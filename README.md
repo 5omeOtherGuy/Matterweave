@@ -4,7 +4,7 @@
 
 [v0.3](docs/V0.3.md) adds directional shadows, sun/detail controls, bounded
 background terrain preparation and a breakable arch playground to the native
-ash/Vulkan explorer. The release candidate is being tested on a OnePlus13 running
+ash/Vulkan explorer. The v0.3 slice was tested on a OnePlus13 running
 LineageOS23.2/Android16; see STATUS for delivery and verification progress.
 
 ## Current implementation

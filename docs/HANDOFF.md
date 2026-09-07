@@ -6,12 +6,14 @@ Take over Matterweave from the current repository branch. Use this repository as
 
 Do not spend the session repeating the initial requirements interview or producing another plan in place of code. Read the live repository first: this handoff may predate implementation commits.
 
-## Current implementation entry — 2026-09-07
+## Current implementation entry — 2026-09-08
 
 For the next release, read the [v0.3 delivery and coordination plan](V0.3.md).
 It preserves the planned feature slices, multi-model assignments, board ownership,
-bounded-context protocol and startup verification gates. The board and three feature slices are implemented; integrated phone validation
-and release closeout are underway. Read
+bounded-context protocol and startup verification gates. The board and three feature slices are implemented and phone validation passed.
+The v0.3.0 release contains shadows, background preparation and the breakable arch.
+Prioritize stationary-scene efficiency next; read BENCHMARKS for the owner’s
+unplugged/cooling requirement and the measured thermal limitations. Read
 [execution_log.md](../execution_log.md) and STATUS for actual progress; planned
 features are not shipped work.
 

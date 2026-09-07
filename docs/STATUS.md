@@ -2,7 +2,7 @@
 
 Updated: 2026-09-08
 
-## v0.3 release candidate in device validation
+## v0.3 verified Android slice
 
 The [v0.3 plan](V0.3.md) has working implementations of directional shadows,
 bounded background terrain/mesh preparation and a six-body breakable arch that
@@ -14,7 +14,7 @@ lighting preferences; changed preferences persist.
 The [execution log](../execution_log.md) records exact mixed-model assignments,
 submissions, review corrections, board behavior and failed diagnostic hypotheses.
 Astra, Opus5 and Muse produced isolated contributions; lead integrated them through
-[draft PR#4](https://github.com/5omeOtherGuy/Matterweave/pull/4). The [board](../tools/coordination/README.md)
+[PR #4](https://github.com/5omeOtherGuy/Matterweave/pull/4). The [board](../tools/coordination/README.md)
 passed16 local recovery/ownership checks and its GitHub workflow. Submission is
 explicitly distinct from lead acceptance.
 
@@ -25,11 +25,14 @@ validation. ARM64 APK build/signature/16KiB ZIP+ELF alignment pass. An exposed f
 in an isolated phone fixture is pixel-identical on/off, including low sun at2048;
 coarse terrace-shadow edges remain a quality limit of the finite map.
 
-A controlled120-second warmup plus20-minute v0.3 fixed-quality phone run is active.
-Its measurements, remaining movement/lifecycle checks, final CI/merge and GitHub
-APK release are pending. Current user scene is backed up for restoration after
-fixed-scene tests. Earlier interactive v0.3 profiling is excluded from controlled
-comparisons because the owner also used the phone.
+A controlled 120-second warmup plus 20-minute fixed-quality run completed.
+All 61,509 selected presentation intervals were co-observed; mean 19.515 ms,
+p95 24.878 ms. All 40 health samples reported severe throttling. The run was
+USB powered and entered hot: no causal speed/power comparison with v0.2 is valid.
+See the [complete evidence](evidence/2026-09-08-v0.3.md) for exact conditions,
+clock/coverage limits and CPU/GPU wall-time meanings. Final travel/reversal and
+two resume/relaunch cycles passed; the user's saved scene was restored.
+GitHub CI passes; final delivery uses PR #4 and the v0.3.0 development prerelease.
 
 The earlier v0.2 timestamp capture has99.8183% verified interval-duration coverage;
 its median/p95/p99 verified intervals were16.580834/16.584323/16.585886ms. Four gaps
@@ -85,6 +88,12 @@ workflow. The release tag identifies the final integrated source; its manifest
 records the exact build revision and APK checksum.
 
 ## Limits and next actions
+
+First priority: investigate stationary-scene heat. The current app still steps
+physics, rebuilds dynamic meshes and redraws shadows while stationary. Profile
+CPU busy time/waits, reuse unchanged work, and evaluate frame caps/idle cadence.
+The [benchmark protocol](BENCHMARKS.md) now requires unplugged, cooled, matched
+conditions for future efficiency comparisons; charging was a confounder here.
 
 1. Complete the equivalent-quality ray/mesh/hybrid mobile comparison. The retained
    reference mesher and new greedy path provide a correctness baseline, not a final
