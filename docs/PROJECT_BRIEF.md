@@ -2,7 +2,7 @@
 
 ## Product
 
-Matterweave is a bespoke native Android voxel engine and game framework. Its purpose is to make detailed, interactive worlds reusable across many small and medium-scale game designs, with particular interest in procedural generation, replayability and rich systems. The engine should be capable of larger workloads as hardware permits; there is no inherited hard world-size limit.
+Matterweave is a modular native Android voxel engine and game framework built primarily in Rust. Its purpose is to make detailed, interactive worlds reusable across many small and medium-scale game designs, with particular interest in procedural generation, replayability and rich systems. The engine should be capable of larger workloads as hardware permits; there is no inherited hard world-size limit.
 
 Example games include creature-collecting RPGs, tiny worlds, different kinds of roguelikes, exploration games, 3D adventures and 2.5D RPGs. These examples motivate flexible cameras, input, simulation, persistence and content systems. They do not require implementing all of these games in the initial engine milestone.
 
@@ -15,6 +15,9 @@ Example games include creature-collecting RPGs, tiny worlds, different kinds of 
 5. Support complex physics and interactive worlds as a strategic capability.
 6. Include dynamic indirect lighting/reflections inspired by Lumen and automatically varying geometric detail inspired by Nanite.
 7. Make the engine reusable for different environments, perspectives and game rules.
+8. Use Rust wherever feasible without detriment. Keep other-language interfaces/dependencies narrow and justified.
+9. Prioritize modularity and reuse viable alternatives meeting strict criteria. Build new technology, tools and Rust interfaces when necessary or significantly advantageous.
+10. Consider Jolt only if it provides major advantages over viable Rust physics alternatives after integration costs.
 
 ## Interpretation of efficiency
 
@@ -36,7 +39,9 @@ The discussion began with a small browser/site technology demo: a lush, earthy, 
 
 Consequently, browser hosting, JavaScript/WebGL, the earlier demo implementation, its memory limits, fixed scene scale and its art direction are not requirements for Matterweave. A similar environment can be a showcase. Touch interaction remains a sensible Android baseline, recorded as a working implementation requirement rather than evidence that every old constraint survived.
 
-No existing engine, language, renderer or library was explicitly selected by the owner during the discussion. The assistant recommended a bespoke voxel core with selective reuse and proposed C++/Vulkan, Jolt, Android game libraries and Arm ASR. These are preserved as proposals with decision gates.
+The initial setup proposed C++/Vulkan, Jolt and selective infrastructure reuse without an owner language selection. The owner subsequently selected Rust wherever feasible without detriment, required modularity and qualifying reuse, authorized necessary or significantly advantageous custom technology/tools/interfaces, and restricted Jolt to cases of major advantage. Accepted ADR-0014 supersedes the earlier foundation/reuse proposals; ADR-0015 proposes a Rust/Cargo/Vulkan foundation. Specific libraries, rendering algorithms and versions remain unselected.
+
+This expands the potential engineering work to reusable Rust hardware adapters and tools where justified. It does not mandate building an entire SDK, driver stack or every component from scratch. The selection procedure and evidence thresholds are in [component selection](COMPONENT_SELECTION.md).
 
 ## What success looks like
 

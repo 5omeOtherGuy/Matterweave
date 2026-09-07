@@ -2,7 +2,7 @@
 
 ## Available now
 
-This setup contains documentation and its validator. It does not contain Gradle, CMake engine targets, an Android manifest, native source or a buildable APK.
+This setup contains documentation and its validator. It does not contain a Cargo engine workspace, Gradle application, Android manifest, native source or buildable APK. Rust preference is accepted; exact implementation packages/toolchains remain proposals.
 
 ```sh
 git clone https://github.com/5omeOtherGuy/Matterweave.git
@@ -14,9 +14,11 @@ Python 3.10+ is sufficient for the documentation check. It uses only the standar
 
 ## M0 environment setup requirements
 
-Inspect the actual development environment before selecting tools. Resolve a compatible JDK/Gradle/Android Gradle Plugin/SDK/NDK/CMake set from official documentation, pin exact versions, and commit the Gradle wrapper plus checksum verification. Choose and record the initial minimum Android API, ARM64 ABI and Vulkan feature profile. The native foundation in ADR-0003 is a proposal until verified.
+Inspect the actual development environment before selecting tools. Resolve a compatible stable Rust/Cargo and JDK/Gradle/Android Gradle Plugin/SDK/NDK set from official documentation; add CMake only for components that require it. Pin exact versions, the Rust edition/MSRV, rust-toolchain.toml, workspace Cargo.lock and the Gradle wrapper with checksum verification. Choose and record the initial minimum Android API, ARM64 ABI and Vulkan feature profile. Accepted ADR-0014 governs selection; ADR-0015 proposes the implementation foundation.
 
 Document installation steps for at least one reproducible host environment, required environment variables and a clean-checkout build. Commit a dependency manifest/lock mechanism with exact revisions, source URLs, licenses, local patches and rationale when dependencies are first adopted. No dependency has been pinned in this setup, and reference repositories are not automatically dependencies.
+
+Assess suitable Rust components under [component selection](COMPONENT_SELECTION.md). Prototype missing interfaces or significant improvements only against a concrete gap. Do not replace the existing adequate Python documentation validator solely for language uniformity. Kotlin/platform glue and GPU shaders remain legitimate other-language components where appropriate.
 
 Select shader source language/compiler and record how shaders are built, reflected and packaged. Do not rely on a developer's globally installed unversioned compiler. Inspect [Android native page-size guidance](https://developer.android.com/guide/practices/page-sizes) for every native library and the resulting APK; avoid assumptions about a fixed 4 KB page size.
 
@@ -34,7 +36,7 @@ When real hardware is unavailable, produce the APK, use available host/emulator 
 
 ## Build and CI progression
 
-The initial documentation workflow checks repository integrity. M0 should add host tests and a clean Android APK build with artifact retention. Record toolchain versions and use reproducible dependency retrieval. Add Vulkan validation/debug builds and targeted sanitizers where supported; keep release performance captures separate from instrumented correctness runs.
+The initial documentation workflow checks repository integrity. M0 should add Rust formatting, lint and host tests plus a clean Android APK build with artifact retention. Record actual commands once targets exist. Record toolchain versions and use reproducible dependency retrieval. Document unsafe/FFI invariants; add Vulkan validation/debug builds and applicable sanitizer or Miri checks for specific correctness risks, without treating Miri as GPU/foreign-library validation. Keep release performance captures separate from instrumented correctness runs.
 
 Cache downloads/build products using appropriate version keys. Do not make a cached build the only evidence that a fresh checkout works. Keep CI permissions minimal and avoid exposing credentials in logs.
 

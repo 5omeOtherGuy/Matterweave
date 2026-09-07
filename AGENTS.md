@@ -25,6 +25,10 @@ This repository is the durable project context. Preserve decisions, evidence, us
 
 ## Engineering and verification
 
+- Follow accepted [ADR-0014](docs/adr/0014-rust-modularity-and-evidence-led-reuse.md): Rust wherever feasible without material detriment, explicit modularity and reuse of viable alternatives meeting strict criteria. Use [component selection](docs/COMPONENT_SELECTION.md) for substantial decisions. The former C++ default is superseded; the current foundation proposal is ADR-0015.
+- Inspect suitable existing solutions before substantial custom implementation. New technology, tools and Rust hardware interfaces are authorized where necessary or significantly advantageous. Prototype credible improvements, then validate before claiming or adopting a performance advantage. Do not rewrite adequate dependencies solely for language uniformity.
+- Evaluate suitable Rust physics first. Jolt is eligible only for major workload-relevant advantages after binding, data conversion, build and maintenance costs. No physics package is selected by policy alone.
+- Keep unsafe/FFI/GPU contracts narrow and explicit. Logical modularity need not impose runtime plugins, a permanent ABI, large copies or dynamic dispatch in inner loops. Missing Rust bindings are engineering tasks; new wrappers do not create hardware capabilities or privileged device access.
 - Prefer the smallest complete vertical slice that resolves the current milestone. Introduce abstractions for actual requirements; avoid building an editor, plugin ecosystem or general rendering framework before the native slice works.
 - Pin adopted dependencies and build tools; record source, revision, license and integration rationale. Avoid floating dependency branches in reproducible builds.
 - Keep Android UI/lifecycle, engine core and game-specific rules separate. Do not leak Vulkan or physics-library types through every public gameplay interface.

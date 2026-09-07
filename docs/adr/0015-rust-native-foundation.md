@@ -1,0 +1,38 @@
+# ADR-0015: Rust native Android foundation
+
+- Date: 2026-09-07
+- Status: Proposed
+- Basis: Engineering implementation proposal under accepted ADR-0014; named packages remain candidates.
+- Requirements: R01, R03, R10, R13, R17, R18, R19
+
+## Context
+
+Rust is now the default language. The next session needs a concrete Android build and graphics starting point, with room for efficient hardware integration and reusable subsystems. No engine implementation exists at this decision point.
+
+## Decision
+
+Propose a Cargo workspace, a pinned stable Rust toolchain and committed Cargo.lock for the workspace/sample applications. Start with the aarch64-linux-android target, the Android NDK and Gradle packaging. Pin the Rust edition/MSRV and compatible Android tools in M0. Add CMake only for dependencies or tooling that actually require it. Use a small Kotlin/Java layer where Android integration benefits or requires it.
+
+Investigate android-activity/GameActivity integration rather than hand-writing lifecycle/input glue. Follow the selected Rust integration's instructions; do not combine incompatible native glue layers. Keep a host-testable core and reproducible APK assembly.
+
+Investigate ash for direct Vulkan control. wgpu remains a viable alternative if its exposed capabilities and performance meet the strict criteria. Missing features must be identified in the actual API/version; do not assume an abstraction is slower or prohibits all advanced features. Shader-language/compiler selection is separate from host-language selection.
+
+Prefer existing allocation, math, concurrency and serialization libraries when they meet requirements. Evaluate Rapier for the first physics path; apply ADR-0014's major-advantage threshold before adopting Jolt. No named dependency is pinned or selected in this proposal.
+
+## Alternatives
+
+A C++ engine core is superseded by the owner's Rust direction. Small foreign-library/platform adapters remain allowed under the exception policy. Existing Rust frameworks or libraries may supply useful components; Rust does not imply selecting a whole framework or automatically selecting wgpu. Nightly-only language/toolchain features need a concrete necessity or significant benefit.
+
+## Consequences
+
+Cargo, Android packaging and any native dependencies must form one reproducible build. FFI contracts specify ownership, layout/alignment, callback threads, cancellation and panic/error handling. Batch transfers and calls where useful; test the total pipeline. Keep unsafe sections localized with documented safety invariants and applicable validation.
+
+Logical modularity should preserve contiguous data, efficient work batching and opportunities for static dispatch. Do not clone large world data or introduce broad shared locking merely to satisfy an inconvenient ownership model; design the ownership boundary first.
+
+## Validation
+
+M0 produces a clean-checkout ARM64 APK with input/lifecycle checks and capability reporting, plus Rust formatting/lint/test commands as real targets appear. Validate native-library page-size compatibility and packaging. Record exact versions and selection evidence. M1/M2 resolve representation/rendering choices; a successful build does not prove mobile performance.
+
+## References
+
+[Accepted Rust policy](0014-rust-modularity-and-evidence-led-reuse.md), [Rust Android target](https://doc.rust-lang.org/rustc/platform-support/android.html), [ash](https://github.com/ash-rs/ash), [wgpu](https://github.com/gfx-rs/wgpu), [android-activity](https://github.com/rust-mobile/android-activity), [Rapier](https://github.com/dimforge/rapier), [Rust FFI guidance](https://doc.rust-lang.org/nomicon/ffi.html).

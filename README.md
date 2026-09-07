@@ -1,6 +1,6 @@
 # Matterweave
 
-**A native Android voxel engine and game framework for detailed, interactive worlds.**
+**A modular native Android voxel engine and game framework, built primarily in Rust, for detailed, interactive worlds.**
 
 Matterweave aims to combine fine geometric detail, dynamic lighting and complex physics with efficient, sustained performance on modern Android hardware. It is intended to support creature-collecting RPGs, small worlds, roguelikes, exploration, 3D adventures and 2.5D games through reusable engine systems.
 
@@ -22,7 +22,9 @@ The repository is intended to be sufficient context for a fresh implementation s
 
 ## Architectural direction
 
-The initial working proposal is a native C++ core with Vulkan rendering, Android lifecycle/input integration and selective reuse of established libraries. Matterweave would own its voxel representation, streaming, rendering strategy and integration of world edits with lighting and physics. Sparse voxel blocks, a hybrid rendering path, Jolt Physics and Arm ASR are candidates to validate, not dependencies already selected or integrated.
+Rust is the accepted default wherever feasible without material detriment. Reuse viable solutions meeting our strict criteria; create technology, tools and hardware interfaces when necessary or significantly advantageous. Modularity must preserve efficient data flow and permit replacing components. [ADR-0014](docs/adr/0014-rust-modularity-and-evidence-led-reuse.md) records this policy and the major-advantage condition for considering Jolt.
+
+The working implementation proposal is a Rust/Cargo core with Vulkan, initially investigating ash, Rust Android integration and suitable Rust physics such as Rapier. Sparse voxel blocks, a hybrid rendering path and Arm ASR remain candidates to validate. The engine owns its architecture and integration; adequate existing implementations should be reused. See [component selection](docs/COMPONENT_SELECTION.md) and [ADR-0015](docs/adr/0015-rust-native-foundation.md) for decision gates. No runtime dependency has been selected or integrated yet.
 
 Android is the product platform. Desktop tools and host tests may support development. A browser implementation does not satisfy the project goal.
 

@@ -6,6 +6,7 @@ Read [AGENTS.md](AGENTS.md), [the implementation handoff](docs/HANDOFF.md) and [
 
 - Explain the problem, resulting behavior and relevant requirement/ADR.
 - Keep engine services separate from game-specific content.
+- Prefer Rust where feasible without material detriment. Reuse qualifying components; justify substantial custom work, foreign dependencies and interfaces through [component selection](docs/COMPONENT_SELECTION.md). Jolt requires major advantages over viable Rust alternatives.
 - Preserve unrelated work and avoid force-pushing shared branches.
 - Resolve routine technical decisions with evidence; record material decisions in an ADR using [the template](docs/adr/template.md).
 - Record sources, exact versions, licenses and local changes for adopted dependencies/assets. A research link is not an adopted dependency.

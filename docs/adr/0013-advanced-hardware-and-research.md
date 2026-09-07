@@ -13,6 +13,8 @@ The owner explicitly wants useful access to modern Android CPU, GPU, RAM and NPU
 
 Inventory actual device/API features early. Evaluate multicore scheduling, SIMD, GPU-driven work, shader precision, subgroups, asynchronous compute, hardware RT and NPU paths against an existing workload. Adopt per-capability paths only with a defined contract and total-cost evidence; report unsupported features clearly.
 
+Apply accepted [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md): prefer adequate existing Rust interfaces; create or extend bindings, tools and backends when necessary or significantly advantageous. A missing Rust wrapper is an integration problem to investigate, not an automatic rejection of Rust. New interfaces must use capabilities actually exposed by the device/driver/API, preserve modularity and document unsafe/FFI contracts. They do not create missing hardware functionality.
+
 For NPUs, first identify a useful inference workload and available runtime/vendor API, then measure input/output movement, execution, synchronization and quality. Do not assume an NPU is a general-purpose Vulkan graphics unit. Keep CPU/GPU baseline paths where practical.
 
 Reserve neural radiance caches, ReSTIR-family sampling, frame generation and advanced simulation for bounded later experiments. These remain opportunities; none is required before the first useful native renderer.

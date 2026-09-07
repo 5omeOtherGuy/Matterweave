@@ -9,7 +9,7 @@ Assessment date: 2026-09-07. Sources below are primary project/vendor documentat
 | [Google Filament](https://github.com/google/filament) | Real-time physically based renderer with explicit Android support and a focus on efficiency. | Strong rendering baseline/reuse candidate. It does not itself provide the requested complete voxel/game framework; investigate the cost of custom traversal, lighting and edit integration. |
 | [Godot Voxel Tools](https://voxel-tools.readthedocs.io/en/latest/) | Voxel terrain tooling built around Godot. | Useful existing-framework alternative and reference for terrain/editing workflows. Measure its actual Android path before making fidelity/performance claims. |
 | [Luanti](https://github.com/luanti-org/luanti) | Established voxel game-creation platform with an Android build path. | Useful world/game framework reference. Its existing design and block-oriented content model are not automatically the best foundation for this project's fine-detail renderer. |
-| [VoxelHex](https://github.com/Ministry-of-Voxel-Affairs/VoxelHex) | Rust/wgpu sparse voxel-brick tree with GPU ray tracing and mixed-resolution representation. Its README lists lighting and landscape/loading work on the roadmap. | Inspect algorithms and selective reuse. Do not assume a complete, production-ready Android lighting/streaming engine. Account for Rust/FFI/backend integration if retaining a C++ foundation. |
+| [VoxelHex](https://github.com/Ministry-of-Voxel-Affairs/VoxelHex) | Rust/wgpu sparse voxel-brick tree with GPU ray tracing and mixed-resolution representation. Its README lists lighting and landscape/loading work on the roadmap. | Inspect algorithms and selective reuse under the accepted Rust policy. Language alignment helps integration but does not establish Android performance or complete lighting/streaming capabilities. |
 | [voxel-rs](https://github.com/tim-oster/voxel-rs) | Rust/OpenGL sparse voxel-octree ray tracer. | Algorithm and benchmark reference. An Android/Vulkan port and its performance are separate work, not demonstrated by the desktop project. |
 | [Unreal Lumen on Android](https://dev.epicgames.com/documentation/en-us/unreal-engine/using-lumen-global-illumination-on-mobile-in-unreal-engine) | Epic documents experimental Lumen on selected high-end Android devices using the desktop renderer and Vulkan SM5, with and without hardware RT. | Valuable visual/integration benchmark. Epic flags significant cost and experimental status; avoid either claiming universal support or dismissing Android Lumen as impossible. |
 
@@ -17,9 +17,9 @@ Earlier screening also considered Unity, Defold and Axmol as general/mobile engi
 
 ## Current comparison conclusion
 
-The recommended experiment is a bespoke voxel core with selective infrastructure reuse. This gives ownership over representation, edit propagation and Android workload budgets while avoiding unnecessary rewrites. It is an engineering hypothesis: no evidence currently establishes that Matterweave will outperform an existing engine. A full-engine foundation remains a legitimate outcome if focused integration evidence favors it without abandoning the accepted goals.
+The owner has now selected Rust wherever feasible without detriment, explicit modularity and reuse of viable solutions meeting strict criteria. New technology/tools/interfaces are authorized when necessary or significantly advantageous; Jolt requires major advantages. The architecture is owned by Matterweave, while adequate implementations should be reused. No evidence currently establishes that Matterweave will outperform an existing engine. A whole-engine or foreign-component route must also meet this accepted policy, rather than relying on the superseded C++ recommendation.
 
-Evaluate total development/integration cost, platform support, editing, rendering, physics, authoring tools, dependency maintenance and runtime behavior. One static screenshot or desktop FPS figure cannot resolve that choice. See [ADR-0004](adr/0004-build-and-reuse-boundary.md) and [ADR-0006](adr/0006-rendering-path-selection.md).
+Evaluate total development/integration cost, platform support, editing, rendering, physics, authoring tools, dependency maintenance and runtime behavior. One static screenshot or desktop FPS figure cannot resolve that choice. See [ADR-0014](adr/0014-rust-modularity-and-evidence-led-reuse.md), [component selection](COMPONENT_SELECTION.md) and [ADR-0006](adr/0006-rendering-path-selection.md).
 
 ## Concrete infrastructure candidates
 
@@ -28,10 +28,23 @@ Evaluate total development/integration cost, platform support, editing, renderin
 | [Android Vulkan guidance](https://developer.android.com/games/develop/vulkan/overview) | Android's recommended low-level graphics direction supports the proposed native renderer. | Minimum feature profile, drivers, shader path and exact build tools. |
 | [Android Game Development Kit](https://developer.android.com/games/agdk/overview) | Native lifecycle/input integration, frame pacing and related game libraries. | Select needed components and record their exact versions/integration. |
 | [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) | Established allocation infrastructure for Vulkan. | Allocation strategy, budget reporting, transient peaks and chosen release. |
-| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | C++ physics with Android ARM64 support, rigid bodies, constraints and multicore-oriented design. | Android build, scheduling, voxel collider/fracture integration and actual workload cost. |
+| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | C++ physics with Android ARM64 support, rigid bodies, constraints and multicore-oriented design. | Conditional exception only: must demonstrate major advantages over viable Rust alternatives including binding, build, conversion and maintenance costs. |
 | [Arm ASR generic library](https://github.com/arm/accuracy-super-resolution-generic-library) | Mobile-oriented temporal upscaling with Vulkan integration and documented motion/depth inputs. | Total frame savings, output quality and handling of moving/edited voxels on the target GPU. |
 
 These components solve different layers. Filament is not a replacement for Jolt; VMA is not a streaming architecture; Jolt does not automatically implement voxel destruction; ASR does not create source geometry. Proposed dependency choices appear in the relevant ADRs.
+
+## Rust foundation candidates
+
+The following are current candidates, not selected dependencies or performance results. [ADR-0015](adr/0015-rust-native-foundation.md) proposes the first integration experiment.
+
+| Candidate | Relevant capability | Matterweave decision |
+| --- | --- | --- |
+| [ash](https://github.com/ash-rs/ash) | Thin Rust Vulkan bindings with direct API/extension access and unsafe operations. | First renderer-integration candidate; build narrow checked ownership/lifetime interfaces and validate actual device capabilities. Do not reimplement adequate bindings. |
+| [wgpu](https://github.com/gfx-rs/wgpu) | Rust graphics abstraction with a native Android Vulkan path. | Eligible if its actual feature/control/performance profile meets requirements; no presumed performance penalty or universal feature exclusion. |
+| [android-activity](https://github.com/rust-mobile/android-activity) | Rust NativeActivity/GameActivity integration. | Evaluate before custom lifecycle glue and follow its own integration instructions. A small Kotlin/Java layer may remain appropriate. |
+| [Rapier](https://github.com/dimforge/rapier) | Rust 2D/3D physics. | Initial physics candidate, requiring workload/collision/destruction validation; no assumption of parity with another solver. |
+
+[Rust Android target documentation](https://doc.rust-lang.org/rustc/platform-support/android.html) and [Rust FFI guidance](https://doc.rust-lang.org/nomicon/ffi.html) support toolchain and boundary design. They do not prove a particular integration is correct or efficient. GPU shaders may remain in a suitable shader language; the owner requested pragmatic Rust use rather than mandatory language uniformity.
 
 ## Frontier graphics references and limits
 

@@ -8,11 +8,13 @@ Do not spend the session repeating the initial requirements interview or produci
 
 ## Starting state of this handoff
 
-On 2026-09-07 the GitHub repository was empty. This setup establishes requirements, 13 ADRs, architectural proposals, research, milestones, documentation validation and contribution conventions. **There is no engine, APK, demo, dependency lock or device result in the setup commit.** Consult [STATUS.md](STATUS.md) and Git history for subsequent changes.
+On 2026-09-07 the GitHub repository was empty. The initial setup established requirements and 13 ADRs. The subsequent Rust policy update adds accepted ADR-0014 and proposed ADR-0015, supersedes ADR-0003/0004, and brings the requirement register to 20 entries. **There is no engine, APK, demo, dependency lock or device result in these documentation commits.** Consult [STATUS.md](STATUS.md) and Git history for subsequent changes.
 
 ## Essential context
 
 Matterweave is the engine/framework product. Android-native delivery, voxel-based worlds, high fidelity, hardware efficiency, reusable game systems, dynamic lighting and automatic fine-detail management are central. Complex physics is a strategic capability. Genre examples include creature-collecting RPGs, roguelikes, exploration, tiny worlds, 3D adventures and 2.5D games.
+
+Rust is now the owner's explicit default wherever feasible without detriment. Modularity, qualifying reuse and maximum useful speed/efficiency govern selection. Build new technology, tools or Rust hardware interfaces when necessary or significantly advantageous. Jolt is eligible only if major advantages justify it. Read [ADR-0014](adr/0014-rust-modularity-and-evidence-led-reuse.md) and [component selection](COMPONENT_SELECTION.md); do not restart the language debate or follow the superseded C++ proposal.
 
 Earlier browser/site demo constraints were explicitly replaced. The former scene is neither an engine dependency nor the required art direction. No separate Pokémon project or earlier personal conversation is needed. See [PROJECT_BRIEF.md](PROJECT_BRIEF.md) for the complete scope history.
 
@@ -20,22 +22,22 @@ Earlier browser/site demo constraints were explicitly replaced. The former scene
 
 1. Read [AGENTS.md](../AGENTS.md), [STATUS.md](STATUS.md), [REQUIREMENTS.md](REQUIREMENTS.md), the [ADR index](adr/README.md) and [ROADMAP.md](ROADMAP.md).
 2. Inspect current source, branches, worktree changes, checks and tool/device availability. Preserve unrelated work. Record relevant environment facts without secrets.
-3. Resolve the M0 foundation choices sufficiently to build: language/toolchain, Android shell, minimum capability profile and pinned dependency revisions. ADR-0003 currently proposes C++20/CMake/Gradle/Vulkan; ADR-0004 proposes selective reuse. Accept or revise engineering decisions with rationale. Do not block implementation awaiting owner approval of routine choices.
+3. Resolve M0's Rust toolchain, Android shell, minimum capability profile and pinned dependency revisions. ADR-0015 proposes Cargo/NDK/Gradle, ash/Vulkan and existing Rust Android integration under accepted ADR-0014. Assess viable components before substantial custom work. Accept or revise engineering proposals with rationale; do not block implementation awaiting owner approval of routine choices.
 4. Build the native application shell and instrumentation. Include touch input, lifecycle behavior and capability reporting from the start.
 5. Deliver M1's small queryable/editable voxel world using the simplest adequate renderer. Preserve a baseline while preparing M2's ray/mesh/hybrid comparison. Do not implement three production engines before the first native sample works.
 6. Continue through authorized milestones with useful verification. The roadmap is ordered delivery work, not a requirement to stop after M1 or a promise to finish every research track in one session.
 
 ## Working architecture, not a completed selection
 
-- Native C++ core and Vulkan renderer; a thin Android shell using the NDK and Android game libraries.
-- Own voxel storage, derived-data coordination, streaming and rendering decisions; integrate mature infrastructure selectively.
+- Rust/Cargo core and Vulkan renderer, initially investigating ash; a thin Android shell using the NDK and appropriate existing Rust integration.
+- Own the architecture, contracts and world/renderer integration while reusing adequate implementations. Build or extend components only under the accepted necessity/significant-advantage policy.
 - Investigate sparse voxel blocks, separate movable object volumes and multiresolution representations.
 - Compare compute voxel traversal, rasterized voxel surfaces and a hybrid using the same scenes and quality criteria.
-- Investigate Jolt for physics and Arm ASR for temporal reconstruction.
+- Investigate suitable Rust physics such as Rapier. Jolt requires major advantages under ADR-0014. Arm ASR remains a reconstruction candidate subject to the same integration criteria.
 - Investigate probe/cached dynamic GI with selective tracing and optional hardware RT paths.
 - Plan capability-based quality profiles and measured CPU/GPU/NPU scheduling, memory budgets and thermal adaptation.
 
-The associated ADRs remain **Proposed** until their stated decision gates are met. Product goals in accepted ADRs remain binding. Exact shader toolchain, block size, voxel surface representation, device floor and dependencies are unresolved.
+Rust preference and the selection/modularity policy are **Accepted** in ADR-0014. Specific implementation choices in ADR-0015 and the other active proposals remain **Proposed** until their gates are met. Exact shader toolchain, block size, voxel surface representation, device floor and dependencies are unresolved. ADR-0003/0004 are historical and superseded.
 
 ## First handoff-worthy implementation result
 

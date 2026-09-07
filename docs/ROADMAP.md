@@ -4,7 +4,7 @@ All implementation milestones are **not started** in the repository setup. This 
 
 ## M0 — Reproducible Android foundation
 
-Resolve the initial foundation in ADR-0003/0004. Pin compatible JDK, Gradle wrapper, Android Gradle Plugin, SDK/NDK, CMake and shader tools. Choose and document an initial Android/API/Vulkan profile; verify capabilities rather than inferring them from marketing names. Build a native ARM64 application with lifecycle, surface handling, multitouch actions, logging, capability reporting and frame instrumentation. Add host/native build checks and APK artifacts in CI.
+Apply accepted ADR-0014 and resolve the Rust foundation proposal in ADR-0015. Pin compatible Rust/Cargo, edition/MSRV, JDK, Gradle wrapper, Android Gradle Plugin, SDK/NDK and shader tools; add CMake only for components requiring it. Commit the workspace lock/toolchain records. Assess existing Android integration and graphics components before custom work. Choose and document an initial Android/API/Vulkan profile; verify capabilities rather than inferring them from marketing names. Build a native ARM64 application with lifecycle, surface handling, multitouch actions, logging, capability reporting and frame instrumentation. Add Rust checks, host/native builds and APK artifacts in CI.
 
 **Done:** a clean checkout builds an APK using documented commands; the application presents a frame and responds to input; background/resume and surface recreation are handled; a physical-device smoke result is recorded when access exists. If hardware is absent, publish the APK and mark that subgate outstanding. Verify native-library page-size compatibility and packaging under the chosen toolchain. No voxel fidelity or mobile performance claim is made at this stage.
 
@@ -22,7 +22,7 @@ Use M1 fixtures to compare focused compute traversal, extracted-surface rasteriz
 
 ## M3 — Interactive physics and bounded streaming
 
-Integrate a selected physics library, character movement, dynamic voxel objects and a constraint interaction. Implement a bounded fracture/destruction example, versioned collision updates and edit persistence. Stress streaming, eviction, cancellation, rapid camera reversal and memory pressure. A renderer/physics update policy must define the interval between a world edit and collision publication.
+Assess Rust physics first and integrate a qualifying library, character movement, dynamic voxel objects and a constraint interaction. Jolt adoption requires a documented major advantage under ADR-0014, including binding/integration costs; it is not a mandatory comparison if no credible major gap exists. Reuse or extend qualifying components for a bounded fracture/destruction example, versioned collision updates and edit persistence. Stress streaming, eviction, cancellation, rapid camera reversal and memory pressure. A renderer/physics update policy must define the interval between a world edit and collision publication.
 
 **Done:** a breakable structure reacts physically; movement and queries remain correct after edits and LOD changes; stale jobs cannot restore old geometry/collision; saves round-trip state; queues, staging and residency obey explicit limits. Record mass/inertia handling and limitations. Run sustained native tests when hardware is available.
 
@@ -34,7 +34,7 @@ Build the Lumen-like GI/reflection capability on a direct-light baseline. Add te
 
 ## M5 — Sustained mobile fidelity
 
-Profile actual bottlenecks across the declared initial device set. Tune useful parallel work, memory traffic, materials, shadows, foliage/atmosphere, streaming, frame pacing and thermal adaptation. Inventory accelerator capabilities and execute only focused experiments justified by existing workloads. Evaluate NPU candidates with transfer and synchronization costs included; record useful negative results.
+Profile actual bottlenecks across the declared initial device set. Tune useful parallel work, memory traffic, materials, shadows, foliage/atmosphere, streaming, frame pacing and thermal adaptation. Inventory accelerator capabilities and execute focused experiments justified by existing workloads. Reuse qualifying Rust interfaces, extend existing ones, or create a narrow backend when necessary/significantly advantageous. Evaluate NPU candidates with transfer and synchronization costs included; record useful negative results. Keep new interfaces independently testable with explicit capability and lifetime contracts.
 
 **Done:** a sustained benchmark report includes the actual quality profile, device/driver/OS, resolution, frame-time distribution, memory, thermal behavior and any unmeasured quantities. Adaptive and fixed-quality runs are separated. The supported profile/device table is evidence-based. No claim of optimizing all Android hardware is made from one phone.
 

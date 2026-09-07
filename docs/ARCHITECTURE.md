@@ -1,6 +1,14 @@
 # Architecture working proposal
 
-This describes intended boundaries, not existing modules. Accepted outcomes are in [REQUIREMENTS.md](REQUIREMENTS.md); implementation choices remain subject to the [ADRs](adr/README.md). Introduce these boundaries incrementally as working code requires them.
+This describes intended boundaries, not existing modules. Accepted outcomes are in [REQUIREMENTS.md](REQUIREMENTS.md); Rust preference, modularity and qualifying reuse are accepted in ADR-0014. Specific implementations remain subject to the active [ADRs](adr/README.md). Introduce boundaries incrementally as working code requires them.
+
+## Rust modules and efficient interfaces
+
+The current foundation proposal is a Rust/Cargo workspace. Use modules/crates with explicit ownership and data contracts, keeping Android, rendering, physics, world data, tools and game rules separable. Reuse adequate implementations inside those boundaries; a bespoke architecture is not a mandate to reimplement all internals. See [component selection](COMPONENT_SELECTION.md).
+
+Prefer stable handles and contiguous/batched data where suitable. Static composition can preserve optimization opportunities; modularity does not require dynamic plugins or per-object virtual calls. Establish foreign interfaces only where needed, with layout, thread, error/panic and lifetime contracts. Expose efficient Rust-facing APIs around necessary unsafe sections. GPU resource retirement and asynchronous world revisions still need explicit correctness mechanisms.
+
+Investigate ash for direct Vulkan and existing Rust Android lifecycle integration. wgpu remains eligible if it meets the actual feature/control/performance requirements. Any new hardware interface starts from an available Android/driver/vendor API and an identified gap or significant expected gain; it does not assume driver privileges or make unsupported features available.
 
 ## Runtime responsibilities
 
@@ -53,7 +61,7 @@ Temporal reconstruction requires prior object/camera transforms, depth, jitter a
 
 ## Physics and gameplay
 
-Jolt is a candidate rigid-body/constraint foundation. Generate bounded collision proxies suitable for dynamic bodies and update affected static collision regions. Do not turn every visual voxel into an individual rigid body. Fracture needs project-specific connectivity, mass/inertia and representation work; a physics library does not provide this automatically.
+Assess suitable Rust physics first, with Rapier an initial candidate. Jolt is eligible only for major workload-relevant advantages after binding and integration costs, under ADR-0014. Generate bounded collision proxies suitable for dynamic bodies and update affected static collision regions. Do not turn every visual voxel into an individual rigid body. Reuse or extend qualifying fracture/connectivity implementations; create project-specific work only for a demonstrated gap or significant advantage. A physics library does not automatically supply voxel destruction.
 
 Use a fixed simulation step with bounded catch-up and render interpolation. Account for determinism limits; reproducible generation does not imply cross-device bit-exact physics or multiplayer lockstep. Separate cheap logical simulation from local detailed physical simulation without changing gameplay-critical outcomes due to camera distance.
 
