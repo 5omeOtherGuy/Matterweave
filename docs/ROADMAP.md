@@ -7,13 +7,16 @@ open; M4–M6 remain future work. Consult [STATUS](STATUS.md) for actual checks.
 This roadmap is an ordered delivery strategy, not an estimate or release promise.
 
 The [v0.3 slice](V0.3.md) implements dynamic shadows, bounded background
-preparation and a destruction playground. Phone validation and release closeout
-are underway. Its multi-model protocol and [execution log](../execution_log.md)
+preparation and a destruction playground. Phone validation completed and v0.3.0
+was released. Its multi-model protocol and [execution log](../execution_log.md)
 record the actual delivery process. This advances M3 and direct lighting; it does
 not close equivalent-quality M2 comparisons or full M4 indirect-light/detail gates.
 
-Next: prioritize measured stationary-scene efficiency, with unplugged and matched
-thermal conditions, before expanding costly effects. See [benchmark protocol](BENCHMARKS.md).
+Next: execute the [performance campaign](PERFORMANCE_PLAN.md), beginning with
+trustworthy measurements and redundant-work reduction. Its required
+[dense alien showcase](SHOWCASE.md) supplies demanding real workloads throughout.
+Use unplugged, matched thermal conditions and the [benchmark protocol](BENCHMARKS.md).
+The numeric showcase/performance budgets are working targets, not achieved results.
 
 ## M0 — Reproducible Android foundation
 
