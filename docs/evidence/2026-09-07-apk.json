@@ -1,0 +1,12 @@
+{
+  "source_commit": "2cd6435a900fea7868c5e5225a5ff5ac94d99c0d",
+  "artifact_name": "matterweave-arm64-debug.apk",
+  "bytes": 2625049,
+  "sha256": "ca2333d15aa495236ee18d5367f4f2bf9aa46efaf898821e9d524ce702216196",
+  "build": "Fresh detached checkout, empty Cargo target directory, shared downloaded dependency/tool caches, normal Gradle checksum verification. All 33 tasks executed.",
+  "profile": "debug ARM64, min API 28 / target 35, Vulkan 1.1",
+  "signing": "local development key, APK v2 verified",
+  "native_elf_and_zip_alignment_bytes": 16384,
+  "physical_android_validation": "not run; no attached device",
+  "host_validation": "llvmpipe Vulkan validation, 30 presented frames plus edit/save/reload/resize/recreation; 24 tests pass"
+}

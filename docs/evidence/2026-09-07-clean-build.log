@@ -1,0 +1,138 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:javaPreCompileDebug
+> Task :app:checkDebugAarMetadata
+> Task :app:generateDebugResValues
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:mergeDebugResources
+> Task :app:packageDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets
+> Task :app:processDebugJavaRes NO-SOURCE
+> Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugJavaResource
+> Task :app:checkDebugDuplicateClasses
+> Task :app:desugarDebugFileDependencies
+> Task :app:mergeExtDexDebug
+> Task :app:mergeLibDexDebug
+> Task :app:processDebugResources
+
+> Task :app:buildRustDebug
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling equivalent v1.0.2
+   Compiling memchr v2.8.3
+   Compiling rustversion v1.0.23
+   Compiling hashbrown v0.17.1
+   Compiling syn v2.0.119
+   Compiling indexmap v2.14.2
+   Compiling libc v0.2.189
+   Compiling syn v3.0.5
+   Compiling cfg_aliases v0.2.2
+   Compiling winnow v1.0.4
+   Compiling jni-sys-macros v0.4.1
+   Compiling toml_datetime v0.7.0
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling jni-sys v0.3.1
+   Compiling winnow v0.7.15
+   Compiling jni-sys v0.4.1
+   Compiling toml_edit v0.23.4
+   Compiling thiserror v1.0.69
+   Compiling log v0.4.28
+   Compiling cfg-if v1.0.4
+   Compiling jobserver v0.1.35
+   Compiling proc-macro-crate v3.4.0
+   Compiling thiserror-impl v1.0.69
+   Compiling heck v0.5.0
+   Compiling thiserror v2.0.20
+   Compiling find-msvc-tools v0.1.12
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.5
+   Compiling strum_macros v0.26.4
+   Compiling num_enum_derive v0.7.6
+   Compiling naga v24.0.0
+   Compiling thiserror-impl v2.0.20
+   Compiling bytes v1.12.1
+   Compiling termcolor v1.4.1
+   Compiling unicode-width v0.1.14
+   Compiling raw-window-handle v0.6.2
+   Compiling bitflags v2.13.1
+   Compiling serde v1.0.219
+   Compiling bit-vec v0.8.0
+   Compiling spirv v0.3.0+sdk-1.3.268.0
+   Compiling bit-set v0.8.0
+   Compiling codespan-reporting v0.11.1
+   Compiling combine v4.6.8
+   Compiling num_enum v0.7.6
+   Compiling android-activity v0.6.0
+   Compiling strum v0.26.3
+   Compiling ndk-sys v0.6.0+11769913
+   Compiling serde_derive v1.0.219
+   Compiling aho-corasick v1.1.5
+   Compiling arrayvec v0.7.8
+   Compiling ash v0.38.0+1.3.281
+   Compiling unicode-xid v0.2.6
+   Compiling cesu8 v1.1.0
+   Compiling rustc-hash v1.1.0
+   Compiling regex-syntax v0.8.11
+   Compiling hexf-parse v0.2.1
+   Compiling serde_json v1.0.140
+   Compiling regex-automata v0.4.18
+   Compiling jni v0.21.1
+   Compiling ndk v0.9.0
+   Compiling libloading v0.8.9
+   Compiling winit v0.30.12
+   Compiling bytemuck_derive v1.12.0
+   Compiling itoa v1.0.18
+   Compiling tracing-core v0.1.36
+   Compiling ryu v1.0.23
+   Compiling android-properties v0.2.2
+   Compiling pin-project-lite v0.2.17
+   Compiling ndk-context v0.1.1
+   Compiling tracing v0.1.44
+   Compiling bytemuck v1.23.2
+   Compiling matterweave-render v0.1.0 (/mnt/bench/matterweave-dev/clean-checkout/crates/matterweave-render)
+   Compiling regex v1.13.1
+   Compiling dpi v0.1.2
+   Compiling smol_str v0.2.2
+   Compiling cursor-icon v1.2.0
+   Compiling env_filter v0.1.4
+   Compiling matterweave-core v0.1.0 (/mnt/bench/matterweave-dev/clean-checkout/crates/matterweave-core)
+   Compiling android_log-sys v0.3.2
+   Compiling font8x8 v0.3.1
+   Compiling android_logger v0.15.1
+   Compiling pollster v0.4.0
+   Compiling glam v0.30.9
+   Compiling ash-window v0.13.0
+   Compiling matterweave-explorer v0.1.0 (/mnt/bench/matterweave-dev/clean-checkout/apps/explorer)
+    Finished `dev` profile [unoptimized] target(s) in 1m 18s
+Native library: /mnt/bench/matterweave-dev/clean-checkout/android/app/build/rustJniLibs/debug/arm64-v8a/libmatterweave_explorer.so
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeProjectDexDebug
+> Task :app:mergeDebugNativeLibs
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:stripDebugDebugSymbols
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 1m 49s
+33 actionable tasks: 33 executed

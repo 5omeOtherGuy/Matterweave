@@ -1,6 +1,6 @@
 # Delivery roadmap
 
-All implementation milestones are **not started** in the repository setup. This is an ordered delivery strategy, not an estimate, a release promise or a reason to pause between authorized tasks. Experimental branches should converge into reusable code and recorded decisions.
+M0/M1 now have an implemented Android MVP with host and APK evidence; physical-device subgates remain outstanding. M2–M6 have not started. Consult [STATUS](STATUS.md) for exact verification. This roadmap is an ordered delivery strategy, not an estimate or release promise. Experimental branches should converge into reusable code and recorded decisions.
 
 ## M0 — Reproducible Android foundation
 

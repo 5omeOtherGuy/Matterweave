@@ -1,0 +1,13 @@
+vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+Graphics: Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true
+SMOKE: window focus false; explicit smoke keeps rendering
+SMOKE EXERCISE: aimed place/remove and save/reload passed; revision 42904
+SMOKE EXERCISE: resize requested
+SMOKE EXERCISE: resize event 1100x700
+vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+Graphics: Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true
+SMOKE EXERCISE: host renderer/window recreated
+SMOKE: window focus false; explicit smoke keeps rendering
+SMOKE PASS: 30 presented frames; Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true; world revision 42904

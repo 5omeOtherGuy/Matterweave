@@ -30,3 +30,12 @@ M2 chooses the primary approach with equivalent-quality physical-device evidence
 ## References
 
 [Benchmark protocol](../BENCHMARKS.md), [research](../RESEARCH.md), [world data](0005-voxel-world-data.md).
+
+## M1 implementation evidence — 2026-09-07
+
+The first reference rasterizes exposed voxel surfaces directly through ash.
+Direct sun, ambient shading, fog and a HUD are implemented. The native host
+exercise and APK build establish integration evidence, not a measured mobile
+renderer selection. No ray/mesh/hybrid comparison has been performed; this ADR
+remains Proposed. See [renderer notes](../../crates/matterweave-render/README.md)
+and [STATUS](../STATUS.md).

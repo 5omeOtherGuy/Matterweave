@@ -1,8 +1,8 @@
 # ADR-0015: Rust native Android foundation
 
 - Date: 2026-09-07
-- Status: Proposed
-- Basis: Engineering implementation proposal under accepted ADR-0014; named packages remain candidates.
+- Status: Accepted
+- Basis: Engineering selection under accepted ADR-0014, owner-directed ash first backend, implemented ARM64 packaging and host integration evidence.
 - Requirements: R01, R03, R10, R13, R17, R18, R19
 
 ## Context
@@ -36,3 +36,20 @@ M0 produces a clean-checkout ARM64 APK with input/lifecycle checks and capabilit
 ## References
 
 [Accepted Rust policy](0014-rust-modularity-and-evidence-led-reuse.md), [Rust Android target](https://doc.rust-lang.org/rustc/platform-support/android.html), [ash](https://github.com/ash-rs/ash), [wgpu](https://github.com/gfx-rs/wgpu), [android-activity](https://github.com/rust-mobile/android-activity), [Rapier](https://github.com/dimforge/rapier), [Rust FFI guidance](https://doc.rust-lang.org/nomicon/ffi.html).
+
+## Implementation decision and evidence — 2026-09-07
+
+Accepted for the M0/M1 baseline: Rust/Cargo 1.96.0 (edition 2021), NDK
+28.2.13676358, Gradle 8.11.1/AGP 8.9.2, API 28 minimum/API 35 target and ARM64.
+The first backend uses ash 0.38.0 with ash-window 0.13.0. winit 0.30.12 and
+android-activity 0.6.0 provide a consistent NativeActivity implementation.
+No Java/Kotlin app source, GameActivity glue, CMake or physics library is required.
+Naga 24.0.0 validates WGSL and generates SPIR-V at build time. Dependency locks,
+checksums, licenses and alternatives are in [DEPENDENCIES](../DEPENDENCIES.md).
+
+The development APK builds; native ARM64 exports, system-library dependencies,
+signing and 16 KiB ELF/ZIP alignment are inspected. Host tests and an ash/Vulkan
+smoke exercise verify editing, persistence, resize and renderer recreation.
+[STATUS](../STATUS.md) records the exact results and unexecuted physical-device
+gates. Engineering acceptance does not claim physical Android execution or mobile
+performance. Rendering selection beyond this reference remains ADR-0006/M2 work.

@@ -12,6 +12,7 @@ This repository is the durable project context. Preserve decisions, evidence, us
 - Advance through working implementation and relevant verification. Do not stop after planning, scaffolding or creating a backlog when the authorized implementation task can proceed.
 - Resolve ordinary engineering choices with evidence and record them. Proposed ADRs permit experiments; they are not automatic requests for owner approval. Follow the decision process in the ADR index.
 - Preserve explicit owner requirements. Ask only when an actual missing owner decision, inaccessible capability or irreversible action prevents the next necessary step. Continue independent work and state precisely what remains blocked.
+- The owner authorizes the normal delivery workflow: commit completed work on a branch, push it, open a pull request, resolve actionable review/CI findings, and merge after the relevant checks pass. Do not stop at a local commit or an unmerged PR, and do not ask for repeated permission for these steps. Preserve branch protections and shared history; report any access or required-review blocker.
 - Do not infer authority to purchase hardware/services, change repository visibility or access controls, select the owner's license, publish a store release, or overwrite others' work. Follow the active session's Git and integration authorization; do not force-push shared history.
 
 ## Scope and decision integrity

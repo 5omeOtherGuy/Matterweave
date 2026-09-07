@@ -6,6 +6,17 @@ Take over Matterweave from the current repository branch. Use this repository as
 
 Do not spend the session repeating the initial requirements interview or producing another plan in place of code. Read the live repository first: this handoff may predate implementation commits.
 
+## Current implementation entry — 2026-09-07
+
+The first M0/M1 MVP is implemented. Start from [STATUS](STATUS.md), the
+[development guide](DEVELOPMENT.md), [MVP scope](MVP.md) and
+[component record](DEPENDENCIES.md). Code is in `crates/matterweave-core`,
+`crates/matterweave-render` and `apps/explorer`; Android packaging is in `android`.
+The first backend is ash/direct Vulkan. Host tests and smoke execution pass and
+an ARM64 APK is built/inspected. Physical Android validation remains outstanding.
+The remaining sections preserve the original starting context; they are not a
+request to scaffold a second app or restart completed M0/M1 work.
+
 ## Starting state of this handoff
 
 On 2026-09-07 the GitHub repository was empty. The initial setup established requirements and 13 ADRs. The subsequent Rust policy update adds accepted ADR-0014 and proposed ADR-0015, supersedes ADR-0003/0004, and brings the requirement register to 20 entries. **There is no engine, APK, demo, dependency lock or device result in these documentation commits.** Consult [STATUS.md](STATUS.md) and Git history for subsequent changes.
