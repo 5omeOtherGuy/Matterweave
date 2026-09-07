@@ -68,7 +68,9 @@ for ARM64 ELF LOAD and ZIP-entry alignment. Debug signing uses the local standar
 Android debug key, never committed. Successful packaging does not prove device
 execution, Vulkan driver correctness or lifecycle behavior.
 
-The supported artifact is the development APK. Production signing and store
+The supported artifact is the development APK. The owner requested delivery via
+[GitHub prereleases](https://github.com/5omeOtherGuy/Matterweave/releases), with
+an APK checksum and its build/test limitations. Production signing and store
 publication have not been configured. The Android CI job runs the same build and
 retains the APK and SHA-256 as a workflow artifact. CI execution status must be
 checked separately from the locally executed commands in STATUS.

@@ -42,7 +42,7 @@ See [the evidence report](evidence/2026-09-07-mvp.md) and
 | Fresh-checkout packaging | PASS at `2cd6435`: detached checkout, empty Cargo build directory; all 33 Gradle tasks executed. APK hash matches the working-checkout build. |
 | Documentation integrity | PASS; rerun after each final documentation update. |
 | Physical Android, emulator, thermal/GPU benchmarks | NOT RUN: no available device/emulator. No mobile timing claims. |
-| GitHub Actions | Workflow definitions added; remote CI not executed during local development. |
+| GitHub Actions | Remote host/Android/docs checks run on [PR #1](https://github.com/5omeOtherGuy/Matterweave/pull/1); consult its live checks for the final integration result. |
 
 Build artifact: `android/app/build/outputs/apk/debug/app-debug.apk` (ignored in Git).
 Local deliverable: `artifacts/matterweave-arm64-debug.apk` (2.6 MB), with adjacent
@@ -79,7 +79,8 @@ is future work. See the renderer README for precise unsafe/synchronization contr
    [development guide's checklist](DEVELOPMENT.md#install-launch-and-collect-android-evidence).
    Record device/OS/driver/build/seed and every result; fix findings before declaring
    M0/M1 fully device-accepted.
-2. Run the added workflow on the repository branch to establish remote CI evidence.
+2. Deliver changes through PRs and merge after checks pass, per the owner's standing authorization. The owner also requested the MVP APK on
+   [GitHub Releases](https://github.com/5omeOtherGuy/Matterweave/releases); development APKs are marked prerelease with explicit device-test limitations.
 3. Begin M2's equivalent-scene ray/mesh/hybrid and mesher comparisons with the M1
    baseline preserved. Make mobile performance selections only with device evidence.
 4. Proceed to Rust physics, streaming and lighting according to the roadmap once
