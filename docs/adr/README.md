@@ -26,8 +26,8 @@ For an accepted ADR, append implementation/evidence notes without rewriting its 
 | [0012](0012-validation-and-continuity.md) | Reproducible evidence and repository continuity | Accepted | Engineering convention; applies to every milestone. |
 | [0013](0013-advanced-hardware-and-research.md) | Capability-based acceleration and frontier research | Proposed | Inventory in M0; workload-specific experiment before adoption. |
 | [0014](0014-rust-modularity-and-evidence-led-reuse.md) | Rust, modularity and evidence-led reuse | Accepted | Owner policy; component decisions must meet its criteria. |
-| [0015](0015-rust-native-foundation.md) | Rust native Android foundation | Proposed | M0 reproducible Rust/native build and integration checks. |
+| [0015](0015-rust-native-foundation.md) | Rust native Android foundation | Accepted | M0 reproducible Rust/native build and integration checks. |
 
 ## Current decision order
 
-Apply accepted 0014, resolve 0015 enough to build M0, then 0005 enough for the M1 correctness slice. Use 0006/0007 for focused M2 experiments and the [component-selection procedure](../COMPONENT_SELECTION.md) for meaningful reuse/custom-development decisions. Subsequent lighting/physics proposals should not delay the native baseline. If hardware is absent, record a provisional engineering choice without inventing mobile performance evidence; continue independent development.
+Apply accepted 0014/0015 and preserve the implemented M0/M1 baseline; complete its outstanding physical-device checks. Use 0006/0007 for focused M2 experiments and the [component-selection procedure](../COMPONENT_SELECTION.md) for meaningful reuse/custom-development decisions. Subsequent lighting/physics proposals should not delay the native baseline. If hardware is absent, record a provisional engineering choice without inventing mobile performance evidence; continue independent development.

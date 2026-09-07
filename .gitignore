@@ -1,4 +1,7 @@
 # Host/build outputs
+/target/
+/artifacts/
+/matterweave-world*.json
 **/build/
 **/out/
 .cache/

@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/matterweave-core", "crates/matterweave-render", "apps/explorer"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+publish = false
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

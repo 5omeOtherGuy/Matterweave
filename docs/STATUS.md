@@ -2,38 +2,84 @@
 
 Updated: 2026-09-07
 
-## Repository setup
+## First Android MVP implemented
 
-The repository was empty when initially inspected. The setup added a self-contained brief, requirements, 13 ADRs, research, architecture, milestones, benchmarks and handoff. The subsequent Rust policy update brings the repository to 15 ADRs and 20 requirements, with an explicit component-selection procedure.
+M0/M1 now have working code and build/host evidence. The ARM64 development APK
+builds, with native-library alignment and signing verified. The shared app/core/
+ash renderer run on host Vulkan. **Physical Android execution, lifecycle behavior
+and mobile performance remain unverified.** No physical device or emulator is
+attached to this environment. M2–M6 are not complete or claimed.
 
-Documentation tooling and templates are the only executable/project support artifacts in this setup. **No engine code, native application, APK, integration benchmark or device run exists yet.**
+Implemented behavior:
 
-## Decisions
+- Sparse authoritative 16³ voxel chunks, seeded original terrain, material edits,
+  checked revisions, reference DDA rays and exposed-face mesh generation.
+- Bounded versioned save/load with atomic replacement, validation, failed-save
+  preservation, and app-level corrupt-save recovery without overwriting originals.
+- Direct ash/Vulkan 1.1 rendering with shaded surfaces, fog, depth and diagnostics.
+  Explicit resource ownership, frame fence and per-image presentation semaphores.
+- Android NativeActivity, touch movement/look/edit, elevation controls, adjustable
+  movement layout, lifecycle release/recreation paths and private autosaves.
+- Native host sample and repeatable smoke exercise; pinned Rust/Android build,
+  dependency provenance/checksums and host/APK CI definitions.
 
-- Accepted: ADR-0001 (product/platform), ADR-0002 (fidelity and efficient hardware use), ADR-0012 (validation/continuity), ADR-0014 (Rust wherever feasible without detriment, modularity, qualifying reuse and justified custom technology/interfaces).
-- Proposed: ADR-0005 through ADR-0011, ADR-0013 and ADR-0015 (Rust native foundation). No specific physics/rendering package is selected.
-- Superseded: ADR-0003/0004. Their historical C++/reuse recommendations must not guide new foundation selection. Earlier browser-demo constraints also remain non-binding.
-- Physics now starts by assessing suitable Rust libraries such as Rapier. Jolt is eligible only for major advantages after complete integration costs. No Jolt comparison is required absent a credible major gap in qualifying Rust options.
+## Verification actually executed
 
-## Validation at setup
+See [the evidence report](evidence/2026-09-07-mvp.md) and
+[raw host smoke output](evidence/2026-09-07-host-smoke.log).
 
-Run `python3 tools/check_docs.py` to check local Markdown links, ADR structure/index/status consistency and requirement-to-ADR references. This checks repository documentation integrity, not the correctness or performance of a future engine. The setup is reviewed for requirement/proposal distinctions and explicit definitions of done.
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | PASS. |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | PASS. |
+| `cargo test --workspace --locked` | PASS: 14 core + 10 explorer tests, no failures. |
+| Core LLVM source coverage | 94.40% lines, 94.12% regions, 95% functions; no branch-coverage claim. Reproduction in core README. |
+| Native host smoke, 30 presented frames | PASS on llvmpipe with Vulkan validation enabled: aimed edits/save/reload, actual resize event, host window/renderer recreation. No validation warnings/errors. |
+| Native screenshot inspection | PASS: terrain/landmarks, correctly oriented HUD and controls visible. Host software Vulkan only. |
+| `android/gradlew -p android :app:assembleDebug --no-daemon` | PASS, including subsequent normal checksum-enforced build. |
+| APK signing / manifest / ARM64 exports | PASS: v2 debug signature, API 28/35, ARM64, NativeActivity entry exports and expected Android system dependencies. |
+| ELF/ZIP page alignment + official zipalign | PASS: packaged library LOAD segments and uncompressed ZIP entry aligned to 16384 bytes. |
+| Fresh-checkout packaging | Final isolated rebuild pending in this implementation commit; follow-up report will record its result. |
+| Documentation integrity | PASS; rerun after each final documentation update. |
+| Physical Android, emulator, thermal/GPU benchmarks | NOT RUN: no available device/emulator. No mobile timing claims. |
+| GitHub Actions | Workflow definitions added; remote CI not executed during local development. |
 
-Original setup check on 2026-09-07: **PASS — 29 Markdown files, 97 local links, 13 ADRs and 16 requirements.** Rust-policy update check on the same date: **PASS — 32 Markdown files, 128 local links, 15 ADRs and 20 requirements.** The documentation workflow runs the same check on pushes and pull requests; consult the live GitHub check for its execution result.
+Build artifact: `android/app/build/outputs/apk/debug/app-debug.apk` (ignored in Git).
+The final handoff supplies a convenient local copy and checksum; CI retains its
+own APK artifact after a workflow run. Screenshot is at `artifacts/matterweave-host.png`.
 
-There are no Android build or performance results to report. Native build/test CI is to be introduced in M0. External research sources are recorded with an assessment date; they are not vendored dependencies or performance results for Matterweave.
+## Decisions and boundaries
+
+ADR-0015 is accepted as the implemented engineering foundation: Rust 1.96.0,
+NativeActivity/winit, ash, Naga SPIR-V, NDK r28c, Gradle/AGP, ARM64 API 28/Vulkan 1.1.
+ADR-0001/0002/0012/0014 remain accepted; ADR-0003/0004 remain superseded. Other
+research proposals remain proposed. M1's reference mesh does not settle M2's
+ray/mesh/hybrid or production-world representation decisions. Dependency choices
+and alternatives are in [DEPENDENCIES](DEPENDENCIES.md).
+
+This is a small synchronous baseline: whole-world remeshing/upload and save per
+edit, one frame in flight, host-visible mesh buffers, no streaming, LOD, physics,
+indirect illumination, reflections or second game sample. Camera flight can pass
+through terrain. Counters distinguish frame/main-thread wall time, voxel payload,
+mesh bytes and queried heap capacity; they are not GPU time, process RSS or free RAM.
+
+Android rotation currently uses supported IDENTITY surface transform and compositor
+rotation, with an explicit unsupported-profile error otherwise. Physical lifecycle,
+orientation, input and driver validation remain required. Unextended Vulkan WSI
+teardown uses the documented idle fallback; optional presentation-fence retirement
+is future work. See the renderer README for precise unsafe/synchronization contracts.
 
 ## Next actions
 
-1. Start M0 under accepted ADR-0014: inspect build/device access, assess qualifying existing components, pin the Rust/Android toolchain and capability profile, and resolve ADR-0015 for the first build. Do not reopen the superseded C++ default.
-2. Create the Android shell, touch/lifecycle handling and diagnostics; produce an APK and exact clean-checkout build instructions.
-3. Advance to M1's queryable/editable voxel slice and tests, maintaining a reference implementation for correctness.
-4. Add real-device evidence when available, then use M2 comparisons to choose the primary representation/rendering path.
+1. Install the APK on an available ARM64 Vulkan 1.1 Android device and execute the
+   [development guide's checklist](DEVELOPMENT.md#install-launch-and-collect-android-evidence).
+   Record device/OS/driver/build/seed and every result; fix findings before declaring
+   M0/M1 fully device-accepted.
+2. Run the added workflow on the repository branch to establish remote CI evidence.
+3. Begin M2's equivalent-scene ray/mesh/hybrid and mesher comparisons with the M1
+   baseline preserved. Make mobile performance selections only with device evidence.
+4. Proceed to Rust physics, streaming and lighting according to the roadmap once
+   their integration/measurement prerequisites are met.
 
-## Known limitations and owner questions
-
-No reference device has been inventoried or reserved for this project. No physical-device access is established by this repository setup. Numeric budgets are provisional. The project license is undecided; no license has been selected for the owner. See [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) for timing and working defaults.
-
-## Update format for implementation sessions
-
-Replace stale status with a concise account of the current milestone, implemented behavior, relevant commit/artifact identifiers, exact commands and results, device/run metadata, remaining gaps and next tasks. Preserve detailed experiment outcomes in ADRs or linked benchmark reports; do not leave passing claims unsupported by evidence.
+Project licensing, release signing ownership and store publication remain owner
+decisions. Nothing in this MVP chooses a project license or publishes a store build.

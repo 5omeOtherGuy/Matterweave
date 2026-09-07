@@ -1,43 +1,62 @@
 # Matterweave
 
-**A modular native Android voxel engine and game framework, built primarily in Rust, for detailed, interactive worlds.**
+**A modular native Android voxel engine and game framework, built primarily in Rust.**
 
-Matterweave aims to combine fine geometric detail, dynamic lighting and complex physics with efficient, sustained performance on modern Android hardware. It is intended to support creature-collecting RPGs, small worlds, roguelikes, exploration, 3D adventures and 2.5D games through reusable engine systems.
+The first MVP implements an editable procedural voxel world, direct Vulkan rendering
+through ash, touch exploration and private save/load. It is a foundation for the
+larger engine: dynamic indirect lighting, automatic fine-detail selection, complex
+physics and multiple game samples remain planned milestones.
 
-The visual targets include lighting inspired by Lumen and smoothly varying geometric detail inspired by Nanite. These describe desired capabilities, not implemented features or a promise of Unreal Engine feature parity. The engine should exploit useful CPU, GPU, memory and accelerator capabilities while measuring their actual contribution to performance and image quality.
+## Current implementation
 
-## Current state
+- **Core:** sparse 16³ voxel chunks, material queries, revisions, deterministic
+  terrain, reference ray queries, surface extraction and bounded atomic snapshots.
+- **Renderer:** ash/Vulkan 1.1, direct light, ambient shading, fog, depth and a
+  diagnostic HUD. Vulkan resources and platform handles stay outside world data.
+- **Explorer:** Android NativeActivity, simultaneous touch move/look/edit, free
+  flight, adjustable movement layout, autosave and corrupt-save recovery.
+- **Delivery:** pinned Cargo/NDK/Gradle build, ARM64 debug APK, host tests,
+  native Vulkan smoke exercise and APK signing/page-alignment verification.
 
-**Pre-implementation.** This repository contains the project specification, architecture proposals, research, development milestones and implementation handoff. There is no engine, Android application, playable demo or device benchmark yet. Documentation validation is the only implemented tooling.
+The APK has been built and inspected locally. Shared native behavior has been
+exercised on host software Vulkan; **physical Android behavior and mobile
+performance are not yet verified**. See [STATUS](docs/STATUS.md) for exact evidence,
+limitations and next steps. Android remains the product platform; the desktop
+executable supports development and testing.
 
-## Start here
+## Build and run
 
-1. Read [AGENTS.md](AGENTS.md) for development and orchestration instructions.
-2. Read the [implementation handoff](docs/HANDOFF.md) and [current status](docs/STATUS.md).
-3. Read the [project brief](docs/PROJECT_BRIEF.md) and [requirements](docs/REQUIREMENTS.md).
-4. Review the [ADR index](docs/adr/README.md), [architecture proposal](docs/ARCHITECTURE.md) and [research](docs/RESEARCH.md).
-5. Implement the next milestone in the [roadmap](docs/ROADMAP.md), following the [development guide](docs/DEVELOPMENT.md) and [benchmark protocol](docs/BENCHMARKS.md).
-
-The repository is intended to be sufficient context for a fresh implementation session. No previous chat, browser demo or unrelated game repository is a required input.
-
-## Architectural direction
-
-Rust is the accepted default wherever feasible without material detriment. Reuse viable solutions meeting our strict criteria; create technology, tools and hardware interfaces when necessary or significantly advantageous. Modularity must preserve efficient data flow and permit replacing components. [ADR-0014](docs/adr/0014-rust-modularity-and-evidence-led-reuse.md) records this policy and the major-advantage condition for considering Jolt.
-
-The working implementation proposal is a Rust/Cargo core with Vulkan, initially investigating ash, Rust Android integration and suitable Rust physics such as Rapier. Sparse voxel blocks, a hybrid rendering path and Arm ASR remain candidates to validate. The engine owns its architecture and integration; adequate existing implementations should be reused. See [component selection](docs/COMPONENT_SELECTION.md) and [ADR-0015](docs/adr/0015-rust-native-foundation.md) for decision gates. No runtime dependency has been selected or integrated yet.
-
-Android is the product platform. Desktop tools and host tests may support development. A browser implementation does not satisfy the project goal.
-
-## Validate this repository
-
-With Python 3.10 or newer:
+After installing the tools in the [development guide](docs/DEVELOPMENT.md):
 
 ```sh
-python3 tools/check_docs.py
+cargo test --workspace --locked
+android/gradlew -p android :app:assembleDebug --no-daemon
+python3 tools/verify_apk.py android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Android build and installation commands will be added when the first application exists. See [open questions](docs/OPEN_QUESTIONS.md) for choices the implementation session can resolve and the few decisions reserved for the owner.
+APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+Minimum development profile: ARM64 Android API 28, Vulkan 1.1.
+Installation, controls, validation and troubleshooting are in the development guide.
+
+## Project context
+
+1. [AGENTS.md](AGENTS.md): contributor and orchestration instructions.
+2. [Status](docs/STATUS.md) and [handoff](docs/HANDOFF.md): current state and continuity.
+3. [MVP scope](docs/MVP.md), [project brief](docs/PROJECT_BRIEF.md) and [requirements](docs/REQUIREMENTS.md).
+4. [ADR index](docs/adr/README.md), [architecture](docs/ARCHITECTURE.md) and [roadmap](docs/ROADMAP.md).
+5. [Dependencies](docs/DEPENDENCIES.md), [component selection](docs/COMPONENT_SELECTION.md)
+   and [benchmark protocol](docs/BENCHMARKS.md).
+
+Rust, efficient modularity and evidence-led reuse are accepted policy. Lumen-like
+lighting and Nanite-like detail remain outcome goals, without a feature-parity
+promise. The reference surface renderer does not resolve the planned ray/mesh/hybrid
+comparison. No mobile speed advantage is claimed from host or emulator results.
+
+For documentation checks: `python3 tools/check_docs.py`.
 
 ## License
 
-The owner has not selected a project license. Public visibility is not a license grant. No third-party engine code or assets are bundled in this setup; dependency selection must record licenses and provenance. License selection does not block implementing and testing original project code for the owner.
+The owner has not selected a project license. Public visibility is not a license
+grant. Upstream dependency licenses, versions and provenance are recorded in
+[the dependency inventory](docs/DEPENDENCIES.md); they do not license original
+Matterweave code. The included Gradle wrapper retains its upstream license.

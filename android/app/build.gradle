@@ -1,0 +1,39 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'dev.matterweave.explorer'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    ndkVersion '28.2.13676358'
+    defaultConfig {
+        applicationId 'dev.matterweave.explorer'
+        minSdk 28
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    buildTypes {
+        debug { debuggable true }
+        release { minifyEnabled false }
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+    sourceSets {
+        debug.jniLibs.srcDir layout.buildDirectory.dir('rustJniLibs/debug')
+        release.jniLibs.srcDir layout.buildDirectory.dir('rustJniLibs/release')
+    }
+}
+
+['Debug': 'dev', 'Release': 'release'].each { variant, profile ->
+    def rustTask = tasks.register("buildRust${variant}", Exec) {
+        workingDir rootProject.projectDir.parentFile
+        // Cargo owns incremental dependency tracking, including shaders and Cargo.lock.
+        doFirst {
+            commandLine 'python3', 'tools/build_native.py', '--sdk', android.sdkDirectory,
+                '--profile', profile, '--out', layout.buildDirectory.dir("rustJniLibs/${variant.toLowerCase()}").get().asFile
+        }
+    }
+    tasks.configureEach { task ->
+        if (task.name == "merge${variant}JniLibFolders") { task.dependsOn rustTask }
+    }
+}

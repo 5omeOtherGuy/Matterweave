@@ -1,0 +1,70 @@
+name: Rust and Android MVP
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+      - name: Formatting, lint and behavioral tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          python3 tools/check_docs.py
+      - name: Native Vulkan smoke
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers vulkan-validationlayers
+          mkdir -p artifacts
+          timeout 90s xvfb-run -a cargo run --locked -p matterweave-explorer -- --smoke-exercise --smoke-frames 30 --save artifacts/smoke-world.json 2>&1 | tee artifacts/host-smoke.log
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/host-smoke.log; then exit 1; fi
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21.0.8'
+      - name: Install pinned Rust and Android tools
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+          python3 tools/setup_android.py --sdk "$ANDROID_HOME" --accept-licenses
+      - name: Build ARM64 APK
+        run: android/gradlew -p android :app:assembleDebug --no-daemon
+      - name: Verify native page sizes, APK alignment and signing
+        run: |
+          python3 tools/verify_apk.py android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk > android/app/build/outputs/apk/debug/app-debug.apk.sha256
+      - name: Retain development APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: matterweave-arm64-debug
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14

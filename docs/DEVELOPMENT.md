@@ -1,45 +1,162 @@
 # Development guide
 
-## Available now
+The workspace contains `matterweave-core`, `matterweave-render` (ash/Vulkan), and
+`matterweave-explorer`. Android NativeActivity loads the explorer shared library;
+a desktop executable supplies supporting integration tests. See [MVP scope](MVP.md)
+and [status](STATUS.md) for implemented behavior and actual evidence.
 
-This setup contains documentation and its validator. It does not contain a Cargo engine workspace, Gradle application, Android manifest, native source or buildable APK. Rust preference is accepted; exact implementation packages/toolchains remain proposals.
+## Linux build setup
+
+Use Linux x86_64, Python 3.11+, Rustup, JDK 21, unzip, and network access to the
+pinned upstream sources. The docs validator alone still supports Python 3.10+.
+Dependencies and build tools are listed in [the component record](DEPENDENCIES.md).
 
 ```sh
 git clone https://github.com/5omeOtherGuy/Matterweave.git
 cd Matterweave
-python3 tools/check_docs.py
+rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+export ANDROID_HOME="$HOME/Android/Sdk"
+python3 tools/setup_android.py --sdk "$ANDROID_HOME"
 ```
 
-Python 3.10+ is sufficient for the documentation check. It uses only the standard library and checks local links and ADR/requirement consistency. External URLs, Android compatibility and architectural feasibility are not validated by this command.
+The setup helper validates the command-line tools archive SHA-256 and invokes
+SDK manager for API 35, build-tools 35.0.0 and NDK 28.2.13676358. Review the SDK
+licenses when prompted; `--accept-licenses` is available for authorized CI setup.
+It adds the `aarch64-linux-android` Rust target. It does not change global Rust,
+Gradle or shell configuration. Existing SDK installations are supported.
 
-## M0 environment setup requirements
+Allow several GB for the SDK, native build outputs and dependency caches. You may
+set `CARGO_TARGET_DIR` and `GRADLE_USER_HOME` to directories on a larger volume;
+these are optional location overrides, never committed machine-specific paths.
+The Gradle wrapper validates its distribution and Maven artifact checksums.
+Android ABI/minimum profile is ARM64, API 28 and Vulkan 1.1. This is a development
+profile, not a store compatibility or device-performance guarantee.
 
-Inspect the actual development environment before selecting tools. Resolve a compatible stable Rust/Cargo and JDK/Gradle/Android Gradle Plugin/SDK/NDK set from official documentation; add CMake only for components that require it. Pin exact versions, the Rust edition/MSRV, rust-toolchain.toml, workspace Cargo.lock and the Gradle wrapper with checksum verification. Choose and record the initial minimum Android API, ARM64 ABI and Vulkan feature profile. Accepted ADR-0014 governs selection; ADR-0015 proposes the implementation foundation.
+## Host checks
 
-Document installation steps for at least one reproducible host environment, required environment variables and a clean-checkout build. Commit a dependency manifest/lock mechanism with exact revisions, source URLs, licenses, local patches and rationale when dependencies are first adopted. No dependency has been pinned in this setup, and reference repositories are not automatically dependencies.
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+python3 tools/check_docs.py
+python3 tools/dependency_report.py
+```
 
-Assess suitable Rust components under [component selection](COMPONENT_SELECTION.md). Prototype missing interfaces or significant improvements only against a concrete gap. Do not replace the existing adequate Python documentation validator solely for language uniformity. Kotlin/platform glue and GPU shaders remain legitimate other-language components where appropriate.
+The core tests cover independent reference edits, negative/chunk boundaries,
+ray queries, mesh winding/occlusion, bounded snapshot validation, save failures,
+round trips and revision exhaustion. Explorer tests cover simultaneous touch
+roles, cancellation, camera bounds, actual sample editing, save retry and corrupt
+save recovery. Production core coverage reproduction is in its
+[README](../crates/matterweave-core/README.md); coverage is not GPU validation.
 
-Select shader source language/compiler and record how shaders are built, reflected and packaged. Do not rely on a developer's globally installed unversioned compiler. Inspect [Android native page-size guidance](https://developer.android.com/guide/practices/page-sizes) for every native library and the resulting APK; avoid assumptions about a fixed 4 KB page size.
+## Build and inspect the Android APK
 
-## Commands the implementation must add
+```sh
+android/gradlew -p android :app:assembleDebug --no-daemon
+python3 tools/verify_apk.py android/app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk
+sha256sum android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-Add and verify exact commands for native/host configure, build and tests; Android debug/profile build; APK location; device discovery; installation and launch; diagnostics capture; and the deterministic benchmark runner. Include expected output and common environment failures. Do not document guessed module names or present commands for nonexistent targets as working instructions.
+Gradle invokes `tools/build_native.py`, which uses `cargo build --locked`, the
+pinned NDK ARM64/API-28 compiler, and an explicit 16 KiB maximum-page-size linker
+option. The library is built as `libmatterweave_explorer.so`. AGP packages native
+libraries uncompressed and aligned; the inspector checks every packaged `.so`
+for ARM64 ELF LOAD and ZIP-entry alignment. Debug signing uses the local standard
+Android debug key, never committed. Successful packaging does not prove device
+execution, Vulkan driver correctness or lifecycle behavior.
 
-Prefer debug signing for development. Do not commit keystores, access tokens, local SDK paths or release credentials. Store-specific publication and signing are not part of this setup.
+The supported artifact is the development APK. Production signing and store
+publication have not been configured. The Android CI job runs the same build and
+retains the APK and SHA-256 as a workflow artifact. CI execution status must be
+checked separately from the locally executed commands in STATUS.
 
-## Android functional checks
+## Install, launch and collect Android evidence
 
-Test launch, simultaneous touches, input cancellation, background/foreground, surface loss/recreation, safe shutdown, display changes and save/reload. Choose a documented orientation policy rather than allowing accidental behavior. Handle unsupported Vulkan/device features with a clear diagnostic or supported fallback. Avoid claiming desktop input proves touch usability.
+```sh
+export PATH="$ANDROID_HOME/platform-tools:$PATH"
+adb devices -l
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n dev.matterweave.explorer/android.app.NativeActivity
+adb logcat -d -s Matterweave '*:S'
+```
 
-When real hardware is unavailable, produce the APK, use available host/emulator checks and leave precise physical-device steps. Maintain a distinction between build success, functional success and measured device performance.
+For multiple devices, add `-s SERIAL` to every adb command. USB debugging and host
+authorization must already be available. No physical device is implied by the
+presence of `adb`. Save files live at `internal_data_path()/world.json`; no network,
+external-storage permission, cloud account or service is required.
 
-## Build and CI progression
+Touch controls: drag the lower **MOVE** zone to move; drag free space to look;
+hold **UP/DOWN** for elevation; aim the crosshair and tap **REMOVE/PLACE**. **SAVE**
+retries saving explicitly. **SWAP** changes the movement side and **SIZE** enlarges
+the movement zone. Multiple fingers can move, look and edit simultaneously.
+Edits autosave. This first sample uses a free-flying camera without collision.
 
-The initial documentation workflow checks repository integrity. M0 should add Rust formatting, lint and host tests plus a clean Android APK build with artifact retention. Record actual commands once targets exist. Record toolchain versions and use reproducible dependency retrieval. Document unsafe/FFI invariants; add Vulkan validation/debug builds and applicable sanitizer or Miri checks for specific correctness risks, without treating Miri as GPU/foreign-library validation. Keep release performance captures separate from instrumented correctness runs.
+Physical-device checklist (record each result, do not infer from host tests):
 
-Cache downloads/build products using appropriate version keys. Do not make a cached build the only evidence that a fresh checkout works. Keep CI permissions minimal and avoid exposing credentials in logs.
+1. Launch in landscape; verify correct orientation, readable controls, visible
+   terrain and queried GPU/driver diagnostics.
+2. Move/look with two fingers and edit with a third. Release, cancel, lose focus
+   and resume; confirm no stuck movement/look. Try both layout sizes/sides.
+3. Place/remove terrain across a chunk boundary. Relaunch after an edit; verify
+   persistence and material/query agreement. Aim beyond range for a harmless miss.
+4. Home/resume repeatedly, lock/unlock, rotate between landscape orientations,
+   and test display/surface recreation. The current path requires identity
+   surface transform support and lets the Android compositor rotate.
+5. Inspect logcat for initialization, allocation or Vulkan errors. Confirm the
+   application does not render while suspended. Test low-memory behavior where
+   feasible; preserve any failure logs.
+6. Record model, OS/API, driver, build commit, APK checksum, seed, resolution and
+   conditions in a new evidence report. Follow [BENCHMARKS](BENCHMARKS.md) before
+   making performance claims; host/emulator timings do not select a mobile renderer.
 
-## Contribution and evidence
+## Supporting native host run
 
-Follow [CONTRIBUTING.md](../CONTRIBUTING.md), [AGENTS.md](../AGENTS.md) and the [benchmark protocol](BENCHMARKS.md). Update [STATUS.md](STATUS.md) and affected ADRs with each meaningful implementation handoff. Prefer clear modules and small complete changes over placeholder systems.
+A Vulkan loader and compatible driver are required. Host software Vulkan is
+useful for correctness only. Debug builds enable the validation layer if installed;
+`MATTERWEAVE_VALIDATION=1` also requests it in release, while `0` disables it.
+Missing layers are reported in the capabilities line.
+
+```sh
+cargo run --locked -p matterweave-explorer -- --save /tmp/matterweave-world.json
+```
+
+Desktop controls: WASD horizontal flight, Space/Left Shift elevation, right-drag
+look, left-click or Q remove, E place, F5 save, H swap and J size. The desktop
+launcher is supporting evidence; Android remains the product platform.
+
+For a headless integration run on Linux, install Xvfb, xauth, Mesa Vulkan drivers
+and Vulkan validation layers through your package manager. Use a new temporary
+save path because the exercise deliberately verifies fresh save/load behavior:
+
+```sh
+cargo build --locked -p matterweave-explorer --bin matterweave-explorer
+smoke_dir=$(mktemp -d)
+timeout 90s xvfb-run -a cargo run --locked -p matterweave-explorer -- --smoke-exercise --smoke-frames 30 --save "$smoke_dir/world.json"
+```
+
+`--smoke-exercise` requires an explicit nonexistent save path. It tests actual
+sample place/remove/save/load actions, observes a resize event, recreates the host
+window/renderer, and exits after the requested presented-frame count. Failure
+exits nonzero. This exercises shared code, not Android lifecycle callbacks on a
+phone. Inspect validation output as well as exit status.
+
+## Diagnostics and current limits
+
+FRAME is a smoothed interval between redraws; MAIN is wall time inside draw,
+including Vulkan waits; MESH is the most recent full extraction/upload wall time.
+These are not GPU timestamps or CPU execution samples. DATA counts voxel payload,
+not process memory. GPU heap sizes are queried capacities, not free memory.
+
+World meshing, uploads and autosaves are synchronous for this small fixture. No
+streaming, greedy meshing, LOD, indirect illumination or physics backend is present.
+Corrupt saves are retained; the app uses numbered recovery sidecars and restores
+the latest valid recovery on subsequent startup. Errors are shown in the HUD and
+logged; initialization failures requiring a renderer cannot show a graphical HUD.
+
+Changing dependencies requires regenerating Cargo.lock and provenance intentionally.
+For a deliberate Gradle dependency update, regenerate verification metadata from
+trusted upstreams with `--write-verification-metadata sha256`, review it, then rerun
+a normal verification-enforced build. Do not disable verification to bypass failures.

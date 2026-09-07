@@ -1,15 +1,15 @@
 # Open questions and working defaults
 
-An open technical question is work to resolve, not automatically an owner blocker. No owner answer is required to start M0. Revisit this table when evidence changes and record the corresponding ADR update.
+An open technical question is work to resolve, not automatically an owner blocker. M0/M1 now have an implemented baseline; current evidence and remaining subgates are in [STATUS](STATUS.md). Revisit this table when evidence changes.
 
 | Question | Working direction | Who resolves / when |
 | --- | --- | --- |
 | Component reuse, adaptation or custom work? | Rust preference, qualifying reuse and necessity/significant-advantage policy are accepted; individual components remain open. | Implementation session under ADR-0014 and COMPONENT_SELECTION.md. |
-| Rust toolchain and Android integration? | Rust is selected as the default. Cargo/NDK/Gradle and ash are initial candidates; versions/edition and adapters remain open. | Implementation session, ADR-0015 in M0. |
-| Android/API/GPU floor? | ARM64 high-end Android first; query Vulkan features and declare initial profile. | Implementation session establishes provisional floor in M0; consult owner only if intended reach materially changes. |
-| Reference phones and physical access? | Inventory devices actually accessible; do not assume a personal phone is connected. | Implementation session in M0. Owner/device access needed only for unavailable physical validation or hardware acquisition. |
+| Rust toolchain and Android integration? | Rust 1.96.0, Cargo/NDK/Gradle, ash and NativeActivity/winit are adopted for M0/M1; see DEPENDENCIES.md. | Resolved baseline in accepted ADR-0015; revisit only with evidence. |
+| Android/API/GPU floor? | MVP profile: ARM64, API 28, Vulkan 1.1 with queried capabilities; device coverage unverified. | Implementation session establishes provisional floor in M0; consult owner only if intended reach materially changes. |
+| Reference phones and physical access? | Local ADB inventory was empty on 2026-09-07; physical smoke/driver evidence remains outstanding. | Implementation session in M0. Owner/device access needed only for unavailable physical validation or hardware acquisition. |
 | Frame rate/resolution/RAM targets? | Proposed profiles and measurement protocol in BENCHMARKS.md; no fixed memory quota yet. | Implementation session proposes measured budgets in M1/M2; owner preference only for a material product tradeoff. |
-| Exact voxel representation? | Sparse blocks, separate movable objects and a reference query path. | Implementation session, ADR-0005 in M1/M2. |
+| Exact voxel representation? | M1 reference uses sparse 16³ chunks and DDA; production representation and movable objects remain M2/M3 work. | Implementation session, ADR-0005 in M1/M2. |
 | Ray, mesh or hybrid primary rendering? | Hybrid hypothesis with common-scene comparisons; ray traversal remains a serious candidate. | Implementation session, ADR-0006 in M2. |
 | Dynamic GI implementation? | Probes/radiance cache plus selective tracing to evaluate. | Implementation session, ADR-0008 in M4. |
 | Physics scope/library? | Start rigid bodies, constraints, character movement and editable collision; assess Rust candidates such as Rapier. Jolt requires major advantages. | Implementation session, ADR-0010 under accepted ADR-0014. |

@@ -30,3 +30,13 @@ M1 tests coordinates, occupancy/material queries, edits and serialization agains
 ## References
 
 [Architecture](../ARCHITECTURE.md), [rendering selection](0006-rendering-path-selection.md), [benchmarks](../BENCHMARKS.md).
+
+## M1 implementation evidence — 2026-09-07
+
+The host-testable reference now uses sparse 16³ byte-material chunks, checked
+world revisions, bounded DDA queries, synchronous derived surface meshes and
+validated versioned JSON snapshots. Tests cover negative coordinates, seams,
+winding, ray edges, malformed saves, round trips and revision exhaustion. See
+[core notes](../../crates/matterweave-core/README.md) and [STATUS](../STATUS.md).
+This establishes the M1 reference; production representation, object volumes,
+streaming and asynchronous publication remain proposed until M2/M3 evidence.

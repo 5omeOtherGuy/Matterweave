@@ -1,6 +1,6 @@
 # Contributing to Matterweave
 
-Read [AGENTS.md](AGENTS.md), [the implementation handoff](docs/HANDOFF.md) and [the ADR index](docs/adr/README.md) first. The project is currently in pre-implementation; contribute towards the next concrete milestone in [the roadmap](docs/ROADMAP.md).
+Read [AGENTS.md](AGENTS.md), [the implementation handoff](docs/HANDOFF.md) and [the ADR index](docs/adr/README.md) first. The first M0/M1 MVP is implemented; consult [status](docs/STATUS.md) for remaining validation and the next concrete milestone in [the roadmap](docs/ROADMAP.md).
 
 ## Changes
 
