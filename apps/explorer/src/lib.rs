@@ -1,5 +1,6 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
+mod metrics;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
 use matterweave_core::World;
@@ -50,12 +51,21 @@ struct Explorer {
     frame_ms: f64,
     cpu_ms: f64,
     mesh_ms: f64,
+    save_ms: f64,
+    profile: Option<metrics::FrameLog>,
     frames: u64,
     smoke_frames: Option<u64>,
     failed: bool,
     focused: bool,
 }
 impl Explorer {
+    fn flush_profile(&mut self) {
+        if let Some(profile) = &mut self.profile {
+            if let Err(error) = profile.flush() {
+                log::warn!("Frame capture flush failed: {error}");
+            }
+        }
+    }
     fn new(mut save_path: PathBuf, smoke_frames: Option<u64>) -> Self {
         let mut recovery = false;
         let (mut world, mut status) = if save_path.exists() {
@@ -179,6 +189,22 @@ impl Explorer {
         if !restored {
             physics.spawn_demo(&world);
         }
+        let profile = match metrics::FrameLog::requested(
+            save_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        ) {
+            Ok(profile) => {
+                if let Some(profile) = &profile {
+                    log::info!("Frame capture: {}", profile.path.display());
+                }
+                profile
+            }
+            Err(error) => {
+                log::warn!("Frame capture request failed: {error}");
+                None
+            }
+        };
         Self {
             renderer: None,
             window: None,
@@ -200,6 +226,8 @@ impl Explorer {
             frame_ms: 0.,
             cpu_ms: 0.,
             mesh_ms: 0.,
+            save_ms: 0.,
+            profile,
             frames: 0,
             smoke_frames,
             failed: false,
@@ -207,6 +235,7 @@ impl Explorer {
         }
     }
     fn save(&mut self) {
+        let begin = Instant::now();
         let session = Session {
             version: 1,
             physics: self.physics.snapshot(),
@@ -244,6 +273,7 @@ impl Explorer {
                 eprintln!("{}", self.status);
             }
         }
+        self.save_ms += begin.elapsed().as_secs_f64() * 1000.;
     }
     fn action(&mut self, action: Action) {
         log::info!("Action {action:?}");
@@ -737,9 +767,11 @@ impl Explorer {
         let (motion, look) = self.controls.consume();
         self.camera
             .update(if self.flying { motion } else { Vec3::ZERO }, look, dt);
+        let stream_begin = Instant::now();
         if self.world.stream_around(self.camera.position.to_array()) {
             self.physics.sync_world(&self.world);
         }
+        let stream_ms = stream_begin.elapsed().as_secs_f64() * 1000.;
         let horizontal = (Vec3::new(-self.camera.yaw.cos(), 0., self.camera.yaw.sin()) * motion.x
             + Vec3::new(self.camera.yaw.sin(), 0., self.camera.yaw.cos()) * motion.z)
             .clamp_length_max(1.)
@@ -767,6 +799,7 @@ impl Explorer {
             self.save();
             self.autosave_elapsed = 0.;
         }
+        let mesh_begin = Instant::now();
         if let Err(error) = self.sync_render_meshes() {
             log::error!("Mesh upload failed: {error}");
             eprintln!("Mesh upload failed: {error}");
@@ -774,6 +807,7 @@ impl Explorer {
             event_loop.exit();
             return;
         }
+        let mesh_work_ms = mesh_begin.elapsed().as_secs_f64() * 1000.;
         let hud = self.hud();
         let matrix = self
             .camera
@@ -810,6 +844,31 @@ impl Explorer {
             }
         }
         self.cpu_ms = now.elapsed().as_secs_f64() * 1000.;
+        if let Some(profile) = &mut self.profile {
+            match profile.record(
+                self.frames,
+                [
+                    Some(f64::from(dt) * 1000.),
+                    Some(self.cpu_ms),
+                    Some(stream_ms),
+                    Some(mesh_work_ms),
+                    Some(self.save_ms),
+                    None,
+                    None,
+                ],
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    log::info!("Frame capture complete: {}", profile.path.display());
+                    self.profile = None;
+                }
+                Err(error) => {
+                    log::warn!("Frame capture failed: {error}");
+                    self.profile = None;
+                }
+            }
+        }
+        self.save_ms = 0.;
         if !self.failed
             && self.smoke_frames.is_some_and(|limit| self.frames >= limit)
             && (!self.smoke_exercise || self.smoke_stage >= 3)
@@ -872,6 +931,7 @@ impl ApplicationHandler for Explorer {
         if self.dirty {
             self.save();
         }
+        self.flush_profile();
         self.renderer = None;
         self.window = None;
     }
@@ -1010,6 +1070,7 @@ impl ApplicationHandler for Explorer {
         if self.dirty {
             self.save();
         }
+        self.flush_profile();
         self.renderer = None;
         self.window = None;
     }

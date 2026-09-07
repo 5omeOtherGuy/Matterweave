@@ -2,20 +2,26 @@
 
 Updated: 2026-09-07
 
-## v0.3 planning handoff
+## v0.3 implementation in progress
 
 The [v0.3 delivery and coordination plan](V0.3.md) records the next feature slices
 (shadows, bounded asynchronous streaming and a destruction playground), worker
 allocation, board authority, bounded reads, acknowledgment/recovery rules and
 required startup rehearsals. It is durable project context, not shipped functionality.
-The board wrapper, live implementation run and v0.3 device measurements are not
-implemented/run. Next: validate the coordination access layer and recovery gates,
-establish the phone baseline and shared interfaces, then dispatch bounded workers.
+The [local board](../tools/coordination/README.md) is implemented and its bootstrap
+rehearsals passed (16 tests, then affected review checks). Lead verified real-run
+startup, bounded worker views and rejection of unregistered work/invalid receipts.
+Shadows, streaming and playground workers are active in isolated worktrees; their
+changes are not yet accepted. A stationary v0.2 phone baseline is being collected.
+See the ongoing [execution log](../execution_log.md) for model/harness outcomes,
+friction, corrections and current evidence. Next: accept tested worker revisions,
+integrate controls/telemetry and validate the actual v0.3 APK.
 
 Planning verification: the installed orchestration helper's 11 tests passed;
 those checks do not prove the proposed wrapper or process-fencing protocol.
 Documentation verification: `python3 tools/check_docs.py` and `git diff --check`
-pass for this handoff update. No native code or APK changed in this update.
+pass for this handoff update. The lead has added opt-in bounded frame CSV capture; 16 explorer tests pass.
+No v0.3 APK has been built or installed yet.
 
 ## v0.2 interactive Android slice
 

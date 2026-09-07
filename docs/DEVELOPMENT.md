@@ -181,3 +181,29 @@ Changing dependencies requires regenerating Cargo.lock and provenance intentiona
 For a deliberate Gradle dependency update, regenerate verification metadata from
 trusted upstreams with `--write-verification-metadata sha256`, review it, then rerun
 a normal verification-enforced build. Do not disable verification to bypass failures.
+
+## Opt-in frame capture (v0.3 development)
+
+Place an integer count (1..240000) in `profile-frames.txt` beside the world save
+before launching the app. On Android this is the app-private `files` directory,
+accessible through `adb shell run-as dev.matterweave.explorer`. A valid request is
+consumed after a new timestamped `frame-profile-*.csv` opens successfully. Captures
+never overwrite an existing file, stop at the requested count and flush on suspend
+or exit. Invalid requests remain for correction. Normal runs create no frame log.
+
+Rows contain the presented-frame counter, draw-interval/main-thread/stream/mesh-
+upload/save wall times and optional prior-completed GPU timings. CPU fields are
+wall times, not CPU busy time. Retry draws may repeat the presented counter. Missing
+GPU values remain empty; initial capture integration does not yet populate them.
+GPU queries and compositor presentation timestamps are distinct measurements.
+Copy captures under `/mnt/bench` and preserve build/scene/conditions before making
+performance comparisons. Profiling overhead must be considered.
+
+Coordination startup/recovery checks:
+
+```bash
+python3 -m unittest discover -s tools/coordination -p 'test_*.py' -v
+```
+
+See the [board operations guide](../tools/coordination/README.md) and
+[v0.3 protocol](V0.3.md) for bounded worker reads and ownership rules.

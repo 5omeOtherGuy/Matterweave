@@ -10,8 +10,9 @@ Do not spend the session repeating the initial requirements interview or produci
 
 For the next release, read the [v0.3 delivery and coordination plan](V0.3.md).
 It preserves the planned feature slices, multi-model assignments, board ownership,
-bounded-context protocol and startup verification gates. v0.3 implementation and
-the board access wrapper have not started; do not confuse this plan with shipped work.
+bounded-context protocol and startup verification gates. The board access layer is now implemented; feature workers are active. Read
+[execution_log.md](../execution_log.md) and STATUS for actual progress; planned
+features are not shipped work.
 
 The M0/M1 MVP shipped, and v0.2 advances M2/M3; see [v0.2 scope](V0.2.md). Start from [STATUS](STATUS.md), the
 [development guide](DEVELOPMENT.md), [MVP scope](MVP.md) and
