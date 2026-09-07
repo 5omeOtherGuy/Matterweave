@@ -6,10 +6,11 @@ streaming and interactive physics. Full M2 comparison and M3 stress gates remain
 open; M4–M6 remain future work. Consult [STATUS](STATUS.md) for actual checks.
 This roadmap is an ordered delivery strategy, not an estimate or release promise.
 
-The next planned release is [v0.3](V0.3.md): dynamic shadows, smoother bounded
-streaming, a destruction playground and measured phone validation. That document
-also records the multi-model delivery and coordination protocol; the work is not
-yet implemented and does not close the full M2–M4 gates.
+The [v0.3 candidate](V0.3.md) implements dynamic shadows, bounded background
+preparation and a destruction playground. Phone validation and release closeout
+are underway. Its multi-model protocol and [execution log](../execution_log.md)
+record the actual delivery process. This advances M3 and direct lighting; it does
+not close equivalent-quality M2 comparisons or full M4 indirect-light/detail gates.
 
 ## M0 — Reproducible Android foundation
 

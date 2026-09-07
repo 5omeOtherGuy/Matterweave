@@ -30,3 +30,18 @@ M4 moves lights, changes sun direction and opens/closes a room; record indirect 
 ## References
 
 [Lumen technical details](https://dev.epicgames.com/documentation/unreal-engine/lumen-technical-details-in-unreal-engine), [DDGI algorithm reference](https://github.com/NVIDIAGameWorks/RTXGI-DDGI/blob/main/docs/Algorithms.md), [research](../RESEARCH.md).
+
+
+## v0.3 direct-light foundation — 2026-09-08
+
+Implemented a finite directional depth map through existing ash/Naga components,
+with independent resident-caster visibility, camera-centered texel snapping,
+receiver-plane corrected3×3 filtering, edge fade, sun presets and1024/2048 settings.
+The renderer reuses the existing frame fence for safe resource changes and reads
+optional completed GPU intervals. Phone and host evidence are recorded in STATUS.
+
+The map covers128 world units; nonresident casters and fine terrace-shadow edges
+remain limitations. Dynamic objects and edited terrain feed derived geometry;
+no bounced illumination, color bleeding, reflections or temporal reconstruction is
+implemented. This is the direct-light prerequisite, not fulfillment of Lumen-like
+outcomes; this ADR remains Proposed. See [renderer notes](../../crates/matterweave-render/README.md).

@@ -10,7 +10,8 @@ Do not spend the session repeating the initial requirements interview or produci
 
 For the next release, read the [v0.3 delivery and coordination plan](V0.3.md).
 It preserves the planned feature slices, multi-model assignments, board ownership,
-bounded-context protocol and startup verification gates. The board access layer is now implemented; feature workers are active. Read
+bounded-context protocol and startup verification gates. The board and three feature slices are implemented; integrated phone validation
+and release closeout are underway. Read
 [execution_log.md](../execution_log.md) and STATUS for actual progress; planned
 features are not shipped work.
 

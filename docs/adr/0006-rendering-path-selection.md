@@ -39,3 +39,19 @@ exercise and APK build establish integration evidence, not a measured mobile
 renderer selection. No ray/mesh/hybrid comparison has been performed; this ADR
 remains Proposed. See [renderer notes](../../crates/matterweave-render/README.md)
 and [STATUS](../STATUS.md).
+
+
+## v0.3 engineering disposition — 2026-09-08
+
+**Retain provisionally:** ash surface rasterization with cached greedy meshes,
+independent shadow visibility, bounded async preparation and optional GPU intervals.
+The same physical phone supports functional off/on shadow and1024/2048 comparisons.
+Those quality/cost toggles do not compare ray/mesh/hybrid representations.
+
+**Defer final primary-path selection:** no equivalent-quality compute traversal or
+hybrid prototype has yet been measured against the raster path. Expanding to three
+production renderers would delay this complete Android slice without answering a
+bounded experiment. The next M2 experiment remains shared-fixture traversal versus
+raster costs, including edits/preparation and orthographic views. This ADR remains
+Proposed; neither phone operation nor greedy triangle reduction accepts the final
+mobile rendering choice. See [STATUS](../STATUS.md) and the [execution log](../../execution_log.md).

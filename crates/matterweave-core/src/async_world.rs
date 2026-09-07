@@ -111,10 +111,10 @@ fn mesh_bytes(mesh: &Mesh) -> usize {
 
 /// Bounded background preparation attached to one authoritative world.
 ///
-/// Snapshot cost: at most three window clones exist at once (pending job, executing
-/// job, completed result). Each clone holds the resident window and the edit
-/// overrides, so under the current window and override limits it is bounded by
-/// (147 + 512) * 4096 B, about 2.6 MiB per clone.
+/// Snapshot cost: three retained window clones (pending, executing, completed),
+/// plus one transient clone while replacing a pending job. Each holds resident
+/// voxels and edit overrides: at most (147 + 512) * 4096 B, about 2.6 MiB of
+/// voxel payload per clone, excluding attachment and collection overhead.
 pub struct AsyncWorld {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
