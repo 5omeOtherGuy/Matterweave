@@ -1,0 +1,53 @@
+# Delivery roadmap
+
+All implementation milestones are **not started** in the repository setup. This is an ordered delivery strategy, not an estimate, a release promise or a reason to pause between authorized tasks. Experimental branches should converge into reusable code and recorded decisions.
+
+## M0 — Reproducible Android foundation
+
+Resolve the initial foundation in ADR-0003/0004. Pin compatible JDK, Gradle wrapper, Android Gradle Plugin, SDK/NDK, CMake and shader tools. Choose and document an initial Android/API/Vulkan profile; verify capabilities rather than inferring them from marketing names. Build a native ARM64 application with lifecycle, surface handling, multitouch actions, logging, capability reporting and frame instrumentation. Add host/native build checks and APK artifacts in CI.
+
+**Done:** a clean checkout builds an APK using documented commands; the application presents a frame and responds to input; background/resume and surface recreation are handled; a physical-device smoke result is recorded when access exists. If hardware is absent, publish the APK and mark that subgate outstanding. Verify native-library page-size compatibility and packaging under the chosen toolchain. No voxel fidelity or mobile performance claim is made at this stage.
+
+## M1 — First useful voxel slice
+
+Implement queryable CPU voxel data, material identities, a seeded small scene, simple rendering, touch movement/look/action, and one visible edit interaction. Add stable IDs/revisions, reference ray queries and a minimal save/load round trip. Use a deliberately straightforward baseline; an initially dense small fixture is allowed as a reference, not a production-world allocation strategy.
+
+**Done:** a person can explore and edit real voxel content in the APK; a save/reload preserves those edits; tests cover chunk/voxel boundaries, negative coordinates and query correctness; memory and timing counters describe real workload quantities. Device behavior is recorded separately from build/host results. Commit exact build/install/test instructions and a short capture or reproducible manual procedure.
+
+## M2 — Representation and renderer selection
+
+Use M1 fixtures to compare focused compute traversal, extracted-surface rasterization and a hybrid prototype. Investigate sparse blocks, static versus dynamic object data, initial LOD/residency and visibility. Include an orthographic workload, dense foliage/thin geometry, close detail, occlusion and dynamic edits. Time-box each experiment around a decision; reuse common fixtures and infrastructure.
+
+**Done:** a report uses the [benchmark protocol](BENCHMARKS.md), compares equivalent quality and total costs, and records an accept/reject/defer conclusion in ADR-0005/0006/0007. Select a primary path with evidence. If physical hardware is absent, keep mobile performance selection provisional; continue data correctness and integration work. Retain a minimal reference implementation and useful regression fixtures.
+
+## M3 — Interactive physics and bounded streaming
+
+Integrate a selected physics library, character movement, dynamic voxel objects and a constraint interaction. Implement a bounded fracture/destruction example, versioned collision updates and edit persistence. Stress streaming, eviction, cancellation, rapid camera reversal and memory pressure. A renderer/physics update policy must define the interval between a world edit and collision publication.
+
+**Done:** a breakable structure reacts physically; movement and queries remain correct after edits and LOD changes; stale jobs cannot restore old geometry/collision; saves round-trip state; queues, staging and residency obey explicit limits. Record mass/inertia handling and limitations. Run sustained native tests when hardware is available.
+
+## M4 — Dynamic lighting and stable detail
+
+Build the Lumen-like GI/reflection capability on a direct-light baseline. Add temporal inputs and evaluate reconstruction. Refine automatic detail selection/transitions for thin geometry, zoom and movement. Compare cached/probe lighting and selective tracing; optional hardware RT is a capability path, not an assumed universal feature.
+
+**Done:** recorded tests show changing indirect illumination after moving lights and opening/closing an enclosure; reflections respond to scene changes; geometry transitions are visually reviewed; ghosting, disocclusion and lighting latency have explicit observations and thresholds. Costs and quality are measured together. ADR-0008/0009 are resolved for this milestone without promising all later research features.
+
+## M5 — Sustained mobile fidelity
+
+Profile actual bottlenecks across the declared initial device set. Tune useful parallel work, memory traffic, materials, shadows, foliage/atmosphere, streaming, frame pacing and thermal adaptation. Inventory accelerator capabilities and execute only focused experiments justified by existing workloads. Evaluate NPU candidates with transfer and synchronization costs included; record useful negative results.
+
+**Done:** a sustained benchmark report includes the actual quality profile, device/driver/OS, resolution, frame-time distribution, memory, thermal behavior and any unmeasured quantities. Adaptive and fixed-quality runs are separated. The supported profile/device table is evidence-based. No claim of optimizing all Android hardware is made from one phone.
+
+## M6 — Reusable framework proof
+
+Create two small playable samples using the same engine. Suggested pair: an exploration/destruction scene and a top-down or 2.5D procedural turn-based encounter game with original assets. Demonstrate different cameras, environments and mechanics through shared input, world, physics/query, save and rendering services. Add the minimal animation, audio, UI and asset pipeline those samples actually need.
+
+**Done:** both samples build and run with documented authoring and extension steps, seeded behavior and persistence. Game-specific rules are outside the engine. Real mobile controls are usable. The reusable engine's supported capabilities and limitations are documented; the second game does not require forking engine code.
+
+## Later research and productization
+
+Neural radiance caching, ReSTIR-family sampling, frame generation, advanced accelerator paths, fluids/soft bodies, broader device support, multiplayer, a production editor and scripting can follow demonstrated need. Prototype these independently of the core milestone path. Owner decisions for licensing and distribution are tracked in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
+
+## Definition of engine demonstrator done
+
+M0–M6 acceptance criteria are met for a declared device/profile set, or remaining gaps are explicitly identified rather than hidden. A fresh checkout builds, documented samples run on real Android hardware, and evidence covers fine geometry, automatic detail, dynamic lighting, interactive physics, resource efficiency and reuse. The repository contains all code, build instructions, dependency provenance, results and known limitations needed to continue development. This is an engine demonstrator, not a claim of commercial production readiness.

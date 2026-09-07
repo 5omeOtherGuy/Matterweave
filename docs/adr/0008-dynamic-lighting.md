@@ -1,0 +1,32 @@
+# ADR-0008: Dynamic indirect illumination and reflections
+
+- Date: 2026-09-07
+- Status: Proposed
+- Basis: Proposed implementation of the owner's accepted Lumen-like lighting goal.
+- Requirements: R03, R09, R12
+
+## Context
+
+The desired visual capability includes bounced light, color bleeding, interior/exterior transitions and reflections responding to world changes. Lumen uses several tracing/caching mechanisms; it is not simply one full-resolution ray-tracing pass.
+
+## Decision
+
+Start with direct lighting and a repeatable reference scene. Evaluate sparse probes/radiance caches, budgeted updates and selective tracing for diffuse indirect lighting. Treat specular reflections separately, evaluating screen-space information, fallback representations and selective rays. Keep hardware RT optional until support and total benefit are established.
+
+Define invalidation for moving lights/objects and edited geometry. An opening may change lighting beyond its immediate voxel neighbors. Record update latency, temporal reuse and quality controls explicitly.
+
+## Alternatives
+
+Baked lighting alone cannot meet the changing-world goal, but can be a baseline for static content. Full path tracing is a useful reference/research path rather than an assumed mobile default. Directly adopting Unreal's full lighting architecture carries integration and runtime costs. Voxel cone tracing or other GI methods remain eligible experiments.
+
+## Consequences
+
+Light leaks, stale illumination, disocclusion, glossy noise and cache memory are concrete risks. The voxel representation may help visibility queries but does not make GI free. Diffuse GI, reflections, shadows and volumetrics need separate cost/quality accounting.
+
+## Validation
+
+M4 moves lights, changes sun direction and opens/closes a room; record indirect response, reflection changes, thin-wall leaks, update latency and total cost. Include comparison captures and device evidence where available.
+
+## References
+
+[Lumen technical details](https://dev.epicgames.com/documentation/unreal-engine/lumen-technical-details-in-unreal-engine), [DDGI algorithm reference](https://github.com/NVIDIAGameWorks/RTXGI-DDGI/blob/main/docs/Algorithms.md), [research](../RESEARCH.md).

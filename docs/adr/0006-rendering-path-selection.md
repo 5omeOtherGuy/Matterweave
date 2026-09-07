@@ -1,0 +1,32 @@
+# ADR-0006: Compare voxel ray, mesh and hybrid rendering
+
+- Date: 2026-09-07
+- Status: Proposed
+- Basis: Engineering comparison required by the revised voxel-engine goal.
+- Requirements: R02, R03, R08, R09, R11
+
+## Context
+
+The owner earlier used the term voxel ray engine, then replaced the earlier constraints with a native Android voxel-engine goal. Voxels remain central. A ray-only pipeline was not re-established as a mandatory condition. Mobile performance cannot be inferred from desktop voxel demos.
+
+## Decision
+
+Build a simple native baseline first, then compare focused prototypes of compute voxel traversal, extracted-surface rasterization and a hybrid. Hybrid is the current hypothesis, not a decision supported by results. Use common world fixtures, camera paths, resolution, material/lighting settings and geometric-error criteria.
+
+Keep depth, normals, stable identity and motion data compatible with lighting and temporal needs. Investigate GPU-driven visibility and work generation only with a baseline that exposes their benefit. Preserve non-camera visibility requirements for shadows/reflections/GI.
+
+## Alternatives
+
+Pure traversal avoids some mesh rebuilding but may be limited by divergence/bandwidth. Surface rasterization uses hardware well for some workloads but carries extraction/update costs. Hybrid adds representation and scheduling complexity. Full hardware ray tracing requires explicit device support and suitable acceleration data.
+
+## Consequences
+
+Experiments must include preparation, rebuilds, uploads and memory, not just steady static-frame timing. Do not build three complete production renderers or maintain unused paths indefinitely. Retain a correctness reference after selection.
+
+## Validation
+
+M2 chooses the primary approach with equivalent-quality physical-device evidence where available, including dynamic edits and orthographic views. Without hardware, selection remains provisional for mobile performance. Record rejected options and revisit triggers.
+
+## References
+
+[Benchmark protocol](../BENCHMARKS.md), [research](../RESEARCH.md), [world data](0005-voxel-world-data.md).

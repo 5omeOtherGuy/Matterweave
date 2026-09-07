@@ -1,0 +1,31 @@
+# Host/build outputs
+**/build/
+**/out/
+.cache/
+__pycache__/
+*.pyc
+.venv/
+
+# Android and local IDE configuration
+.gradle/
+.cxx/
+.externalNativeBuild/
+.idea/
+local.properties
+*.iml
+captures/
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+
+# Generated application artifacts; publish through CI/releases
+*.apk
+*.aab
+
+# OS metadata
+.DS_Store
+Thumbs.db
