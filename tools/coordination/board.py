@@ -311,7 +311,7 @@ class Board:
                 require(json.loads(row["submission"]) == submission, "Submission is immutable; lead must start a new attempt")
             self.db.execute("UPDATE statuses SET submission=? WHERE task=? AND attempt=?",
                             (packed(submission), req["task"], req["attempt"]))
-            return {"submitted": submission, "accepted": False}
+            return {"submitted": submission, "accepted": False, "acceptance_state": "awaiting_lead_review"}
         if op == "quiescence":
             task = self.task(req, state, worker=False)
             proof = bounded(req["proof"], 2048)

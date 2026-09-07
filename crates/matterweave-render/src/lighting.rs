@@ -214,4 +214,97 @@ mod tests {
             assert!(p.iter().all(|v| v.is_finite()) && p[2] > 0. && p[2] < 1.);
         }
     }
+
+    // CPU model of world.wgsl's analytical receiver-plane gradient. The oracle
+    // below independently ray-intersects the actual plane at each sampled texel;
+    // this checks signs, scale and nearest-sample phase, not Vulkan pixel output.
+    fn receiver_gradient(camera: &ShadowCamera, normal: Vec3) -> Option<glam::Vec2> {
+        let sun = Vec3::from_array(camera.direction);
+        let cosine = normal.dot(sun);
+        if cosine <= 0.0001 {
+            return None;
+        }
+        let row = |r| {
+            Vec3::new(
+                camera.view_proj[0][r],
+                camera.view_proj[1][r],
+                camera.view_proj[2][r],
+            )
+        };
+        let x = row(0);
+        let y = row(1);
+        let world_per_u = 2.0 * x / x.length_squared();
+        let world_per_v = -2.0 * y / y.length_squared();
+        Some(
+            glam::Vec2::new(normal.dot(world_per_u), normal.dot(world_per_v))
+                * (-row(2).dot(sun) / cosine),
+        )
+    }
+
+    #[test]
+    fn pcf_receiver_plane_matches_geometric_texel_center_depths() {
+        use glam::Vec2;
+        let mut uncorrected_failures = 0;
+        for size in [1024, 2048] {
+            for (direction, normal) in [
+                ([0.4, 0.85, 0.3], Vec3::Y),
+                ([1.0, 0.02, 0.2], Vec3::Y),
+                ([0.4, 0.85, 0.3], Vec3::new(1.0, 1.0, 0.0).normalize()),
+            ] {
+                let sun = Sun {
+                    direction_to_sun: direction,
+                    intensity: 0.8,
+                };
+                let camera = ShadowCamera::new([0.0; 3], sun, &[FLOOR], size).unwrap();
+                let matrix = Mat4::from_cols_array_2d(&camera.view_proj);
+                let inverse = matrix.inverse();
+                let ray = Vec3::from_array(camera.direction);
+                let gradient = receiver_gradient(&camera, normal).unwrap();
+                assert!(gradient.is_finite());
+                let depth_at = |uv: Vec2| {
+                    // The plane passes through the origin. Reconstruct a light
+                    // ray using Vulkan's flipped texture Y, then intersect it.
+                    let near = inverse.transform_point3(Vec3::new(
+                        2.0 * uv.x - 1.0,
+                        1.0 - 2.0 * uv.y,
+                        0.0,
+                    ));
+                    let hit = near - ray * (normal.dot(near) / normal.dot(ray));
+                    matrix.transform_point3(hit).z
+                };
+                let texel = 1.0 / size as f32;
+                let bias = 0.025 / camera.depth_span;
+                for phase in [0.0, 0.17, 0.49, 0.83] {
+                    let uv = Vec2::splat(0.5) + Vec2::new(phase, 0.37 - phase) * texel;
+                    let receiver_depth = depth_at(uv);
+                    for y in -1..=1 {
+                        for x in -1..=1 {
+                            let tap = uv + Vec2::new(x as f32, y as f32) * texel;
+                            let center = ((tap / texel).floor() + Vec2::splat(0.5)) * texel;
+                            let stored_depth = depth_at(center);
+                            let corrected = receiver_depth + gradient.dot(center - uv);
+                            assert!((corrected - stored_depth).abs() < 2.0e-5);
+                            assert!(corrected - bias <= stored_depth);
+                            uncorrected_failures +=
+                                usize::from(receiver_depth - bias > stored_depth);
+                        }
+                    }
+                }
+            }
+        }
+        // The old constant-depth PCF incorrectly classified an exposed plane.
+        assert!(uncorrected_failures > 0);
+    }
+
+    #[test]
+    fn receiver_plane_avoids_parallel_and_back_facing_singularities() {
+        for direction in [[1.0, 0.0, 0.0], [1.0, 1.0e-6, 0.0], [0.0, -1.0, 0.0]] {
+            let sun = Sun {
+                direction_to_sun: direction,
+                intensity: 16.0,
+            };
+            let camera = ShadowCamera::new([0.0; 3], sun, &[FLOOR], 1024).unwrap();
+            assert!(receiver_gradient(&camera, Vec3::Y).is_none());
+        }
+    }
 }

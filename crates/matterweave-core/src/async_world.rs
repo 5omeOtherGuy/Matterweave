@@ -21,7 +21,7 @@ use std::thread::JoinHandle;
 pub const MAX_QUEUED_MESH_JOBS: usize = 32;
 /// Completed meshes awaiting `poll_mesh`.
 pub const MAX_MESH_RESULTS: usize = 8;
-/// Total vertex plus index bytes held in completed meshes. A single result is always
+/// Total allocated vertex plus index capacity bytes held in completed meshes. A single result is always
 /// accepted into an empty queue, so an unusually large mesh cannot stall forever.
 /// Worst case for one edited 16³ chunk is a full checkerboard: 2048 cubes with six
 /// unmergeable faces each, 12288 quads = 4 * 12288 * 36 B vertices + 6 * 12288 * 4 B
@@ -83,6 +83,8 @@ struct Queue {
     /// dropped job's key becomes requestable again. Bounded by the job bounds.
     active: BTreeSet<[i32; 3]>,
     stream_result: Option<StreamResult>,
+    stream_active: Option<([i32; 2], u64, u64, u64)>,
+    prefer_mesh: bool,
     mesh_results: VecDeque<MeshResult>,
     mesh_result_bytes: usize,
     inflight: usize,
@@ -104,7 +106,7 @@ impl Shared {
 }
 
 fn mesh_bytes(mesh: &Mesh) -> usize {
-    mesh.vertices.len() * std::mem::size_of::<Vertex>() + mesh.indices.len() * 4
+    mesh.vertices.capacity() * std::mem::size_of::<Vertex>() + mesh.indices.capacity() * 4
 }
 
 /// Bounded background preparation attached to one authoritative world.
@@ -161,7 +163,11 @@ impl AsyncWorld {
         let Some(center) = World::stream_center_of(eye) else {
             return false;
         };
+        self.requested_center = Some(center);
         if !world.is_streaming() || world.stream_center() == Some(center) {
+            let mut queue = self.shared.lock();
+            queue.stream = None;
+            queue.stream_result = None;
             return false;
         }
         let mut queue = self.shared.lock();
@@ -169,6 +175,19 @@ impl AsyncWorld {
             return false;
         }
         let generation = queue.generation;
+        let identity = (center, world.revision(), world.seed(), generation);
+        if queue.stream_active == Some(identity)
+            || queue
+                .stream
+                .as_ref()
+                .is_some_and(|j| (j.center, j.source_revision, j.seed, j.generation) == identity)
+            || queue
+                .stream_result
+                .as_ref()
+                .is_some_and(|j| (j.center, j.source_revision, j.seed, j.generation) == identity)
+        {
+            return false;
+        }
         let superseded = queue
             .stream
             .replace(StreamJob {
@@ -222,14 +241,25 @@ impl AsyncWorld {
         let Some(revision) = world.chunk_revision(key) else {
             return false;
         };
+        let queue = self.shared.lock();
+        if queue.shutdown
+            || queue.meshes.len() >= MAX_QUEUED_MESH_JOBS
+            || queue.active.contains(&key)
+            || queue
+                .mesh_results
+                .iter()
+                .any(|r| r.key == key && r.mesh.revision == revision)
+        {
+            return false;
+        }
+        // The public API requires &mut self, so only the worker can change the
+        // queue during this unlocked copy; it can only free capacity.
+        drop(queue);
         let Some(voxels) = world.chunk_halo(key) else {
             return false;
         };
         let mut queue = self.shared.lock();
-        if queue.shutdown || queue.meshes.len() >= MAX_QUEUED_MESH_JOBS || !queue.active.insert(key)
-        {
-            return false;
-        }
+        queue.active.insert(key);
         let generation = queue.generation;
         queue.meshes.push_back(MeshJob {
             key,
@@ -284,6 +314,13 @@ impl AsyncWorld {
         self.requested_center = None;
     }
 
+    /// False after worker startup failure or an unexpected worker exit.
+    pub fn available(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+    }
+
     pub fn stats(&self) -> AsyncStats {
         let queue = self.shared.lock();
         AsyncStats {
@@ -334,10 +371,16 @@ fn run(shared: &Shared) {
         if queue.shutdown {
             return;
         }
-        // Terrain first: residency gates movement, geometry only follows it.
-        let job = match queue.stream.take() {
-            Some(job) => Job::Stream(job),
-            None => Job::Mesh(queue.meshes.pop_front().expect("nonempty queue")),
+        // Alternate when both classes are ready: sustained travel cannot starve
+        // retained-chunk geometry. Each service unit remains bounded.
+        let job = if !queue.meshes.is_empty() && (queue.prefer_mesh || queue.stream.is_none()) {
+            queue.prefer_mesh = false;
+            Job::Mesh(queue.meshes.pop_front().expect("nonempty queue"))
+        } else {
+            queue.prefer_mesh = true;
+            let job = queue.stream.take().expect("nonempty stream queue");
+            queue.stream_active = Some((job.center, job.source_revision, job.seed, job.generation));
+            Job::Stream(job)
         };
         queue.inflight = 1;
         drop(queue);
@@ -348,6 +391,7 @@ fn run(shared: &Shared) {
                 world.stream_around(job.position);
                 let mut queue = shared.lock();
                 queue.inflight = 0;
+                queue.stream_active = None;
                 if queue.shutdown || queue.generation != job.generation {
                     queue.discarded += 1;
                     continue;
@@ -369,7 +413,9 @@ fn run(shared: &Shared) {
                 let bytes = mesh_bytes(&mesh);
                 let mut queue = shared.lock();
                 queue.inflight = 0;
-                queue.active.remove(&job.key);
+                if queue.generation == job.generation {
+                    queue.active.remove(&job.key);
+                }
                 let full = queue.mesh_results.len() >= MAX_MESH_RESULTS
                     || (!queue.mesh_results.is_empty()
                         && queue.mesh_result_bytes + bytes > MAX_MESH_RESULT_BYTES);

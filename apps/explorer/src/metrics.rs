@@ -54,7 +54,7 @@ impl FrameLog {
             .create_new(true)
             .open(&path)?;
         let mut writer = BufWriter::with_capacity(64 * 1024, file);
-        writeln!(writer, "presented_count,draw_interval_wall_ms,main_wall_ms,stream_wall_ms,mesh_upload_wall_ms,save_wall_ms,previous_completed_gpu_ms,previous_completed_shadow_gpu_ms")?;
+        writeln!(writer, "presented_count,draw_interval_wall_ms,main_wall_ms,stream_wall_ms,mesh_upload_wall_ms,save_wall_ms,previous_completed_gpu_ms,previous_completed_shadow_gpu_ms,gpu_frame_id,gpu_shadows,gpu_map_size")?;
         writer.flush()?;
         fs::remove_file(request)?;
         Ok(Some(Self {
@@ -66,7 +66,7 @@ impl FrameLog {
 
     /// GPU values describe the prior completed submission, not this CPU sample.
     /// Missing or invalid measurements remain empty CSV cells, never fabricated zeroes.
-    pub fn record(&mut self, frame: u64, values: [Option<f64>; 7]) -> io::Result<bool> {
+    pub fn record(&mut self, frame: u64, values: [Option<f64>; 10]) -> io::Result<bool> {
         if self.remaining == 0 {
             return Ok(false);
         }
@@ -116,15 +116,18 @@ mod tests {
                     None,
                     None,
                     Some(f64::NAN),
-                    Some(-1.)
+                    Some(-1.),
+                    None,
+                    None,
+                    None,
                 ]
             )
             .unwrap());
-        assert!(!log.record(2, [Some(8.); 7]).unwrap());
-        assert!(!log.record(3, [Some(9.); 7]).unwrap());
+        assert!(!log.record(2, [Some(8.); 10]).unwrap());
+        assert!(!log.record(3, [Some(9.); 10]).unwrap());
         let text = fs::read_to_string(&log.path).unwrap();
         assert_eq!(text.lines().count(), 3);
-        assert!(text.lines().nth(1).unwrap().ends_with("0.0000,,,,"));
+        assert!(text.lines().nth(1).unwrap().ends_with("0.0000,,,,,,,"));
         drop(log);
         fs::remove_dir_all(dir).unwrap();
     }

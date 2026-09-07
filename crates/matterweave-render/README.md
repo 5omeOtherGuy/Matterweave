@@ -154,9 +154,15 @@ in the next render. Shadows do not alter authoritative voxels or collision.
 
 Depth format selection requires both attachment and sampling support. A nearest
 comparison sampler and explicit 3x3 PCF avoid requiring optional linear depth
-filtering. The receiver depth bias is 0.025 world units, increased at grazing
-angles, then converted using the fitted depth span. Shadow UV Y matches Naga's
-Vulkan vertex Y adjustment. The outer map region fades to unshadowed sunlight.
+filtering. Each PCF tap compares against the receiver plane's depth at the
+nearest sampled texel center, including the center tap's subtexel offset. This
+prevents the receiving surface itself from occluding neighboring filter taps.
+The remaining contact bias is 0.025 world units, increased at grazing angles,
+then converted using the fitted depth span. Nearly parallel receivers (sun/normal
+cosine at most 0.0001) bypass shadows to avoid a singular plane calculation;
+their direct sunlight contribution is negligible. Shadow UV Y and the receiver
+plane gradient match Naga's Vulkan vertex Y adjustment. The outer map region
+fades to unshadowed sunlight.
 Bias/contact quality, grazing light and moving coverage edges require phone review;
 this bounded map cannot include terrain the application has not made resident.
 
@@ -177,9 +183,11 @@ These bytes are not included in `mesh_bytes`.
 usable timestamp bits and period. `gpu_timings()` returns `Option<GpuTimings>` for
 the most recently completed submission, usually the preceding frame. Consumers
 must deduplicate `frame_id` and retain its recorded `shadows` and
-`shadow_map_size` when collecting comparisons. `render_ms` covers GPU command
-execution including the shadow and color passes, excluding CPU work and
-presentation. `shadow_ms` is the start-to-shadow-pass-end GPU interval when
+`shadow_map_size` when collecting comparisons. `render_ms` is the GPU timestamp
+interval covering the shadow and color passes and any swapchain-acquire semaphore
+stall. It excludes CPU execution and presentation of this submission, but can
+include waiting for the presentation engine to release an acquired image. It is
+not a measure of active GPU work alone. `shadow_ms` is the start-to-shadow-pass-end GPU interval when
 shadows are enabled; it is `None` when disabled. Queue-stage overlap means it is
 not an independently additive cost or a substitute for matched off/on runs.
 

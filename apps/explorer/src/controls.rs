@@ -15,6 +15,9 @@ pub enum Action {
     Flight,
     Home,
     ResetObjects,
+    Shadows,
+    Sun,
+    ShadowQuality,
 }
 #[derive(Debug, Clone, Copy)]
 enum Finger {
@@ -44,7 +47,7 @@ impl Controls {
         self.mouse_look = false;
         self.cursor = None;
     }
-    pub fn buttons(&self) -> [([f32; 4], &'static str, Action); 11] {
+    pub fn buttons(&self) -> [([f32; 4], &'static str, Action); 14] {
         [
             ([390., 520., 105., 58.], "REMOVE", Action::Remove),
             ([505., 520., 105., 58.], "PLACE", Action::Place),
@@ -58,8 +61,15 @@ impl Controls {
             ([852., 68., 128., 40.], "HOME", Action::Home),
             (
                 [720., 116., 260., 40.],
-                "RESET OBJECTS",
+                "RESET PLAYGROUND",
                 Action::ResetObjects,
+            ),
+            ([720., 164., 124., 40.], "SHADOWS", Action::Shadows),
+            ([852., 164., 128., 40.], "SUN", Action::Sun),
+            (
+                [720., 212., 260., 40.],
+                "SHADOW DETAIL",
+                Action::ShadowQuality,
             ),
         ]
     }

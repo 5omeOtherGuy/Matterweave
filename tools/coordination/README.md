@@ -99,7 +99,9 @@ The model must wait at this startup boundary until its runtime is registered.
 
 Only the lead replaces assignments and lifecycle states. The enforced lifecycle
 is `ready -> running -> submitted -> accepted`, with `blocked` and `revoked`.
-Worker `submit` records immutable completion evidence; the lead then advances the
+Worker `submit` records immutable completion evidence. Its `accepted:false` and
+`acceptance_state:awaiting_lead_review` mean successful submission awaiting review,
+not a failed submission; the lead then advances the
 snapshot to `submitted`, reviews, verifies quiescence, and accepts with
 `acceptance:{"revision":"FULL_REVISION","evidence":"CHECKED_EVIDENCE_POINTER"}`.
 Submission and acceptance require the current clean worktree HEAD. Further edits

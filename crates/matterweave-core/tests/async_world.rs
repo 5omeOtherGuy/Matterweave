@@ -336,3 +336,23 @@ fn published_residency_gates_movement_at_window_boundaries() {
     assert!(world.stream_contains_position([70.0, 4.0, 0.0], 1.0));
     assert!(world.stats().chunks <= 147);
 }
+
+#[test]
+fn returning_home_cancels_a_prepared_destination_and_repeated_requests_coalesce() {
+    let mut world = streamed(20260907, [0., 4., 0.]);
+    let revision = world.revision();
+    let mut jobs = AsyncWorld::new();
+    assert!(jobs.available());
+    assert!(jobs.request_stream(&world, [120., 4., 0.]));
+    for _ in 0..100 {
+        assert!(!jobs.request_stream(&world, [120., 4., 0.]));
+    }
+    settle(&jobs);
+    assert!(!jobs.request_stream(&world, [0., 4., 0.]));
+    assert!(!jobs.poll_stream(&mut world));
+    assert_eq!(world.revision(), revision);
+    assert!(world.stream_contains_position([0., 4., 0.], 1.));
+    assert!(jobs.request_stream(&world, [-120., 4., 0.]));
+    publish(&mut jobs, &mut world);
+    assert!(world.stream_contains_position([-120., 4., 0.], 1.));
+}

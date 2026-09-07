@@ -38,13 +38,32 @@ fn shadow_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     if ndc.z <= 0.0 || ndc.z >= 1.0 || any(abs(ndc.xy) >= vec2(1.0)) { return 1.0; }
     // Naga flips vertex clip Y for Vulkan. Texture coordinates must match that flip.
     let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    let slope = 1.0 - max(dot(normalize(normal), lighting.sun.xyz), 0.0);
-    let depth = ndc.z - lighting.params.y * (1.0 + 2.0 * slope);
+    let receiver_normal = normalize(normal);
+    let cos_light = dot(receiver_normal, lighting.sun.xyz);
+    // The receiver plane is singular parallel to the sun. Its direct-light
+    // contribution is negligible here, so avoid an unbounded depth correction.
+    if cos_light <= 0.0001 { return 1.0; }
+    let row_x = vec3(lighting.view_proj[0].x, lighting.view_proj[1].x, lighting.view_proj[2].x);
+    let row_y = vec3(lighting.view_proj[0].y, lighting.view_proj[1].y, lighting.view_proj[2].y);
+    let row_z = vec3(lighting.view_proj[0].z, lighting.view_proj[1].z, lighting.view_proj[2].z);
+    // The directional projection has orthogonal rows. These vectors move one UV
+    // unit at constant light depth; V reverses the Naga/Vulkan clip-Y adjustment.
+    let world_per_u = 2.0 * row_x / dot(row_x, row_x);
+    let world_per_v = -2.0 * row_y / dot(row_y, row_y);
+    let depth_per_world = -dot(row_z, lighting.sun.xyz);
+    let depth_gradient = vec2(dot(receiver_normal, world_per_u), dot(receiver_normal, world_per_v))
+        * (depth_per_world / cos_light);
+    let bias = lighting.params.y * (1.0 + 2.0 * (1.0 - cos_light));
     var visible = 0.0;
     for (var y = -1; y <= 1; y += 1) {
         for (var x = -1; x <= 1; x += 1) {
+            let tap_uv = uv + vec2(f32(x), f32(y)) * lighting.params.z;
+            // Nearest sampling reads a texel center, including for the center
+            // tap. Compensate both the filter offset and the subtexel phase.
+            let sample_uv = (floor(tap_uv / lighting.params.z) + vec2(0.5)) * lighting.params.z;
+            let sample_depth = ndc.z + dot(depth_gradient, sample_uv - uv) - bias;
             visible += textureSampleCompareLevel(shadow_map, shadow_sampler,
-                uv + vec2(f32(x), f32(y)) * lighting.params.z, depth);
+                sample_uv, sample_depth);
         }
     }
     // Fade the finite XY coverage rather than exposing a hard moving map boundary.

@@ -151,9 +151,10 @@ including Vulkan waits; MESH is the most recent changed-chunk extraction/upload 
 These are not GPU timestamps or CPU execution samples. DATA counts voxel payload,
 not process memory. GPU heap sizes are queried capacities, not free memory.
 
-Chunk meshing, terrain streaming/collision preparation, uploads and autosaves are
-synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
-automatic LOD, indirect illumination and shadows remain future work. Physics runs
+Terrain generation and dirty chunk meshing now use bounded background preparation.
+Collision publication, GPU uploads, snapshot copying and autosaves remain synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
+Filtered directional shadows are implemented; automatic LOD and indirect
+illumination remain future work. Physics runs
 at 60 Hz with bounded catch-up and interpolated object rendering. The resident
 window, stored-override limit and save size are explicit in the core README.
 Corrupt world/session snapshots remain intact; numbered recovery snapshots are
@@ -194,7 +195,10 @@ or exit. Invalid requests remain for correction. Normal runs create no frame log
 Rows contain the presented-frame counter, draw-interval/main-thread/stream/mesh-
 upload/save wall times and optional prior-completed GPU timings. CPU fields are
 wall times, not CPU busy time. Retry draws may repeat the presented counter. Missing
-GPU values remain empty; initial capture integration does not yet populate them.
+GPU values remain empty when unavailable. Completed GPU frame ID, shadow enable
+state and map size accompany those values; IDs reset on renderer recreation.
+GPU total interval can include waiting on swapchain acquisition and is not pure
+active GPU execution.
 GPU queries and compositor presentation timestamps are distinct measurements.
 Copy captures under `/mnt/bench` and preserve build/scene/conditions before making
 performance comparisons. Profiling overhead must be considered.
