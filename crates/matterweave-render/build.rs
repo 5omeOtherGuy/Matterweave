@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf};
 fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
-    for name in ["world", "hud"] {
+    for name in ["world", "hud", "shadow"] {
         let source = format!("src/{name}.wgsl");
         println!("cargo:rerun-if-changed={source}");
         let text = fs::read_to_string(&source).expect("read WGSL");
@@ -17,6 +17,9 @@ fn main() {
             ("vs_main", naga::ShaderStage::Vertex),
             ("fs_main", naga::ShaderStage::Fragment),
         ] {
+            if name == "shadow" && stage == naga::ShaderStage::Fragment {
+                continue;
+            }
             // Naga's default ADJUST_COORDINATE_SPACE flips Y for Vulkan, preserving
             // the core's right-handed, 0..1 depth camera and top-left HUD convention.
             let words = naga::back::spv::write_vec(
