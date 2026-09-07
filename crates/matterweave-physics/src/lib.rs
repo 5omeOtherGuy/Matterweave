@@ -2,7 +2,7 @@
 use matterweave_core::{Mesh, Vertex, World};
 use rapier3d::{control::KinematicCharacterController, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const FIXED_DT: f32 = 1.0 / 60.0;
 pub const MAX_BODIES: usize = 64;
@@ -60,6 +60,7 @@ pub struct Physics {
     multibody: MultibodyJointSet,
     ccd: CCDSolver,
     terrain: BTreeMap<[i32; 3], (u64, ColliderHandle)>,
+    resident_columns: Option<BTreeSet<[i32; 2]>>,
     objects: Vec<VoxelBody>,
     character: RigidBodyHandle,
     character_collider: ColliderHandle,
@@ -97,6 +98,7 @@ impl Physics {
             multibody: MultibodyJointSet::new(),
             ccd: CCDSolver::new(),
             terrain: BTreeMap::new(),
+            resident_columns: None,
             objects: Vec::new(),
             character,
             character_collider,
@@ -115,6 +117,9 @@ impl Physics {
     }
     /// Publishes exact solid-voxel collision synchronously. No visual mesh/LOD is consulted.
     pub fn sync_world(&mut self, world: &World) {
+        self.resident_columns = world
+            .stream_resident_chunks()
+            .map(|keys| keys.into_iter().map(|k| [k[0], k[2]]).collect());
         let keys = world.chunk_keys();
         let removed: Vec<_> = self
             .terrain
@@ -253,12 +258,30 @@ impl Physics {
         {
             self.release();
         }
+        let mut release_unloaded = false;
         for object in &mut self.objects {
             let body = &mut self.bodies[object.handle];
             object.previous = *body.position();
             let delta = body.translation() - self.center;
-            // Resident terrain extends at least 48 m horizontally. Preserve distant bodies
-            // before their support is evicted; they resume when the player returns.
+            // During background preparation the published window can lag behind
+            // the character. Distance alone does not guarantee loaded support.
+            // A rotation-invariant radius plus one bounded-speed fixed step keeps
+            // the whole body away from unloaded columns, including resident air.
+            let radius = object
+                .dimensions
+                .iter()
+                .map(|&d| (f32::from(d) * 0.25).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            let margin = radius + 128.0 * FIXED_DT + 0.05;
+            let supported = self.resident_columns.as_ref().is_none_or(|columns| {
+                let p = body.translation();
+                let low = [(p.x - margin).floor() as i32, (p.z - margin).floor() as i32]
+                    .map(|c| c.div_euclid(16));
+                let high = [(p.x + margin).floor() as i32, (p.z + margin).floor() as i32]
+                    .map(|c| c.div_euclid(16));
+                (low[0]..=high[0]).all(|x| (low[1]..=high[1]).all(|z| columns.contains(&[x, z])))
+            });
             if body.translation().y < -32.0 {
                 // Retain fallen voxel data without unbounded acceleration below the world.
                 let mut position = body.translation();
@@ -268,8 +291,19 @@ impl Physics {
                 body.set_angvel(Vector::ZERO, true);
             }
             body.set_enabled(
-                delta.x.abs() < 40.0 && delta.z.abs() < 40.0 && body.translation().y > -32.0,
+                supported
+                    && delta.x.abs() < 40.0
+                    && delta.z.abs() < 40.0
+                    && body.translation().y > -32.0,
             );
+            release_unloaded |= !supported
+                && self
+                    .held
+                    .as_ref()
+                    .is_some_and(|h| h.handle == object.handle);
+        }
+        if release_unloaded {
+            self.release();
         }
         self.pipeline.step(
             Vector::new(0.0, -20.0, 0.0),

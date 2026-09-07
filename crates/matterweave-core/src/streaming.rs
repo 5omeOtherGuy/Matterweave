@@ -52,6 +52,14 @@ impl World {
         })
     }
 
+    /// Published residency including empty chunks; None means a non-streaming
+    /// world whose data is all authoritative in memory. Bounded to 147 keys.
+    pub fn stream_resident_chunks(&self) -> Option<Vec<[i32; 3]>> {
+        self.streaming
+            .as_ref()
+            .map(|s| s.resident.iter().copied().collect())
+    }
+
     /// Center of the currently published window, if streaming has published one.
     pub(crate) fn stream_center(&self) -> Option<[i32; 2]> {
         self.streaming.as_ref().and_then(|stream| stream.center)

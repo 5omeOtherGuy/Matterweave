@@ -456,3 +456,31 @@ fn playground_dimension_limits_reject_atomically() {
     physics.restore(&beamed).unwrap();
     assert_eq!(physics.snapshot().bodies[0].dimensions, [6, 2, 2]);
 }
+
+#[test]
+fn nearby_preserved_body_waits_for_its_collision_window() {
+    let mut world = World::generate(20260907);
+    world.enable_streaming();
+    world.stream_around([0., 4., 0.]);
+    let mut physics = Physics::new(&world);
+    let snapshot = PhysicsSnapshot {
+        version: 1,
+        eye: [31., 10., 0.],
+        bodies: vec![body([70.5, 12., 0.5])],
+    };
+    physics.restore(&snapshot).unwrap();
+    physics.set_flying_eye(snapshot.eye);
+    // Within the old 40m distance gate, but outside the published x<64 window.
+    for _ in 0..120 {
+        physics.step_objects(FIXED_DT);
+    }
+    assert_eq!(physics.snapshot().bodies, snapshot.bodies);
+    world.stream_around(snapshot.eye);
+    physics.sync_world(&world);
+    for _ in 0..120 {
+        physics.step_objects(FIXED_DT);
+    }
+    let resumed = physics.snapshot();
+    assert!(resumed.bodies[0].position[1] < 12.);
+    assert!(resumed.bodies[0].position[1] > -8.);
+}

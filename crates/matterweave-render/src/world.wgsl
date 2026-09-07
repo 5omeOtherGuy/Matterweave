@@ -62,8 +62,15 @@ fn shadow_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
             // tap. Compensate both the filter offset and the subtexel phase.
             let sample_uv = (floor(tap_uv / lighting.params.z) + vec2(0.5)) * lighting.params.z;
             let sample_depth = ndc.z + dot(depth_gradient, sample_uv - uv) - bias;
-            visible += textureSampleCompareLevel(shadow_map, shadow_sampler,
-                sample_uv, sample_depth);
+            // Explicit integer fetch separates stored depth/raster precision
+            // from the comparison sampler's coordinate and Dref behavior.
+            let sample_texel = vec2<i32>(floor(tap_uv / lighting.params.z));
+            let map_size = vec2<i32>(textureDimensions(shadow_map));
+            var stored_depth = 1.0;
+            if all(sample_texel >= vec2<i32>(0)) && all(sample_texel < map_size) {
+                stored_depth = textureLoad(shadow_map, sample_texel, 0);
+            }
+            visible += select(0.0, 1.0, sample_depth <= stored_depth);
         }
     }
     // Fade the finite XY coverage rather than exposing a hard moving map boundary.
