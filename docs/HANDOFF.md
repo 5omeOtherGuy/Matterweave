@@ -6,9 +6,19 @@ Take over Matterweave from the current repository branch. Use this repository as
 
 Do not spend the session repeating the initial requirements interview or producing another plan in place of code. Read the live repository first: this handoff may predate implementation commits.
 
+## Next authorized implementation campaign
+
+Start from [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md), then its linked task list and
+showcase specification. The owner requested an iterative overall optimization
+campaign using all six model families, with Muse/Gemini code reviews before Astra's
+review, testable worker definitions of done and engineering-log handoffs. A small,
+dense, lush, highly detailed alien map with water, complex terrain and recognizable
+mushrooms is a mandatory deliverable. The plan is written; do not delegate another
+plan-writing round. No optimization or showcase implementation is claimed yet.
+
 ## Current implementation entry — 2026-09-08
 
-For the next release, read the [v0.3 delivery and coordination plan](V0.3.md).
+For the shipped v0.3 release, see the [v0.3 delivery and coordination plan](V0.3.md).
 It preserves the planned feature slices, multi-model assignments, board ownership,
 bounded-context protocol and startup verification gates. The board and three feature slices are implemented and phone validation passed.
 The v0.3.0 release contains shadows, background preparation and the breakable arch.

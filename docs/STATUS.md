@@ -2,6 +2,17 @@
 
 Updated: 2026-09-08
 
+## Next campaign: performance and dense alien showcase
+
+The owner requested the [saved execution plan](PERFORMANCE_PLAN.md), with concrete
+[P00–P07 assignments](PERFORMANCE_TASKS.md) and a required
+[showcase map](SHOWCASE.md). This is planned work, not shipped optimization or art.
+Next runnable task is P00 preflight, followed by measurement/fixture implementation.
+The lead writes the plan; subagents execute experiments, implementation and review.
+All six roster models get useful task qualification, with Muse/Gemini reviews before
+Astra's code review. Existing paid credits still require explicit execution ceilings;
+no purchases or automatic top-ups are authorized.
+
 ## v0.3 verified Android slice
 
 The [v0.3 plan](V0.3.md) has working implementations of directional shadows,
