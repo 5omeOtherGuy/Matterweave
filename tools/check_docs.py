@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADR_DIR = ROOT / "docs" / "adr"
 STATUSES = {"Proposed", "Accepted", "Rejected", "Superseded"}
 SECTIONS = {"Context", "Decision", "Alternatives", "Consequences", "Validation", "References"}
-SKIP_PARTS = {".git", "build", "out", ".gradle", ".cache", ".venv", "node_modules"}
+SKIP_PARTS = {"vendor", ".git", "build", "out", ".gradle", ".cache", ".venv", "node_modules"}
 
 
 def without_fences(text: str) -> str:

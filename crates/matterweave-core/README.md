@@ -1,6 +1,6 @@
 # Matterweave core
 
-Independent Rust world data and M1 reference algorithms. No Android, windowing,
+Independent Rust world data, retained M1 reference algorithms and v0.2 chunk streaming. No Android, windowing,
 graphics backend or physics types appear in the public interface.
 
 The authoritative world uses sparse, deterministically ordered 16³ chunks with
@@ -24,33 +24,65 @@ starting inside a solid returns distance zero and a zero normal. Exact simultane
 crossings advance all tied axes, avoiding edge-only hits, and use the lowest
 crossed axis for the normal. Queries cannot overflow the i32 coordinate space.
 
-Persistence stores complete material snapshots, seed, generator/format versions
-and revision. Version 1 import/export is bounded to 512 chunks and 12 MiB of JSON;
-unknown versions, duplicate chunks, invalid coordinates, malformed lengths and
-empty serialized chunks are rejected. Loading creates a separate validated world.
+Persistence writes version 2 and accepts version 1. Non-streamed worlds store
+complete snapshots. Streamed worlds store up to 512 authoritative chunk overrides
+(including explicit air), the active window center and an extension-generator
+version. Resident procedural terrain is derived and regenerated on load. A 12 MiB
+JSON cap bounds the entire save including optional opaque app metadata. Unknown
+versions, duplicate chunks, invalid coordinates, malformed lengths and empty
+serialized nonempty chunks are rejected. `save_with_attachment` atomically stores
+world and app state together; `save` preserves any loaded attachment. The app owns
+validation of the attachment schema.
+
 Saving uses a unique same-directory temporary file, buffered write, file sync and
 atomic rename. Failure before rename preserves the previous destination. Directory
 sync after rename is best-effort; power-loss durability is not guaranteed. Use the
-application's private writable data directory. This is not a compressed streaming
-format, and no migration from future format/generator versions is implemented.
+application's private writable data directory.
 
-`allocated_bytes` counts allocated voxel payload only, excluding BTreeMap nodes,
-allocator overhead, temporary serialization buffers and meshes. Mesh extraction
-is synchronous whole-world exposed-face generation with stable order, CCW outward
-triangles and cross-chunk neighbor queries. All materials are opaque. There is no
-greedy meshing, LOD, lighting cache or collision representation. f32 vertex positions
-lose single-voxel precision at large coordinates; the small fixture is near origin.
+`enable_streaming()` opts in; `World::new` stays empty and `generate` retains the
+original reference fixture. `stream_around` synchronously publishes a radius-three
+chunk window (at most 7×7×3 chunks), clipped to x/z [-256,256), y [-16,32). Only
+resident cells inside that domain accept edits. The original x/z [-32,32) square
+remains entirely snapshot-authoritative: missing legacy chunks mean air, including
+fully removed chunks. Saved chunks outside the domain remain in the override
+archive and are preserved on save, although they cannot be visited in this slice.
+The surrounding integer terrain meets the original descending island edge and
+gradually returns to rolling hills. This is bounded streaming, not virtualized LOD.
+
+Each first edit of a generated chunk copies its authoritative 4096-byte payload
+into a bounded override archive. Later edits update that copy. Reaching 512 stored
+overrides rejects edits requiring another slot, preserving already saved data;
+`stored_overrides` reports consumption. Eviction never discards an override.
+`allocated_bytes` includes resident and override voxel payloads, excluding map and
+allocator overhead, temporary serialization buffers and meshes. `chunks` and
+`solid_voxels` describe resident content only.
+
+`mesh()` retains the whole-world exposed-face reference. `mesh_chunk(key)` adapts
+an 18³ padded material volume to block-mesh greedy quads, preserving material IDs,
+cross-chunk occlusion and CCW winding. All materials are opaque. `chunk_revision`
+changes only for a local edit, shared-face neighbor edit or relevant load/unload.
+Absent chunks return None. A derived result can be published only if its key and
+revision still match the current world; replacing a World invalidates all caches.
+No asynchronous jobs exist, so collision/render consumers must synchronize before
+the next simulation step. f32 vertices lose voxel precision at extreme legacy
+coordinates; the streamed domain stays close to origin.
 
 ## Component assessment (2026-09-07)
 
-[block-mesh 0.2.0](https://docs.rs/block-mesh/0.2.0/block_mesh/) supplies existing
-visible-face and greedy-quad algorithms, with an 18³ padded input for 16³ chunks.
-It is a credible optimized meshing candidate. This M1 implementation keeps a tiny
-direct neighbor-query reference for correctness comparisons without a padded-copy
-adapter. This is a bounded reference implementation, not a claim that custom
-meshing outperforms the dependency. Compare/adopt the existing greedy mesher in M2
-using equal scenes and total extraction/upload/memory costs. No benchmark numbers
-from the library are presented as Matterweave measurements.
+[block-mesh 0.2.0](https://docs.rs/block-mesh/0.2.0/block_mesh/) is adopted for greedy
+quad extraction after inspecting its padded-volume contract, merge-value support,
+face orientation and output index code. The adapter uses material identity as the
+merge key. The existing reference remains for equivalence tests. This reuses the
+mature algorithm without introducing its coordinate or storage types into the
+public engine API. Host geometry reduction is evidence for adoption of this
+bounded mesh optimization, not a mobile frame-time comparison or final M2
+ray/mesh/hybrid selection.
+
+The equal-scene regression (seed 8712, three explicit edits in
+`tests/streaming.rs`) measured 27,744 reference triangles and 6,660 greedy
+triangles: 76.0% fewer, with identical unit faces and materials. Reproduce with
+`cargo test -p matterweave-core greedy_surfaces -- --nocapture`. This is a geometry
+count, not a frame-time or GPU benchmark.
 
 Standard-library `BTreeMap` and fixed arrays supply storage; the project-specific
 code owns coordinate/material/revision semantics. A general voxel engine would
@@ -59,6 +91,7 @@ Existing general-purpose components are adopted rather than reimplemented:
 
 | Component | Exact version | Source | Upstream license | Role |
 | --- | --- | --- | --- | --- |
+| block-mesh | 0.2.0 | [crate](https://crates.io/crates/block-mesh/0.2.0) | MIT OR Apache-2.0 | Reused greedy surface extraction on padded chunk data. |
 | bytemuck | 1.23.2 | [crate](https://crates.io/crates/bytemuck/1.23.2) | Zlib OR Apache-2.0 OR MIT | Checked plain-data derives for GPU vertex upload. |
 | serde | 1.0.219 | [crate](https://crates.io/crates/serde/1.0.219) | MIT OR Apache-2.0 | Serialization contract and validated typed decoding. |
 | serde_json | 1.0.140 | [crate](https://crates.io/crates/serde_json/1.0.140) | MIT OR Apache-2.0 | Inspectable versioned persistence; replaceable behind the save API. |
@@ -69,13 +102,19 @@ These are dependency licenses, not a project-license choice.
 ## Verification
 
 From the repository root: `cargo test -p matterweave-core`.
+The v0.2 suite passes 22 integration tests on Rust 1.96.0 Linux x86_64.
+
+v0.2 adds exact greedy/reference unit-face and material equivalence, boundary
+revision locality, streaming bounds/reversals, legacy removed-chunk migration and
+evicted edits reloaded together with opaque app state.
+
 Tests exercise negative/chunk boundaries, sparse-reference edits, seeded terrain,
 ray ranges/invalid inputs/edge crossings, surface winding and seam occlusion,
 revision invalidation, snapshot round trips, malformed versions/chunks, save size
 limits and temporary-file cleanup after a failed rename. Native integration and
 device behavior are verified by the application, not by host core tests.
 
-On 2026-09-07, Rust 1.96.0 on Linux x86_64 passed 14 integration tests,
+The original v0.1 run on 2026-09-07 used Rust 1.96.0 on Linux x86_64 and passed 14 integration tests,
 `cargo clippy -p matterweave-core --all-targets --locked -- -D warnings`, and scoped
 `rustfmt --check`. An instrumented host run measured 94.40% production-source line
 coverage, 94.12% region coverage and 95% function coverage. Branch coverage was not

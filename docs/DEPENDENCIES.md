@@ -1,7 +1,7 @@
 # MVP component and toolchain selections
 
 Assessment date: 2026-09-07. These are implementation choices under ADR-0014,
-not mobile performance findings. No local patches to upstream dependencies are used.
+not mobile performance findings. The narrowly patched winit source is tracked in `vendor/winit`; its upstream provenance and exact lifecycle patch are documented there.
 Exact transitive revisions and checksums are in [Cargo.lock](../Cargo.lock);
 [the generated inventory](dependencies.json) records source, version, checksum,
 repository and upstream license for every locked Cargo package, including build
@@ -29,8 +29,14 @@ first backend. No measured speed advantage is asserted. The surface mesh is
 the M1 reference, while ADR-0006 retains the M2 ray/mesh/hybrid comparison.
 [Core notes](../crates/matterweave-core/README.md) assess block-mesh and explain
 the deliberately small reference implementation. [Renderer notes](../crates/matterweave-render/README.md)
-record memory, synchronization and lifetime contracts. Physics is deferred to M3;
-no physics dependency or Jolt exception has been selected.
+record memory, synchronization and lifetime contracts. [Rapier 0.32.0](https://docs.rs/rapier3d/0.32.0/rapier3d/) (Apache-2.0) is adopted for
+the M3 slice: Rust solver, controller, shape queries and spring joints without FFI.
+[Physics selection notes](../crates/matterweave-physics/README.md) record alternatives
+and limits; no credible major Jolt advantage required a foreign integration.
+[block-mesh 0.2.0](https://docs.rs/block-mesh/0.2.0/block_mesh/) (MIT OR Apache-2.0)
+supplies v0.2 greedy quads after exact surface/material equivalence tests against
+our retained reference mesher. This is a geometry reduction finding, not a complete
+mobile rendering-path selection.
 
 The world fixture and material colors are original procedural content. No imported
 game assets are used. Dependency licenses do not select a license for Matterweave.

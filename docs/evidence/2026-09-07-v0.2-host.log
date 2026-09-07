@@ -1,0 +1,26 @@
+warning: direct cast of function item into an integer
+   --> vendor/winit/src/platform_impl/linux/x11/ime/context.rs:161:40
+    |
+161 |                 preedit_start_callback as usize,
+    |                                        ^^^^^^^^
+    |
+    = note: `#[warn(function_casts_as_integer)]` on by default
+help: first cast to a pointer `as *const ()`
+    |
+161 |                 preedit_start_callback as *const () as usize,
+    |                                        ++++++++++++
+
+warning: `winit` (lib) generated 1 warning (run `cargo fix --lib -p winit` to apply 1 suggestion)
+   Compiling matterweave-explorer v0.2.0 (/home/someotherguy/Documents/ChatGPT/Matterweave/apps/explorer)
+    Finished `dev` profile [optimized] target(s) in 10.42s
+     Running `/mnt/bench/matterweave-dev/target/debug/matterweave-explorer --smoke-exercise --smoke-frames 30 --save /mnt/bench/matterweave-dev/v0.2/smoke-final-world.json`
+Graphics: Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true
+SMOKE: window focus false; explicit smoke keeps rendering
+SMOKE EXERCISE: aimed place/remove and save/reload passed; revision 42905
+SMOKE EXERCISE: grab/throw/fracture and atomic object save passed; 18 bodies
+SMOKE EXERCISE: resize requested
+SMOKE EXERCISE: resize event 1100x700
+Graphics: Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true
+SMOKE EXERCISE: host renderer/window recreated
+SMOKE: window focus false; explicit smoke keeps rendering
+SMOKE PASS: 30 presented frames; Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true; world revision 42905

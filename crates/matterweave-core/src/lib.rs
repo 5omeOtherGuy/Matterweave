@@ -3,6 +3,7 @@
 mod mesh;
 mod persistence;
 mod ray;
+mod streaming;
 
 pub use mesh::{Mesh, Vertex};
 pub use ray::{RayHit, MAX_RAY_DISTANCE};
@@ -10,7 +11,8 @@ use std::collections::BTreeMap;
 
 pub const CHUNK_EDGE: i32 = 16;
 pub const CHUNK_VOLUME: usize = 4096;
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
+pub use streaming::{STREAM_MAX_Y, STREAM_MIN_Y, STREAM_RADIUS_CHUNKS, WORLD_LIMIT};
 pub const GENERATOR_VERSION: u32 = 1;
 
 #[derive(Clone)]
@@ -26,13 +28,18 @@ pub struct World {
     seed: u64,
     revision: u64,
     chunks: BTreeMap<[i32; 3], Chunk>,
+    chunk_revisions: BTreeMap<[i32; 3], u64>,
+    streaming: Option<streaming::Streaming>,
+    attachment: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorldStats {
     pub chunks: usize,
     pub solid_voxels: usize,
-    /// Allocated voxel payload only. Excludes map/allocator overhead and derived meshes.
+    /// Stored authoritative chunk overrides, including explicit empty chunks.
+    pub stored_overrides: usize,
+    /// Resident plus override voxel payload. Excludes map/allocator overhead and derived meshes.
     pub allocated_bytes: usize,
 }
 
@@ -48,6 +55,9 @@ impl World {
             seed,
             revision: 0,
             chunks: BTreeMap::new(),
+            chunk_revisions: BTreeMap::new(),
+            streaming: None,
+            attachment: None,
         }
     }
 
@@ -66,6 +76,16 @@ impl World {
     /// Returns whether material data changed. Empty chunks are reclaimed immediately.
     /// At revision exhaustion, edits are rejected without changing data or wrapping.
     pub fn set(&mut self, cell: [i32; 3], material: u8) -> bool {
+        if let Some(stream) = &self.streaming {
+            let key = address(cell).0;
+            if !Self::contains_stream_cell(cell)
+                || !stream.resident.contains(&key)
+                || (!stream.overrides.contains_key(&key)
+                    && stream.overrides.len() >= streaming::MAX_OVERRIDES)
+            {
+                return false;
+            }
+        }
         if self.get(cell) == material {
             return false;
         }
@@ -89,14 +109,70 @@ impl World {
             self.chunks.remove(&key);
         }
         self.revision = next_revision;
+        if let Some(stream) = &mut self.streaming {
+            stream.overrides.insert(key, self.chunks.get(&key).cloned());
+        }
+        self.invalidate_cell(cell);
         true
+    }
+
+    /// Resident nonempty chunks in stable order.
+    pub fn chunk_keys(&self) -> Vec<[i32; 3]> {
+        self.chunks.keys().copied().collect()
+    }
+
+    /// Version of derived geometry/collision including shared-face dependencies.
+    /// An absent chunk returns None, invalidating any previously uploaded chunk.
+    pub fn chunk_revision(&self, key: [i32; 3]) -> Option<u64> {
+        self.chunks.get(&key).map(|_| {
+            self.chunk_revisions
+                .get(&key)
+                .copied()
+                .unwrap_or(self.revision)
+        })
+    }
+
+    fn invalidate_cell(&mut self, cell: [i32; 3]) {
+        let key = address(cell).0;
+        if self.chunks.contains_key(&key) {
+            self.chunk_revisions.insert(key, self.revision);
+        } else {
+            self.chunk_revisions.remove(&key);
+        }
+        for axis in 0..3 {
+            let local = cell[axis].rem_euclid(CHUNK_EDGE);
+            let offset = if local == 0 {
+                -1
+            } else if local == 15 {
+                1
+            } else {
+                continue;
+            };
+            let mut neighbor = key;
+            neighbor[axis] += offset;
+            if self.chunks.contains_key(&neighbor) {
+                self.chunk_revisions.insert(neighbor, self.revision);
+            }
+        }
     }
 
     pub fn stats(&self) -> WorldStats {
         WorldStats {
             chunks: self.chunks.len(),
             solid_voxels: self.chunks.values().map(|chunk| chunk.solid).sum(),
-            allocated_bytes: self.chunks.len() * CHUNK_VOLUME,
+            stored_overrides: self
+                .streaming
+                .as_ref()
+                .map_or(0, |stream| stream.overrides.len()),
+            allocated_bytes: (self.chunks.len()
+                + self.streaming.as_ref().map_or(0, |stream| {
+                    stream
+                        .overrides
+                        .values()
+                        .filter(|chunk| chunk.is_some())
+                        .count()
+                }))
+                * CHUNK_VOLUME,
         }
     }
 

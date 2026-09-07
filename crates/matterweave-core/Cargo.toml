@@ -1,6 +1,6 @@
 [package]
 name = "matterweave-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 
@@ -8,3 +8,4 @@ publish = false
 bytemuck = { version = "=1.23.2", features = ["derive"] }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
+block-mesh = "=0.2.0"

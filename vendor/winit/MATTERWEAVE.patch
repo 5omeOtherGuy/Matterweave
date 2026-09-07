@@ -1,0 +1,69 @@
+--- a/src/event_loop.rs
++++ b/src/event_loop.rs
+@@ -115,7 +115,7 @@
+     pub fn build(&mut self) -> Result<EventLoop<T>, EventLoopError> {
+         let _span = tracing::debug_span!("winit::EventLoopBuilder::build").entered();
+ 
+-        if EVENT_LOOP_CREATED.swap(true, Ordering::Relaxed) {
++        if EVENT_LOOP_CREATED.swap(true, Ordering::AcqRel) {
+             return Err(EventLoopError::RecreationAttempt);
+         }
+ 
+@@ -130,6 +130,13 @@
+     #[cfg(web_platform)]
+     pub(crate) fn allow_event_loop_recreation() {
+         EVENT_LOOP_CREATED.store(false, Ordering::Relaxed);
++    }
++
++    // Android can destroy and recreate its Activity without restarting the process.
++    // Called only by the platform loop's last field after its other fields drop.
++    #[cfg(android_platform)]
++    pub(crate) fn release_android_event_loop() {
++        EVENT_LOOP_CREATED.store(false, Ordering::Release);
+     }
+ }
+ 
+--- a/src/platform_impl/android/mod.rs
++++ b/src/platform_impl/android/mod.rs
+@@ -143,6 +143,17 @@
+     cause: StartCause,
+     ignore_volume_keys: bool,
+     combining_accent: Option<char>,
++    // Rust drops fields in declaration order. Release the process-wide creation
++    // guard only after the platform loop and its AndroidApp references are gone.
++    _creation_guard: EventLoopCreationGuard,
++}
++
++struct EventLoopCreationGuard;
++
++impl Drop for EventLoopCreationGuard {
++    fn drop(&mut self) {
++        event_loop::EventLoopBuilder::<()>::release_android_event_loop();
++    }
+ }
+ 
+ #[derive(Debug, Clone, PartialEq)]
+@@ -192,6 +203,7 @@
+             cause: StartCause::Init,
+             ignore_volume_keys: attributes.ignore_volume_keys,
+             combining_accent: None,
++            _creation_guard: EventLoopCreationGuard,
+         })
+     }
+ 
+@@ -287,9 +299,12 @@
+                     warn!("TODO: forward onStop notification to application");
+                 },
+                 MainEvent::Destroy => {
+-                    // XXX: maybe exit mainloop to drop things before being
+-                    // killed by the OS?
+-                    warn!("TODO: forward onDestroy notification to application");
++                    // android-activity's onDestroy waits for android_main to return.
++                    // Stop dispatch now; pump_events emits LoopExiting, allowing
++                    // the application to save/drop resources before run returns.
++                    self.running = false;
++                    self.window_target.p.exit();
++                    return;
+                 },
+                 MainEvent::InsetsChanged { .. } => {
+                     // XXX: how to forward this state to applications?

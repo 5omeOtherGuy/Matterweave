@@ -1,0 +1,161 @@
+use crate::{address, hash, Chunk, World, CHUNK_VOLUME};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub const STREAM_RADIUS_CHUNKS: i32 = 3;
+pub const WORLD_LIMIT: i32 = 256;
+pub const STREAM_MIN_Y: i32 = -16;
+pub const STREAM_MAX_Y: i32 = 32;
+pub(crate) const MAX_OVERRIDES: usize = 512;
+
+#[derive(Clone)]
+pub(crate) struct Streaming {
+    // None is an explicitly empty edited chunk, never absence of an override.
+    pub overrides: BTreeMap<[i32; 3], Option<Chunk>>,
+    pub resident: BTreeSet<[i32; 3]>,
+    pub center: Option<[i32; 2]>,
+}
+
+impl World {
+    /// Opt in to the versioned terrain extension. The original square remains completely
+    /// snapshot-authoritative: missing legacy chunks are air, including deletions.
+    /// Saved chunks elsewhere are retained as overrides, including outside bounds.
+    pub fn enable_streaming(&mut self) {
+        if self.streaming.is_none() {
+            self.streaming = Some(Streaming {
+                overrides: self
+                    .chunks
+                    .iter()
+                    .map(|(&key, value)| (key, Some(value.clone())))
+                    .collect(),
+                resident: BTreeSet::new(),
+                center: None,
+            });
+        }
+    }
+
+    pub fn is_streaming(&self) -> bool {
+        self.streaming.is_some()
+    }
+
+    /// Legal editable simulation domain. Streaming additionally requires residency.
+    pub fn contains_stream_cell([x, y, z]: [i32; 3]) -> bool {
+        (-WORLD_LIMIT..WORLD_LIMIT).contains(&x)
+            && (-WORLD_LIMIT..WORLD_LIMIT).contains(&z)
+            && (STREAM_MIN_Y..STREAM_MAX_Y).contains(&y)
+    }
+
+    /// Synchronously publish a bounded 7x7x3 window. No stale background jobs exist;
+    /// callers synchronize render/collision revisions before advancing simulation.
+    /// At revision exhaustion or with nonfinite input residency is left unchanged.
+    pub fn stream_around(&mut self, position: [f32; 3]) -> bool {
+        if position.iter().any(|v| !v.is_finite()) {
+            return false;
+        }
+        let center =
+            [position[0], position[2]].map(|v| ((v.floor() as i32).div_euclid(16)).clamp(-16, 15));
+        let Some(stream) = &self.streaming else {
+            return false;
+        };
+        if stream.center == Some(center) {
+            return false;
+        }
+        let Some(revision) = self.revision.checked_add(1) else {
+            return false;
+        };
+        let mut wanted = BTreeSet::new();
+        for x in
+            (center[0] - STREAM_RADIUS_CHUNKS).max(-16)..=(center[0] + STREAM_RADIUS_CHUNKS).min(15)
+        {
+            for z in (center[1] - STREAM_RADIUS_CHUNKS).max(-16)
+                ..=(center[1] + STREAM_RADIUS_CHUNKS).min(15)
+            {
+                for y in -1..2 {
+                    wanted.insert([x, y, z]);
+                }
+            }
+        }
+        let mut changed: BTreeSet<_> = stream
+            .resident
+            .symmetric_difference(&wanted)
+            .copied()
+            .collect();
+        // First publication also evicts legacy chunks outside the new window.
+        changed.extend(
+            self.chunks
+                .keys()
+                .filter(|key| !wanted.contains(*key))
+                .copied(),
+        );
+        self.chunks.retain(|key, _| wanted.contains(key));
+        self.chunk_revisions.retain(|key, _| wanted.contains(key));
+        for &key in wanted.difference(&stream.resident) {
+            let chunk = match stream.overrides.get(&key) {
+                Some(value) => value.clone(),
+                None if (-2..2).contains(&key[0]) && (-2..2).contains(&key[2]) => None,
+                None => generated_chunk(self.seed, key),
+            };
+            if let Some(chunk) = chunk {
+                self.chunks.insert(key, chunk);
+            }
+        }
+        self.revision = revision;
+        for key in changed {
+            for (axis, offset) in [(0, 0), (0, -1), (0, 1), (1, -1), (1, 1), (2, -1), (2, 1)] {
+                let mut neighbor = key;
+                neighbor[axis] += offset;
+                if self.chunks.contains_key(&neighbor) {
+                    self.chunk_revisions.insert(neighbor, revision);
+                }
+            }
+        }
+        let stream = self.streaming.as_mut().unwrap();
+        stream.resident = wanted;
+        stream.center = Some(center);
+        true
+    }
+}
+
+fn generated_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
+    let mut chunk = Chunk {
+        voxels: Box::new([0; CHUNK_VOLUME]),
+        solid: 0,
+    };
+    for x in key[0] * 16..key[0] * 16 + 16 {
+        for z in key[2] * 16..key[2] * 16 + 16 {
+            // Match the closest legacy edge falloff (positive edge 31, negative
+            // edge -32), then recover gradually across the surrounding basin.
+            let cx = x.div_euclid(8);
+            let cz = z.div_euclid(8);
+            let fx = x.rem_euclid(8);
+            let fz = z.rem_euclid(8);
+            let noise = |dx, dz| (hash(seed, cx + dx, cz + dz) % 7) as i32;
+            let a = noise(0, 0) * (8 - fx) + noise(1, 0) * fx;
+            let b = noise(0, 1) * (8 - fx) + noise(1, 1) * fx;
+            let edge_x = x.clamp(-32, 31);
+            let edge_z = z.clamp(-32, 31);
+            let edge_falloff = (edge_x.abs().max(edge_z.abs()) - 20).max(0) / 3;
+            let distance = (x - edge_x).abs().max((z - edge_z).abs());
+            let falloff = (edge_falloff - distance / 4).max(0);
+            let height = (a * (8 - fz) + b * fz) / 64 - falloff;
+            for y in key[1] * 16..key[1] * 16 + 16 {
+                if y < -8 || y > height {
+                    continue;
+                }
+                let material = if y == height {
+                    if height <= 0 {
+                        4
+                    } else {
+                        1
+                    }
+                } else if y >= height - 2 {
+                    2
+                } else {
+                    3
+                };
+                chunk.voxels[address([x, y, z]).1] = material;
+                chunk.solid += 1;
+            }
+        }
+    }
+    (chunk.solid != 0).then_some(chunk)
+}

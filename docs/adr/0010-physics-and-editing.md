@@ -30,3 +30,13 @@ M3 demonstrates constraints, dynamic voxel bodies and a breakable structure; tes
 ## References
 
 [Rapier](https://github.com/dimforge/rapier), [Jolt source and platform support](https://github.com/jrouwe/JoltPhysics), [world data](0005-voxel-world-data.md), [architecture](../ARCHITECTURE.md).
+
+## v0.2 implementation evidence
+
+Rapier 0.32.0 is the selected solver for the bounded M3 slice under ADR-0014.
+See the [physics crate](../../crates/matterweave-physics/README.md) for component
+assessment, fixed-step/catch-up, interpolation, mass and inertia, spring grab,
+fracture caps, collision publication and snapshot validation contracts. The full
+ADR remains proposed until larger workloads and native stress gates are met.
+There is no camera-dependent collision LOD; evicted distant objects are frozen
+before their supporting terrain is unloaded. No Jolt integration was justified.

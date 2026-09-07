@@ -9,6 +9,12 @@ pub enum Action {
     Save,
     Swap,
     Size,
+    Grab,
+    Throw,
+    Break,
+    Flight,
+    Home,
+    ResetObjects,
 }
 #[derive(Debug, Clone, Copy)]
 enum Finger {
@@ -25,6 +31,7 @@ pub struct Controls {
     pub swapped: bool,
     pub large: bool,
     look_delta: Vec2,
+    jump_pressed: bool,
     pub mouse_look: bool,
     pub cursor: Option<Vec2>,
 }
@@ -33,16 +40,27 @@ impl Controls {
         self.fingers.clear();
         self.keys.clear();
         self.look_delta = Vec2::ZERO;
+        self.jump_pressed = false;
         self.mouse_look = false;
         self.cursor = None;
     }
-    pub fn buttons(&self) -> [([f32; 4], &'static str, Action); 5] {
+    pub fn buttons(&self) -> [([f32; 4], &'static str, Action); 11] {
         [
             ([390., 520., 105., 58.], "REMOVE", Action::Remove),
             ([505., 520., 105., 58.], "PLACE", Action::Place),
             ([720., 20., 76., 38.], "SAVE", Action::Save),
             ([804., 20., 76., 38.], "SWAP", Action::Swap),
             ([888., 20., 92., 38.], "SIZE", Action::Size),
+            ([282., 454., 138., 52.], "GRAB/DROP", Action::Grab),
+            ([430., 454., 138., 52.], "THROW", Action::Throw),
+            ([578., 454., 138., 52.], "BREAK", Action::Break),
+            ([720., 68., 124., 40.], "WALK/FLY", Action::Flight),
+            ([852., 68., 128., 40.], "HOME", Action::Home),
+            (
+                [720., 116., 260., 40.],
+                "RESET OBJECTS",
+                Action::ResetObjects,
+            ),
         ]
     }
     pub fn move_zone(&self) -> [f32; 4] {
@@ -67,6 +85,7 @@ impl Controls {
         }
         let elevations = self.elevation_zones();
         let role = if contains(elevations[0], p) {
+            self.jump_pressed = true;
             Finger::Up
         } else if contains(elevations[1], p) {
             Finger::Down
@@ -141,6 +160,9 @@ impl Controls {
                 motion += axis;
             }
         }
+        if std::mem::take(&mut self.jump_pressed) {
+            motion.y = motion.y.max(1.);
+        }
         let delta = std::mem::take(&mut self.look_delta);
         (motion.clamp_length_max(1.), delta)
     }
@@ -157,9 +179,9 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            position: Vec3::new(12., 18., 28.),
-            yaw: -2.7367,
-            pitch: -0.40,
+            position: Vec3::new(12., 10., 23.),
+            yaw: -2.82,
+            pitch: -0.18,
         }
     }
 }
@@ -180,7 +202,7 @@ impl Camera {
             (right * motion.x + Vec3::Y * motion.y + forward * motion.z) * 10. * dt.clamp(0., 0.05);
         self.position = self
             .position
-            .clamp(Vec3::new(-80., -16., -80.), Vec3::new(80., 80., 80.));
+            .clamp(Vec3::new(-248., -8., -248.), Vec3::new(248., 70., 248.));
     }
     pub fn view_projection(&self, aspect: f32) -> [[f32; 4]; 4] {
         (Mat4::perspective_rh(65_f32.to_radians(), aspect.max(0.01), 0.1, 240.)
@@ -246,6 +268,14 @@ mod tests {
         for _ in 0..10000 {
             camera.update(Vec3::Z, Vec2::ZERO, 0.05);
         }
-        assert!(camera.position.abs().max_element() <= 80.);
+        assert!(camera.position.abs().max_element() <= 248.);
+    }
+    #[test]
+    fn quick_jump_tap_is_not_lost_between_frames() {
+        let mut c = Controls::default();
+        c.start(1, Vec2::new(940., 410.));
+        c.end(1);
+        assert_eq!(c.consume().0, Vec3::Y);
+        assert_eq!(c.consume().0, Vec3::ZERO);
     }
 }

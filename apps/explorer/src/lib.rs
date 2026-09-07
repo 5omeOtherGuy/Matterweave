@@ -1,26 +1,43 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
 use controls::{Action, Camera, Controls};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use matterweave_core::World;
+use matterweave_physics::{Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, Renderer};
+use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, TouchPhase, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{Window, WindowId},
 };
 
 const SEED: u64 = 20260907;
 const EDIT_RANGE: f32 = 12.;
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Session {
+    version: u32,
+    physics: PhysicsSnapshot,
+    yaw: f32,
+    pitch: f32,
+    flying: bool,
+    swapped: bool,
+    large: bool,
+}
 struct Explorer {
     // Renderer must be dropped before the Android suspend callback returns.
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     world: World,
     camera: Camera,
+    physics: Physics,
+    flying: bool,
+    jump_held: bool,
+    autosave_elapsed: f32,
     controls: Controls,
     save_path: PathBuf,
     dirty: bool,
@@ -41,7 +58,7 @@ struct Explorer {
 impl Explorer {
     fn new(mut save_path: PathBuf, smoke_frames: Option<u64>) -> Self {
         let mut recovery = false;
-        let (world, status) = if save_path.exists() {
+        let (mut world, mut status) = if save_path.exists() {
             match World::load(&save_path) {
                 Ok(world) => (world, "Loaded saved world".into()),
                 Err(e) => {
@@ -85,14 +102,95 @@ impl Explorer {
         } else {
             (World::generate(SEED), "Explore. Edits autosave.".into())
         };
+        world.enable_streaming();
+        let mut camera = Camera::default();
+        world.stream_around(camera.position.to_array());
+        let mut physics = Physics::new(&world);
+        physics.teleport(camera.position.to_array());
+        let mut flying = false;
+        let mut controls = Controls::default();
+        let restored = if let Some(value) = world.attachment() {
+            let loaded = serde_json::from_value::<Session>(value.clone())
+                .map_err(|e| e.to_string())
+                .and_then(|session| {
+                    if session.version != 1
+                        || !session.yaw.is_finite()
+                        || !session.pitch.is_finite()
+                        || session.pitch.abs() > 1.51
+                    {
+                        return Err("Invalid session camera or version".into());
+                    }
+                    physics.restore(&session.physics)?;
+                    camera.position = Vec3::from_array(physics.character_eye());
+                    camera.yaw = session.yaw;
+                    camera.pitch = session.pitch;
+                    flying = session.flying;
+                    controls.swapped = session.swapped;
+                    controls.large = session.large;
+                    Ok(())
+                });
+            if let Err(error) = loaded {
+                // Keep the invalid combined snapshot intact. New saves use a recovery path.
+                let original = save_path.clone();
+                let name = original.file_name().unwrap_or_default().to_string_lossy();
+                let mut latest_valid = None;
+                for sequence in 1_u64.. {
+                    let candidate =
+                        original.with_file_name(format!("{name}.session-recovery-{sequence}.json"));
+                    if !candidate.exists() {
+                        save_path = candidate;
+                        break;
+                    }
+                    if let Ok(recovered) = World::load(&candidate) {
+                        if let Some(attachment) = recovered.attachment() {
+                            if let Ok(session) =
+                                serde_json::from_value::<Session>(attachment.clone())
+                            {
+                                if session.version == 1
+                                    && session.yaw.is_finite()
+                                    && session.pitch.is_finite()
+                                    && session.pitch.abs() <= 1.51
+                                    && physics.restore(&session.physics).is_ok()
+                                {
+                                    latest_valid = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(path) = latest_valid {
+                    let mut recovered = Self::new(path, smoke_frames);
+                    recovered.recovery = true;
+                    recovered.status = "Recovered session; original retained".into();
+                    return recovered;
+                }
+                recovery = true;
+                status = "LOAD FAILED: session retained; recovery active".into();
+                log::error!("Session load failed: {error}");
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+        world.stream_around(camera.position.to_array());
+        physics.sync_world(&world);
+        if !restored {
+            physics.spawn_demo(&world);
+        }
         Self {
             renderer: None,
             window: None,
             world,
-            camera: Camera::default(),
-            controls: Controls::default(),
+            camera,
+            physics,
+            flying,
+            jump_held: false,
+            autosave_elapsed: 0.,
+            controls,
             save_path,
-            dirty: false,
+            dirty: true,
             recovery,
             smoke_exercise: false,
             smoke_stage: 0,
@@ -109,9 +207,30 @@ impl Explorer {
         }
     }
     fn save(&mut self) {
-        match self.world.save(&self.save_path) {
+        let session = Session {
+            version: 1,
+            physics: self.physics.snapshot(),
+            yaw: self.camera.yaw,
+            pitch: self.camera.pitch.clamp(-1.5, 1.5),
+            flying: self.flying,
+            swapped: self.controls.swapped,
+            large: self.controls.large,
+        };
+        let result = serde_json::to_value(session)
+            .map_err(std::io::Error::other)
+            .and_then(|value| {
+                self.world
+                    .save_with_attachment(&self.save_path, Some(value))
+            });
+        match result {
             Ok(()) => {
                 self.dirty = false;
+                log::info!(
+                    "Saved revision {} bodies {} eye {:?}",
+                    self.world.revision(),
+                    self.physics.body_count(),
+                    self.camera.position.to_array()
+                );
                 self.status = if self.recovery {
                     "Recovery saved; original retained"
                 } else {
@@ -127,7 +246,96 @@ impl Explorer {
         }
     }
     fn action(&mut self, action: Action) {
+        log::info!("Action {action:?}");
+        let origin = self.camera.position.to_array();
+        let direction = self.camera.forward().to_array();
         match action {
+            Action::Flight => {
+                if self.flying && !self.physics.teleport(origin) {
+                    self.status = "Move into open space before walking".into();
+                    return;
+                }
+                self.flying = !self.flying;
+                self.jump_held = false;
+                self.status = if self.flying {
+                    "Flight enabled"
+                } else {
+                    "Walking enabled: jump to climb"
+                }
+                .into();
+                self.dirty = true;
+            }
+            Action::Home => {
+                self.physics.release();
+                let mut home = Camera::default();
+                self.world.stream_around(home.position.to_array());
+                self.physics.sync_world(&self.world);
+                let mut placed = false;
+                for height in (10..=70).step_by(2) {
+                    home.position.y = height as f32;
+                    if self.physics.teleport(home.position.to_array()) {
+                        placed = true;
+                        break;
+                    }
+                }
+                if placed {
+                    self.camera = home;
+                    self.status = "Returned home".into();
+                } else {
+                    self.world.stream_around(origin);
+                    self.physics.sync_world(&self.world);
+                    self.status = "Home obstructed: move into open space".into();
+                }
+                self.dirty = true;
+            }
+            Action::ResetObjects => {
+                let mut snapshot = self.physics.snapshot();
+                snapshot.bodies.clear();
+                if let Err(error) = self.physics.restore(&snapshot) {
+                    self.status = format!("RESET FAILED: {error}");
+                    return;
+                }
+                // Demo terrain may be evicted when resetting far from home.
+                let mut demo_world = self.world.clone();
+                demo_world.stream_around(Camera::default().position.to_array());
+                self.physics.spawn_demo(&demo_world);
+                self.dirty = true;
+                self.save();
+                self.status = "Objects reset at home".into();
+            }
+            Action::Grab => {
+                self.status = if self
+                    .physics
+                    .grab(&self.world, origin, direction, EDIT_RANGE)
+                {
+                    "Grab changed: aim to carry, THROW to launch"
+                } else {
+                    "Aim at a nearby wooden physics object"
+                }
+                .into();
+                self.dirty = true;
+            }
+            Action::Throw => {
+                self.status = if self.physics.throw(direction) {
+                    "Object thrown"
+                } else {
+                    "GRAB an object first"
+                }
+                .into();
+                self.dirty = true;
+            }
+            Action::Break => {
+                self.status = if self
+                    .physics
+                    .break_body(&self.world, origin, direction, EDIT_RANGE)
+                {
+                    "Object fractured into physical voxels"
+                } else {
+                    "Aim at an unbroken physics object"
+                }
+                .into();
+                self.dirty = true;
+            }
             Action::Save => self.save(),
             Action::Swap => {
                 self.controls.swapped = !self.controls.swapped;
@@ -152,7 +360,10 @@ impl Explorer {
                             hit.cell[2] + hit.normal[2],
                         ]
                     };
-                    if target.iter().any(|v| !(-64..64).contains(v)) {
+                    if target[0].abs() >= 256
+                        || target[2].abs() >= 256
+                        || !(-16..32).contains(&target[1])
+                    {
                         self.status = "Edit outside sample bounds".into();
                         return;
                     }
@@ -161,9 +372,19 @@ impl Explorer {
                         self.status = "Placement needs an empty adjacent cell".into();
                         return;
                     }
+                    if action == Action::Place
+                        && !self.flying
+                        && self.physics.intersects_character_cell(target)
+                    {
+                        self.status = "Move away before placing here".into();
+                        return;
+                    }
                     if self.world.set(target, material) {
+                        self.physics.sync_world(&self.world);
                         self.dirty = true;
                         self.save();
+                    } else {
+                        self.status = "Edit rejected: world/save limit reached".into();
                     }
                 } else {
                     self.status = "Aim at a voxel within 12 units".into();
@@ -175,7 +396,7 @@ impl Explorer {
     // This does not emulate Android surface callbacks or establish device compatibility.
     fn exercise(&mut self, event_loop: &ActiveEventLoop) {
         let result: Result<(), String> = match self.smoke_stage {
-            0 if self.frames >= 2 => self.exercise_edits(),
+            0 if self.frames >= 2 => self.exercise_edits().and_then(|()| self.exercise_objects()),
             1 if self.frames >= 4 => {
                 if let Some(window) = &self.window {
                     let _ = window.request_inner_size(winit::dpi::LogicalSize::new(1100, 700));
@@ -246,6 +467,40 @@ impl Explorer {
         );
         Ok(())
     }
+    fn exercise_objects(&mut self) -> Result<(), String> {
+        let snapshot = self.physics.snapshot();
+        let body = snapshot.bodies.first().ok_or("No demo objects")?;
+        let previous_camera = std::mem::take(&mut self.camera);
+        self.camera.position = Vec3::from_array(body.position) + Vec3::Y * 6.;
+        self.camera.yaw = 0.;
+        self.camera.pitch = -1.5;
+        self.action(Action::Grab);
+        if !self.physics.held() {
+            return Err("Object grab failed".into());
+        }
+        self.action(Action::Throw);
+        if self.physics.held() {
+            return Err("Object throw failed".into());
+        }
+        self.action(Action::Break);
+        self.camera = previous_camera;
+        if self.physics.body_count() <= snapshot.bodies.len() {
+            return Err("Object fracture failed".into());
+        }
+        self.save();
+        let loaded = World::load(&self.save_path).map_err(|e| e.to_string())?;
+        let session: Session =
+            serde_json::from_value(loaded.attachment().ok_or("Missing session")?.clone())
+                .map_err(|e| e.to_string())?;
+        if session.physics.bodies.len() != self.physics.body_count() {
+            return Err("Object snapshot did not round trip".into());
+        }
+        eprintln!(
+            "SMOKE EXERCISE: grab/throw/fracture and atomic object save passed; {} bodies",
+            self.physics.body_count()
+        );
+        Ok(())
+    }
     fn point(&self, x: f64, y: f64) -> Vec2 {
         let size = self
             .window
@@ -264,11 +519,20 @@ impl Explorer {
         let accent = [0.52, 0.94, 0.72, 1.];
         let panel = [0.025, 0.055, 0.075, 0.87];
         hud.rect([16., 16., 687., 131.], panel);
-        hud.text(30., 30., "MATTERWEAVE / VOXEL EXPLORER", 2., white);
+        hud.text(30., 30., "MATTERWEAVE 0.2 / PHYSICS EXPLORER", 2., white);
         hud.text(
             30.,
             55.,
-            "NATIVE BASELINE - FLY CAMERA - NO PHYSICS",
+            &format!(
+                "{} | {} BODIES | {}",
+                if self.flying { "FLIGHT" } else { "WALK + JUMP" },
+                self.physics.body_count(),
+                if self.physics.held() {
+                    "CARRYING"
+                } else {
+                    "GRAB / THROW / BREAK"
+                }
+            ),
             1.25,
             accent,
         );
@@ -302,11 +566,12 @@ impl Explorer {
                 30.,
                 111.,
                 &format!(
-                    "{}X{} | MESH {} KIB | {}",
+                    "{}X{} | MESH {} KIB | VISIBLE {}/{}",
                     size.width,
                     size.height,
                     r.mesh_bytes / 1024,
-                    r.capabilities
+                    r.visible_chunks,
+                    r.resident_chunks
                 )
                 .chars()
                 .take(65)
@@ -333,10 +598,24 @@ impl Explorer {
             self.camera.forward().to_array(),
             EDIT_RANGE,
         );
-        let cross = if hit.is_some() { accent } else { white };
+        let object_target = self.physics.has_target(
+            &self.world,
+            self.camera.position.to_array(),
+            self.camera.forward().to_array(),
+            EDIT_RANGE,
+        );
+        let cross = if object_target {
+            [1., 0.72, 0.38, 1.]
+        } else if hit.is_some() {
+            accent
+        } else {
+            white
+        };
         hud.rect([491., 299., 18., 2.], cross);
         hud.rect([499., 291., 2., 18.], cross);
-        if let Some(hit) = hit {
+        if object_target {
+            hud.text(402., 324., "OBJECT / GRAB OR BREAK", 1., cross);
+        } else if let Some(hit) = hit {
             hud.text(
                 420.,
                 324.,
@@ -371,15 +650,21 @@ impl Explorer {
             .controls
             .elevation_zones()
             .into_iter()
-            .zip(["UP", "DOWN"])
+            .zip(if self.flying {
+                ["UP", "DOWN"]
+            } else {
+                ["JUMP", ""]
+            })
         {
-            hud.rect(rect, panel);
-            hud.text(rect[0] + 10., rect[1] + 18., label, 1.25, white);
+            if !label.is_empty() {
+                hud.rect(rect, panel);
+                hud.text(rect[0] + 10., rect[1] + 18., label, 1.25, white);
+            }
         }
-        hud.rect([280., 460., 440., 45.], panel);
+        hud.rect([280., 400., 440., 42.], panel);
         hud.text(
             293.,
-            470.,
+            410.,
             &self.status.chars().take(52).collect::<String>(),
             1.,
             if self.status.contains("FAILED") {
@@ -390,8 +675,8 @@ impl Explorer {
         );
         hud.text(
             293.,
-            486.,
-            "EDITS AUTOSAVE / SAVE FOR EXPLICIT RETRY",
+            426.,
+            "WOODEN STRUCTURE AHEAD / HOME RETURNS TO START",
             1.,
             muted,
         );
@@ -399,11 +684,31 @@ impl Explorer {
         hud.text(
             265.,
             588.,
-            "WASD MOVE | SPACE/SHIFT HEIGHT | RMB LOOK | LMB REMOVE | E PLACE",
+            "WASD | SPACE JUMP | RMB LOOK | E PLACE | G GRAB | T THROW | B BREAK | F FLY",
             1.,
             white,
         );
         hud
+    }
+    fn sync_render_meshes(&mut self) -> Result<(), String> {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Ok(());
+        };
+        let begin = Instant::now();
+        let keys = self.world.chunk_keys();
+        renderer.retain_chunks(&keys)?;
+        let mut changed = false;
+        for key in keys {
+            if renderer.chunk_revision(key) != self.world.chunk_revision(key) {
+                renderer.upload_chunk(key, &self.world.mesh_chunk(key))?;
+                changed = true;
+            }
+        }
+        if changed {
+            self.mesh_ms = begin.elapsed().as_secs_f64() * 1000.;
+        }
+        renderer.upload_dynamic(&self.physics.dynamic_mesh())?;
+        Ok(())
     }
     // Xvfb without a window manager need not grant focus. Explicit host smoke
     // runs still request real presented frames; renderer absence/zero size remain gates.
@@ -430,19 +735,44 @@ impl Explorer {
             self.frame_ms * 0.9 + f64::from(dt) * 100.
         };
         let (motion, look) = self.controls.consume();
-        self.camera.update(motion, look, dt);
-        let renderer = self.renderer.as_mut().unwrap();
-        if renderer.mesh_revision != Some(self.world.revision()) {
-            let begin = Instant::now();
-            let mesh = self.world.mesh();
-            if let Err(error) = renderer.upload(&mesh) {
-                log::error!("Mesh upload failed: {error}");
-                eprintln!("Mesh upload failed: {error}");
-                self.failed = true;
-                event_loop.exit();
-                return;
-            }
-            self.mesh_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.camera
+            .update(if self.flying { motion } else { Vec3::ZERO }, look, dt);
+        if self.world.stream_around(self.camera.position.to_array()) {
+            self.physics.sync_world(&self.world);
+        }
+        let horizontal = (Vec3::new(-self.camera.yaw.cos(), 0., self.camera.yaw.sin()) * motion.x
+            + Vec3::new(self.camera.yaw.sin(), 0., self.camera.yaw.cos()) * motion.z)
+            .clamp_length_max(1.)
+            * 6.;
+        let jumping = motion.y > 0.;
+        self.physics.update_grab(
+            self.camera.position.to_array(),
+            self.camera.forward().to_array(),
+        );
+        if self.flying {
+            self.physics.set_flying_eye(self.camera.position.to_array());
+            self.physics.step_objects(dt);
+        } else {
+            self.physics
+                .step(dt, horizontal.to_array(), jumping && !self.jump_held);
+            self.camera.position = Vec3::from_array(self.physics.character_eye());
+        }
+        if !self.flying && self.camera.position.y < -14. {
+            self.action(Action::Home);
+        }
+        self.jump_held = jumping;
+        self.dirty = true;
+        self.autosave_elapsed += dt.min(0.1);
+        if self.autosave_elapsed >= 15. {
+            self.save();
+            self.autosave_elapsed = 0.;
+        }
+        if let Err(error) = self.sync_render_meshes() {
+            log::error!("Mesh upload failed: {error}");
+            eprintln!("Mesh upload failed: {error}");
+            self.failed = true;
+            event_loop.exit();
+            return;
         }
         let hud = self.hud();
         let matrix = self
@@ -465,6 +795,11 @@ impl Explorer {
             }
             FrameResult::Presented => {
                 self.frames += 1;
+                if self.frames.is_multiple_of(300) {
+                    log::info!("FRAME {} interval_ms {:.2} main_ms {:.2} mesh_ms {:.2} eye {:?} grounded {} bodies {} chunks {}",
+                        self.frames, self.frame_ms, self.cpu_ms, self.mesh_ms,
+                        self.camera.position.to_array(), self.physics.grounded(), self.physics.body_count(), self.world.stats().chunks);
+                }
             }
             FrameResult::Retry => {}
             FrameResult::OutOfMemory => {
@@ -494,7 +829,9 @@ impl ApplicationHandler for Explorer {
         if self.renderer.is_some() {
             return;
         }
+        log::info!("Lifecycle resumed");
         self.controls.clear();
+        self.jump_held = false;
         self.last_frame = Instant::now();
         self.focused = true;
         let window = match event_loop.create_window(
@@ -527,6 +864,9 @@ impl ApplicationHandler for Explorer {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        log::info!("Lifecycle suspended");
+        self.physics.release();
+        self.jump_held = false;
         self.controls.clear();
         self.focused = false;
         if self.dirty {
@@ -571,6 +911,8 @@ impl ApplicationHandler for Explorer {
                 self.focused = focused;
                 self.last_frame = Instant::now();
                 if !focused {
+                    self.physics.release();
+                    self.jump_held = false;
                     self.controls.clear();
                     if self.dirty {
                         self.save();
@@ -584,6 +926,12 @@ impl ApplicationHandler for Explorer {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed
+                    && event.logical_key == Key::Named(NamedKey::BrowserBack)
+                {
+                    event_loop.exit();
+                    return;
+                }
                 if let PhysicalKey::Code(key) = event.physical_key {
                     if event.state == ElementState::Pressed {
                         self.controls.keys.insert(key);
@@ -595,6 +943,12 @@ impl ApplicationHandler for Explorer {
                                 KeyCode::F5 => self.action(Action::Save),
                                 KeyCode::KeyH => self.action(Action::Swap),
                                 KeyCode::KeyJ => self.action(Action::Size),
+                                KeyCode::KeyG => self.action(Action::Grab),
+                                KeyCode::KeyT => self.action(Action::Throw),
+                                KeyCode::KeyB => self.action(Action::Break),
+                                KeyCode::KeyF => self.action(Action::Flight),
+                                KeyCode::Home => self.action(Action::Home),
+                                KeyCode::F6 => self.action(Action::ResetObjects),
                                 _ => {}
                             }
                         }
@@ -684,7 +1038,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\nWASD move; Space/Shift height; right-drag look; left remove; E place; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -749,6 +1103,9 @@ mod tests {
         let mut app = Explorer::new(path, None);
         app.world = World::new(SEED);
         app.world.set([0, 0, 0], 3);
+        app.physics = Physics::new(&app.world);
+        app.flying = true;
+        app.dirty = false;
         app.camera.position = glam::Vec3::new(0.5, 0.5, 3.5);
         app.camera.yaw = std::f32::consts::PI;
         app.camera.pitch = 0.;
@@ -843,5 +1200,58 @@ mod tests {
         app.smoke_frames = None;
         app.focused = true;
         assert!(app.wants_frames());
+    }
+    #[test]
+    fn physics_actions_and_combined_session_survive_restart() {
+        let path = fixture().save_path;
+        let mut app = Explorer::new(path.clone(), None);
+        app.exercise_objects().unwrap();
+        app.controls.swapped = true;
+        app.flying = true;
+        app.physics.set_flying_eye([70., 20., -40.]);
+        app.camera.position = Vec3::from_array(app.physics.character_eye());
+        app.camera.yaw = 0.75;
+        app.world.stream_around(app.camera.position.to_array());
+        app.save();
+        let restarted = Explorer::new(path.clone(), None);
+        assert!(restarted.flying && restarted.controls.swapped);
+        assert_eq!(restarted.camera.position, app.camera.position);
+        assert_eq!(restarted.camera.yaw, 0.75);
+        assert_eq!(restarted.physics.snapshot(), app.physics.snapshot());
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn invalid_session_is_retained_and_latest_recovery_reopens() {
+        let path = fixture().save_path;
+        World::generate(SEED)
+            .save_with_attachment(&path, Some(serde_json::json!({"invalid": true})))
+            .unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let mut app = Explorer::new(path.clone(), None);
+        assert!(app.recovery);
+        assert_ne!(app.save_path, path);
+        app.world.set([0, 25, 0], 7);
+        app.save();
+        let restarted = Explorer::new(path.clone(), None);
+        assert_eq!(restarted.save_path, app.save_path);
+        assert_eq!(restarted.world.get([0, 25, 0]), 7);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(app.save_path).unwrap();
+    }
+    #[test]
+    fn home_finds_clear_spawn_and_blocked_flight_switch_stays_in_flight() {
+        let mut app = fixture();
+        let home = Camera::default();
+        app.world
+            .set(home.position.floor().to_array().map(|v| v as i32), 3);
+        app.physics.sync_world(&app.world);
+        app.camera.position = home.position;
+        app.action(Action::Flight);
+        assert!(app.flying);
+        app.action(Action::Home);
+        assert_eq!(app.camera.position.x, home.position.x);
+        assert!(app.camera.position.y > home.position.y);
+        assert_eq!(app.physics.character_eye(), app.camera.position.to_array());
     }
 }

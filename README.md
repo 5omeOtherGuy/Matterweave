@@ -2,27 +2,27 @@
 
 **A modular native Android voxel engine and game framework, built primarily in Rust.**
 
-The first MVP implements an editable procedural voxel world, direct Vulkan rendering
-through ash, touch exploration and private save/load. It is a foundation for the
-larger engine: dynamic indirect lighting, automatic fine-detail selection, complex
-physics and multiple game samples remain planned milestones.
+[v0.2](docs/V0.2.md) adds walking, jumping, movable and breakable voxel objects,
+a larger streamed world, and cached greedy chunk rendering through ash/Vulkan.
+The Android APK has been tested on a OnePlus 13 running LineageOS 23.2/Android 16.
 
 ## Current implementation
 
-- **Core:** sparse 16³ voxel chunks, material queries, revisions, deterministic
-  terrain, reference ray queries, surface extraction and bounded atomic snapshots.
-- **Renderer:** ash/Vulkan 1.1, direct light, ambient shading, fog, depth and a
-  diagnostic HUD. Vulkan resources and platform handles stay outside world data.
-- **Explorer:** Android NativeActivity, simultaneous touch move/look/edit, free
-  flight, adjustable movement layout, autosave and corrupt-save recovery.
-- **Delivery:** pinned Cargo/NDK/Gradle build, ARM64 debug APK, host tests,
-  native Vulkan smoke exercise and APK signing/page-alignment verification.
+- **Core:** sparse 16³ chunks, deterministic terrain, exact voxel/ray queries,
+  local revisions, greedy/reference meshes and bounded persistent streaming.
+- **Physics:** Rapier fixed-step character, editable collision, voxel rigid bodies,
+  spring grabbing, throwing, bounded fracture and validated snapshots.
+- **Renderer:** ash/Vulkan 1.1 chunk caching/culling, dynamic objects, direct light,
+  ambient shading, fog, depth and a diagnostic HUD.
+- **Explorer:** native Android touch controls, walk/flight, terrain editing,
+  resettable physics demonstration and atomic world/object/camera saves.
+- **Delivery:** pinned Rust/NDK/Gradle builds, ARM64 development APK, host and
+  physical-device evidence, Vulkan validation and signing/page-alignment checks.
 
-The APK has been built and inspected locally. Shared native behavior has been
-exercised on host software Vulkan; **physical Android behavior and mobile
-performance are not yet verified**. See [STATUS](docs/STATUS.md) for exact evidence,
-limitations and next steps. Android remains the product platform; the desktop
-executable supports development and testing.
+See [STATUS](docs/STATUS.md) for exact evidence and limitations. Full mobile
+ray/mesh/hybrid comparisons, automatic fine-detail LOD, indirect lighting,
+reflections and multiple game samples remain planned milestones. Android is the
+product platform; the desktop executable supports development and testing.
 
 ## Build and run
 
