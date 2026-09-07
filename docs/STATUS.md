@@ -39,14 +39,18 @@ See [the evidence report](evidence/2026-09-07-mvp.md) and
 | `android/gradlew -p android :app:assembleDebug --no-daemon` | PASS, including subsequent normal checksum-enforced build. |
 | APK signing / manifest / ARM64 exports | PASS: v2 debug signature, API 28/35, ARM64, NativeActivity entry exports and expected Android system dependencies. |
 | ELF/ZIP page alignment + official zipalign | PASS: packaged library LOAD segments and uncompressed ZIP entry aligned to 16384 bytes. |
-| Fresh-checkout packaging | Final isolated rebuild pending in this implementation commit; follow-up report will record its result. |
+| Fresh-checkout packaging | PASS at `2cd6435`: detached checkout, empty Cargo build directory; all 33 Gradle tasks executed. APK hash matches the working-checkout build. |
 | Documentation integrity | PASS; rerun after each final documentation update. |
 | Physical Android, emulator, thermal/GPU benchmarks | NOT RUN: no available device/emulator. No mobile timing claims. |
 | GitHub Actions | Workflow definitions added; remote CI not executed during local development. |
 
 Build artifact: `android/app/build/outputs/apk/debug/app-debug.apk` (ignored in Git).
-The final handoff supplies a convenient local copy and checksum; CI retains its
-own APK artifact after a workflow run. Screenshot is at `artifacts/matterweave-host.png`.
+Local deliverable: `artifacts/matterweave-arm64-debug.apk` (2.6 MB), with adjacent
+`.sha256` file. [Artifact manifest](evidence/2026-09-07-apk.json) records exact hash,
+size and source revision. CI retains its own artifact after a workflow run.
+[Host screenshot](evidence/2026-09-07-host.png) is supporting visual evidence.
+The isolated verification checkout and generated target were removed after use;
+shared SDK/dependency caches and the active checkout build target were preserved.
 
 ## Decisions and boundaries
 
