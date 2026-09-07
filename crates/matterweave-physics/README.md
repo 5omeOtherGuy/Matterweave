@@ -84,3 +84,10 @@ fracture, articulated voxel creatures, fluids, soft bodies, or mobile thermal an
 large-body-count efficiency. Host behavioral tests establish correctness of these
 bounded scenarios; APK operation and sustained device measurements belong in the
 repository's release evidence.
+
+
+v0.3 also gates dynamic-body activation against columns from the published collision
+window, including resident air. A conservative rotation-independent radius and one
+bounded-speed fixed step supplement the40m activity radius. This preserves nearby
+objects when async terrain preparation lags behind the camera; the delayed-window
+regression verifies frozen objects resume after synchronous collision publication.
