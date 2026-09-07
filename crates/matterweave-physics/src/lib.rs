@@ -6,6 +6,12 @@ use std::collections::BTreeMap;
 
 pub const FIXED_DT: f32 = 1.0 / 60.0;
 pub const MAX_BODIES: usize = 64;
+/// Largest voxel count along one body axis. The v0.3 playground beam is
+/// 3x1x1 m, i.e. [6, 2, 2] half-meter voxels.
+pub const MAX_VOXEL_DIM: u8 = 6;
+/// Largest voxel count per body. Earlier [1, 2]-only snapshots satisfy this,
+/// so persisted saves restore without a format bump.
+pub const MAX_VOXELS_PER_BODY: usize = 32;
 const EYE_OFFSET: f32 = 0.65;
 const HALF_SEGMENT: f32 = 0.55;
 const RADIUS: f32 = 0.30;
@@ -20,6 +26,8 @@ pub struct BodySnapshot {
     pub velocity: [f32; 3],
     pub angular_velocity: [f32; 3],
     /// Solid rectangular voxel volume. Fracture preserves each half-meter voxel.
+    /// Each axis holds 1..=MAX_VOXEL_DIM voxels with at most MAX_VOXELS_PER_BODY
+    /// voxels per body; see valid_dimensions.
     pub dimensions: [u8; 3],
     pub material: u8,
 }
@@ -377,6 +385,95 @@ impl Physics {
             }
         }
     }
+    /// Spawns the v0.3 breakable arch playground near the home camera: two
+    /// pillars of two 1 m cubes, one bridging 3x1x1 m beam ([6, 2, 2] voxels)
+    /// and one loose 1 m cube. Pillars and beam are wood (8); the loose cube
+    /// is accent (7). The 64 voxels total mean every body can fully fracture
+    /// without exceeding MAX_BODIES. Spawns only when empty and returns true
+    /// when the arch was placed. Pillar columns sit on probed terrain in front
+    /// of the home camera (near z16..19 for the v0.3 scene); the closest
+    /// candidate pair with equal ground is used, so the beam rests supported
+    /// on both pillars with 0.5 m overlap each side. Columns occupied by the
+    /// spawn_demo stack are skipped. Leaves spawn_demo behavior unchanged.
+    pub fn spawn_playground(&mut self, world: &World) -> bool {
+        if !self.objects.is_empty() {
+            return false;
+        }
+        // Highest solid cell top per column; integer math keeps level checks exact.
+        let ground = |x: i32, z: i32| {
+            (-16..48)
+                .rev()
+                .find(|&y| world.get([x, y, z]) != 0)
+                .map_or(0, |y| y + 1)
+        };
+        // Candidate pillar pairs in front of the home camera, closest to the
+        // v0.3 scene anchor first; the beam needs both pillar tops at the same
+        // height to rest supported. Demo-occupied columns are skipped so the
+        // arch never intersects the spawn_demo stack.
+        const DEMO: [[i32; 2]; 5] = [[9, 17], [10, 17], [11, 17], [14, 20], [15, 18]];
+        let mut candidates: Vec<(i32, i32)> = Vec::new();
+        for z in 15..=20 {
+            for x0 in 5..=15 {
+                candidates.push((x0, z));
+            }
+        }
+        candidates.sort_by_key(|&(x0, z)| ((x0 - 10).abs() + (z - 19).abs(), z, x0));
+        let mut site: Option<(i32, i32, i32, i32)> = None;
+        for (x0, z) in candidates {
+            if DEMO.contains(&[x0, z]) || DEMO.contains(&[x0 + 3, z]) {
+                continue;
+            }
+            let (left, right) = (ground(x0, z), ground(x0 + 3, z));
+            let replace = match site {
+                None => true,
+                Some((_, _, a, b)) => (left - right).abs() < (a - b).abs(),
+            };
+            if replace {
+                site = Some((x0, z, left, right));
+            }
+            if (left - right).abs() == 0 {
+                break;
+            }
+        }
+        let Some((x0, z, left, right)) = site else {
+            return false;
+        };
+        let top = left.max(right) as f32;
+        for (x, column) in [(x0, left as f32), (x0 + 3, right as f32)] {
+            for level in 0..2 {
+                self.insert_body(&BodySnapshot {
+                    position: [
+                        x as f32 + 0.5,
+                        column + 0.52 + level as f32 * 1.02,
+                        z as f32 + 0.5,
+                    ],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    velocity: [0.0; 3],
+                    angular_velocity: [0.0; 3],
+                    dimensions: [2; 3],
+                    material: 8,
+                });
+            }
+        }
+        self.insert_body(&BodySnapshot {
+            position: [x0 as f32 + 2.0, top + 2.56, z as f32 + 0.5],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            velocity: [0.0; 3],
+            angular_velocity: [0.0; 3],
+            dimensions: [6, 2, 2],
+            material: 8,
+        });
+        let loose = ground(x0 + 1, z + 2) as f32;
+        self.insert_body(&BodySnapshot {
+            position: [x0 as f32 + 1.5, loose + 0.52, z as f32 + 2.5],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            velocity: [0.0; 3],
+            angular_velocity: [0.0; 3],
+            dimensions: [2; 3],
+            material: 7,
+        });
+        true
+    }
     fn insert_body(&mut self, snapshot: &BodySnapshot) {
         let pose = Pose::from_parts(
             Vector::from_array(snapshot.position),
@@ -502,6 +599,10 @@ impl Physics {
     }
     /// Splits a solid voxel volume into physical half-meter voxels, preserving mass and
     /// each voxel's center/rotation. Refuses the operation if the body cap would be exceeded.
+    /// Piece offsets, velocities and cuboid masses derive from the stored dimensions, so
+    /// collision (insert_body) and rendering (append_box) agree for any validated size.
+    /// Voxel counts are bounded by MAX_VOXELS_PER_BODY, far below overflow, and the cap
+    /// check runs before any mutation, so refusal is atomic.
     pub fn break_body(
         &mut self,
         world: &World,
@@ -603,7 +704,7 @@ impl Physics {
                 || !valid_vector(body.angular_velocity, 128.0)
                 || !body.rotation.iter().all(|v| v.is_finite())
                 || (norm - 1.0).abs() > 0.01
-                || body.dimensions.iter().any(|&n| !(1..=2).contains(&n))
+                || !valid_dimensions(body.dimensions)
                 || body.material == 0
             {
                 return Err("invalid voxel body snapshot".into());
@@ -634,7 +735,8 @@ impl Physics {
         self.jump_pending = false;
         Ok(())
     }
-    /// Interpolated, world-space mesh for bounded small dynamic objects.
+    /// Interpolated, world-space mesh for bounded dynamic voxel objects. Box extents
+    /// derive from the same stored dimensions as collision, so changed-size bodies agree.
     pub fn dynamic_mesh(&self) -> Mesh {
         let mut mesh = Mesh {
             revision: self.mesh_revision,
@@ -651,6 +753,10 @@ impl Physics {
         }
         mesh
     }
+}
+fn valid_dimensions(dimensions: [u8; 3]) -> bool {
+    dimensions.iter().all(|&n| (1..=MAX_VOXEL_DIM).contains(&n))
+        && dimensions.iter().map(|&n| n as usize).product::<usize>() <= MAX_VOXELS_PER_BODY
 }
 fn valid_vector(v: [f32; 3], bound: f32) -> bool {
     v.iter().all(|x| x.is_finite() && x.abs() <= bound)

@@ -2,9 +2,11 @@ use matterweave_core::World;
 use matterweave_physics::{BodySnapshot, Physics, PhysicsSnapshot, FIXED_DT, MAX_BODIES};
 
 fn floor() -> World {
+    // Covers the full generated-world extent so the playground arch site near
+    // the home camera rests on terrain in tests as it does in the real world.
     let mut world = World::new(5);
-    for x in -20..20 {
-        for z in -20..20 {
+    for x in -32..32 {
+        for z in -32..32 {
             world.set([x, 0, z], 3);
         }
     }
@@ -276,4 +278,181 @@ fn full_body_budget_stack_remains_finite_and_supported() {
     assert_eq!(snapshot.bodies.len(), MAX_BODIES);
     assert!(snapshot.bodies.iter().all(|body| body.position[1] > 1.0));
     physics.restore(&snapshot).unwrap();
+}
+
+fn voxels(dimensions: [u8; 3]) -> usize {
+    dimensions.iter().map(|&n| n as usize).product()
+}
+
+#[test]
+fn playground_spawns_arch_once_and_preserves_demo() {
+    let world = floor();
+    let mut physics = Physics::new(&world);
+    assert!(physics.spawn_playground(&world));
+    assert_eq!(physics.body_count(), 6);
+    let snapshot = physics.snapshot();
+    let mut cubes = 0;
+    let mut beams = 0;
+    let mut accent = 0;
+    let mut total = 0;
+    for body in &snapshot.bodies {
+        total += voxels(body.dimensions);
+        match (body.dimensions, body.material) {
+            ([2, 2, 2], 8) => cubes += 1,
+            ([6, 2, 2], 8) => beams += 1,
+            ([2, 2, 2], 7) => accent += 1,
+            unexpected => panic!("unexpected playground body {unexpected:?}"),
+        }
+    }
+    assert_eq!((cubes, beams, accent), (4, 1, 1));
+    assert_eq!(total, MAX_BODIES);
+    // Spawns only when empty; the demo stays backward compatible.
+    assert!(!physics.spawn_playground(&world));
+    assert_eq!(physics.snapshot(), snapshot);
+    physics.spawn_demo(&world);
+    assert_eq!(physics.body_count(), 6);
+    let mut fresh = Physics::new(&world);
+    fresh.spawn_demo(&world);
+    assert!(fresh.body_count() > 0);
+    assert!(!fresh.spawn_playground(&world));
+}
+
+#[test]
+fn playground_arch_settles_supported_on_flat_floor() {
+    let world = floor();
+    let mut physics = Physics::new(&world);
+    assert!(physics.spawn_playground(&world));
+    for _ in 0..600 {
+        physics.step_objects(FIXED_DT);
+    }
+    let snapshot = physics.snapshot();
+    assert_eq!(snapshot.bodies.len(), 6);
+    let beam = snapshot
+        .bodies
+        .iter()
+        .find(|body| body.dimensions == [6, 2, 2])
+        .unwrap();
+    // Flat floor top is y=1: pillars rest near 1.52/2.54, the beam near 3.56,
+    // centered at the scene anchor (12.0, 19.5) in front of the home camera.
+    assert!((beam.position[0] - 12.0).abs() < 0.35, "{beam:?}");
+    assert!((beam.position[2] - 19.5).abs() < 0.35, "{beam:?}");
+    assert!(beam.position[1] > 3.1 && beam.position[1] < 4.0, "{beam:?}");
+    for body in &snapshot.bodies {
+        assert!(body.position[1] > 1.1, "{body:?}");
+    }
+}
+
+#[test]
+fn playground_fully_fractures_to_body_budget() {
+    let world = floor();
+    let mut physics = Physics::new(&world);
+    assert!(physics.spawn_playground(&world));
+    // Largest first via the public ray API. Horizontal rays at each target's
+    // own height keep the aimed body nearest without mirroring internals:
+    // outer-side origins avoid starting inside a neighboring body.
+    let mut breaks = 0;
+    for _ in 0..16 {
+        let snapshot = physics.snapshot();
+        if snapshot.bodies.iter().all(|body| body.dimensions == [1; 3]) {
+            break;
+        }
+        let target = snapshot
+            .bodies
+            .iter()
+            .filter(|body| body.dimensions != [1; 3])
+            .max_by_key(|body| voxels(body.dimensions))
+            .unwrap()
+            .clone();
+        let side = if target.position[0] < 12.0 { -3.0 } else { 3.0 };
+        let origin = [
+            target.position[0] + side,
+            target.position[1],
+            target.position[2],
+        ];
+        let direction = if side < 0.0 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [-1.0, 0.0, 0.0]
+        };
+        assert!(
+            physics.break_body(&world, origin, direction, 8.0),
+            "valid split refused at {:?}",
+            target.position
+        );
+        breaks += 1;
+    }
+    assert_eq!(breaks, 6);
+    let snapshot = physics.snapshot();
+    assert_eq!(snapshot.bodies.len(), MAX_BODIES);
+    assert!(snapshot.bodies.iter().all(|body| body.dimensions == [1; 3]));
+}
+
+#[test]
+fn playground_partial_fracture_roundtrips_through_serde() {
+    let world = floor();
+    let mut physics = Physics::new(&world);
+    assert!(physics.spawn_playground(&world));
+    let beam = physics
+        .snapshot()
+        .bodies
+        .iter()
+        .find(|body| body.dimensions == [6, 2, 2])
+        .unwrap()
+        .clone();
+    let origin = [beam.position[0] - 3.0, beam.position[1], beam.position[2]];
+    assert!(physics.break_body(&world, origin, [1.0, 0.0, 0.0], 8.0));
+    let fractured = physics.snapshot();
+    assert_eq!(fractured.bodies.len(), 6 - 1 + 24);
+    assert_eq!(
+        fractured
+            .bodies
+            .iter()
+            .map(|body| voxels(body.dimensions))
+            .sum::<usize>(),
+        MAX_BODIES
+    );
+    assert_eq!(
+        fractured
+            .bodies
+            .iter()
+            .filter(|body| body.dimensions == [1; 3] && body.material == 8)
+            .count(),
+        24
+    );
+    let json = serde_json::to_string(&fractured).unwrap();
+    let decoded: PhysicsSnapshot = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, fractured);
+    physics.restore(&decoded).unwrap();
+    assert_eq!(physics.snapshot(), fractured);
+}
+
+#[test]
+fn playground_dimension_limits_reject_atomically() {
+    let world = floor();
+    let mut physics = Physics::new(&world);
+    // One breakable cube plus singles: splitting would need 65 bodies.
+    let mut bodies = vec![body([0.5, 1.6, 0.5])];
+    for index in 0..MAX_BODIES - 1 {
+        bodies.push(body([30.0 + index as f32 * 1.01, 1.6, 30.0]));
+    }
+    physics
+        .restore(&PhysicsSnapshot {
+            version: 1,
+            eye: [0.5, 4.0, 4.0],
+            bodies,
+        })
+        .unwrap();
+    let before = physics.snapshot();
+    assert!(!physics.break_body(&world, [0.5, 1.6, 3.5], [0.0, 0.0, -1.0], 8.0));
+    assert_eq!(physics.snapshot(), before);
+    for dimensions in [[7, 1, 1], [7, 2, 2], [6, 6, 6], [6, 3, 3], [0, 2, 2]] {
+        let mut invalid = before.clone();
+        invalid.bodies[0].dimensions = dimensions;
+        assert!(physics.restore(&invalid).is_err(), "{dimensions:?}");
+        assert_eq!(physics.snapshot(), before);
+    }
+    let mut beamed = before.clone();
+    beamed.bodies[0].dimensions = [6, 2, 2];
+    physics.restore(&beamed).unwrap();
+    assert_eq!(physics.snapshot().bodies[0].dimensions, [6, 2, 2]);
 }

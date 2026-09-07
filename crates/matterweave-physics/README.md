@@ -34,12 +34,21 @@ experiment for this slice. The lockfile records all transitive revisions/checksu
   Character impulses push dynamic objects. Autostep is disabled: full-meter steps
   require jumping. X/Z position stays within the finite world's ±256 m boundary.
   The application owns respawning after the character falls below the world.
-- Dynamic bodies are solid half-meter voxel volumes (each dimension 1 or 2),
+- Dynamic bodies are solid half-meter voxel volumes (each axis 1..=6 voxels,
+  at most 32 voxels per body; see MAX_VOXEL_DIM and MAX_VOXELS_PER_BODY),
   with density-derived mass and inertia and CCD enabled. A break converts the
   volume into its original voxels, carrying rotation and point velocities forward
   with a small outward fracture impulse. It is a bounded voxel split, not a
   connectivity/stress fracture solver. Up to 64 bodies are retained. A fracture
-  exceeding the cap is refused before mutation.
+  exceeding the cap is refused before mutation. Older [1, 2]-only snapshots
+  still validate, so no snapshot version bump was needed for larger bodies.
+- `spawn_playground` builds the v0.3 breakable arch in front of the home
+  camera (near z16..19 for the v0.3 scene) only when no bodies exist: two
+  pillars of two 1 m wood (8) cubes, one bridging 3x1x1 m wood beam
+  ([6, 2, 2] voxels) resting on probed equal-height terrain columns with
+  0.5 m overlap each side, and one loose 1 m accent (7) cube. Columns used by
+  the spawn_demo stack are skipped. The 64 voxels total mean every body can
+  fully fracture within the 64-body budget. `spawn_demo` is unchanged.
 - Grabbing uses a spring joint to a kinematic anchor three meters along the view;
   throwing adds a mass-scaled impulse. Terrain ray hits occlude interaction with
   bodies. Held joints are transient and released on restore or teleport; a grab
@@ -66,7 +75,9 @@ experiment for this slice. The lockfile records all transitive revisions/checksu
 Run `cargo test -p matterweave-physics` for behavioral floor/wall/jump tests,
 negative chunk boundaries and collision edits, invalid input/time bounds,
 terrain-occluded grabbing and throwing, bounded fracture, atomic snapshot
-validation, and dynamic-body preservation across terrain eviction.
+validation, dynamic-body preservation across terrain eviction, playground arch
+settling/support, full 64-piece fracture without rejected valid splits, and
+voxel-dimension limit rejection.
 
 The adapter does not claim deterministic cross-device physics, stress-driven
 fracture, articulated voxel creatures, fluids, soft bodies, or mobile thermal and
