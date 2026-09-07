@@ -30,3 +30,11 @@ M2/M4 record approach, retreat, zoom and rapid reversal captures; inspect seams,
 ## References
 
 [Epic Nanite overview](https://dev.epicgames.com/documentation/unreal-engine/nanite-virtualized-geometry-in-unreal-engine), [world data](0005-voxel-world-data.md), [benchmarks](../BENCHMARKS.md).
+
+## v0.2 bounded residency slice
+
+The [core contract](../../crates/matterweave-core/README.md) now implements a bounded
+synchronous chunk window with persistent authoritative overrides and local mesh
+revisions. This provides residency and edit correctness evidence, while automatic
+multiresolution selection, transitions and asynchronous cancellation remain open.
+Frustum culling is a draw decision and does not remove nearby collision.

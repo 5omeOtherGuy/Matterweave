@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Refresh upstream Cargo provenance from locked metadata (Python 3.11+)."""
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -18,7 +19,14 @@ for package in sorted(metadata["packages"], key=lambda item: (item["name"], item
         record["checksum"] = checksums[(package["name"], package["version"])]
         packages.append(record)
 report = {
-    "note": "All locked Cargo packages, including host, target-specific and build dependencies. No local dependency patches. Package licenses are upstream metadata, not the Matterweave project license.",
+    "note": "Locked Cargo dependencies including host/build/other-platform packages. Upstream licenses do not select a Matterweave license. Vendored patches are listed separately.",
+    "vendored": [{
+        "name": "winit", "version": "0.30.12",
+        "source": "https://crates.io/api/v1/crates/winit/0.30.12/download",
+        "upstream_archive_sha256": "c66d4b9ed69c4009f6321f762d6e61ad8a2389cd431b97cb1e146812e9e6c732",
+        "license": "Apache-2.0", "path": "vendor/winit",
+        "patch_sha256": hashlib.sha256((ROOT / "vendor/winit/MATTERWEAVE.patch").read_bytes()).hexdigest(),
+    }],
     "packages": packages,
 }
 (ROOT / "docs/dependencies.json").write_text(json.dumps(report, indent=2) + "\n")

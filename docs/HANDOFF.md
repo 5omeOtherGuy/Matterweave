@@ -8,12 +8,12 @@ Do not spend the session repeating the initial requirements interview or produci
 
 ## Current implementation entry — 2026-09-07
 
-The first M0/M1 MVP is implemented. Start from [STATUS](STATUS.md), the
+The M0/M1 MVP shipped, and v0.2 advances M2/M3; see [v0.2 scope](V0.2.md). Start from [STATUS](STATUS.md), the
 [development guide](DEVELOPMENT.md), [MVP scope](MVP.md) and
 [component record](DEPENDENCIES.md). Code is in `crates/matterweave-core`,
-`crates/matterweave-render` and `apps/explorer`; Android packaging is in `android`.
+`crates/matterweave-render`, `crates/matterweave-physics` and `apps/explorer`; Android packaging is in `android`.
 The first backend is ash/direct Vulkan. Host tests and smoke execution pass and
-an ARM64 APK is built/inspected. Physical Android validation remains outstanding.
+an ARM64 APK is built/inspected. The owner reported v0.1 working on a OnePlus 13; consult STATUS for subsequent attached-device tests.
 The remaining sections preserve the original starting context; they are not a
 request to scaffold a second app or restart completed M0/M1 work.
 

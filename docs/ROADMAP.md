@@ -1,6 +1,10 @@
 # Delivery roadmap
 
-M0/M1 now have an implemented Android MVP with host and APK evidence; physical-device subgates remain outstanding. M2–M6 have not started. Consult [STATUS](STATUS.md) for exact verification. This roadmap is an ordered delivery strategy, not an estimate or release promise. Experimental branches should converge into reusable code and recorded decisions.
+M0/M1 shipped as v0.1 and the owner reported a successful OnePlus 13 run.
+The [v0.2 slice](V0.2.md) advances M2/M3 with greedy chunk rendering, bounded terrain
+streaming and interactive physics. Full M2 comparison and M3 stress gates remain
+open; M4–M6 remain future work. Consult [STATUS](STATUS.md) for actual checks.
+This roadmap is an ordered delivery strategy, not an estimate or release promise.
 
 ## M0 — Reproducible Android foundation
 

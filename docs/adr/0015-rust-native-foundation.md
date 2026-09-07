@@ -53,3 +53,13 @@ smoke exercise verify editing, persistence, resize and renderer recreation.
 [STATUS](../STATUS.md) records the exact results and unexecuted physical-device
 gates. Engineering acceptance does not claim physical Android execution or mobile
 performance. Rendering selection beyond this reference remains ADR-0006/M2 work.
+
+## v0.2 lifecycle implementation note
+
+Attached OnePlus13 testing exposed duplicate NativeActivity initialization during
+repeat launches. The activity is now singleTask and handles logical Back explicitly.
+A narrowly [vendored winit patch](../../vendor/winit/MATTERWEAVE-PATCH.md) handles
+Destroy and sequential event-loop recreation, retaining single-live-loop exclusion.
+Three same-process Back/relaunch cycles and both landscape orientations passed;
+see [device evidence](../evidence/2026-09-07-v0.2.md). Rust/native architecture and
+the Vulkan profile remain unchanged. Store signing remains outside this prerelease.

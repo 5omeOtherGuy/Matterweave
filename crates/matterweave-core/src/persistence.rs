@@ -20,6 +20,18 @@ struct Snapshot {
     seed: u64,
     revision: u64,
     chunks: Vec<SavedChunk>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    streaming: Option<SavedStreaming>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attachment: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedStreaming {
+    extension_version: u32,
+    center: Option<[i32; 2]>,
+    empty_overrides: Vec<[i32; 3]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,22 +58,59 @@ impl World {
     /// must provide atomic rename (Android private storage does). Directory fsync after
     /// rename is best-effort; sudden power loss is outside this MVP durability guarantee.
     pub fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        if self.chunks.len() > MAX_SAVE_CHUNKS {
-            return Err(invalid("world exceeds 512-chunk save limit"));
-        }
+        self.save_with_attachment(path, self.attachment.clone())
+    }
+
+    pub fn attachment(&self) -> Option<&serde_json::Value> {
+        self.attachment.as_ref()
+    }
+
+    /// Atomically stores opaque application metadata with the same world snapshot.
+    /// The application owns metadata schema validation; the total byte cap applies.
+    pub fn save_with_attachment(
+        &self,
+        path: impl AsRef<Path>,
+        attachment: Option<serde_json::Value>,
+    ) -> io::Result<()> {
+        let mut chunks = Vec::new();
+        let streaming = if let Some(stream) = &self.streaming {
+            if stream.overrides.len() > MAX_SAVE_CHUNKS {
+                return Err(invalid("world exceeds 512-chunk override limit"));
+            }
+            let mut empty_overrides = Vec::new();
+            for (&position, chunk) in &stream.overrides {
+                if let Some(chunk) = chunk {
+                    chunks.push(SavedChunk {
+                        position,
+                        voxels: chunk.voxels.to_vec(),
+                    });
+                } else {
+                    empty_overrides.push(position);
+                }
+            }
+            Some(SavedStreaming {
+                extension_version: 1,
+                center: stream.center,
+                empty_overrides,
+            })
+        } else {
+            if self.chunks.len() > MAX_SAVE_CHUNKS {
+                return Err(invalid("world exceeds 512-chunk save limit"));
+            }
+            chunks.extend(self.chunks.iter().map(|(&position, chunk)| SavedChunk {
+                position,
+                voxels: chunk.voxels.to_vec(),
+            }));
+            None
+        };
         let snapshot = Snapshot {
             format_version: FORMAT_VERSION,
             generator_version: GENERATOR_VERSION,
             seed: self.seed,
             revision: self.revision,
-            chunks: self
-                .chunks
-                .iter()
-                .map(|(&position, chunk)| SavedChunk {
-                    position,
-                    voxels: chunk.voxels.to_vec(),
-                })
-                .collect(),
+            chunks,
+            streaming,
+            attachment,
         };
         let path = path.as_ref();
         let parent = path
@@ -125,8 +174,10 @@ impl World {
             return Err(invalid("save exceeds byte limit"));
         }
         let snapshot: Snapshot = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        if snapshot.format_version != FORMAT_VERSION
+        if !(1..=FORMAT_VERSION).contains(&snapshot.format_version)
             || snapshot.generator_version != GENERATOR_VERSION
+            || (snapshot.format_version == 1
+                && (snapshot.streaming.is_some() || snapshot.attachment.is_some()))
         {
             return Err(invalid("unsupported world or generator version"));
         }
@@ -167,6 +218,48 @@ impl World {
             }
         }
         world.revision = snapshot.revision;
+        world.chunk_revisions = world
+            .chunks
+            .keys()
+            .map(|&key| (key, world.revision))
+            .collect();
+        world.attachment = snapshot.attachment;
+        if let Some(stream) = snapshot.streaming {
+            if stream.extension_version != 1
+                || stream
+                    .center
+                    .is_some_and(|center| center.iter().any(|v| !(-16..16).contains(v)))
+                || world.chunks.len() + stream.empty_overrides.len() > MAX_SAVE_CHUNKS
+            {
+                return Err(invalid("invalid streaming metadata"));
+            }
+            world.enable_streaming();
+            for key in stream.empty_overrides {
+                if !World::contains_stream_cell(key.map(|v| v.saturating_mul(16)))
+                    || world
+                        .streaming
+                        .as_mut()
+                        .unwrap()
+                        .overrides
+                        .insert(key, None)
+                        .is_some()
+                {
+                    return Err(invalid("invalid or duplicate empty override"));
+                }
+            }
+            if let Some(center) = stream.center {
+                // Reconstruct derived residency without changing the saved revision.
+                // Saturated saves remain readonly but still reconstruct correctly.
+                world.revision = snapshot.revision.saturating_sub(1);
+                world.stream_around([center[0] as f32 * 16.0, 0.0, center[1] as f32 * 16.0]);
+                world.revision = snapshot.revision;
+                world.chunk_revisions = world
+                    .chunks
+                    .keys()
+                    .map(|&key| (key, world.revision))
+                    .collect();
+            }
+        }
         Ok(world)
     }
 }

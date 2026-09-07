@@ -1,15 +1,20 @@
 [workspace]
-members = ["crates/matterweave-core", "crates/matterweave-render", "apps/explorer"]
+members = ["crates/matterweave-core", "crates/matterweave-render", "crates/matterweave-physics", "apps/explorer"]
 resolver = "2"
+exclude = ["vendor/winit"]
+
+[patch.crates-io]
+winit = { path = "vendor/winit" }
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.96"
 publish = false
 
 [profile.dev]
 debug = 0
+opt-level = 2
 
 [profile.release]
 lto = "thin"

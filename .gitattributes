@@ -12,3 +12,5 @@ gradlew text eol=lf
 *.jpg binary
 *.glb binary
 *.jar binary
+vendor/** linguist-vendored=true
+*.patch whitespace=-blank-at-eol

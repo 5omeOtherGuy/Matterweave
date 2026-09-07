@@ -1,0 +1,7 @@
+    Blocking waiting for file lock on build directory
+   Compiling matterweave-core v0.1.0 (/home/someotherguy/Documents/ChatGPT/Matterweave/crates/matterweave-core)
+   Compiling matterweave-render v0.1.0 (/home/someotherguy/Documents/ChatGPT/Matterweave/crates/matterweave-render)
+    Finished `dev` profile [optimized] target(s) in 36.76s
+     Running `/mnt/bench/matterweave-dev/target/debug/examples/cache_smoke`
+Vulkan 1.4.318 | llvmpipe (LLVM 20.1.2, 256 bits) | driver 104865800 | vendor 10005 device 0000 | heaps 7307MiB:DEVICE_LOCAL | validation true
+cache_smoke: six frames passed; stale uploads, invalid upload retention, culling, eviction, dynamic reuse/growth/empty and teardown

@@ -1,0 +1,149 @@
+09-07 19:27:58.791 26738 26753 I Matterweave: matterweave_explorer: FRAME 2700 interval_ms 14.85 main_ms 15.68 mesh_ms 26.60 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:03.247 26738 26753 I Matterweave: matterweave_explorer: FRAME 3000 interval_ms 14.98 main_ms 15.43 mesh_ms 26.60 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:04.324 26738 26753 I Matterweave: matterweave_explorer: Saved revision 42912 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:07.670 26738 26753 I Matterweave: matterweave_explorer: FRAME 3300 interval_ms 14.82 main_ms 14.49 mesh_ms 26.60 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:11.454 26738 26753 I Matterweave: matterweave_explorer: Saved revision 42912 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:11.715 26738 26753 I Matterweave: matterweave_explorer: Lifecycle suspended
+09-07 19:28:12.001 26738 26753 I Matterweave: matterweave_explorer: Lifecycle resumed
+09-07 19:28:12.009 26738 26753 I Matterweave: matterweave_explorer: Graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+09-07 19:28:12.587 26738 26753 I Matterweave: matterweave_explorer: Saved revision 42912 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:12.596 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:12.612 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:12.889 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:12.895 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:12.895 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:12.895 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:13.792 26738 26814 I Matterweave: matterweave_explorer: Lifecycle resumed
+09-07 19:28:13.797 26738 26814 I Matterweave: matterweave_explorer: Graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+09-07 19:28:14.493 26738 26814 I Matterweave: matterweave_explorer: Saved revision 42914 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:14.772 26738 26814 I Matterweave: matterweave_explorer: Lifecycle suspended
+09-07 19:28:15.036 26738 26814 I Matterweave: matterweave_explorer: Lifecycle resumed
+09-07 19:28:15.045 26738 26814 I Matterweave: matterweave_explorer: Graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+09-07 19:28:15.618 26738 26814 I Matterweave: matterweave_explorer: Saved revision 42914 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:15.628 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:15.648 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:15.930 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:15.938 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:15.938 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:15.938 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:16.852 26738 26851 I Matterweave: matterweave_explorer: Lifecycle resumed
+09-07 19:28:16.859 26738 26851 I Matterweave: matterweave_explorer: Graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+09-07 19:28:17.548 26738 26851 I Matterweave: matterweave_explorer: Saved revision 42916 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:17.798 26738 26851 I Matterweave: matterweave_explorer: Lifecycle suspended
+09-07 19:28:18.095 26738 26851 I Matterweave: matterweave_explorer: Lifecycle resumed
+09-07 19:28:18.103 26738 26851 I Matterweave: matterweave_explorer: Graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+09-07 19:28:18.670 26738 26851 I Matterweave: matterweave_explorer: Saved revision 42916 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:18.684 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:18.697 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:18.957 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:18.976 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:18.976 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:18.976 26738 26738 E Matterweave: android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+09-07 19:28:19.877 26738 26888 I Matterweave: matterweave_explorer: Lifecycle resumed
+09-07 19:28:19.885 26738 26888 I Matterweave: matterweave_explorer: Graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+09-07 19:28:24.377 26738 26888 I Matterweave: matterweave_explorer: FRAME 300 interval_ms 14.83 main_ms 14.92 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:28.805 26738 26888 I Matterweave: matterweave_explorer: FRAME 600 interval_ms 14.86 main_ms 15.08 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:33.259 26738 26888 I Matterweave: matterweave_explorer: FRAME 900 interval_ms 14.69 main_ms 14.95 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:34.911 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42918 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:37.726 26738 26888 I Matterweave: matterweave_explorer: FRAME 1200 interval_ms 14.80 main_ms 15.08 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:42.165 26738 26888 I Matterweave: matterweave_explorer: FRAME 1500 interval_ms 14.95 main_ms 15.22 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:46.638 26738 26888 I Matterweave: matterweave_explorer: FRAME 1800 interval_ms 15.30 main_ms 16.42 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:49.921 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42918 bodies 18 eye [-8.239898, 7.9390736, -63.001644]
+09-07 19:28:51.089 26738 26888 I Matterweave: matterweave_explorer: FRAME 2100 interval_ms 14.46 main_ms 14.94 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:55.523 26738 26888 I Matterweave: matterweave_explorer: FRAME 2400 interval_ms 15.03 main_ms 15.25 mesh_ms 25.25 eye [-8.239898, 7.9390736, -63.001644] grounded false bodies 18 chunks 98
+09-07 19:28:57.845 26738 26888 I Matterweave: matterweave_explorer: Action Home
+09-07 19:28:57.942 26738 26888 I Matterweave: matterweave_explorer: Action Flight
+09-07 19:28:58.003 26738 26888 I Matterweave: matterweave_explorer: Action ResetObjects
+09-07 19:28:58.007 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 9.966667, 23.0]
+09-07 19:28:59.932 26738 26888 I Matterweave: matterweave_explorer: FRAME 2700 interval_ms 14.84 main_ms 15.42 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:04.196 26738 26888 I Matterweave: matterweave_explorer: FRAME 3000 interval_ms 13.72 main_ms 13.97 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:04.921 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:29:08.629 26738 26888 I Matterweave: matterweave_explorer: FRAME 3300 interval_ms 14.85 main_ms 15.01 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:13.012 26738 26888 I Matterweave: matterweave_explorer: FRAME 3600 interval_ms 14.75 main_ms 14.79 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:17.451 26738 26888 I Matterweave: matterweave_explorer: FRAME 3900 interval_ms 15.13 main_ms 15.20 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:19.928 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:29:21.882 26738 26888 I Matterweave: matterweave_explorer: FRAME 4200 interval_ms 14.74 main_ms 14.50 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:25.725 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:29:26.462 26738 26888 I Matterweave: matterweave_explorer: FRAME 4500 interval_ms 15.11 main_ms 14.66 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:30.843 26738 26888 I Matterweave: matterweave_explorer: FRAME 4800 interval_ms 14.80 main_ms 14.84 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:35.057 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:29:35.227 26738 26888 I Matterweave: matterweave_explorer: FRAME 5100 interval_ms 14.52 main_ms 13.82 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:39.657 26738 26888 I Matterweave: matterweave_explorer: FRAME 5400 interval_ms 14.68 main_ms 14.54 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:44.087 26738 26888 I Matterweave: matterweave_explorer: FRAME 5700 interval_ms 14.89 main_ms 13.97 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:48.531 26738 26888 I Matterweave: matterweave_explorer: FRAME 6000 interval_ms 14.67 main_ms 13.60 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:50.058 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:29:50.286 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:29:53.069 26738 26888 I Matterweave: matterweave_explorer: FRAME 6300 interval_ms 14.44 main_ms 14.98 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:29:57.496 26738 26888 I Matterweave: matterweave_explorer: FRAME 6600 interval_ms 14.79 main_ms 15.17 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:01.920 26738 26888 I Matterweave: matterweave_explorer: FRAME 6900 interval_ms 14.83 main_ms 15.16 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:05.182 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:06.357 26738 26888 I Matterweave: matterweave_explorer: FRAME 7200 interval_ms 14.89 main_ms 15.12 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:10.769 26738 26888 I Matterweave: matterweave_explorer: FRAME 7500 interval_ms 14.67 main_ms 14.69 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:14.768 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:15.335 26738 26888 I Matterweave: matterweave_explorer: FRAME 7800 interval_ms 15.29 main_ms 15.07 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:15.407 26738 26888 I Matterweave: matterweave_explorer: Action Save
+09-07 19:30:15.411 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:15.515 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:16.143 26738 26888 I Matterweave: matterweave_explorer: Action Save
+09-07 19:30:16.146 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:19.887 26738 26888 I Matterweave: matterweave_explorer: FRAME 8100 interval_ms 14.80 main_ms 15.86 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:20.423 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:24.299 26738 26888 I Matterweave: matterweave_explorer: FRAME 8400 interval_ms 14.89 main_ms 14.13 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:28.721 26738 26888 I Matterweave: matterweave_explorer: FRAME 8700 interval_ms 14.86 main_ms 15.00 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:33.120 26738 26888 I Matterweave: matterweave_explorer: FRAME 9000 interval_ms 14.35 main_ms 14.68 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:35.427 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:37.521 26738 26888 I Matterweave: matterweave_explorer: FRAME 9300 interval_ms 14.70 main_ms 14.89 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:41.934 26738 26888 I Matterweave: matterweave_explorer: FRAME 9600 interval_ms 14.86 main_ms 14.81 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:46.373 26738 26888 I Matterweave: matterweave_explorer: FRAME 9900 interval_ms 14.93 main_ms 14.82 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:50.437 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:30:50.803 26738 26888 I Matterweave: matterweave_explorer: FRAME 10200 interval_ms 14.75 main_ms 13.88 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:55.260 26738 26888 I Matterweave: matterweave_explorer: FRAME 10500 interval_ms 15.00 main_ms 14.73 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:30:59.686 26738 26888 I Matterweave: matterweave_explorer: FRAME 10800 interval_ms 14.93 main_ms 15.03 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:04.101 26738 26888 I Matterweave: matterweave_explorer: FRAME 11100 interval_ms 14.68 main_ms 14.76 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:05.451 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:31:08.516 26738 26888 I Matterweave: matterweave_explorer: FRAME 11400 interval_ms 14.93 main_ms 14.99 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:12.913 26738 26888 I Matterweave: matterweave_explorer: FRAME 11700 interval_ms 14.90 main_ms 14.99 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:17.323 26738 26888 I Matterweave: matterweave_explorer: FRAME 12000 interval_ms 14.75 main_ms 14.64 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:20.464 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:31:21.757 26738 26888 I Matterweave: matterweave_explorer: FRAME 12300 interval_ms 14.86 main_ms 14.44 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:26.176 26738 26888 I Matterweave: matterweave_explorer: FRAME 12600 interval_ms 14.71 main_ms 14.84 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:30.595 26738 26888 I Matterweave: matterweave_explorer: FRAME 12900 interval_ms 14.45 main_ms 14.18 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:35.037 26738 26888 I Matterweave: matterweave_explorer: FRAME 13200 interval_ms 14.89 main_ms 15.14 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:35.473 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:31:39.266 26738 26888 I Matterweave: matterweave_explorer: FRAME 13500 interval_ms 14.83 main_ms 14.31 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:43.716 26738 26888 I Matterweave: matterweave_explorer: FRAME 13800 interval_ms 14.76 main_ms 15.23 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:48.159 26738 26888 I Matterweave: matterweave_explorer: FRAME 14100 interval_ms 15.03 main_ms 14.83 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:50.478 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:31:52.603 26738 26888 I Matterweave: matterweave_explorer: FRAME 14400 interval_ms 14.92 main_ms 15.75 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:31:57.056 26738 26888 I Matterweave: matterweave_explorer: FRAME 14700 interval_ms 14.76 main_ms 14.96 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:01.494 26738 26888 I Matterweave: matterweave_explorer: FRAME 15000 interval_ms 14.56 main_ms 14.58 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:05.482 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:32:05.902 26738 26888 I Matterweave: matterweave_explorer: FRAME 15300 interval_ms 14.73 main_ms 14.95 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:10.338 26738 26888 I Matterweave: matterweave_explorer: FRAME 15600 interval_ms 14.66 main_ms 13.56 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:14.726 26738 26888 I Matterweave: matterweave_explorer: FRAME 15900 interval_ms 14.70 main_ms 14.51 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:19.179 26738 26888 I Matterweave: matterweave_explorer: FRAME 16200 interval_ms 14.56 main_ms 13.50 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:20.489 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:32:23.590 26738 26888 I Matterweave: matterweave_explorer: FRAME 16500 interval_ms 14.64 main_ms 14.69 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:28.000 26738 26888 I Matterweave: matterweave_explorer: FRAME 16800 interval_ms 14.89 main_ms 15.39 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:32.422 26738 26888 I Matterweave: matterweave_explorer: FRAME 17100 interval_ms 14.59 main_ms 14.69 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:35.493 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:32:36.862 26738 26888 I Matterweave: matterweave_explorer: FRAME 17400 interval_ms 14.81 main_ms 15.50 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:41.299 26738 26888 I Matterweave: matterweave_explorer: FRAME 17700 interval_ms 14.99 main_ms 14.47 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:45.723 26738 26888 I Matterweave: matterweave_explorer: FRAME 18000 interval_ms 14.79 main_ms 14.15 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:50.144 26738 26888 I Matterweave: matterweave_explorer: FRAME 18300 interval_ms 14.92 main_ms 15.19 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:50.506 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:32:54.578 26738 26888 I Matterweave: matterweave_explorer: FRAME 18600 interval_ms 14.78 main_ms 14.29 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:32:59.015 26738 26888 I Matterweave: matterweave_explorer: FRAME 18900 interval_ms 14.83 main_ms 14.83 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:03.473 26738 26888 I Matterweave: matterweave_explorer: FRAME 19200 interval_ms 14.86 main_ms 15.00 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:05.512 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:33:07.918 26738 26888 I Matterweave: matterweave_explorer: FRAME 19500 interval_ms 14.76 main_ms 15.26 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:12.317 26738 26888 I Matterweave: matterweave_explorer: FRAME 19800 interval_ms 14.76 main_ms 13.93 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:16.717 26738 26888 I Matterweave: matterweave_explorer: FRAME 20100 interval_ms 14.61 main_ms 14.65 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:20.520 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:33:21.136 26738 26888 I Matterweave: matterweave_explorer: FRAME 20400 interval_ms 14.82 main_ms 15.07 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:25.598 26738 26888 I Matterweave: matterweave_explorer: FRAME 20700 interval_ms 14.92 main_ms 14.76 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:30.044 26738 26888 I Matterweave: matterweave_explorer: FRAME 21000 interval_ms 14.78 main_ms 14.41 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:34.467 26738 26888 I Matterweave: matterweave_explorer: FRAME 21300 interval_ms 14.75 main_ms 14.55 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:35.524 26738 26888 I Matterweave: matterweave_explorer: Saved revision 42919 bodies 11 eye [12.0, 4.517111, 23.0]
+09-07 19:33:38.912 26738 26888 I Matterweave: matterweave_explorer: FRAME 21600 interval_ms 14.77 main_ms 14.79 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98
+09-07 19:33:43.362 26738 26888 I Matterweave: matterweave_explorer: FRAME 21900 interval_ms 14.62 main_ms 15.23 mesh_ms 17.95 eye [12.0, 4.517111, 23.0] grounded true bodies 11 chunks 98

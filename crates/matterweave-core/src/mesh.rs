@@ -94,3 +94,67 @@ impl World {
         mesh
     }
 }
+
+#[derive(Clone, Copy)]
+struct Material(u8);
+impl block_mesh::Voxel for Material {
+    fn get_visibility(&self) -> block_mesh::VoxelVisibility {
+        if self.0 == 0 {
+            block_mesh::VoxelVisibility::Empty
+        } else {
+            block_mesh::VoxelVisibility::Opaque
+        }
+    }
+}
+impl block_mesh::MergeVoxel for Material {
+    type MergeValue = u8;
+    fn merge_value(&self) -> u8 {
+        self.0
+    }
+}
+
+impl World {
+    /// Material-preserving greedy quads from a 16³ chunk and one-voxel halo.
+    /// Positions are world space. Revision includes neighboring shared-face edits;
+    /// accept a result only if `chunk_revision(key) == Some(mesh.revision)`.
+    pub fn mesh_chunk(&self, key: [i32; 3]) -> Mesh {
+        use block_mesh::ndshape::{ConstShape, ConstShape3u32};
+        type Shape = ConstShape3u32<18, 18, 18>;
+        let mut mesh = Mesh {
+            revision: self.chunk_revision(key).unwrap_or(self.revision),
+            ..Mesh::default()
+        };
+        if !self.chunks.contains_key(&key) {
+            return mesh;
+        }
+        let mut voxels = vec![Material(0); Shape::SIZE as usize];
+        for i in 0..Shape::SIZE {
+            let local = Shape::delinearize(i);
+            let cell =
+                std::array::from_fn(|axis| i64::from(key[axis]) * 16 + i64::from(local[axis]) - 1);
+            if let [Ok(x), Ok(y), Ok(z)] = cell.map(i32::try_from) {
+                voxels[i as usize] = Material(self.get([x, y, z]));
+            }
+        }
+        let faces = block_mesh::RIGHT_HANDED_Y_UP_CONFIG.faces;
+        let mut buffer = block_mesh::GreedyQuadsBuffer::new(voxels.len());
+        block_mesh::greedy_quads(&voxels, &Shape {}, [0; 3], [17; 3], &faces, &mut buffer);
+        for (group, face) in buffer.quads.groups.iter().zip(faces) {
+            for quad in group {
+                let base = mesh.vertices.len() as u32;
+                let material = voxels[Shape::linearize(quad.minimum) as usize].0;
+                for position in face.quad_mesh_positions(quad, 1.0) {
+                    mesh.vertices.push(Vertex {
+                        position: std::array::from_fn(|axis| {
+                            (i64::from(key[axis]) * 16) as f32 + position[axis] - 1.0
+                        }),
+                        normal: face.signed_normal().as_vec3().to_array(),
+                        color: color(material),
+                    });
+                }
+                mesh.indices.extend(face.quad_mesh_indices(base));
+            }
+        }
+        mesh
+    }
+}

@@ -1,11 +1,13 @@
 //! Direct Vulkan exposed-surface baseline. See README.md for ownership and synchronization.
+mod frustum;
 mod hud;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
+use frustum::Frustum;
 pub use hud::Hud;
-use matterweave_core::{Mesh, Vertex};
+use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::{ffi::CStr, sync::Arc};
+use std::{collections::BTreeMap, ffi::CStr, sync::Arc};
 use winit::window::Window;
 
 #[repr(C)]
@@ -104,11 +106,19 @@ struct Buffer {
 }
 impl Buffer {
     fn new(device: Arc<Device>, bytes: &[u8], usage: vk::BufferUsageFlags) -> Result<Self> {
+        Self::with_capacity(device, bytes, bytes.len(), usage)
+    }
+    fn with_capacity(
+        device: Arc<Device>,
+        bytes: &[u8],
+        capacity: usize,
+        usage: vk::BufferUsageFlags,
+    ) -> Result<Self> {
         let mut out = Self {
             device,
             raw: vk::Buffer::null(),
             memory: vk::DeviceMemory::null(),
-            size: bytes.len().max(4),
+            size: capacity.max(bytes.len()).max(4),
         };
         // SAFETY: exclusive new buffer, requirements checked before binding, RAII cleans partial failures.
         unsafe {
@@ -170,6 +180,140 @@ impl Buffer {
             self.device.raw.unmap_memory(self.memory);
         }
         Ok(())
+    }
+}
+
+struct GpuMesh {
+    vertices: Option<Buffer>,
+    indices: Option<Buffer>,
+    index_count: u32,
+    revision: u64,
+    bounds: [[f32; 3]; 2],
+}
+
+fn validate_mesh(mesh: &Mesh) -> Result<(u32, [[f32; 3]; 2])> {
+    let count = u32::try_from(mesh.indices.len()).map_err(|_| "Mesh has more than u32 indices")?;
+    if mesh
+        .indices
+        .iter()
+        .any(|&i| i as usize >= mesh.vertices.len())
+    {
+        return Err("Mesh index exceeds vertex count".into());
+    }
+    let mut bounds = [[f32::INFINITY; 3], [f32::NEG_INFINITY; 3]];
+    for vertex in &mesh.vertices {
+        if !vertex
+            .position
+            .iter()
+            .chain(&vertex.normal)
+            .chain(&vertex.color)
+            .all(|v| v.is_finite())
+        {
+            return Err("Mesh contains non-finite vertex data".into());
+        }
+        for (axis, position) in vertex.position.iter().copied().enumerate() {
+            bounds[0][axis] = bounds[0][axis].min(position);
+            bounds[1][axis] = bounds[1][axis].max(position);
+        }
+    }
+    Ok((count, bounds))
+}
+
+impl GpuMesh {
+    fn new(device: Arc<Device>, mesh: &Mesh, spare_capacity: bool) -> Result<Self> {
+        let (index_count, bounds) = validate_mesh(mesh)?;
+        let capacity = |size: usize| {
+            if spare_capacity {
+                size.checked_next_power_of_two().unwrap_or(size)
+            } else {
+                size
+            }
+        };
+        // Allocation and writes complete before this object replaces a live mesh.
+        let (vertices, indices) = if index_count == 0 {
+            (None, None)
+        } else {
+            let vertices = bytemuck::cast_slice(&mesh.vertices);
+            let indices = bytemuck::cast_slice(&mesh.indices);
+            (
+                Some(Buffer::with_capacity(
+                    device.clone(),
+                    vertices,
+                    capacity(vertices.len()),
+                    vk::BufferUsageFlags::VERTEX_BUFFER,
+                )?),
+                Some(Buffer::with_capacity(
+                    device,
+                    indices,
+                    capacity(indices.len()),
+                    vk::BufferUsageFlags::INDEX_BUFFER,
+                )?),
+            )
+        };
+        Ok(Self {
+            vertices,
+            indices,
+            index_count,
+            revision: mesh.revision,
+            bounds,
+        })
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        self.vertices.as_ref().map_or(0, |b| b.size) + self.indices.as_ref().map_or(0, |b| b.size)
+    }
+
+    /// Caller must complete the frame fence first. Both mappings succeed before
+    /// either buffer changes, preserving a complete previous mesh on map failure.
+    fn rewrite(&mut self, mesh: &Mesh) -> Result<bool> {
+        let (count, bounds) = validate_mesh(mesh)?;
+        if count == 0 {
+            self.index_count = 0;
+            self.revision = mesh.revision;
+            self.bounds = bounds;
+            return Ok(true);
+        }
+        let (Some(v), Some(i)) = (&self.vertices, &self.indices) else {
+            return Ok(false);
+        };
+        let vertices = bytemuck::cast_slice::<_, u8>(&mesh.vertices);
+        let indices = bytemuck::cast_slice::<_, u8>(&mesh.indices);
+        if v.size < vertices.len() || i.size < indices.len() {
+            return Ok(false);
+        }
+        // SAFETY: exclusive Renderer access after fence wait, distinct owned
+        // coherent allocations, validated ranges, unmap both before submission.
+        unsafe {
+            let d = &v.device.raw;
+            let vp = d
+                .map_memory(
+                    v.memory,
+                    0,
+                    vertices.len() as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .map_err(err)?;
+            let ip = match d.map_memory(
+                i.memory,
+                0,
+                indices.len() as u64,
+                vk::MemoryMapFlags::empty(),
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    d.unmap_memory(v.memory);
+                    return Err(err(e));
+                }
+            };
+            std::ptr::copy_nonoverlapping(vertices.as_ptr(), vp.cast::<u8>(), vertices.len());
+            std::ptr::copy_nonoverlapping(indices.as_ptr(), ip.cast::<u8>(), indices.len());
+            d.unmap_memory(i.memory);
+            d.unmap_memory(v.memory);
+        }
+        self.index_count = count;
+        self.revision = mesh.revision;
+        self.bounds = bounds;
+        Ok(true)
     }
 }
 impl Drop for Buffer {
@@ -748,15 +892,18 @@ pub struct Renderer {
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
-    vertices: Option<Buffer>,
-    indices: Option<Buffer>,
+    legacy: Option<GpuMesh>,
+    chunks: BTreeMap<[i32; 3], GpuMesh>,
+    dynamic: Option<GpuMesh>,
     hud: Option<Buffer>,
-    index_count: u32,
     requested: vk::Extent2D,
     recreate: bool,
     pub mesh_revision: Option<u64>,
     pub capabilities: String,
+    /// Allocated vertex/index buffer capacity; excludes HUD, depth and driver overhead.
     pub mesh_bytes: usize,
+    pub visible_chunks: usize,
+    pub resident_chunks: usize,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>) -> Result<Self> {
@@ -936,10 +1083,10 @@ impl Renderer {
             device,
             commands,
             swapchain: None,
-            vertices: None,
-            indices: None,
+            legacy: None,
+            chunks: BTreeMap::new(),
+            dynamic: None,
             hud: None,
-            index_count: 0,
             requested: vk::Extent2D {
                 width: size.width,
                 height: size.height,
@@ -948,51 +1095,90 @@ impl Renderer {
             mesh_revision: None,
             capabilities,
             mesh_bytes: 0,
+            visible_chunks: 0,
+            resident_chunks: 0,
         })
     }
     pub fn resize(&mut self, width: u32, height: u32) {
         self.requested = vk::Extent2D { width, height };
         self.recreate = true;
     }
+    /// Compatibility whole-world path. A successful upload replaces cached chunks.
     pub fn upload(&mut self, mesh: &Mesh) -> Result<()> {
         if self.mesh_revision.is_some_and(|r| r > mesh.revision) {
             return Ok(());
         }
-        let count =
-            u32::try_from(mesh.indices.len()).map_err(|_| "Mesh has more than u32 indices")?;
-        if mesh
-            .indices
-            .iter()
-            .any(|&i| i as usize >= mesh.vertices.len())
-        {
-            return Err("Mesh index exceeds vertex count".into());
-        }
         self.commands.wait()?;
-        // Transactional allocation: keep the previous complete mesh on any failure.
-        let (vertices, indices) = if count == 0 {
-            (None, None)
-        } else {
-            (
-                Some(Buffer::new(
-                    self.device.clone(),
-                    bytemuck::cast_slice(&mesh.vertices),
-                    vk::BufferUsageFlags::VERTEX_BUFFER,
-                )?),
-                Some(Buffer::new(
-                    self.device.clone(),
-                    bytemuck::cast_slice(&mesh.indices),
-                    vk::BufferUsageFlags::INDEX_BUFFER,
-                )?),
-            )
-        };
-        self.vertices = vertices;
-        self.indices = indices;
-        self.index_count = count;
+        let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
+        self.legacy = Some(replacement);
+        self.chunks.clear();
         self.mesh_revision = Some(mesh.revision);
-        self.mesh_bytes =
-            mesh.vertices.len() * std::mem::size_of::<Vertex>() + mesh.indices.len() * 4;
+        self.update_counters();
         Ok(())
     }
+
+    /// World-space geometry, normally one 16-cubed voxel chunk. Empty meshes
+    /// retain their revision so occluded chunks are not rebuilt every frame.
+    /// Older revisions are ignored. A successful upload switches off legacy mesh.
+    pub fn upload_chunk(&mut self, key: [i32; 3], mesh: &Mesh) -> Result<()> {
+        if self
+            .chunk_revision(key)
+            .is_some_and(|revision| revision > mesh.revision)
+        {
+            return Ok(());
+        }
+        self.commands.wait()?;
+        let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
+        self.chunks.insert(key, replacement);
+        self.legacy = None;
+        self.mesh_revision = None;
+        self.update_counters();
+        Ok(())
+    }
+
+    pub fn chunk_revision(&self, key: [i32; 3]) -> Option<u64> {
+        self.chunks.get(&key).map(|mesh| mesh.revision)
+    }
+
+    /// Forget evicted chunks only after all draws referencing them complete.
+    /// Callers must discard stale jobs for evicted chunks before uploading them.
+    pub fn retain_chunks(&mut self, keys: &[[i32; 3]]) -> Result<()> {
+        let keep: std::collections::BTreeSet<_> = keys.iter().copied().collect();
+        if self.chunks.keys().any(|key| !keep.contains(key)) {
+            self.commands.wait()?;
+            self.chunks.retain(|key, _| keep.contains(key));
+            self.update_counters();
+        }
+        Ok(())
+    }
+
+    /// CPU-transformed world-space objects. Reuses coherent buffer capacity after
+    /// the frame fence; grows transactionally when geometry exceeds capacity.
+    /// Revision is informational here: changing transforms may retain a revision.
+    pub fn upload_dynamic(&mut self, mesh: &Mesh) -> Result<()> {
+        self.commands.wait()?;
+        if let Some(dynamic) = &mut self.dynamic {
+            if dynamic.rewrite(mesh)? {
+                return Ok(());
+            }
+        }
+        self.dynamic = Some(GpuMesh::new(self.device.clone(), mesh, true)?);
+        self.update_counters();
+        Ok(())
+    }
+
+    fn update_counters(&mut self) {
+        self.resident_chunks = self.chunks.len();
+        self.visible_chunks = self.visible_chunks.min(self.resident_chunks);
+        self.mesh_bytes = self
+            .chunks
+            .values()
+            .chain(self.legacy.iter())
+            .chain(self.dynamic.iter())
+            .map(GpuMesh::allocated_bytes)
+            .sum();
+    }
+
     pub fn render(&mut self, view_proj: [[f32; 4]; 4], eye: [f32; 3], hud: &Hud) -> FrameResult {
         match self.draw(view_proj, eye, hud) {
             Ok(result) => result,
@@ -1108,21 +1294,36 @@ impl Renderer {
                 }],
             );
             d.cmd_set_scissor(cmd, 0, &[area]);
-            if let (Some(v), Some(i)) = (&self.vertices, &self.indices) {
-                d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
-                d.cmd_push_constants(
-                    cmd,
-                    s.layout,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    bytemuck::bytes_of(&Camera {
-                        view_proj,
-                        eye: [eye[0], eye[1], eye[2], 1.0],
-                    }),
-                );
-                d.cmd_bind_vertex_buffers(cmd, 0, &[v.raw], &[0]);
-                d.cmd_bind_index_buffer(cmd, i.raw, 0, vk::IndexType::UINT32);
-                d.cmd_draw_indexed(cmd, self.index_count, 1, 0, 0, 0);
+            d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
+            d.cmd_push_constants(
+                cmd,
+                s.layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                bytemuck::bytes_of(&Camera {
+                    view_proj,
+                    eye: [eye[0], eye[1], eye[2], 1.0],
+                }),
+            );
+            let frustum = Frustum::new(view_proj);
+            self.visible_chunks = self
+                .chunks
+                .values()
+                .filter(|mesh| mesh.index_count > 0 && frustum.intersects(mesh.bounds))
+                .count();
+            let visible = self
+                .chunks
+                .values()
+                .filter(|mesh| mesh.index_count > 0 && frustum.intersects(mesh.bounds));
+            for mesh in self.legacy.iter().chain(visible).chain(self.dynamic.iter()) {
+                if mesh.index_count == 0 {
+                    continue;
+                }
+                if let (Some(v), Some(i)) = (&mesh.vertices, &mesh.indices) {
+                    d.cmd_bind_vertex_buffers(cmd, 0, &[v.raw], &[0]);
+                    d.cmd_bind_index_buffer(cmd, i.raw, 0, vk::IndexType::UINT32);
+                    d.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+                }
             }
             if hud_count > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.hud);

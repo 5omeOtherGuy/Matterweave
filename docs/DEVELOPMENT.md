@@ -1,6 +1,6 @@
 # Development guide
 
-The workspace contains `matterweave-core`, `matterweave-render` (ash/Vulkan), and
+The workspace contains `matterweave-core`, `matterweave-physics` (Rapier), `matterweave-render` (ash/Vulkan), and
 `matterweave-explorer`. Android NativeActivity loads the explorer shared library;
 a desktop executable supplies supporting integration tests. See [MVP scope](MVP.md)
 and [status](STATUS.md) for implemented behavior and actual evidence.
@@ -90,11 +90,11 @@ authorization must already be available. No physical device is implied by the
 presence of `adb`. Save files live at `internal_data_path()/world.json`; no network,
 external-storage permission, cloud account or service is required.
 
-Touch controls: drag the lower **MOVE** zone to move; drag free space to look;
-hold **UP/DOWN** for elevation; aim the crosshair and tap **REMOVE/PLACE**. **SAVE**
-retries saving explicitly. **SWAP** changes the movement side and **SIZE** enlarges
-the movement zone. Multiple fingers can move, look and edit simultaneously.
-Edits autosave. This first sample uses a free-flying camera without collision.
+Touch and keyboard controls for walking, flight, terrain edits and physical object
+interaction are listed in [v0.2](V0.2.md#touch-controls). Edits save immediately;
+terrain, object state, camera and control preferences share one atomic snapshot.
+Existing v0.1 saves migrate automatically. Back exits the activity; HOME inside the
+app respawns the player. These are distinct from the phone's Home navigation action.
 
 Physical-device checklist (record each result, do not infer from host tests):
 
@@ -125,8 +125,7 @@ Missing layers are reported in the capabilities line.
 cargo run --locked -p matterweave-explorer -- --save /tmp/matterweave-world.json
 ```
 
-Desktop controls: WASD horizontal flight, Space/Left Shift elevation, right-drag
-look, left-click or Q remove, E place, F5 save, H swap and J size. The desktop
+Desktop controls are listed in [v0.2](V0.2.md#touch-controls). The desktop
 launcher is supporting evidence; Android remains the product platform.
 
 For a headless integration run on Linux, install Xvfb, xauth, Mesa Vulkan drivers
@@ -140,7 +139,7 @@ timeout 90s xvfb-run -a cargo run --locked -p matterweave-explorer -- --smoke-ex
 ```
 
 `--smoke-exercise` requires an explicit nonexistent save path. It tests actual
-sample place/remove/save/load actions, observes a resize event, recreates the host
+sample place/remove plus grab/throw/fracture and atomic save/load actions, observes a resize event, recreates the host
 window/renderer, and exits after the requested presented-frame count. Failure
 exits nonzero. This exercises shared code, not Android lifecycle callbacks on a
 phone. Inspect validation output as well as exit status.
@@ -148,15 +147,35 @@ phone. Inspect validation output as well as exit status.
 ## Diagnostics and current limits
 
 FRAME is a smoothed interval between redraws; MAIN is wall time inside draw,
-including Vulkan waits; MESH is the most recent full extraction/upload wall time.
+including Vulkan waits; MESH is the most recent changed-chunk extraction/upload wall time.
 These are not GPU timestamps or CPU execution samples. DATA counts voxel payload,
 not process memory. GPU heap sizes are queried capacities, not free memory.
 
-World meshing, uploads and autosaves are synchronous for this small fixture. No
-streaming, greedy meshing, LOD, indirect illumination or physics backend is present.
-Corrupt saves are retained; the app uses numbered recovery sidecars and restores
-the latest valid recovery on subsequent startup. Errors are shown in the HUD and
-logged; initialization failures requiring a renderer cannot show a graphical HUD.
+Chunk meshing, terrain streaming/collision preparation, uploads and autosaves are
+synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
+automatic LOD, indirect illumination and shadows remain future work. Physics runs
+at 60 Hz with bounded catch-up and interpolated object rendering. The resident
+window, stored-override limit and save size are explicit in the core README.
+Corrupt world/session snapshots remain intact; numbered recovery snapshots are
+loaded on subsequent startup. Errors are shown in the HUD and logged.
+
+The published development APK uses optimization level 2 and the existing local
+debug key. CI uses its own debug key; installing a CI artifact over the GitHub
+release can fail signature validation. Use GitHub release APKs for updates.
+
+The Android lifecycle correction is a narrowly vendored winit 0.30.12 patch; see
+[vendor provenance](../vendor/winit/MATTERWEAVE-PATCH.md). It handles activity destruction
+and sequential event-loop recreation. The singleTask activity manifest routes normal
+repeat launches to the existing NativeActivity, avoiding duplicate NDK contexts.
+
+The extra renderer cache smoke can be run with:
+
+```sh
+timeout 60s xvfb-run -a cargo run --locked -p matterweave-render --example cache_smoke
+```
+
+It covers submitted-buffer replacement, stale/invalid uploads, eviction, culling,
+dynamic buffer reuse/growth and teardown under Vulkan validation.
 
 Changing dependencies requires regenerating Cargo.lock and provenance intentionally.
 For a deliberate Gradle dependency update, regenerate verification metadata from
