@@ -113,48 +113,75 @@ impl block_mesh::MergeVoxel for Material {
     }
 }
 
+use block_mesh::ndshape::{ConstShape, ConstShape3u32};
+type Shape = ConstShape3u32<18, 18, 18>;
+
+/// One chunk and its one-voxel halo: the only world data a mesh job reads.
+/// Fixed size keeps a queued job's cost exactly [`HALO_VOLUME`] bytes.
+pub(crate) const HALO_VOLUME: usize = 18 * 18 * 18;
+pub(crate) type Halo = Box<[u8; HALO_VOLUME]>;
+const _: () = assert!(Shape::SIZE as usize == HALO_VOLUME);
+
 impl World {
-    /// Material-preserving greedy quads from a 16³ chunk and one-voxel halo.
-    /// Positions are world space. Revision includes neighboring shared-face edits;
-    /// accept a result only if `chunk_revision(key) == Some(mesh.revision)`.
-    pub fn mesh_chunk(&self, key: [i32; 3]) -> Mesh {
-        use block_mesh::ndshape::{ConstShape, ConstShape3u32};
-        type Shape = ConstShape3u32<18, 18, 18>;
-        let mut mesh = Mesh {
-            revision: self.chunk_revision(key).unwrap_or(self.revision),
-            ..Mesh::default()
-        };
+    /// Copies the materials `mesh_chunk` would read. `None` for an absent chunk,
+    /// which invalidates any previously derived geometry for that key.
+    pub(crate) fn chunk_halo(&self, key: [i32; 3]) -> Option<Halo> {
         if !self.chunks.contains_key(&key) {
-            return mesh;
+            return None;
         }
-        let mut voxels = vec![Material(0); Shape::SIZE as usize];
+        let mut voxels: Halo = Box::new([0; HALO_VOLUME]);
         for i in 0..Shape::SIZE {
             let local = Shape::delinearize(i);
             let cell =
                 std::array::from_fn(|axis| i64::from(key[axis]) * 16 + i64::from(local[axis]) - 1);
             if let [Ok(x), Ok(y), Ok(z)] = cell.map(i32::try_from) {
-                voxels[i as usize] = Material(self.get([x, y, z]));
+                voxels[i as usize] = self.get([x, y, z]);
             }
         }
-        let faces = block_mesh::RIGHT_HANDED_Y_UP_CONFIG.faces;
-        let mut buffer = block_mesh::GreedyQuadsBuffer::new(voxels.len());
-        block_mesh::greedy_quads(&voxels, &Shape {}, [0; 3], [17; 3], &faces, &mut buffer);
-        for (group, face) in buffer.quads.groups.iter().zip(faces) {
-            for quad in group {
-                let base = mesh.vertices.len() as u32;
-                let material = voxels[Shape::linearize(quad.minimum) as usize].0;
-                for position in face.quad_mesh_positions(quad, 1.0) {
-                    mesh.vertices.push(Vertex {
-                        position: std::array::from_fn(|axis| {
-                            (i64::from(key[axis]) * 16) as f32 + position[axis] - 1.0
-                        }),
-                        normal: face.signed_normal().as_vec3().to_array(),
-                        color: color(material),
-                    });
-                }
-                mesh.indices.extend(face.quad_mesh_indices(base));
-            }
-        }
-        mesh
+        Some(voxels)
     }
+
+    /// Material-preserving greedy quads from a 16³ chunk and one-voxel halo.
+    /// Positions are world space. Revision includes neighboring shared-face edits;
+    /// accept a result only if `chunk_revision(key) == Some(mesh.revision)`.
+    pub fn mesh_chunk(&self, key: [i32; 3]) -> Mesh {
+        let revision = self.chunk_revision(key).unwrap_or(self.revision);
+        match self.chunk_halo(key) {
+            Some(voxels) => mesh_halo(key, &voxels, revision),
+            None => Mesh {
+                revision,
+                ..Mesh::default()
+            },
+        }
+    }
+}
+
+/// Deterministic mesher shared by the synchronous and background paths, so an
+/// accepted background result is byte-identical to `mesh_chunk` for equal input.
+pub(crate) fn mesh_halo(key: [i32; 3], voxels: &[u8; HALO_VOLUME], revision: u64) -> Mesh {
+    let mut mesh = Mesh {
+        revision,
+        ..Mesh::default()
+    };
+    let voxels: Vec<Material> = voxels.iter().map(|&value| Material(value)).collect();
+    let faces = block_mesh::RIGHT_HANDED_Y_UP_CONFIG.faces;
+    let mut buffer = block_mesh::GreedyQuadsBuffer::new(voxels.len());
+    block_mesh::greedy_quads(&voxels, &Shape {}, [0; 3], [17; 3], &faces, &mut buffer);
+    for (group, face) in buffer.quads.groups.iter().zip(faces) {
+        for quad in group {
+            let base = mesh.vertices.len() as u32;
+            let material = voxels[Shape::linearize(quad.minimum) as usize].0;
+            for position in face.quad_mesh_positions(quad, 1.0) {
+                mesh.vertices.push(Vertex {
+                    position: std::array::from_fn(|axis| {
+                        (i64::from(key[axis]) * 16) as f32 + position[axis] - 1.0
+                    }),
+                    normal: face.signed_normal().as_vec3().to_array(),
+                    color: color(material),
+                });
+            }
+            mesh.indices.extend(face.quad_mesh_indices(base));
+        }
+    }
+    mesh
 }
