@@ -2,6 +2,21 @@
 
 Updated: 2026-09-07
 
+## v0.3 planning handoff
+
+The [v0.3 delivery and coordination plan](V0.3.md) records the next feature slices
+(shadows, bounded asynchronous streaming and a destruction playground), worker
+allocation, board authority, bounded reads, acknowledgment/recovery rules and
+required startup rehearsals. It is durable project context, not shipped functionality.
+The board wrapper, live implementation run and v0.3 device measurements are not
+implemented/run. Next: validate the coordination access layer and recovery gates,
+establish the phone baseline and shared interfaces, then dispatch bounded workers.
+
+Planning verification: the installed orchestration helper's 11 tests passed;
+those checks do not prove the proposed wrapper or process-fencing protocol.
+Documentation verification: `python3 tools/check_docs.py` and `git diff --check`
+pass for this handoff update. No native code or APK changed in this update.
+
 ## v0.2 interactive Android slice
 
 M0/M1 shipped in v0.1. The owner reported that version working on a OnePlus 13;
