@@ -1,21 +1,44 @@
 # Current status
 
-Updated: 2026-09-07
+Updated: 2026-09-08
 
-## v0.3 planning handoff
+## v0.3 verified Android slice
 
-The [v0.3 delivery and coordination plan](V0.3.md) records the next feature slices
-(shadows, bounded asynchronous streaming and a destruction playground), worker
-allocation, board authority, bounded reads, acknowledgment/recovery rules and
-required startup rehearsals. It is durable project context, not shipped functionality.
-The board wrapper, live implementation run and v0.3 device measurements are not
-implemented/run. Next: validate the coordination access layer and recovery gates,
-establish the phone baseline and shared interfaces, then dispatch bounded workers.
+The [v0.3 plan](V0.3.md) has working implementations of directional shadows,
+bounded background terrain/mesh preparation and a six-body breakable arch that
+fully fractures to64 pieces. The first APK was installed over v0.2 on the OnePlus13;
+terrain/camera/old bodies survived. New touch shadow/sun/detail/reset controls work,
+and the beam was fractured on-device (6→29 bodies). Old saves receive default
+lighting preferences; changed preferences persist.
 
-Planning verification: the installed orchestration helper's 11 tests passed;
-those checks do not prove the proposed wrapper or process-fencing protocol.
-Documentation verification: `python3 tools/check_docs.py` and `git diff --check`
-pass for this handoff update. No native code or APK changed in this update.
+The [execution log](../execution_log.md) records exact mixed-model assignments,
+submissions, review corrections, board behavior and failed diagnostic hypotheses.
+Astra, Opus5 and Muse produced isolated contributions; lead integrated them through
+[PR #4](https://github.com/5omeOtherGuy/Matterweave/pull/4). The [board](../tools/coordination/README.md)
+passed16 local recovery/ownership checks and its GitHub workflow. Submission is
+explicitly distinct from lead acceptance.
+
+Current checks:77 Rust tests pass (29 core,17 explorer,17 physics,14 renderer),
+workspace Clippy passes, and a90-frame native app smoke passed edits, interaction,
+atomic save/reload, resize and renderer recreation with Vulkan synchronization
+validation. ARM64 APK build/signature/16KiB ZIP+ELF alignment pass. An exposed face
+in an isolated phone fixture is pixel-identical on/off, including low sun at2048;
+coarse terrace-shadow edges remain a quality limit of the finite map.
+
+A controlled 120-second warmup plus 20-minute fixed-quality run completed.
+All 61,509 selected presentation intervals were co-observed; mean 19.515 ms,
+p95 24.878 ms. All 40 health samples reported severe throttling. The run was
+USB powered and entered hot: no causal speed/power comparison with v0.2 is valid.
+See the [complete evidence](evidence/2026-09-08-v0.3.md) for exact conditions,
+clock/coverage limits and CPU/GPU wall-time meanings. Final travel/reversal and
+two resume/relaunch cycles passed; the user's saved scene was restored.
+GitHub CI passes; final delivery uses PR #4 and the v0.3.0 development prerelease.
+
+The earlier v0.2 timestamp capture has99.8183% verified interval-duration coverage;
+its median/p95/p99 verified intervals were16.580834/16.584323/16.585886ms. Four gaps
+cross missing dump histories and are not confirmed stalls. Thermal status reached
+SEVERE; battery temperature30.1→40.8°C during its measurement window. These are
+recorded observations, not a v0.3 comparison or power/thermal superiority claim.
 
 ## v0.2 interactive Android slice
 
@@ -66,18 +89,25 @@ records the exact build revision and APK checksum.
 
 ## Limits and next actions
 
+First priority: investigate stationary-scene heat. The current app still steps
+physics, rebuilds dynamic meshes and redraws shadows while stationary. Profile
+CPU busy time/waits, reuse unchanged work, and evaluate frame caps/idle cadence.
+The [benchmark protocol](BENCHMARKS.md) now requires unplugged, cooled, matched
+conditions for future efficiency comparisons; charging was a confounder here.
+
 1. Complete the equivalent-quality ray/mesh/hybrid mobile comparison. The retained
    reference mesher and new greedy path provide a correctness baseline, not a final
    mobile renderer selection or Nanite-like LOD implementation.
 2. Profile boundary-crossing stalls, collision preparation, uploads, residency,
    frame distributions and sustained thermals under the benchmark protocol.
-   Current streaming/meshing/saving is synchronous; no async cancellation claims.
-3. Expand the 64-body destruction example and stress gameplay/editor changes.
+   Background preparation is implemented; collision publication, uploads, snapshot
+   copying and saves remain synchronous. Cancellation is versioned and bounded.
+3. Stress the expanded64-piece destruction example and gameplay/editor changes.
    Distant bodies freeze before collision eviction. Saves cap overrides at 512 and
    total bytes at 12 MiB; body/camera restoration validates finite bounded values.
-4. Start direct shadows and then M4 indirect illumination/reflections/detail work.
-   Lighting currently remains direct sun, ambient and fog. No full GI, reflection,
-   multiresolution transitions, second game sample or broader device coverage.
+4. Continue from direct shadows into M4 indirect illumination/reflections/detail.
+   Finite-map edge quality and nonresident casters remain limitations. No full GI,
+   reflection, multiresolution transitions, second sample or broader device coverage.
 5. Test real simultaneous multi-finger use, lock/unlock, process-memory pressure and
    additional devices. ADB gestures here are sequential; unit tests cover concurrent
    touch roles, but that is not physical multi-finger validation. Phone Vulkan

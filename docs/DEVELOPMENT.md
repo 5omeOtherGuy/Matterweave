@@ -151,9 +151,10 @@ including Vulkan waits; MESH is the most recent changed-chunk extraction/upload 
 These are not GPU timestamps or CPU execution samples. DATA counts voxel payload,
 not process memory. GPU heap sizes are queried capacities, not free memory.
 
-Chunk meshing, terrain streaming/collision preparation, uploads and autosaves are
-synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
-automatic LOD, indirect illumination and shadows remain future work. Physics runs
+Terrain generation and dirty chunk meshing now use bounded background preparation.
+Collision publication, GPU uploads, snapshot copying and autosaves remain synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
+Filtered directional shadows are implemented; automatic LOD and indirect
+illumination remain future work. Physics runs
 at 60 Hz with bounded catch-up and interpolated object rendering. The resident
 window, stored-override limit and save size are explicit in the core README.
 Corrupt world/session snapshots remain intact; numbered recovery snapshots are
@@ -181,3 +182,32 @@ Changing dependencies requires regenerating Cargo.lock and provenance intentiona
 For a deliberate Gradle dependency update, regenerate verification metadata from
 trusted upstreams with `--write-verification-metadata sha256`, review it, then rerun
 a normal verification-enforced build. Do not disable verification to bypass failures.
+
+## Opt-in frame capture (v0.3 development)
+
+Place an integer count (1..240000) in `profile-frames.txt` beside the world save
+before launching the app. On Android this is the app-private `files` directory,
+accessible through `adb shell run-as dev.matterweave.explorer`. A valid request is
+consumed after a new timestamped `frame-profile-*.csv` opens successfully. Captures
+never overwrite an existing file, stop at the requested count and flush on suspend
+or exit. Invalid requests remain for correction. Normal runs create no frame log.
+
+Rows contain the presented-frame counter, draw-interval/main-thread/stream/mesh-
+upload/save wall times and optional prior-completed GPU timings. CPU fields are
+wall times, not CPU busy time. Retry draws may repeat the presented counter. Missing
+GPU values remain empty when unavailable. Completed GPU frame ID, shadow enable
+state and map size accompany those values; IDs reset on renderer recreation.
+GPU total interval can include waiting on swapchain acquisition and is not pure
+active GPU execution.
+GPU queries and compositor presentation timestamps are distinct measurements.
+Copy captures under `/mnt/bench` and preserve build/scene/conditions before making
+performance comparisons. Profiling overhead must be considered.
+
+Coordination startup/recovery checks:
+
+```bash
+python3 -m unittest discover -s tools/coordination -p 'test_*.py' -v
+```
+
+See the [board operations guide](../tools/coordination/README.md) and
+[v0.3 protocol](V0.3.md) for bounded worker reads and ownership rules.

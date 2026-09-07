@@ -18,3 +18,7 @@ jobs:
           persist-credentials: false
       - name: Check local links and decision records
         run: python3 tools/check_docs.py
+      - name: Check coordination ownership and recovery
+        env:
+          MATTERWEAVE_COORD_TEST_ROOT: ${{ runner.temp }}/matterweave-coordination-tests
+        run: python3 -m unittest discover -s tools/coordination -p 'test_*.py' -v

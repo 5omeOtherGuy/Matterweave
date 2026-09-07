@@ -1,13 +1,20 @@
 //! Direct Vulkan exposed-surface baseline. See README.md for ownership and synchronization.
 mod frustum;
 mod hud;
+mod lighting;
+mod shadow;
+mod timing;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
 use frustum::Frustum;
 pub use hud::Hud;
+pub use lighting::{LightingSettings, Sun};
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use shadow::Shadow;
 use std::{collections::BTreeMap, ffi::CStr, sync::Arc};
+pub use timing::GpuTimings;
+use timing::TimestampQueries;
 use winit::window::Window;
 
 #[repr(C)]
@@ -332,7 +339,12 @@ struct Depth {
     view: vk::ImageView,
 }
 impl Depth {
-    fn new(device: Arc<Device>, size: vk::Extent2D, format: vk::Format) -> Result<Self> {
+    fn new(
+        device: Arc<Device>,
+        size: vk::Extent2D,
+        format: vk::Format,
+        sampled: bool,
+    ) -> Result<Self> {
         let mut out = Self {
             device,
             image: vk::Image::null(),
@@ -357,7 +369,14 @@ impl Depth {
                         .array_layers(1)
                         .samples(vk::SampleCountFlags::TYPE_1)
                         .tiling(vk::ImageTiling::OPTIMAL)
-                        .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                        .usage(
+                            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                                | if sampled {
+                                    vk::ImageUsageFlags::SAMPLED
+                                } else {
+                                    vk::ImageUsageFlags::empty()
+                                },
+                        )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE),
                     None,
                 )
@@ -450,7 +469,11 @@ impl Drop for Swapchain {
     }
 }
 impl Swapchain {
-    fn new(device: Arc<Device>, requested: vk::Extent2D) -> Result<Self> {
+    fn new(
+        device: Arc<Device>,
+        requested: vk::Extent2D,
+        shadow_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self> {
         let api = ash::khr::swapchain::Device::new(&device.instance.raw, &device.raw);
         let mut out = Self {
             device,
@@ -566,7 +589,7 @@ impl Swapchain {
                         .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
                 })
                 .ok_or("No depth attachment format")?;
-            out.depth = Some(Depth::new(d.clone(), out.size, depth_format)?);
+            out.depth = Some(Depth::new(d.clone(), out.size, depth_format, false)?);
             let attachments = [
                 vk::AttachmentDescription::default()
                     .format(format.format)
@@ -625,12 +648,14 @@ impl Swapchain {
             out.layout = d
                 .raw
                 .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&push),
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .push_constant_ranges(&push)
+                        .set_layouts(&[shadow_layout]),
                     None,
                 )
                 .map_err(err)?;
-            out.world = out.pipeline(false)?;
-            out.hud = out.pipeline(true)?;
+            out.world = pipeline(&out.device, out.layout, out.pass, PipelineKind::World)?;
+            out.hud = pipeline(&out.device, out.layout, out.pass, PipelineKind::Hud)?;
             for image in out.api.get_swapchain_images(out.raw).map_err(err)? {
                 let view = d
                     .raw
@@ -672,28 +697,49 @@ impl Swapchain {
         }
         Ok(out)
     }
-    fn pipeline(&self, hud: bool) -> Result<vk::Pipeline> {
-        let (vs, fs): (&[u8], &[u8]) = if hud {
-            (
-                include_bytes!(concat!(env!("OUT_DIR"), "/hud.vs_main.spv")),
-                include_bytes!(concat!(env!("OUT_DIR"), "/hud.fs_main.spv")),
-            )
-        } else {
-            (
-                include_bytes!(concat!(env!("OUT_DIR"), "/world.vs_main.spv")),
-                include_bytes!(concat!(env!("OUT_DIR"), "/world.fs_main.spv")),
-            )
-        };
-        let mut modules = Vec::new();
-        // SAFETY: build-time Naga validates SPIR-V; modules outlive pipeline creation, then are
-        // destroyed on success and error. Struct slices stay in scope during synchronous calls.
-        unsafe {
-            let result = (|| {
-                for bytes in [vs, fs] {
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PipelineKind {
+    World,
+    Hud,
+    Shadow,
+}
+fn pipeline(
+    device: &Device,
+    layout: vk::PipelineLayout,
+    pass: vk::RenderPass,
+    kind: PipelineKind,
+) -> Result<vk::Pipeline> {
+    let hud = kind == PipelineKind::Hud;
+    let shadow = kind == PipelineKind::Shadow;
+    let (vs, fs): (&[u8], &[u8]) = if hud {
+        (
+            include_bytes!(concat!(env!("OUT_DIR"), "/hud.vs_main.spv")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/hud.fs_main.spv")),
+        )
+    } else if shadow {
+        (
+            include_bytes!(concat!(env!("OUT_DIR"), "/shadow.vs_main.spv")),
+            &[],
+        )
+    } else {
+        (
+            include_bytes!(concat!(env!("OUT_DIR"), "/world.vs_main.spv")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/world.fs_main.spv")),
+        )
+    };
+    let mut modules = Vec::new();
+    // SAFETY: build-time Naga validates SPIR-V; modules outlive pipeline creation, then are
+    // destroyed on success and error. Struct slices stay in scope during synchronous calls.
+    unsafe {
+        let result =
+            (|| {
+                for bytes in [vs, fs].into_iter().filter(|b| !b.is_empty()) {
                     let words = ash::util::read_spv(&mut std::io::Cursor::new(bytes))
                         .map_err(|e| e.to_string())?;
                     modules.push(
-                        self.device
+                        device
                             .raw
                             .create_shader_module(
                                 &vk::ShaderModuleCreateInfo::default().code(&words),
@@ -702,16 +748,18 @@ impl Swapchain {
                             .map_err(err)?,
                     );
                 }
-                let stages = [
-                    vk::PipelineShaderStageCreateInfo::default()
-                        .stage(vk::ShaderStageFlags::VERTEX)
-                        .module(modules[0])
-                        .name(c"vs_main"),
-                    vk::PipelineShaderStageCreateInfo::default()
-                        .stage(vk::ShaderStageFlags::FRAGMENT)
-                        .module(modules[1])
-                        .name(c"fs_main"),
-                ];
+                let mut stages = vec![vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::VERTEX)
+                    .module(modules[0])
+                    .name(c"vs_main")];
+                if !shadow {
+                    stages.push(
+                        vk::PipelineShaderStageCreateInfo::default()
+                            .stage(vk::ShaderStageFlags::FRAGMENT)
+                            .module(modules[1])
+                            .name(c"fs_main"),
+                    );
+                }
                 let bindings = [vk::VertexInputBindingDescription {
                     binding: 0,
                     stride: if hud { 24 } else { 36 },
@@ -733,7 +781,7 @@ impl Swapchain {
                         },
                     ]
                 } else {
-                    (0..3)
+                    (0..if shadow { 1 } else { 3 })
                         .map(|location| vk::VertexInputAttributeDescription {
                             location,
                             binding: 0,
@@ -752,7 +800,7 @@ impl Swapchain {
                     .scissor_count(1);
                 let raster = vk::PipelineRasterizationStateCreateInfo::default()
                     .polygon_mode(vk::PolygonMode::FILL)
-                    .cull_mode(if hud {
+                    .cull_mode(if hud || shadow {
                         vk::CullModeFlags::NONE
                     } else {
                         vk::CullModeFlags::BACK
@@ -774,8 +822,8 @@ impl Swapchain {
                     .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
                     .alpha_blend_op(vk::BlendOp::ADD)
                     .color_write_mask(vk::ColorComponentFlags::RGBA)];
-                let blend =
-                    vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
+                let blend = vk::PipelineColorBlendStateCreateInfo::default()
+                    .attachments(if shadow { &[] } else { &attachments });
                 let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
                 let dynamic =
                     vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -789,28 +837,26 @@ impl Swapchain {
                     .depth_stencil_state(&depth)
                     .color_blend_state(&blend)
                     .dynamic_state(&dynamic)
-                    .layout(self.layout)
-                    .render_pass(self.pass)
+                    .layout(layout)
+                    .render_pass(pass)
                     .subpass(0)];
-                match self.device.raw.create_graphics_pipelines(
-                    vk::PipelineCache::null(),
-                    &infos,
-                    None,
-                ) {
+                match device
+                    .raw
+                    .create_graphics_pipelines(vk::PipelineCache::null(), &infos, None)
+                {
                     Ok(p) => Ok(p[0]),
                     Err((partial, e)) => {
                         for p in partial {
-                            self.device.raw.destroy_pipeline(p, None);
+                            device.raw.destroy_pipeline(p, None);
                         }
                         Err(err(e))
                     }
                 }
             })();
-            for module in modules {
-                self.device.raw.destroy_shader_module(module, None);
-            }
-            result
+        for module in modules {
+            device.raw.destroy_shader_module(module, None);
         }
+        result
     }
 }
 struct Commands {
@@ -892,6 +938,8 @@ pub struct Renderer {
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
+    shadow: Shadow,
+    timestamps: Option<TimestampQueries>,
     legacy: Option<GpuMesh>,
     chunks: BTreeMap<[i32; 3], GpuMesh>,
     dynamic: Option<GpuMesh>,
@@ -1079,10 +1127,14 @@ impl Renderer {
             .collect();
         let capabilities=format!("Vulkan {}.{}.{} | {} | driver {} | vendor {:04x} device {:04x} | heaps {} | validation {}",vk::api_version_major(props.api_version),vk::api_version_minor(props.api_version),vk::api_version_patch(props.api_version),name,props.driver_version,props.vendor_id,props.device_id,heaps.join(","),validation_enabled);
         let commands = Commands::new(device.clone())?;
+        let shadow = Shadow::new(device.clone(), LightingSettings::default().shadow_map_size)?;
+        let timestamps = TimestampQueries::new(device.clone())?;
         Ok(Self {
             device,
             commands,
             swapchain: None,
+            shadow,
+            timestamps,
             legacy: None,
             chunks: BTreeMap::new(),
             dynamic: None,
@@ -1180,7 +1232,26 @@ impl Renderer {
     }
 
     pub fn render(&mut self, view_proj: [[f32; 4]; 4], eye: [f32; 3], hud: &Hud) -> FrameResult {
-        match self.draw(view_proj, eye, hud) {
+        self.render_with_lighting(
+            view_proj,
+            eye,
+            hud,
+            &LightingSettings {
+                shadows: false,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Sunlight and shadow settings apply to this frame. Invalid settings return Fatal.
+    pub fn render_with_lighting(
+        &mut self,
+        view_proj: [[f32; 4]; 4],
+        eye: [f32; 3],
+        hud: &Hud,
+        lighting: &LightingSettings,
+    ) -> FrameResult {
+        match self.draw(view_proj, eye, hud, lighting) {
             Ok(result) => result,
             Err(e) => {
                 if e.contains("ERROR_OUT_OF_HOST_MEMORY")
@@ -1193,11 +1264,48 @@ impl Renderer {
             }
         }
     }
-    fn draw(&mut self, view_proj: [[f32; 4]; 4], eye: [f32; 3], hud: &Hud) -> Result<FrameResult> {
+    /// Most recently completed submission, normally the preceding presented frame.
+    pub fn gpu_timings(&self) -> Option<GpuTimings> {
+        self.timestamps.as_ref().and_then(|q| q.completed)
+    }
+
+    pub fn gpu_timestamps_supported(&self) -> bool {
+        self.timestamps.is_some()
+    }
+
+    /// Nonempty mesh draws submitted to the latest shadow pass, independent of camera culling.
+    pub fn shadow_caster_meshes(&self) -> usize {
+        self.shadow.caster_meshes
+    }
+
+    fn draw(
+        &mut self,
+        view_proj: [[f32; 4]; 4],
+        eye: [f32; 3],
+        hud: &Hud,
+        lighting: &LightingSettings,
+    ) -> Result<FrameResult> {
         if self.requested.width == 0 || self.requested.height == 0 {
             return Ok(FrameResult::Retry);
         }
         self.commands.wait()?;
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.read_completed()?;
+        }
+        if lighting.shadow_map_size != self.shadow.size {
+            // Identical descriptor layout definitions remain pipeline-compatible.
+            // Construct replacement transactionally, then retire the idle old map.
+            self.shadow = Shadow::new(self.device.clone(), lighting.shadow_map_size)?;
+        }
+        let bounds: Vec<_> = self
+            .chunks
+            .values()
+            .chain(self.legacy.iter())
+            .chain(self.dynamic.iter())
+            .filter(|m| m.index_count > 0)
+            .map(|m| m.bounds)
+            .collect();
+        self.shadow.update(eye, lighting, &bounds)?;
         if self.recreate {
             // SAFETY: exceptional resize/retirement only. This is the standard
             // unextended WSI idle fallback; its presentation-completion limitation
@@ -1206,13 +1314,17 @@ impl Renderer {
                 self.device.raw.device_wait_idle().map_err(err)?;
             }
             self.swapchain.take();
-            self.swapchain = match Swapchain::new(self.device.clone(), self.requested) {
-                Ok(swapchain) => Some(swapchain),
-                Err(e) if e == "Surface has zero extent" || e.contains("ERROR_OUT_OF_DATE_KHR") => {
-                    return Ok(FrameResult::Retry)
-                }
-                Err(e) => return Err(e),
-            };
+            self.swapchain =
+                match Swapchain::new(self.device.clone(), self.requested, self.shadow.set_layout) {
+                    Ok(swapchain) => Some(swapchain),
+                    Err(e)
+                        if e == "Surface has zero extent"
+                            || e.contains("ERROR_OUT_OF_DATE_KHR") =>
+                    {
+                        return Ok(FrameResult::Retry)
+                    }
+                    Err(e) => return Err(e),
+                };
             self.recreate = false;
         }
         let bytes = bytemuck::cast_slice(&hud.vertices);
@@ -1255,6 +1367,20 @@ impl Renderer {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
             .map_err(err)?;
+            if let Some(timestamps) = &mut self.timestamps {
+                timestamps.begin(cmd);
+            }
+            self.shadow.record(
+                cmd,
+                lighting.shadows,
+                self.chunks
+                    .values()
+                    .chain(self.legacy.iter())
+                    .chain(self.dynamic.iter()),
+            );
+            if let Some(timestamps) = &self.timestamps {
+                timestamps.mark(cmd, 1);
+            }
             let clear = [
                 vk::ClearValue {
                     color: vk::ClearColorValue {
@@ -1295,6 +1421,14 @@ impl Renderer {
             );
             d.cmd_set_scissor(cmd, 0, &[area]);
             d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
+            d.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                s.layout,
+                0,
+                &[self.shadow.set],
+                &[],
+            );
             d.cmd_push_constants(
                 cmd,
                 s.layout,
@@ -1336,6 +1470,9 @@ impl Renderer {
                 d.cmd_draw(cmd, hud_count, 1, 0, 0);
             }
             d.cmd_end_render_pass(cmd);
+            if let Some(timestamps) = &self.timestamps {
+                timestamps.mark(cmd, 2);
+            }
             d.end_command_buffer(cmd).map_err(err)?;
             let waits = [self.commands.available];
             let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -1349,6 +1486,9 @@ impl Renderer {
             d.reset_fences(&[self.commands.fence]).map_err(err)?;
             d.queue_submit(self.device.queue, &submit, self.commands.fence)
                 .map_err(err)?;
+            if let Some(timestamps) = &mut self.timestamps {
+                timestamps.submitted(lighting.shadows, lighting.shadow_map_size);
+            }
             let chains = [s.raw];
             let indices = [index];
             match s.api.queue_present(

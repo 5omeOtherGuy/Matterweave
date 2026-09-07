@@ -15,7 +15,8 @@ Pinned crates.io dependencies: ash 0.38.0 (MIT OR Apache-2.0, Vulkan binding hea
 raw-window-handle 0.6.2 (MIT OR Apache-2.0 OR Zlib); winit 0.30.12 (Apache-2.0, existing
 Android/native window glue); Naga 24.0.0 (MIT OR Apache-2.0, build-time WGSL to
 SPIR-V compiler); bytemuck 1.23.2 (MIT OR Apache-2.0 OR Zlib, explicit upload
-layout); font8x8 0.3.1 (MIT, HUD glyph data). Cargo.lock records checksums.
+layout); font8x8 0.3.1 (MIT, HUD glyph data); glam 0.30.9 (MIT OR Apache-2.0,
+already used by the app, now reused for the light projection). Cargo.lock records checksums.
 
 Source/API: [ash](https://github.com/ash-rs/ash),
 [ash-window](https://github.com/ash-rs/ash/tree/master/ash-window),
@@ -23,7 +24,8 @@ Source/API: [ash](https://github.com/ash-rs/ash),
 [winit](https://github.com/rust-windowing/winit),
 [raw-window-handle](https://github.com/rust-windowing/raw-window-handle),
 [bytemuck](https://github.com/Lokathor/bytemuck),
-[font8x8](https://github.com/saibatizoku/font8x8-rs).
+[font8x8](https://github.com/saibatizoku/font8x8-rs),
+[glam](https://github.com/bitshifter/glam-rs/tree/0.30.9).
 
 Existing ash-window surface glue and Naga avoid custom platform bindings and a
 separate C++ shader compiler build. wgpu was assessed as a viable alternative;
@@ -35,7 +37,7 @@ device-local depth allocation. Transactional chunk replacement temporarily retai
 both old and new allocations. The app bounds residency. Larger scenes need staging,
 suballocation and measured residency work. `mesh_bytes` reports allocated buffer
 capacity, including spare dynamic capacity, but excludes Vulkan allocation padding,
-HUD, depth and driver overhead.
+HUD, depth, shadow resources and driver overhead.
 
 ## GPU and unsafe contracts
 
@@ -95,9 +97,9 @@ chunk caches; a successful `upload_chunk` clears the legacy mesh. Dynamic geomet
 is independent, supplied with positions and normals already transformed to world
 space. This avoids extending the existing 80-byte camera push-constant layout.
 
-This is surface rasterization with direct sun, ambient term, distance fog,
-depth and alpha HUD. No indirect illumination, shadows, virtualized detail,
-GPU timing, asynchronous meshing, RT or mobile performance claim is implemented.
+This is surface rasterization with direct sun, directional shadows, ambient term,
+distance fog, depth and alpha HUD. No indirect illumination, virtualized detail,
+asynchronous meshing, RT or mobile performance claim is implemented.
 Host-visible mesh uploads and a single frame are correctness-first baselines.
 The capability line reports queried capacities, not residency or timing.
 
@@ -105,17 +107,94 @@ The capability line reports queried capacities, not residency or timing.
 column-major translation, perspective camera-inside/behind cases and conservative
 handling of invalid matrices. The isolated host validation example exercises live
 chunk replacement/eviction, stale revisions, failed upload preservation, empty
-chunks, dynamic buffer reuse/growth/empty geometry and in-flight teardown:
+chunks, dynamic buffer reuse/growth/empty geometry, off/on/off shadow toggles,
+off-screen casters, 1024/2048 map replacement, resize, zero extent, full renderer
+recreation and in-flight teardown:
 
 ```sh
 MATTERWEAVE_VALIDATION=1 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
   xvfb-run -a cargo run -p matterweave-render --example cache_smoke --locked
 ```
 
-It must print `cache_smoke: six frames passed` and produce no Vulkan validation
+It must print `cache_smoke: ten frames passed` and produce no Vulkan validation
 errors. This exercise is correctness evidence only, not a frame-time comparison.
 
 Workspace commands and actual validation results belong to
 [DEVELOPMENT](../../docs/DEVELOPMENT.md) and [STATUS](../../docs/STATUS.md).
 Physical Android lifecycle, rotation, driver behavior and sustained performance
 require device evidence; desktop/lavapipe runs do not establish those properties.
+
+
+## Directional sunlight and timing
+
+`render_with_lighting(view_proj, eye, hud, &LightingSettings)` uses a public `Sun`
+(direction from surface toward sun, intensity) and a shadows toggle. New settings
+start with shadows on and a 1024 map; `shadow_map_size` accepts 1024 or 2048.
+The old `render` entry point keeps shadows off with the previous sun/intensity.
+Invalid directions, nonfinite inputs, intensity outside 0..=16, or unsupported map
+sizes return an explicit fatal frame result. The map size default is provisional;
+phone comparisons must establish its quality/cost, not desktop timings.
+
+The implementation reuses ash's existing binding/resource ownership, Naga's pinned
+WGSL compiler and glam's matrix math. The reviewed [Bevy shadow shader](https://github.com/bevyengine/bevy/blob/main/crates/bevy_pbr/src/render/shadows.wgsl)
+is integrated with Bevy's renderer/view bindings; it is not a standalone ash component.
+A focused direct Vulkan depth pass avoids bringing a second engine/render graph into
+this backend. This follows the conventional [depth-map example](https://github.com/SaschaWillems/Vulkan/tree/master/examples/shadowmapping)
+and [Khronos synchronization guidance](https://docs.vulkan.org/guide/latest/synchronization_examples.html).
+No third-party shader code is copied and no speed advantage over another engine is
+claimed. Multi-cascade shadows remain a later quality/coverage decision.
+
+The light projection has a fixed 128-world-unit square XY extent centered on the
+eye in light space. Its center snaps to map texels; camera rotation cannot change
+its basis or scale. Z bounds fit all uploaded mesh AABBs with padding and 16-unit
+quantization, keeping tall and off-camera resident casters. Terrain, legacy meshes
+and dynamic geometry are culled independently against the light volume. The map
+is redrawn each enabled frame, so accepted edits and body movements affect shadows
+in the next render. Shadows do not alter authoritative voxels or collision.
+
+Depth format selection requires both attachment and sampling support. A nearest
+comparison sampler and explicit 3x3 PCF avoid requiring optional linear depth
+filtering. Each PCF tap compares against the receiver plane's depth at the
+nearest sampled texel center, including the center tap's subtexel offset. This
+prevents the receiving surface itself from occluding neighboring filter taps.
+The remaining contact bias is 0.025 world units, increased at grazing angles,
+then converted using the fitted depth span. Nearly parallel receivers (sun/normal
+cosine at most 0.0001) bypass shadows to avoid a singular plane calculation;
+their direct sunlight contribution is negligible. Shadow UV Y and the receiver
+plane gradient match Naga's Vulkan vertex Y adjustment. The outer map region
+fades to unshadowed sunlight.
+Bias/contact quality, grazing light and moving coverage edges require phone review;
+this bounded map cannot include terrain the application has not made resident.
+
+A dedicated RAII owner retains the depth image/view/memory, pass, framebuffer,
+pipeline, uniform buffer, descriptor set/pool/layout and comparison sampler.
+The world camera push constant remains 80 bytes. The 96-byte lighting uniform is
+rewritten only after the existing frame fence. The pass transitions depth writes
+(early/late fragment tests) to fragment shader reads with explicit dependencies;
+a first shadows-off frame still clears/transitions the map, making its sampled
+layout and contents valid before the world pipeline references it. Later off
+frames skip the pass. Changing map size transactionally replaces resources after
+the same fence; descriptor layout definitions remain pipeline-compatible. Full
+renderer teardown waits before any shadow resources are destroyed. One depth map
+uses 4/16 MiB at D32 for 1024/2048 (2/8 MiB at D16), excluding allocation padding.
+These bytes are not included in `mesh_bytes`.
+
+`gpu_timestamps_supported()` reports whether the selected graphics queue exposes
+usable timestamp bits and period. `gpu_timings()` returns `Option<GpuTimings>` for
+the most recently completed submission, usually the preceding frame. Consumers
+must deduplicate `frame_id` and retain its recorded `shadows` and
+`shadow_map_size` when collecting comparisons. `render_ms` is the GPU timestamp
+interval covering the shadow and color passes and any swapchain-acquire semaphore
+stall. It excludes CPU execution and presentation of this submission, but can
+include waiting for the presentation engine to release an acquired image. It is
+not a measure of active GPU work alone. `shadow_ms` is the start-to-shadow-pass-end GPU interval when
+shadows are enabled; it is `None` when disabled. Queue-stage overlap means it is
+not an independently additive cost or a substitute for matched off/on runs.
+
+Query availability is checked after the already required frame fence, with no new
+wait and no `WAIT` query flag. Reads account for the device's timestamp period and
+valid counter bits. A conservative CPU recording-to-read bound rejects samples
+that could span a full counter period, avoiding ambiguous multiple wraps.
+Unsupported/unavailable results remain `None`, never fabricated zero timings.
+Host lavapipe values are correctness evidence only; mobile performance remains
+for the lead's matched physical-device validation.

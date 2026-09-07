@@ -2,20 +2,21 @@
 
 **A modular native Android voxel engine and game framework, built primarily in Rust.**
 
-[v0.2](docs/V0.2.md) adds walking, jumping, movable and breakable voxel objects,
-a larger streamed world, and cached greedy chunk rendering through ash/Vulkan.
-The Android APK has been tested on a OnePlus 13 running LineageOS 23.2/Android 16.
+[v0.3](docs/V0.3.md) adds directional shadows, sun/detail controls, bounded
+background terrain preparation and a breakable arch playground to the native
+ash/Vulkan explorer. The v0.3 slice was tested on a OnePlus13 running
+LineageOS23.2/Android16; see STATUS for delivery and verification progress.
 
 ## Current implementation
 
 - **Core:** sparse 16³ chunks, deterministic terrain, exact voxel/ray queries,
-  local revisions, greedy/reference meshes and bounded persistent streaming.
+  local revisions, greedy/reference meshes and bounded asynchronous preparation.
 - **Physics:** Rapier fixed-step character, editable collision, voxel rigid bodies,
   spring grabbing, throwing, bounded fracture and validated snapshots.
 - **Renderer:** ash/Vulkan 1.1 chunk caching/culling, dynamic objects, direct light,
-  ambient shading, fog, depth and a diagnostic HUD.
+  filtered dynamic shadows, ambient shading, fog and optional GPU timings.
 - **Explorer:** native Android touch controls, walk/flight, terrain editing,
-  resettable physics demonstration and atomic world/object/camera saves.
+  resettable destruction playground and atomic world/object/camera/lighting saves.
 - **Delivery:** pinned Rust/NDK/Gradle builds, ARM64 development APK, host and
   physical-device evidence, Vulkan validation and signing/page-alignment checks.
 

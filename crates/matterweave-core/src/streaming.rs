@@ -1,4 +1,4 @@
-use crate::{address, hash, Chunk, World, CHUNK_VOLUME};
+use crate::{address, hash, Chunk, World, CHUNK_EDGE, CHUNK_VOLUME};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STREAM_RADIUS_CHUNKS: i32 = 3;
@@ -44,15 +44,78 @@ impl World {
             && (STREAM_MIN_Y..STREAM_MAX_Y).contains(&y)
     }
 
+    /// Window center for an eye position, or `None` for nonfinite input.
+    /// One definition serves the synchronous call and background preparation.
+    pub(crate) fn stream_center_of(position: [f32; 3]) -> Option<[i32; 2]> {
+        position.iter().all(|v| v.is_finite()).then(|| {
+            [position[0], position[2]].map(|v| ((v.floor() as i32).div_euclid(16)).clamp(-16, 15))
+        })
+    }
+
+    /// Published residency including empty chunks; None means a non-streaming
+    /// world whose data is all authoritative in memory. Bounded to 147 keys.
+    pub fn stream_resident_chunks(&self) -> Option<Vec<[i32; 3]>> {
+        self.streaming
+            .as_ref()
+            .map(|s| s.resident.iter().copied().collect())
+    }
+
+    /// Center of the currently published window, if streaming has published one.
+    pub(crate) fn stream_center(&self) -> Option<[i32; 2]> {
+        self.streaming.as_ref().and_then(|stream| stream.center)
+    }
+
+    /// Whether every chunk overlapping `position` inflated by `margin` is resident,
+    /// including resident chunks that hold no material. Residency is what makes
+    /// movement and collision safe; `chunk_keys` only lists nonempty chunks.
+    /// A world without streaming is entirely authoritative in memory, so any
+    /// finite in-bounds position is contained. Nonfinite or oversized margins,
+    /// positions outside the simulation domain and unpublished windows are false.
+    pub fn stream_contains_position(&self, position: [f32; 3], margin: f32) -> bool {
+        if !position.iter().all(|v| v.is_finite()) || !(0.0..=64.0).contains(&margin) {
+            return false;
+        }
+        let low = position.map(|v| (f64::from(v) - f64::from(margin)).floor());
+        let high = position.map(|v| (f64::from(v) + f64::from(margin)).floor());
+        if !low
+            .iter()
+            .zip(high)
+            .enumerate()
+            .all(|(axis, (&low, high))| {
+                let (min, max) = if axis == 1 {
+                    (f64::from(STREAM_MIN_Y), f64::from(STREAM_MAX_Y - 1))
+                } else {
+                    (f64::from(-WORLD_LIMIT), f64::from(WORLD_LIMIT - 1))
+                };
+                low >= min && high <= max
+            })
+        {
+            return false;
+        }
+        let Some(stream) = &self.streaming else {
+            return true;
+        };
+        let chunk = |cell: [f64; 3]| cell.map(|v| (v as i32).div_euclid(CHUNK_EDGE));
+        let (low, high) = (chunk(low), chunk(high));
+        for x in low[0]..=high[0] {
+            for y in low[1]..=high[1] {
+                for z in low[2]..=high[2] {
+                    if !stream.resident.contains(&[x, y, z]) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// Synchronously publish a bounded 7x7x3 window. No stale background jobs exist;
     /// callers synchronize render/collision revisions before advancing simulation.
     /// At revision exhaustion or with nonfinite input residency is left unchanged.
     pub fn stream_around(&mut self, position: [f32; 3]) -> bool {
-        if position.iter().any(|v| !v.is_finite()) {
+        let Some(center) = Self::stream_center_of(position) else {
             return false;
-        }
-        let center =
-            [position[0], position[2]].map(|v| ((v.floor() as i32).div_euclid(16)).clamp(-16, 15));
+        };
         let Some(stream) = &self.streaming else {
             return false;
         };

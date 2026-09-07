@@ -149,3 +149,25 @@ The recorded run used `/mnt/bench/matterweave-dev/core-coverage`; substitute an
 appropriate writable data path on other machines and the matching host triple in
 `LLVM_BIN`. Keep `LLVM_PROFILE_FILE` set for instrumented Clippy/build commands too,
 because procedural macros can also emit profile files.
+
+
+## v0.3 bounded preparation
+
+`AsyncWorld` prepares complete windows and greedy chunk meshes on one standard-library
+worker. Stream snapshots carry seed/source revision/controller generation and the
+latest desired center; mesh jobs copy only an18³ material halo and validate current
+chunk revisions. Reversal, edits, reset and eviction reject stale publications.
+Repeated identities coalesce; stream and mesh service alternate when both are ready.
+The queue holds32 mesh jobs, at most one pending window, one executing job, eight
+mesh results and at most8MiB allocated mesh-vector capacity. Window snapshots are
+bounded in count; the roughly2.6MiB maximum per snapshot is voxel payload only,
+excluding attachment/collection overhead. Cloning still occurs on the caller.
+
+Poll before requesting dirty meshes again, cap requests/uploads per frame, and retry
+refused/dropped work later. `available()` permits a synchronous fallback after worker
+startup/exit failure. `reset()` invalidates work after world replacement or synchronous
+rewindowing. Collision publication remains synchronous and precedes movement; use
+`stream_contains_position` for character gating and `stream_resident_chunks` to keep
+nearby dynamic bodies frozen until their supporting collision window is published.
+A published empty chunk is resident air, not missing work. No measured mobile speed
+advantage follows from these bounds alone.

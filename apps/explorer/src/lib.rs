@@ -1,10 +1,11 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
+mod metrics;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
-use matterweave_core::World;
+use matterweave_core::{AsyncWorld, World};
 use matterweave_physics::{Physics, PhysicsSnapshot};
-use matterweave_render::{FrameResult, Hud, Renderer};
+use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use winit::{
@@ -17,6 +18,38 @@ use winit::{
 
 const SEED: u64 = 20260907;
 const EDIT_RANGE: f32 = 12.;
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LightPreferences {
+    shadows: bool,
+    sun_index: usize,
+    map_size: u32,
+}
+impl Default for LightPreferences {
+    fn default() -> Self {
+        Self {
+            shadows: true,
+            sun_index: 0,
+            map_size: 1024,
+        }
+    }
+}
+impl LightPreferences {
+    fn valid(&self) -> bool {
+        self.sun_index < 3 && [1024, 2048].contains(&self.map_size)
+    }
+    fn settings(&self) -> LightingSettings {
+        LightingSettings {
+            sun: Sun {
+                direction_to_sun: [[0.4, 0.85, 0.3], [-0.8, 0.35, 0.3], [0.2, 1., -0.5]]
+                    [self.sun_index],
+                intensity: 0.8,
+            },
+            shadows: self.shadows,
+            shadow_map_size: self.map_size,
+        }
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Session {
@@ -27,12 +60,18 @@ struct Session {
     flying: bool,
     swapped: bool,
     large: bool,
+    #[serde(default)]
+    lighting: LightPreferences,
 }
 struct Explorer {
     // Renderer must be dropped before the Android suspend callback returns.
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     world: World,
+    preparation: AsyncWorld,
+    lighting: LightingSettings,
+    sun_index: usize,
+    last_gpu_frame: Option<u64>,
     camera: Camera,
     physics: Physics,
     flying: bool,
@@ -50,12 +89,21 @@ struct Explorer {
     frame_ms: f64,
     cpu_ms: f64,
     mesh_ms: f64,
+    save_ms: f64,
+    profile: Option<metrics::FrameLog>,
     frames: u64,
     smoke_frames: Option<u64>,
     failed: bool,
     focused: bool,
 }
 impl Explorer {
+    fn flush_profile(&mut self) {
+        if let Some(profile) = &mut self.profile {
+            if let Err(error) = profile.flush() {
+                log::warn!("Frame capture flush failed: {error}");
+            }
+        }
+    }
     fn new(mut save_path: PathBuf, smoke_frames: Option<u64>) -> Self {
         let mut recovery = false;
         let (mut world, mut status) = if save_path.exists() {
@@ -109,11 +157,13 @@ impl Explorer {
         physics.teleport(camera.position.to_array());
         let mut flying = false;
         let mut controls = Controls::default();
+        let mut light_preferences = LightPreferences::default();
         let restored = if let Some(value) = world.attachment() {
             let loaded = serde_json::from_value::<Session>(value.clone())
                 .map_err(|e| e.to_string())
                 .and_then(|session| {
                     if session.version != 1
+                        || !session.lighting.valid()
                         || !session.yaw.is_finite()
                         || !session.pitch.is_finite()
                         || session.pitch.abs() > 1.51
@@ -127,6 +177,7 @@ impl Explorer {
                     flying = session.flying;
                     controls.swapped = session.swapped;
                     controls.large = session.large;
+                    light_preferences = session.lighting;
                     Ok(())
                 });
             if let Err(error) = loaded {
@@ -147,6 +198,7 @@ impl Explorer {
                                 serde_json::from_value::<Session>(attachment.clone())
                             {
                                 if session.version == 1
+                                    && session.lighting.valid()
                                     && session.yaw.is_finite()
                                     && session.pitch.is_finite()
                                     && session.pitch.abs() <= 1.51
@@ -177,12 +229,32 @@ impl Explorer {
         world.stream_around(camera.position.to_array());
         physics.sync_world(&world);
         if !restored {
-            physics.spawn_demo(&world);
+            physics.spawn_playground(&world);
         }
+        let profile = match metrics::FrameLog::requested(
+            save_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        ) {
+            Ok(profile) => {
+                if let Some(profile) = &profile {
+                    log::info!("Frame capture: {}", profile.path.display());
+                }
+                profile
+            }
+            Err(error) => {
+                log::warn!("Frame capture request failed: {error}");
+                None
+            }
+        };
         Self {
             renderer: None,
             window: None,
             world,
+            preparation: AsyncWorld::new(),
+            lighting: light_preferences.settings(),
+            sun_index: light_preferences.sun_index,
+            last_gpu_frame: None,
             camera,
             physics,
             flying,
@@ -200,6 +272,8 @@ impl Explorer {
             frame_ms: 0.,
             cpu_ms: 0.,
             mesh_ms: 0.,
+            save_ms: 0.,
+            profile,
             frames: 0,
             smoke_frames,
             failed: false,
@@ -207,6 +281,7 @@ impl Explorer {
         }
     }
     fn save(&mut self) {
+        let begin = Instant::now();
         let session = Session {
             version: 1,
             physics: self.physics.snapshot(),
@@ -215,6 +290,11 @@ impl Explorer {
             flying: self.flying,
             swapped: self.controls.swapped,
             large: self.controls.large,
+            lighting: LightPreferences {
+                shadows: self.lighting.shadows,
+                sun_index: self.sun_index,
+                map_size: self.lighting.shadow_map_size,
+            },
         };
         let result = serde_json::to_value(session)
             .map_err(std::io::Error::other)
@@ -244,12 +324,40 @@ impl Explorer {
                 eprintln!("{}", self.status);
             }
         }
+        self.save_ms += begin.elapsed().as_secs_f64() * 1000.;
     }
     fn action(&mut self, action: Action) {
         log::info!("Action {action:?}");
         let origin = self.camera.position.to_array();
         let direction = self.camera.forward().to_array();
         match action {
+            Action::Shadows => {
+                self.lighting.shadows = !self.lighting.shadows;
+                self.status = if self.lighting.shadows {
+                    "Shadows on"
+                } else {
+                    "Shadows off"
+                }
+                .into();
+            }
+            Action::Sun => {
+                self.sun_index = (self.sun_index + 1) % 3;
+                self.lighting.sun = Sun {
+                    direction_to_sun: [[0.4, 0.85, 0.3], [-0.8, 0.35, 0.3], [0.2, 1.0, -0.5]]
+                        [self.sun_index],
+                    intensity: 0.8,
+                };
+                self.status =
+                    ["Sun: afternoon", "Sun: low angle", "Sun: overhead"][self.sun_index].into();
+            }
+            Action::ShadowQuality => {
+                self.lighting.shadow_map_size = if self.lighting.shadow_map_size == 1024 {
+                    2048
+                } else {
+                    1024
+                };
+                self.status = format!("Shadow detail: {}", self.lighting.shadow_map_size);
+            }
             Action::Flight => {
                 if self.flying && !self.physics.teleport(origin) {
                     self.status = "Move into open space before walking".into();
@@ -266,6 +374,7 @@ impl Explorer {
                 self.dirty = true;
             }
             Action::Home => {
+                self.preparation.reset();
                 self.physics.release();
                 let mut home = Camera::default();
                 self.world.stream_around(home.position.to_array());
@@ -298,10 +407,10 @@ impl Explorer {
                 // Demo terrain may be evicted when resetting far from home.
                 let mut demo_world = self.world.clone();
                 demo_world.stream_around(Camera::default().position.to_array());
-                self.physics.spawn_demo(&demo_world);
+                self.physics.spawn_playground(&demo_world);
                 self.dirty = true;
                 self.save();
-                self.status = "Objects reset at home".into();
+                self.status = "Playground reset at home".into();
             }
             Action::Grab => {
                 self.status = if self
@@ -519,7 +628,7 @@ impl Explorer {
         let accent = [0.52, 0.94, 0.72, 1.];
         let panel = [0.025, 0.055, 0.075, 0.87];
         hud.rect([16., 16., 687., 131.], panel);
-        hud.text(30., 30., "MATTERWEAVE 0.2 / PHYSICS EXPLORER", 2., white);
+        hud.text(30., 30., "MATTERWEAVE 0.3 / VOXEL PLAYGROUND", 2., white);
         hud.text(
             30.,
             55.,
@@ -636,7 +745,22 @@ impl Explorer {
         hud.rect([center[0] - 1., center[1] - 18., 2., 36.], accent);
         let look_x = if self.controls.swapped { 35. } else { 780. };
         hud.text(look_x, 350., "DRAG TO LOOK", 1.25, white);
-        for (rect, label, _) in self.controls.buttons() {
+        for (rect, label, action) in self.controls.buttons() {
+            let detail;
+            let label = match action {
+                Action::Shadows => {
+                    if self.lighting.shadows {
+                        "SHADOWS ON"
+                    } else {
+                        "SHADOWS OFF"
+                    }
+                }
+                Action::ShadowQuality => {
+                    detail = format!("SHADOW DETAIL {}", self.lighting.shadow_map_size);
+                    &detail
+                }
+                _ => label,
+            };
             hud.rect(rect, panel);
             hud.text(
                 rect[0] + 9.,
@@ -698,10 +822,45 @@ impl Explorer {
         let keys = self.world.chunk_keys();
         renderer.retain_chunks(&keys)?;
         let mut changed = false;
-        for key in keys {
-            if renderer.chunk_revision(key) != self.world.chunk_revision(key) {
-                renderer.upload_chunk(key, &self.world.mesh_chunk(key))?;
-                changed = true;
+        if self.preparation.available() {
+            // Consume before enqueueing so completed work cannot be duplicated.
+            // Bound upload count and stop after the current upload crosses 2ms.
+            for _ in 0..4 {
+                let Some((key, mesh)) = self.preparation.poll_mesh(&self.world) else {
+                    break;
+                };
+                if renderer.chunk_revision(key) != Some(mesh.revision) {
+                    renderer.upload_chunk(key, &mesh)?;
+                    changed = true;
+                }
+                if begin.elapsed().as_secs_f64() >= 0.002 {
+                    break;
+                }
+            }
+            let mut keys = keys;
+            keys.sort_by_key(|key| {
+                let dx = key[0] * 16 + 8 - self.camera.position.x as i32;
+                let dz = key[2] * 16 + 8 - self.camera.position.z as i32;
+                dx * dx + dz * dz
+            });
+            let mut requested = 0;
+            for key in keys {
+                if renderer.chunk_revision(key) != self.world.chunk_revision(key)
+                    && self.preparation.request_mesh(&self.world, key)
+                {
+                    requested += 1;
+                    if requested >= 4 {
+                        break;
+                    }
+                }
+            }
+        } else {
+            // A failed background worker must not leave an empty or frozen world.
+            for key in keys {
+                if renderer.chunk_revision(key) != self.world.chunk_revision(key) {
+                    renderer.upload_chunk(key, &self.world.mesh_chunk(key))?;
+                    changed = true;
+                }
             }
         }
         if changed {
@@ -712,6 +871,12 @@ impl Explorer {
     }
     // Xvfb without a window manager need not grant focus. Explicit host smoke
     // runs still request real presented frames; renderer absence/zero size remain gates.
+    fn column_ready(&self, position: Vec3) -> bool {
+        // The complete window includes all simulation Y chunks. Flight above
+        // that domain needs the same resident XZ footprint, including empty air.
+        self.world
+            .stream_contains_position([position.x, 0., position.z], 2.)
+    }
     fn wants_frames(&self) -> bool {
         self.focused || self.smoke_frames.is_some()
     }
@@ -735,11 +900,26 @@ impl Explorer {
             self.frame_ms * 0.9 + f64::from(dt) * 100.
         };
         let (motion, look) = self.controls.consume();
+        let previous_position = self.camera.position;
         self.camera
             .update(if self.flying { motion } else { Vec3::ZERO }, look, dt);
-        if self.world.stream_around(self.camera.position.to_array()) {
+        let stream_begin = Instant::now();
+        if self.preparation.available() {
+            // Set the latest destination before polling; reversing across a boundary
+            // must invalidate a result for the abandoned direction.
+            self.preparation
+                .request_stream(&self.world, self.camera.position.to_array());
+            if self.preparation.poll_stream(&mut self.world) {
+                self.physics.sync_world(&self.world);
+            }
+        } else if self.world.stream_around(self.camera.position.to_array()) {
             self.physics.sync_world(&self.world);
         }
+        if !self.column_ready(self.camera.position) {
+            self.camera.position = previous_position;
+            self.status = "Preparing terrain...".into();
+        }
+        let stream_ms = stream_begin.elapsed().as_secs_f64() * 1000.;
         let horizontal = (Vec3::new(-self.camera.yaw.cos(), 0., self.camera.yaw.sin()) * motion.x
             + Vec3::new(self.camera.yaw.sin(), 0., self.camera.yaw.cos()) * motion.z)
             .clamp_length_max(1.)
@@ -753,8 +933,17 @@ impl Explorer {
             self.physics.set_flying_eye(self.camera.position.to_array());
             self.physics.step_objects(dt);
         } else {
-            self.physics
-                .step(dt, horizontal.to_array(), jumping && !self.jump_held);
+            // Collision publication above completes before stepping. The inflated
+            // current/proposed footprint covers the bounded fixed-step movement.
+            if self.column_ready(self.camera.position)
+                && self.column_ready(self.camera.position + horizontal * 0.1)
+            {
+                self.physics
+                    .step(dt, horizontal.to_array(), jumping && !self.jump_held);
+            } else {
+                self.physics.step_objects(dt);
+                self.status = "Preparing terrain...".into();
+            }
             self.camera.position = Vec3::from_array(self.physics.character_eye());
         }
         if !self.flying && self.camera.position.y < -14. {
@@ -767,6 +956,7 @@ impl Explorer {
             self.save();
             self.autosave_elapsed = 0.;
         }
+        let mesh_begin = Instant::now();
         if let Err(error) = self.sync_render_meshes() {
             log::error!("Mesh upload failed: {error}");
             eprintln!("Mesh upload failed: {error}");
@@ -774,17 +964,18 @@ impl Explorer {
             event_loop.exit();
             return;
         }
+        let mesh_work_ms = mesh_begin.elapsed().as_secs_f64() * 1000.;
         let hud = self.hud();
         let matrix = self
             .camera
             .view_projection(size.width as f32 / size.height as f32);
         let position = self.camera.position.to_array();
-        match self
-            .renderer
-            .as_mut()
-            .unwrap()
-            .render(matrix, position, &hud)
-        {
+        match self.renderer.as_mut().unwrap().render_with_lighting(
+            matrix,
+            position,
+            &hud,
+            &self.lighting,
+        ) {
             FrameResult::Fatal(error) => {
                 log::error!("Render failed: {error}");
                 eprintln!("Render failed: {error}");
@@ -810,6 +1001,45 @@ impl Explorer {
             }
         }
         self.cpu_ms = now.elapsed().as_secs_f64() * 1000.;
+        let gpu = self
+            .renderer
+            .as_ref()
+            .and_then(|r| r.gpu_timings())
+            .filter(|t| {
+                let fresh = self.last_gpu_frame != Some(t.frame_id);
+                if fresh {
+                    self.last_gpu_frame = Some(t.frame_id);
+                }
+                fresh
+            });
+        if let Some(profile) = &mut self.profile {
+            match profile.record(
+                self.frames,
+                [
+                    Some(f64::from(dt) * 1000.),
+                    Some(self.cpu_ms),
+                    Some(stream_ms),
+                    Some(mesh_work_ms),
+                    Some(self.save_ms),
+                    gpu.map(|t| t.render_ms),
+                    gpu.and_then(|t| t.shadow_ms),
+                    gpu.map(|t| t.frame_id as f64),
+                    gpu.map(|t| f64::from(t.shadows)),
+                    gpu.map(|t| f64::from(t.shadow_map_size)),
+                ],
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    log::info!("Frame capture complete: {}", profile.path.display());
+                    self.profile = None;
+                }
+                Err(error) => {
+                    log::warn!("Frame capture failed: {error}");
+                    self.profile = None;
+                }
+            }
+        }
+        self.save_ms = 0.;
         if !self.failed
             && self.smoke_frames.is_some_and(|limit| self.frames >= limit)
             && (!self.smoke_exercise || self.smoke_stage >= 3)
@@ -852,6 +1082,7 @@ impl ApplicationHandler for Explorer {
             Ok(renderer) => {
                 log::info!("Graphics: {}", renderer.capabilities);
                 eprintln!("Graphics: {}", renderer.capabilities);
+                self.last_gpu_frame = None;
                 self.renderer = Some(renderer);
                 self.window = Some(window);
             }
@@ -872,6 +1103,7 @@ impl ApplicationHandler for Explorer {
         if self.dirty {
             self.save();
         }
+        self.flush_profile();
         self.renderer = None;
         self.window = None;
     }
@@ -949,6 +1181,9 @@ impl ApplicationHandler for Explorer {
                                 KeyCode::KeyF => self.action(Action::Flight),
                                 KeyCode::Home => self.action(Action::Home),
                                 KeyCode::F6 => self.action(Action::ResetObjects),
+                                KeyCode::F7 => self.action(Action::Shadows),
+                                KeyCode::F8 => self.action(Action::Sun),
+                                KeyCode::F9 => self.action(Action::ShadowQuality),
                                 _ => {}
                             }
                         }
@@ -1010,6 +1245,7 @@ impl ApplicationHandler for Explorer {
         if self.dirty {
             self.save();
         }
+        self.flush_profile();
         self.renderer = None;
         self.window = None;
     }
@@ -1110,6 +1346,25 @@ mod tests {
         app.camera.yaw = std::f32::consts::PI;
         app.camera.pitch = 0.;
         app
+    }
+    #[test]
+    fn lighting_preferences_roundtrip_and_old_sessions_get_defaults() {
+        let mut app = fixture();
+        app.action(Action::Shadows);
+        app.action(Action::Sun);
+        app.action(Action::ShadowQuality);
+        app.save();
+        let loaded = Explorer::new(app.save_path.clone(), None);
+        assert!(!loaded.lighting.shadows);
+        assert_eq!(loaded.sun_index, 1);
+        assert_eq!(loaded.lighting.shadow_map_size, 2048);
+        let world = World::load(&app.save_path).unwrap();
+        let mut old = world.attachment().unwrap().clone();
+        old.as_object_mut().unwrap().remove("lighting");
+        let session: Session = serde_json::from_value(old).unwrap();
+        assert!(session.lighting.valid() && session.lighting.shadows);
+        assert_eq!(session.lighting.map_size, 1024);
+        std::fs::remove_file(&app.save_path).unwrap();
     }
     #[test]
     fn aimed_edits_autosave_and_reload_authoritative_cells() {
