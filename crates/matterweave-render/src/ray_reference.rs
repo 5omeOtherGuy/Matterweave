@@ -1,3 +1,134 @@
+//! Isolated unit-voxel ray reference; no GPU resource ownership or path selection.
+//! See `docs/performance/ray-reference.md` for the adapter and traversal contract.
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3};
+use matterweave_core::World;
+
+pub const MAX_CELLS: usize = 64 * 64 * 64;
+pub const MAX_AXIS: u32 = 128;
+pub const PALETTE_BYTES: usize = 256 * 16;
+pub const UNIFORM_BYTES: usize = 192;
+pub const VERTEX_SPIRV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ray_reference.vs_main.spv"));
+pub const FRAGMENT_SPIRV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ray_reference.fs_main.spv"));
+
+/// Group 0 binding 0, 192 bytes. Column-major, unflipped RH 0..1-depth matrices.
+/// Padded vec4s have no implicit padding; bytemuck verifies the upload contract.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct RayUniform {
+    pub inverse_view_projection: [[f32; 4]; 4],
+    pub view_projection: [[f32; 4]; 4],
+    pub eye: [f32; 4],
+    pub origin: [i32; 4],
+    pub dimensions: [u32; 4],
+    /// Normalized direction to sun xyz, intensity w (same as world.wgsl).
+    pub sun: [f32; 4],
+}
+
+/// Logical payload sizes, not allocator overhead, staging duplication or GPU residency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RayMemoryStats {
+    pub material_bytes: usize,
+    pub palette_bytes: usize,
+    pub uniform_bytes: usize,
+    /// One complete upload of all three descriptors.
+    pub upload_bytes: usize,
+}
+
+/// Immutable derived snapshot of a half-open integer AABB. Everything outside it
+/// is intentionally excluded. Material zero is air. Every other u8 ID is solid.
+/// Caller MUST change epoch on replacement/fork/load, even at identical revision;
+/// World has no globally unique identity. Epochs must not be reused while a pack lives.
+#[derive(Debug)]
+pub struct RayVolume {
+    origin: [i32; 3],
+    dimensions: [u32; 3],
+    materials: Vec<u32>,
+    palette: [[f32; 4]; 256],
+    source_epoch: u64,
+    source_revision: u64,
+    source_seed: u64,
+}
+
+impl RayVolume {
+    /// Validates before allocation. Both AABB endpoints must lie within +/-8192.
+    /// Palette is caller-owned linear RGB, not sRGB; alpha is packed as one.
+    pub fn pack(
+        world: &World,
+        epoch: u64,
+        origin: [i32; 3],
+        dimensions: [u32; 3],
+        palette: [[f32; 3]; 256],
+    ) -> Result<Self, String> {
+        if dimensions.iter().any(|&d| d == 0 || d > MAX_AXIS) {
+            return Err("Ray dimensions must be in 1..=128".into());
+        }
+        let cells = dimensions.iter().try_fold(1usize, |n, &d| n.checked_mul(d as usize))
+            .filter(|&n| n <= MAX_CELLS).ok_or("Ray volume exceeds 64^3 cells")?;
+        for axis in 0..3 {
+            let end = i64::from(origin[axis]) + i64::from(dimensions[axis]);
+            if origin[axis] < -8192 || end > 8192 {
+                return Err("Ray bounds exceed +/-8192".into());
+            }
+        }
+        if palette.iter().flatten().any(|&v| !v.is_finite() || !(0.0..=1.0).contains(&v)) {
+            return Err("Ray palette must be finite linear RGB in 0..=1".into());
+        }
+        let mut materials = Vec::new();
+        materials.try_reserve_exact(cells).map_err(|e| format!("Ray allocation: {e}"))?;
+        for z in 0..dimensions[2] {
+            for y in 0..dimensions[1] {
+                for x in 0..dimensions[0] {
+                    materials.push(u32::from(world.get([
+                        origin[0] + x as i32, origin[1] + y as i32, origin[2] + z as i32,
+                    ])));
+                }
+            }
+        }
+        Ok(Self {
+            origin, dimensions, materials,
+            palette: palette.map(|[r,g,b]| [r,g,b,1.0]),
+            source_epoch: epoch, source_revision: world.revision(), source_seed: world.seed(),
+        })
+    }
+    pub fn origin(&self) -> [i32; 3] { self.origin }
+    pub fn dimensions(&self) -> [u32; 3] { self.dimensions }
+    /// Group 0 binding 1: x + dims.x * (y + dims.y * z), u32 stride 4.
+    pub fn materials(&self) -> &[u32] { &self.materials }
+    /// Group 0 binding 2: exactly 256 vec4s, stride 16 (4096 bytes).
+    pub fn palette(&self) -> &[[f32; 4]; 256] { &self.palette }
+    pub fn source_epoch(&self) -> u64 { self.source_epoch }
+    pub fn source_revision(&self) -> u64 { self.source_revision }
+    /// Conservative: even edits outside the crop invalidate this pack.
+    pub fn valid_for(&self, world: &World, epoch: u64) -> bool {
+        self.source_epoch == epoch && self.source_revision == world.revision()
+            && self.source_seed == world.seed()
+    }
+    pub fn memory_stats(&self) -> RayMemoryStats {
+        let material_bytes = self.materials.len() * size_of::<u32>();
+        RayMemoryStats { material_bytes, palette_bytes: PALETTE_BYTES,
+            uniform_bytes: UNIFORM_BYTES, upload_bytes: material_bytes + PALETTE_BYTES + UNIFORM_BYTES }
+    }
+    /// Use finite perspective/orthographic RH projection with finite near/far,
+    /// positive near, standard (not reversed) 0..1 depth. No manual Vulkan Y flip.
+    /// Validate freshness before uploading; constructing a uniform does not do so.
+    pub fn uniform(&self, view_projection: Mat4, eye: Vec3, sun: crate::Sun) -> Result<RayUniform, String> {
+        if !view_projection.is_finite() || !eye.is_finite() || view_projection.determinant() == 0.0 {
+            return Err("Ray camera must be finite and invertible".into());
+        }
+        let inverse = view_projection.inverse();
+        if !inverse.is_finite() { return Err("Ray inverse camera is nonfinite".into()); }
+        Ok(RayUniform {
+            inverse_view_projection: inverse.to_cols_array_2d(),
+            view_projection: view_projection.to_cols_array_2d(),
+            eye: [eye.x, eye.y, eye.z, 0.0],
+            origin: [self.origin[0], self.origin[1], self.origin[2], 0],
+            dimensions: [self.dimensions[0], self.dimensions[1], self.dimensions[2], 0],
+            sun: crate::indirect::light_key(sun)?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
