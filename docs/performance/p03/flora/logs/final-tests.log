@@ -1,0 +1,75 @@
+   Compiling matterweave-detail v0.3.0 (/mnt/bench/matterweave-dev/worktrees/performance-flora/crates/matterweave-detail)
+    Finished `test` profile [optimized] target(s) in 10.08s
+     Running unittests src/lib.rs (/mnt/bench/matterweave-dev/performance/desktop-02/target/debug/deps/matterweave_detail-af5b8cab72a352c4)
+
+running 1 test
+test fixtures::placement_tests::spacing_checks_both_axes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/detail.rs (/mnt/bench/matterweave-dev/performance/desktop-02/target/debug/deps/detail-a2503d7e708f0f5a)
+
+running 34 tests
+test collision_query_sees_solids_behind_liquid_instances_in_either_order ... ok
+test coarsen_refuses_unsupported_derived_scales_instead_of_clamping ... ok
+test directly_constructed_invalid_transforms_are_rejected_by_every_consumer ... ok
+test empty_scene_rejects_invalid_queries_and_distant_instances_do_not_mask_hits ... ok
+test extreme_cell_coordinates_are_rejected_without_abs_overflow ... ok
+test fractional_metre_translations_are_supported_and_queryable ... ok
+test greedy_mesh_removes_shared_faces_across_chunk_seams_with_outward_winding ... ok
+test malformed_snapshots_are_rejected ... ok
+test instances_report_distinct_unique_and_expanded_counts_without_extra_meshes ... ok
+test mesh_world_preserves_winding_and_uses_crate_palette ... ok
+test edits_change_revision_and_invalidate_derived_cache ... ok
+test derived_lod_preserves_the_source_volume ... ok
+test negative_cells_round_trip_through_edit_and_query ... ok
+test non_finite_and_out_of_range_points_are_rejected_not_treated_as_origin_hits ... ok
+test mesh_budget_includes_indices_and_bounds_coarsening_scratch ... ok
+test lod_mesh_revision_identifies_the_authoritative_prototype_revision ... ok
+test scale_validation_rejects_nonfinite_zero_and_oversized ... ok
+test scene_rejects_duplicate_unknown_and_invalid_identities ... ok
+test chunk_major_snapshot_runs_are_accepted_and_json_loader_is_bounded ... ok
+test mushroom_prototype_has_stipe_crown_rim_and_connected_gills ... ok
+test snapshot_loader_rejects_overlaps_regardless_of_declared_count ... ok
+test transform_round_trips_and_rejects_invalid_translation ... ok
+test transformed_boundary_queries_are_exact_at_two_scales ... ok
+test occupied_and_chunk_bookkeeping_matches_snapshot_after_edits_and_removals ... ok
+test unchanged_scene_edit_preserves_cached_geometry ... ok
+test volume_capacity_and_scale_bounds_are_enforced_in_practice ... ok
+test scene_edits_preserve_identity_and_invalidate_cache_even_at_equal_edit_counts ... ok
+test volume_chunk_budget_is_enforced_before_allocation ... ok
+test water_is_liquid_policy_and_terrain_is_collidable ... ok
+test gallery_scene_content_is_reproducible ... ok
+test tile_fixture_is_deterministic_with_negative_coords_relief_and_water ... ok
+test snapshot_round_trip_is_deterministic_and_bounded ... ok
+test gallery_scene_instances_rest_on_dry_ground_across_the_foot_footprint ... ok
+test scene_source_budget_is_enforced_and_leaves_prior_prototypes_intact ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.71s
+
+     Running tests/flora.rs (/mnt/bench/matterweave-dev/performance/desktop-02/target/debug/deps/flora-4c1d4af73216ea2c)
+
+running 15 tests
+test bracket_species_is_reserved_and_scales_reject_garbage ... ok
+test frond_has_continuous_ribs_flanking_blades_and_decorative_policy ... ok
+test clustered_has_four_distinct_caps_connected_roots_and_gills ... ok
+test palette_is_additive_with_flora_policies ... ok
+test negative_rotated_placements_query_and_foot_policy ... ok
+test reed_and_rosette_have_readable_supporting_structure ... ok
+test funnel_has_hollow_pit_connected_stipe_and_gills_under_flesh ... ok
+test support_honours_fractional_translation_and_rejects_invalid_transforms ... ok
+test root_contact_does_not_allow_body_to_intersect_a_higher_bank ... ok
+test every_flora_body_connects_to_its_root ... ok
+test prototypes_are_deterministic_with_explicit_scales_and_budgets ... ok
+test flora_prototypes_round_trip_and_survive_lod_derivation ... ok
+test dense_tile_meshes_fit_budgets_with_honest_cache_accounting ... ok
+test dense_tile_feet_are_supported_corridor_open_and_water_readable ... ok
+test dense_tile_meets_thresholds_deterministically ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.75s
+
+   Doc-tests matterweave_detail
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

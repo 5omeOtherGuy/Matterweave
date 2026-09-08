@@ -1,0 +1,24 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde v1.0.219
+   Compiling static_assertions v1.1.0
+   Compiling ndshape v0.3.0
+   Compiling glam v0.19.0
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.219
+   Compiling syn v3.0.5
+   Compiling serde_json v1.0.140
+   Compiling bytemuck_derive v1.12.0
+   Compiling ilattice v0.1.0
+   Compiling ndcopy v0.3.0
+   Compiling ryu v1.0.23
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling block-mesh v0.2.0
+   Compiling bytemuck v1.23.2
+   Compiling matterweave-core v0.3.0 (/mnt/bench/matterweave-dev/worktrees/performance-flora/crates/matterweave-core)
+   Compiling matterweave-detail v0.3.0 (/mnt/bench/matterweave-dev/worktrees/performance-flora/crates/matterweave-detail)
+    Finished `release` profile [optimized] target(s) in 30.52s
+     Running `/mnt/bench/matterweave-dev/performance/desktop-02/target/release/examples/flora_gallery /mnt/bench/matterweave-dev/performance/desktop-02/flora-gallery-a3`
+wrote flora gallery to /mnt/bench/matterweave-dev/performance/desktop-02/flora-gallery-a3
