@@ -215,9 +215,9 @@ fn every_prototype_fits_the_mesh_preflight_and_the_aggregate_cache_budget() {
             .scene
             .prototype_mesh(&id, Lod::Source)
             .unwrap_or_else(|e| panic!("{id} failed Lod::Source meshing: {e}"));
-        aggregate += showcase.scene.counts().cached_mesh_bytes;
+        aggregate += showcase.scene.cached_mesh_bytes();
         showcase.scene.invalidate(&id);
-        assert_eq!(showcase.scene.counts().cached_mesh_bytes, 0);
+        assert_eq!(showcase.scene.cached_mesh_bytes(), 0);
     }
     assert!(
         aggregate <= MAX_SCENE_CACHE_BYTES,
@@ -406,17 +406,24 @@ fn surface_query_reports_real_solid_in_cavity_intersected_columns() {
     let showcase = map();
     // Terrain queries exclude independently placed plants. A mushroom cap may
     // validly occupy the air above a carved terrain column (regression below).
-    let terrain: Vec<_> = showcase.scene.draws().into_iter()
+    let terrain: Vec<_> = showcase
+        .scene
+        .draws()
+        .into_iter()
         .filter(|d| showcase_class(&d.prototype) == "terrain")
         .map(|d| {
             let source = showcase.scene.prototype(&d.prototype).unwrap();
             let bounds = source.bounds_world(&d.transform).unwrap().unwrap();
             (d.transform, source, bounds)
-        }).collect();
-    let solid_terrain = |point: [f32; 3]| terrain.iter().any(|(transform, source, bounds)| {
-        (0..3).all(|a| point[a] >= bounds.min[a] && point[a] < bounds.max[a])
-            && material_policy(source.sample_world_metres(transform, point).unwrap()) == MaterialPolicy::Collision
-    });
+        })
+        .collect();
+    let solid_terrain = |point: [f32; 3]| {
+        terrain.iter().any(|(transform, source, bounds)| {
+            (0..3).all(|a| point[a] >= bounds.min[a] && point[a] < bounds.max[a])
+                && material_policy(source.sample_world_metres(transform, point).unwrap())
+                    == MaterialPolicy::Collision
+        })
+    };
     let mut lowered = 0usize;
     let mut roofed = 0usize;
     for xi in 0..MAP_EDGE_CELLS {
@@ -451,9 +458,8 @@ fn surface_query_reports_real_solid_in_cavity_intersected_columns() {
                 roofed += 1;
                 // The reported top is solid, and there is real air below it.
                 assert!(solid_terrain([x, top_y, z]));
-                assert!((0..surface.top_cell).any(|y| {
-                    !solid_terrain([x, (y as f32 + 0.5) * TERRAIN_CELL_M, z])
-                }));
+                assert!((0..surface.top_cell)
+                    .any(|y| { !solid_terrain([x, (y as f32 + 0.5) * TERRAIN_CELL_M, z]) }));
             }
         }
     }
@@ -631,11 +637,16 @@ fn plant_source_geometry_clears_both_routes_including_its_own_radius() {
         ] {
             // Check intermediate positions as well as the stored route vertices.
             // Point-only exclusion misses plants halfway between the 2m samples.
-            for point in route.windows(2).flat_map(|pair| (0..=16).map(move |step| {
-                let t = step as f32 / 16.;
-                [pair[0][0] + t * (pair[1][0] - pair[0][0]), 0.,
-                 pair[0][2] + t * (pair[1][2] - pair[0][2])]
-            })) {
+            for point in route.windows(2).flat_map(|pair| {
+                (0..=16).map(move |step| {
+                    let t = step as f32 / 16.;
+                    [
+                        pair[0][0] + t * (pair[1][0] - pair[0][0]),
+                        0.,
+                        pair[0][2] + t * (pair[1][2] - pair[0][2]),
+                    ]
+                })
+            }) {
                 let d = ((point[0] - x).powi(2) + (point[2] - z).powi(2)).sqrt();
                 assert!(
                     d >= limit,
@@ -840,13 +851,19 @@ fn cavity_column_discriminates_terrain_from_placed_flora() {
         let source = showcase.scene.prototype(&draw.prototype).unwrap();
         let sampled = source.sample_world_metres(&draw.transform, point).unwrap();
         if material_policy(sampled) == MaterialPolicy::Collision {
-            eprintln!("cavity intersection: {} / {} / material {}", draw.instance, draw.prototype, sampled);
+            eprintln!(
+                "cavity intersection: {} / {} / material {}",
+                draw.instance, draw.prototype, sampled
+            );
             if showcase_class(&draw.prototype) == "terrain" {
                 terrain_solids.push(draw.instance);
             }
         }
     }
-    assert!(terrain_solids.is_empty(), "carved column contains terrain: {terrain_solids:?}");
+    assert!(
+        terrain_solids.is_empty(),
+        "carved column contains terrain: {terrain_solids:?}"
+    );
 }
 
 #[test]
@@ -856,12 +873,16 @@ fn source_radius_contains_every_occupied_voxel_corner() {
         let radius = species_source_radius_m(species).unwrap();
         let scale = source.scale().metres();
         for (cell, _) in source.iter_cells() {
-            for dx in [0, 1] { for dz in [0, 1] {
-                let x = (cell[0] + dx) as f32 * scale;
-                let z = (cell[2] + dz) as f32 * scale;
-                assert!(x.hypot(z) <= radius + 1e-5,
-                    "{species} corner [{x},{z}] exceeds protected radius {radius}");
-            }}
+            for dx in [0, 1] {
+                for dz in [0, 1] {
+                    let x = (cell[0] + dx) as f32 * scale;
+                    let z = (cell[2] + dz) as f32 * scale;
+                    assert!(
+                        x.hypot(z) <= radius + 1e-5,
+                        "{species} corner [{x},{z}] exceeds protected radius {radius}"
+                    );
+                }
+            }
         }
     }
 }

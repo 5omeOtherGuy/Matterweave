@@ -34,12 +34,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut meshed = 0usize;
     for id in showcase.scene.prototype_ids() {
         showcase.scene.prototype_mesh(&id, Lod::Source)?;
-        let bytes = showcase.scene.counts().cached_mesh_bytes;
+        let bytes = showcase.scene.cached_mesh_bytes();
         aggregate_source_mesh_bytes += bytes;
         largest_mesh_bytes = largest_mesh_bytes.max(bytes);
         meshed += 1;
         showcase.scene.invalidate(&id);
-        if showcase.scene.counts().cached_mesh_bytes != 0 {
+        if showcase.scene.cached_mesh_bytes() != 0 {
             return Err(Box::new(DetailError::BudgetExceeded(
                 "mesh cache not released",
             )));
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         showcase.scene.prototype_mesh(&id, Lod::Source)?;
-        shared_bytes = showcase.scene.counts().cached_mesh_bytes;
+        shared_bytes = showcase.scene.cached_mesh_bytes();
     }
 
     let elevated_length_m: f32 = showcase
