@@ -539,7 +539,7 @@ class TestMalformed(TmpCase):
         with patch("builtins.open") as opened:
             opened.return_value.readline.side_effect = OSError("synthetic EIO")
             with self.assertRaisesRegex(ValueError, "read"):
-                vfp.validate_profile(Path("synthetic-capture.csv"))
+                vfp.validate_profile("synthetic-capture.csv")
 
     def test_row_and_byte_caps(self):
         old_rows, old_bytes = vfp.MAX_ROWS, vfp.MAX_TOTAL_BYTES
