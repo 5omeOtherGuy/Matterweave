@@ -1044,6 +1044,7 @@ fn classify_present(
 }
 
 pub struct Renderer {
+    material_time: Option<f32>,
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
@@ -1254,6 +1255,7 @@ impl Renderer {
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
         Ok(Self {
+            material_time: None,
             device,
             commands,
             swapchain: None,
@@ -1412,6 +1414,16 @@ impl Renderer {
                 .static_scene
                 .as_ref()
                 .map_or(0, |scene| scene.allocated_bytes);
+    }
+
+    /// Opt-in wetland material response. The phase wraps continuously for both
+    /// ripple frequencies; legacy rendering keeps its original material response.
+    pub fn set_wetland_material_time(&mut self, seconds: Option<f32>) -> Result<()> {
+        if seconds.is_some_and(|s| !s.is_finite()) {
+            return Err("Material time must be finite".into());
+        }
+        self.material_time = seconds.map(|s| s.rem_euclid(std::f32::consts::TAU * 10.));
+        Ok(())
     }
 
     pub fn render(&mut self, view_proj: [[f32; 4]; 4], eye: [f32; 3], hud: &Hud) -> FrameResult {
@@ -1671,7 +1683,12 @@ impl Renderer {
                 0,
                 bytemuck::bytes_of(&Camera {
                     view_proj,
-                    eye: [eye[0], eye[1], eye[2], 1.0],
+                    eye: [
+                        eye[0],
+                        eye[1],
+                        eye[2],
+                        self.material_time.map_or(1.0, |t| -1.0 - t),
+                    ],
                 }),
             );
             let frustum = Frustum::new(view_proj);

@@ -332,7 +332,13 @@ impl StaticScene {
             .then(|| Buffer::new(device.clone(), &plan.vertex_bytes, usage))
             .transpose()?;
         let indices = (!plan.index_bytes.is_empty())
-            .then(|| Buffer::new(device.clone(), &plan.index_bytes, usage))
+            .then(|| {
+                Buffer::new(
+                    device.clone(),
+                    &plan.index_bytes,
+                    vk::BufferUsageFlags::INDEX_BUFFER,
+                )
+            })
             .transpose()?;
         // An accepted nonempty instance list always produces instance records.
         let instances = Buffer::new(device.clone(), &plan.instance_bytes, usage)?;

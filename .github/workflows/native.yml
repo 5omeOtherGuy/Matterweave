@@ -36,6 +36,8 @@ jobs:
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/host-smoke.log; then exit 1; fi
           timeout 60s xvfb-run -a cargo run --locked -p matterweave-render --example cache_smoke 2>&1 | tee artifacts/cache-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/cache-smoke.log; then exit 1; fi
+          timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example instancing_smoke 2>&1 | tee artifacts/instancing-smoke.log
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/instancing-smoke.log; then exit 1; fi
           python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer artifacts/gallery-tile
           python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer artifacts/gallery-flora --preset flora
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/gallery-{tile,flora}/run.log; then exit 1; fi

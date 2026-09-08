@@ -90,9 +90,33 @@ fn shadow_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     return mix(visible / 9.0, 1.0, edge);
 }
 @fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
-    let sunlight = max(dot(normalize(v.normal), lighting.sun.xyz), 0.0);
-    let ambient = 0.28 + 0.12 * max(v.normal.y, 0.0);
-    let lit = v.color * (ambient + sunlight * lighting.sun.w * shadow_visibility(v.world, v.normal));
+    var normal = normalize(v.normal);
+    var color = v.color;
+    let enhanced = camera.eye.w < 0.0;
+    // Palette ID13 water is the unique source color (0.16,0.34,0.42).
+    // Geometry and liquid collision policy remain authoritative CPU voxel data.
+    let water = enhanced && distance(v.color, vec3(0.16,0.34,0.42)) < 0.001;
+    let view = normalize(camera.eye.xyz-v.world);
+    var highlight = vec3(0.0);
+    if enhanced {
+        let near_detail = 1.0-smoothstep(12.0,30.0,distance(v.world,camera.eye.xyz));
+        let grain = sin(v.world.x*6.7+v.world.z*3.1)*sin(v.world.y*7.3-v.world.z*5.3);
+        color *= 1.0 + 0.07*near_detail*grain;
+        if water && normal.y>0.5 {
+            let time = -camera.eye.w-1.0;
+            let a = v.world.x*2.8+v.world.z*1.7+time*0.5;
+            let b = v.world.x*-1.4+v.world.z*3.3-time*0.8;
+            normal = normalize(vec3(-0.045*cos(a)-0.035*cos(b),1.0,-0.03*cos(a)+0.05*cos(b)));
+            let fresnel = pow(1.0-max(dot(normal,view),0.0),5.0);
+            color = mix(vec3(0.08,0.23,0.27),vec3(0.30,0.44,0.45),fresnel*0.75);
+            let half_vector = normalize(view+lighting.sun.xyz);
+            highlight = vec3(0.84,0.81,0.62)*pow(max(dot(normal,half_vector),0.0),80.0)*0.55;
+        }
+    }
+    let sunlight = max(dot(normal, lighting.sun.xyz), 0.0);
+    let ambient = 0.28 + 0.12 * max(normal.y, 0.0);
+    let visibility = shadow_visibility(v.world,v.normal);
+    let lit = color * (ambient + sunlight * lighting.sun.w * visibility) + highlight*visibility;
     let fog = 1.0 - exp(-distance(v.world, camera.eye.xyz) * 0.013);
     return vec4(mix(lit, vec3(0.16, 0.24, 0.29), fog), 1.0);
 }
