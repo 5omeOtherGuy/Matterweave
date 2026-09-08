@@ -1,5 +1,6 @@
 use crate::{Chunk, World, CHUNK_VOLUME, FORMAT_VERSION, GENERATOR_VERSION};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Read, Write},
@@ -204,11 +205,12 @@ impl World {
             if solid == 0 {
                 return Err(invalid("empty stored chunk"));
             }
-            let voxels: Box<[u8; CHUNK_VOLUME]> = chunk
+            let boxed: Box<[u8; CHUNK_VOLUME]> = chunk
                 .voxels
                 .into_boxed_slice()
                 .try_into()
                 .map_err(|_| invalid("invalid chunk size"))?;
+            let voxels: Arc<[u8; CHUNK_VOLUME]> = Arc::from(boxed);
             if world
                 .chunks
                 .insert(chunk.position, Chunk { voxels, solid })

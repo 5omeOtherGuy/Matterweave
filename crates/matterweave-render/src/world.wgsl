@@ -8,10 +8,13 @@ struct Lighting {
     sun: vec4<f32>,
     // enabled, normalized depth bias, inverse map size, unused
     params: vec4<f32>,
+    indirect_origin: vec4<i32>,
+    indirect_dimensions: vec4<u32>,
 };
 @group(0) @binding(0) var<uniform> lighting: Lighting;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var<storage, read> indirect_faces: array<vec4<f32>>;
 struct Input {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -89,6 +92,24 @@ fn shadow_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     let edge = smoothstep(0.85, 0.98, max(abs(ndc.x), abs(ndc.y)));
     return mix(visible / 9.0, 1.0, edge);
 }
+// Piecewise-constant face cache: deliberately no trilinear interpolation across
+// thin walls. Lookup the solid side of the unit voxel boundary; greedy quads may
+// span many cells. Unsupported/non-axis normals and outside coverage return zero.
+fn indirect_diffuse(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    if lighting.indirect_dimensions.w == 0u { return vec3(0.0); }
+    let a = abs(normal);
+    var face = 0u;
+    if a.x > 0.999 { face = select(1u, 0u, normal.x > 0.0); }
+    else if a.y > 0.999 { face = select(3u, 2u, normal.y > 0.0); }
+    else if a.z > 0.999 { face = select(5u, 4u, normal.z > 0.0); }
+    else { return vec3(0.0); }
+    let local = floor(world - normal * 0.001) - vec3<f32>(lighting.indirect_origin.xyz);
+    let dims = lighting.indirect_dimensions.xyz;
+    if any(local < vec3(0.0)) || any(local >= vec3<f32>(dims)) { return vec3(0.0); }
+    let c = vec3<u32>(local);
+    let index = ((c.z * dims.y + c.y) * dims.x + c.x) * 6u + face;
+    return indirect_faces[index].xyz;
+}
 @fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
     var normal = normalize(v.normal);
     var color = v.color;
@@ -116,7 +137,8 @@ fn shadow_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     let sunlight = max(dot(normal, lighting.sun.xyz), 0.0);
     let ambient = 0.28 + 0.12 * max(normal.y, 0.0);
     let visibility = shadow_visibility(v.world,v.normal);
-    let lit = color * (ambient + sunlight * lighting.sun.w * visibility) + highlight*visibility;
+    let indirect = indirect_diffuse(v.world, v.normal);
+    let lit = color * (vec3(ambient + sunlight * lighting.sun.w * visibility) + indirect) + highlight*visibility;
     let fog = 1.0 - exp(-distance(v.world, camera.eye.xyz) * 0.013);
     return vec4(mix(lit, vec3(0.16, 0.24, 0.29), fog), 1.0);
 }

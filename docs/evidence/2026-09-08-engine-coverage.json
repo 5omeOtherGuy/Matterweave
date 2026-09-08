@@ -1,0 +1,32 @@
+{
+  "source": "b1f6c67",
+  "method": "Per-object LLVM LCOV exports; union executable source lines; line covered iff any executed object reports positive hits",
+  "crates": {
+    "core": {
+      "lines": 935,
+      "covered": 907,
+      "percent": 97.00534759358288
+    },
+    "detail": {
+      "lines": 3329,
+      "covered": 3193,
+      "percent": 95.91468909582457
+    },
+    "physics": {
+      "lines": 1407,
+      "covered": 1347,
+      "percent": 95.73560767590618
+    },
+    "render": {
+      "lines": 3066,
+      "covered": 2901,
+      "percent": 94.6183953033268
+    }
+  },
+  "limitations": [
+    "inline cfg(test) code remains included",
+    "LLVM unused-function hash-zero diagnostics retained",
+    "engine source only; no app/GPU shader/branch coverage",
+    "later stream/numeric/native-adapter commits excluded"
+  ]
+}

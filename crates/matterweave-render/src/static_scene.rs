@@ -66,7 +66,23 @@ pub(crate) struct PrototypeRange {
     pub bounds: [[f32; 3]; 2],
 }
 
+pub(crate) struct PrototypeGeometry {
+    first_index: u32,
+    index_count: u32,
+    vertex_offset: i32,
+    bounds: [[f32; 3]; 2],
+    has_vertices: bool,
+}
+
+pub(crate) struct InstanceUpdate {
+    instance_bytes: Vec<u8>,
+    prototypes: Vec<PrototypeRange>,
+    bounds: [[f32; 3]; 2],
+    instance_count: u32,
+}
+
 pub(crate) struct StaticScenePlan {
+    geometry: Vec<PrototypeGeometry>,
     pub vertex_bytes: Vec<u8>,
     pub index_bytes: Vec<u8>,
     pub instance_bytes: Vec<u8>,
@@ -80,6 +96,7 @@ pub(crate) struct StaticScenePlan {
 impl StaticScenePlan {
     fn empty() -> Self {
         Self {
+            geometry: Vec::new(),
             vertex_bytes: Vec::new(),
             index_bytes: Vec::new(),
             instance_bytes: Vec::new(),
@@ -259,6 +276,13 @@ pub(crate) fn plan_static_scene_with_budgets(
             .extend_from_slice(bytemuck::cast_slice(&mesh.vertices));
         plan.index_bytes
             .extend_from_slice(bytemuck::cast_slice(&mesh.indices));
+        plan.geometry.push(PrototypeGeometry {
+            first_index: first_index as u32,
+            index_count,
+            vertex_offset: vertex_offset_i32,
+            bounds,
+            has_vertices: !mesh.vertices.is_empty(),
+        });
         let list = grouped.get(&prototype);
         let (instance_offset, instance_count, batch_bounds) = match list {
             Some(list) => {
@@ -310,9 +334,77 @@ pub(crate) fn plan_static_scene_with_budgets(
     Ok(plan)
 }
 
+/// Instance-only planning never reads or copies vertex/index payloads.
+fn plan_instance_update(
+    geometry: &[PrototypeGeometry],
+    instances: &[StaticInstance],
+    budget: usize,
+) -> Result<InstanceUpdate> {
+    let size = instances
+        .len()
+        .checked_mul(INSTANCE_RECORD_SIZE)
+        .filter(|&n| n <= budget)
+        .ok_or("Static instance update exceeds budget")?;
+    let mut grouped: BTreeMap<usize, Vec<&StaticInstance>> = BTreeMap::new();
+    for instance in instances {
+        let mesh = geometry
+            .get(instance.prototype)
+            .ok_or("Unknown static prototype")?;
+        if !mesh.has_vertices
+            || instance.yaw_quarters > 3
+            || !instance.translation.iter().all(|v| v.is_finite())
+        {
+            return Err("Invalid static instance or empty prototype".into());
+        }
+        grouped
+            .entry(instance.prototype)
+            .or_default()
+            .push(instance);
+    }
+    let mut output = InstanceUpdate {
+        instance_bytes: Vec::with_capacity(size),
+        prototypes: Vec::new(),
+        bounds: [[0.; 3]; 2],
+        instance_count: instances.len() as u32,
+    };
+    let mut scene_bounds = None;
+    for (index, placements) in grouped {
+        let mesh = &geometry[index];
+        let offset = instance_bytes(&output.instance_bytes);
+        let mut bounds = None;
+        for instance in &placements {
+            let placed = translate_bounds(
+                rotate_bounds(mesh.bounds, instance.yaw_quarters),
+                instance.translation,
+            );
+            if !placed.iter().flatten().all(|v| v.is_finite()) {
+                return Err("Static instance produces nonfinite bounds".into());
+            }
+            union_bounds(&mut bounds, placed);
+            union_bounds(&mut scene_bounds, placed);
+            output
+                .instance_bytes
+                .extend_from_slice(bytemuck::bytes_of(&instance_record(instance)));
+        }
+        if mesh.index_count > 0 {
+            output.prototypes.push(PrototypeRange {
+                first_index: mesh.first_index,
+                index_count: mesh.index_count,
+                vertex_offset: mesh.vertex_offset,
+                instance_offset: offset,
+                instance_count: placements.len() as u32,
+                bounds: bounds.unwrap(),
+            });
+        }
+    }
+    output.bounds = scene_bounds.unwrap_or([[0.; 3]; 2]);
+    Ok(output)
+}
+
 /// GPU-side static scene. All buffers are created before construction returns,
 /// so a failed replacement never leaves a partially built scene behind.
 pub(crate) struct StaticScene {
+    geometry: Vec<PrototypeGeometry>,
     pub(crate) vertices: Option<Buffer>,
     pub(crate) indices: Option<Buffer>,
     pub(crate) instances: Buffer,
@@ -347,6 +439,7 @@ impl StaticScene {
             + instances.size;
         let prototype_count = plan.prototypes.len();
         Ok(Self {
+            geometry: plan.geometry,
             allocated_bytes,
             prototype_count,
             source_bytes: plan.source_bytes,
@@ -358,6 +451,32 @@ impl StaticScene {
             has_geometry: plan.has_geometry,
             bounds: plan.bounds,
         })
+    }
+
+    pub(crate) fn plan_instances(&self, instances: &[StaticInstance]) -> Result<InstanceUpdate> {
+        plan_instance_update(&self.geometry, instances, STATIC_INSTANCE_BUDGET_BYTES)
+    }
+
+    /// Caller has waited the sole frame fence. Geometry allocations stay untouched.
+    pub(crate) fn update_instances(&mut self, plan: InstanceUpdate) -> Result<()> {
+        if plan.instance_bytes.len() > self.instances.size {
+            let buffer = Buffer::new(
+                self.instances.device.clone(),
+                &plan.instance_bytes,
+                vk::BufferUsageFlags::VERTEX_BUFFER,
+            )?;
+            self.allocated_bytes = self.allocated_bytes - self.instances.size + buffer.size;
+            self.instances = buffer;
+        } else {
+            // Mapping can fail before writes; after the copy there are no fallible steps.
+            self.instances.write(&plan.instance_bytes)?;
+        }
+        self.prototypes = plan.prototypes;
+        self.prototype_count = self.prototypes.len();
+        self.has_geometry = !self.prototypes.is_empty();
+        self.bounds = plan.bounds;
+        self.instance_count = plan.instance_count;
+        Ok(())
     }
 
     pub(crate) fn stats(&self) -> StaticSceneStats {
@@ -500,6 +619,49 @@ mod tests {
         assert!(plan.index_bytes.is_empty());
         assert!(plan.prototypes.is_empty());
         assert!(!plan.has_geometry);
+    }
+
+    #[test]
+    fn instance_updates_can_select_previously_unused_geometry() {
+        let plan =
+            plan_static_scene(&[triangle(1), triangle(2)], &[instance(0, [0.; 3], 0)]).unwrap();
+        let update =
+            plan_instance_update(&plan.geometry, &[instance(1, [-3., 2., 4.], 1)], 16).unwrap();
+        assert_eq!(update.prototypes.len(), 1);
+        let batch = &update.prototypes[0];
+        assert_eq!(
+            (batch.first_index, batch.vertex_offset, batch.index_count),
+            (3, 3, 3)
+        );
+        assert_eq!(batch.bounds, [[-3., 2., 3.], [-3., 3., 4.]]);
+        assert_eq!(update.instance_count, 1);
+        assert_eq!(update.instance_bytes.len(), 16);
+    }
+
+    #[test]
+    fn instance_update_rejects_invalid_inputs_before_publication() {
+        let plan =
+            plan_static_scene(&[triangle(1), Mesh::default()], &[instance(0, [0.; 3], 0)]).unwrap();
+        for bad in [
+            instance(2, [0.; 3], 0),
+            instance(1, [0.; 3], 0),
+            instance(0, [0.; 3], 4),
+            instance(0, [f32::NAN, 0., 0.], 0),
+        ] {
+            assert!(plan_instance_update(&plan.geometry, &[bad], 16).is_err());
+        }
+        assert!(plan_instance_update(&plan.geometry, &[instance(0, [0.; 3], 0)], 15).is_err());
+        assert_eq!(plan.prototypes[0].instance_count, 1);
+    }
+
+    #[test]
+    fn clearing_instances_retains_reusable_geometry_metadata() {
+        let plan = plan_static_scene(&[triangle(1)], &[instance(0, [0.; 3], 0)]).unwrap();
+        let cleared = plan_instance_update(&plan.geometry, &[], 0).unwrap();
+        assert_eq!(cleared.instance_count, 0);
+        assert!(cleared.prototypes.is_empty());
+        let again = plan_instance_update(&plan.geometry, &[instance(0, [1.; 3], 0)], 16).unwrap();
+        assert_eq!(again.prototypes[0].bounds, [[1.; 3], [2., 2., 1.]]);
     }
 
     #[test]

@@ -1,0 +1,98 @@
+{
+  "code_source": "1abe19b",
+  "build_head_documentation_only": "3397e6a",
+  "profile": "Cargo dev opt2 debug0; Android debug",
+  "apk_sha256": "4815d4b941e04004eb2b75753df84b5d7c71afeed305227718adb28bda76008e",
+  "serial": "192.168.178.93:42373",
+  "source": "1abe19b",
+  "events": [
+    {
+      "phase": 0,
+      "elapsed": 0.5465809830056969
+    },
+    {
+      "phase": 1,
+      "elapsed": 2.4843759579962352
+    },
+    {
+      "phase": 2,
+      "elapsed": 4.494670870000846
+    },
+    {
+      "phase": 3,
+      "elapsed": 6.4255177400045795
+    },
+    {
+      "action": "HOME/resume",
+      "elapsed": 7.110403421000228
+    },
+    {
+      "phase": 4,
+      "elapsed": 9.188873271996272
+    },
+    {
+      "phase": 5,
+      "elapsed": 11.188300513007562
+    },
+    {
+      "phase": 6,
+      "elapsed": 13.153513792000012
+    },
+    {
+      "phase": 7,
+      "elapsed": 15.041421072004596
+    },
+    {
+      "phase": 8,
+      "elapsed": 17.028399768008967
+    }
+  ],
+  "captured_phases": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "home": true,
+  "resumed": true,
+  "capability_reports": 3,
+  "terminal_pass": true,
+  "date": "2026-09-08",
+  "device": "OnePlus13 CPH2653",
+  "os": "Android16",
+  "gpu": "Adreno830",
+  "vulkan": "1.3.284",
+  "driver": 2150760522,
+  "validation_layers": false,
+  "frames": 1080,
+  "raw_directory": "/mnt/bench/matterweave-dev/performance/engine-02/phone-detail",
+  "limits": [
+    "Functional fixture, not mobile performance or full LOD visual stability acceptance",
+    "Source collision/material point query, not full Rapier traversal",
+    "Resident budget phase builds no geometry; cold-cache fallback host test only",
+    "Source/fine mesh samples viewed; low contrast and abrupt transitions remain quality limitations"
+  ],
+  "artifacts": {
+    "alignment.log": "17ba7f92f812e0dd5aeb81678ddfd7356d2d7a02a0ba0db7f75e879da62b131b",
+    "build-manifest.json": "89ef8a071905a9b27215acc69824b62dbc7f9aaa8aa2e7d2191c4ec9e3a721b5",
+    "capture.json": "d7c7502168da3b200b2c1501e2f197a08b116c61beb5307052d0b0f2a5db1ee9",
+    "logcat.txt": "a2a0797c57cc89abd437ae1955d195e8c17ea57a5336fddada3a4952b550f5ea",
+    "matterweave-arm64-debug.apk": "4815d4b941e04004eb2b75753df84b5d7c71afeed305227718adb28bda76008e",
+    "phase-0.png": "7572930a17184cd93df34ef83f9559a1d73d9ea1b7c9731195a1567292144ec4",
+    "phase-1.png": "8f60ca2e6f026b8f8d84a7ef06497a62235ac76165b16222ad321a0891d3d78f",
+    "phase-2.png": "c09cf5f5ae784b866eff23d8cef1c48d24b1c0065f37f0f56c0f3b8aaa636764",
+    "phase-3.png": "68f1340f8044d537d233e36fe7704c1d6721c733d49b1bb1f8c1beeac1379503",
+    "phase-4.png": "d024357dc492155f0751e46511506a8f2681f962f93d7c6505a61c692a4efd0b",
+    "phase-5.png": "0e40b331ca5e0573e6c8c195a9b89a4bdac9f424515dce7d62ae9411944ff01b",
+    "phase-6.png": "b8ffd50ff52ceb53a02856a0d5b6f8d5298e6ee6932bb872c7cb2952a9e03d3d",
+    "phase-7.png": "940accb47cdf1b3161140f569bd1b1a63578992067590955856edcb5d0bb59ba",
+    "phase-8.png": "15058bb012e745aea6ccf0943047cffaf76592b7335f8aeb213cf75aabc6f12b",
+    "report.txt": "3785fde0565ca8d416bb47baef03f1252b697336e0be6534f4b1425fca94c2c9",
+    "signature.log": "b0a1af67205efcd284e5bbae691ebf4a0d296b4fcae02cd28e7e0509d0e0efbc"
+  }
+}

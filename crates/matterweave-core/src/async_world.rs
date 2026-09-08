@@ -84,6 +84,7 @@ struct Queue {
     active: BTreeSet<[i32; 3]>,
     stream_result: Option<StreamResult>,
     stream_active: Option<([i32; 2], u64, u64, u64)>,
+    stream_requested: Option<([i32; 2], u64, u64, u64)>,
     prefer_mesh: bool,
     mesh_results: VecDeque<MeshResult>,
     mesh_result_bytes: usize,
@@ -112,9 +113,11 @@ fn mesh_bytes(mesh: &Mesh) -> usize {
 /// Bounded background preparation attached to one authoritative world.
 ///
 /// Snapshot cost: three retained window clones (pending, executing, completed),
-/// plus one transient clone while replacing a pending job. Each holds resident
-/// voxels and edit overrides: at most (147 + 512) * 4096 B, about 2.6 MiB of
-/// voxel payload per clone, excluding attachment and collection overhead.
+/// plus one transient clone while replacing a pending job. Chunk payloads are
+/// shared across clones; edits detach only the changed payload. Generating a new
+/// window allocates its new chunks. Each snapshot has at most (147 + 512) * 4096 B,
+/// about 2.6 MiB of logical payload, excluding attachment/collection overhead.
+/// Fully diverged snapshots can still reach that payload bound independently.
 pub struct AsyncWorld {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
@@ -168,6 +171,7 @@ impl AsyncWorld {
             let mut queue = self.shared.lock();
             queue.stream = None;
             queue.stream_result = None;
+            queue.stream_requested = None;
             return false;
         }
         let mut queue = self.shared.lock();
@@ -176,6 +180,20 @@ impl AsyncWorld {
         }
         let generation = queue.generation;
         let identity = (center, world.revision(), world.seed(), generation);
+        queue.stream_requested = Some(identity);
+        // This request is the latest publishable center. Any pending window for a
+        // different identity is now superseded: drop it before deduping so it can
+        // neither run last and overwrite the window the caller now wants nor be
+        // published for a center `poll_stream` will reject. Only one pending window
+        // is retained, and it always matches the latest request.
+        if queue
+            .stream
+            .as_ref()
+            .is_some_and(|j| (j.center, j.source_revision, j.seed, j.generation) != identity)
+        {
+            queue.stream = None;
+            queue.discarded += 1;
+        }
         if queue.stream_active == Some(identity)
             || queue
                 .stream
@@ -188,18 +206,16 @@ impl AsyncWorld {
         {
             return false;
         }
-        let superseded = queue
-            .stream
-            .replace(StreamJob {
-                world: world.clone(),
-                position: eye,
-                center,
-                source_revision: world.revision(),
-                seed: world.seed(),
-                generation,
-            })
-            .is_some();
-        queue.discarded += u64::from(superseded);
+        // The superseded pending window, if any, was already dropped above, so this
+        // replace only ever installs the latest request into an empty pending slot.
+        queue.stream = Some(StreamJob {
+            world: world.clone(),
+            position: eye,
+            center,
+            source_revision: world.revision(),
+            seed: world.seed(),
+            generation,
+        });
         drop(queue);
         self.requested_center = Some(center);
         self.shared.wake.notify_all();
@@ -307,18 +323,39 @@ impl AsyncWorld {
         queue.active.clear();
         queue.stream = None;
         queue.stream_result = None;
-        // Saturation would stop invalidating in-flight results; queues still clear,
-        // and revision validation continues to reject anything the world outgrew.
-        queue.generation = queue.generation.saturating_add(1);
+        queue.stream_requested = None;
+        // The generation is an opaque, strictly increasing cancellation token that is
+        // never reused: each reset mints a fresh value that invalidates every job
+        // stamped with an older one, including the job in flight. Saturating at
+        // u64::MAX would reuse the current token, letting a same-revision in-flight
+        // job escape cancellation. Rather than reuse a token, retire the worker at
+        // exhaustion; the caller keeps the synchronous path (`available()` is false
+        // and requests are refused), so no stale background result can be published.
+        let retired = match queue.generation.checked_add(1) {
+            Some(next) => {
+                queue.generation = next;
+                false
+            }
+            None => {
+                queue.shutdown = true;
+                true
+            }
+        };
         drop(queue);
         self.requested_center = None;
+        if retired {
+            // Wake an idle worker so it observes shutdown and exits promptly.
+            self.shared.wake.notify_all();
+        }
     }
 
     /// False after worker startup failure or an unexpected worker exit.
     pub fn available(&self) -> bool {
-        self.worker
-            .as_ref()
-            .is_some_and(|worker| !worker.is_finished())
+        !self.shared.lock().shutdown
+            && self
+                .worker
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
     }
 
     pub fn stats(&self) -> AsyncStats {
@@ -371,66 +408,256 @@ fn run(shared: &Shared) {
         if queue.shutdown {
             return;
         }
-        // Alternate when both classes are ready: sustained travel cannot starve
-        // retained-chunk geometry. Each service unit remains bounded.
-        let job = if !queue.meshes.is_empty() && (queue.prefer_mesh || queue.stream.is_none()) {
-            queue.prefer_mesh = false;
-            Job::Mesh(queue.meshes.pop_front().expect("nonempty queue"))
-        } else {
-            queue.prefer_mesh = true;
-            let job = queue.stream.take().expect("nonempty stream queue");
-            queue.stream_active = Some((job.center, job.source_revision, job.seed, job.generation));
-            Job::Stream(job)
-        };
-        queue.inflight = 1;
+        let job = take_job(&mut queue);
         drop(queue);
+        run_job(shared, job);
+    }
+}
 
-        match job {
-            Job::Stream(job) => {
-                let mut world = job.world;
-                world.stream_around(job.position);
-                let mut queue = shared.lock();
-                queue.inflight = 0;
-                queue.stream_active = None;
-                if queue.shutdown || queue.generation != job.generation {
-                    queue.discarded += 1;
-                    continue;
-                }
-                let superseded = queue
-                    .stream_result
-                    .replace(StreamResult {
-                        world,
-                        center: job.center,
-                        source_revision: job.source_revision,
-                        seed: job.seed,
-                        generation: job.generation,
-                    })
-                    .is_some();
-                queue.discarded += u64::from(superseded);
+/// Selects the next bounded unit under the lock. Alternates when both classes are
+/// ready so sustained travel cannot starve retained-chunk geometry. The caller
+/// guarantees at least one job is present (a window of at most 147 generated
+/// chunks or a single 18³ mesh).
+fn take_job(queue: &mut Queue) -> Job {
+    let job = if !queue.meshes.is_empty() && (queue.prefer_mesh || queue.stream.is_none()) {
+        queue.prefer_mesh = false;
+        Job::Mesh(queue.meshes.pop_front().expect("nonempty queue"))
+    } else {
+        queue.prefer_mesh = true;
+        let job = queue.stream.take().expect("nonempty stream queue");
+        queue.stream_active = Some((job.center, job.source_revision, job.seed, job.generation));
+        Job::Stream(job)
+    };
+    queue.inflight = 1;
+    job
+}
+
+/// Executes one bounded unit on its snapshot, then publishes or discards the
+/// result under the lock according to shutdown, generation and world validity.
+fn run_job(shared: &Shared, job: Job) {
+    match job {
+        Job::Stream(job) => {
+            let mut world = job.world;
+            world.stream_around(job.position);
+            let mut queue = shared.lock();
+            queue.inflight = 0;
+            queue.stream_active = None;
+            if queue.shutdown
+                || queue.generation != job.generation
+                || queue.stream_requested
+                    != Some((job.center, job.source_revision, job.seed, job.generation))
+            {
+                queue.discarded += 1;
+                return;
             }
-            Job::Mesh(job) => {
-                let mesh = mesh_halo(job.key, &job.voxels, job.revision);
-                let bytes = mesh_bytes(&mesh);
-                let mut queue = shared.lock();
-                queue.inflight = 0;
-                if queue.generation == job.generation {
-                    queue.active.remove(&job.key);
-                }
-                let full = queue.mesh_results.len() >= MAX_MESH_RESULTS
-                    || (!queue.mesh_results.is_empty()
-                        && queue.mesh_result_bytes + bytes > MAX_MESH_RESULT_BYTES);
-                if queue.shutdown || queue.generation != job.generation || full {
-                    // Nothing records the drop, so the caller can request the key again.
-                    queue.discarded += 1;
-                    continue;
-                }
-                queue.mesh_result_bytes += bytes;
-                queue.mesh_results.push_back(MeshResult {
-                    key: job.key,
-                    mesh,
+            let superseded = queue
+                .stream_result
+                .replace(StreamResult {
+                    world,
+                    center: job.center,
+                    source_revision: job.source_revision,
+                    seed: job.seed,
                     generation: job.generation,
-                });
+                })
+                .is_some();
+            queue.discarded += u64::from(superseded);
+        }
+        Job::Mesh(job) => {
+            let mesh = mesh_halo(job.key, &job.voxels, job.revision);
+            let bytes = mesh_bytes(&mesh);
+            let mut queue = shared.lock();
+            queue.inflight = 0;
+            if queue.generation == job.generation {
+                queue.active.remove(&job.key);
+            }
+            let full = queue.mesh_results.len() >= MAX_MESH_RESULTS
+                || (!queue.mesh_results.is_empty()
+                    && queue.mesh_result_bytes + bytes > MAX_MESH_RESULT_BYTES);
+            if queue.shutdown || queue.generation != job.generation || full {
+                // Nothing records the drop, so the caller can request the key again.
+                queue.discarded += 1;
+                return;
+            }
+            queue.mesh_result_bytes += bytes;
+            queue.mesh_results.push_back(MeshResult {
+                key: job.key,
+                mesh,
+                generation: job.generation,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl AsyncWorld {
+        /// Test-only controller with no background worker. The queue stays live so a
+        /// test can drive the state machine deterministically through `take_job`
+        /// and `run_job` instead of racing a real thread. Private: not a public API.
+        fn manual() -> Self {
+            Self {
+                shared: Arc::new(Shared {
+                    queue: Mutex::new(Queue::default()),
+                    wake: Condvar::new(),
+                }),
+                worker: None,
+                requested_center: None,
             }
         }
+
+        /// Runs every currently pending unit to completion, simulating the worker
+        /// deterministically with no timing dependence.
+        fn drain(&self) {
+            loop {
+                let mut queue = self.shared.lock();
+                if queue.stream.is_none() && queue.meshes.is_empty() {
+                    return;
+                }
+                let job = take_job(&mut queue);
+                drop(queue);
+                run_job(&self.shared, job);
+            }
+        }
+    }
+
+    fn streamed(seed: u64, eye: [f32; 3]) -> World {
+        let mut world = World::generate(seed);
+        world.enable_streaming();
+        assert!(world.stream_around(eye));
+        world
+    }
+
+    // Bug 1: with A in flight and B pending, returning to A must drop the now
+    // superseded pending B so B cannot run last and overwrite A's valid result.
+    #[test]
+    fn latest_request_matching_inflight_drops_a_superseded_pending_window() {
+        let world = streamed(8712, [0.0, 4.0, 0.0]);
+        let eye_a = [120.0, 4.0, 0.0];
+        let eye_b = [-120.0, 4.0, 0.0];
+        let center_a = World::stream_center_of(eye_a).unwrap();
+        let center_b = World::stream_center_of(eye_b).unwrap();
+        assert_ne!(center_a, center_b);
+
+        let mut jobs = AsyncWorld::manual();
+
+        // Request A, then let the worker take it: A is now in flight.
+        assert!(jobs.request_stream(&world, eye_a));
+        let job_a = take_job(&mut jobs.shared.lock());
+        assert!(matches!(job_a, Job::Stream(_)));
+        assert_eq!(
+            jobs.shared.lock().stream_active.map(|(c, ..)| c),
+            Some(center_a)
+        );
+
+        // A different destination B is requested and queued while A runs.
+        assert!(jobs.request_stream(&world, eye_b));
+        assert!(jobs.shared.lock().stream.is_some());
+
+        // The caller returns to A. A is in flight, so no new job is queued, but the
+        // now-superseded pending B must be discarded so it cannot overwrite A.
+        assert!(!jobs.request_stream(&world, eye_a));
+        assert_eq!(jobs.requested_center, Some(center_a));
+        assert!(
+            jobs.shared.lock().stream.is_none(),
+            "superseded pending B was not dropped: {:?}",
+            jobs.shared.lock().stream.as_ref().map(|j| j.center)
+        );
+
+        // Finish A, then any remaining pending unit, then publish. The latest
+        // request A must win; a surviving B would replace and reject it.
+        run_job(&jobs.shared, job_a);
+        jobs.drain();
+        let mut out = world.clone();
+        assert!(
+            jobs.poll_stream(&mut out),
+            "latest request A was never published"
+        );
+        assert!(out.stream_contains_position(eye_a, 1.0));
+        assert!(!out.stream_contains_position(eye_b, 1.0));
+    }
+
+    // Bug 2: reset must cancel in-flight work. A saturating generation at u64::MAX
+    // cannot mint a fresh token, so the controller retires to the synchronous path
+    // instead of silently accepting the stale in-flight result.
+    #[test]
+    fn reset_at_generation_exhaustion_retires_instead_of_leaking_inflight_work() {
+        let mut world = World::new(0);
+        for cell in [[15, 5, 5], [16, 5, 5], [20, 5, 5]] {
+            world.set(cell, 1);
+        }
+        let key = [1, 0, 0];
+        assert!(world.chunk_revision(key).is_some());
+
+        let mut jobs = AsyncWorld::manual();
+        jobs.shared.lock().generation = u64::MAX;
+
+        // Queue and start a mesh job at the exhausted generation: now in flight.
+        assert!(jobs.request_mesh(&world, key));
+        let job = take_job(&mut jobs.shared.lock());
+        assert!(matches!(job, Job::Mesh(_)));
+
+        jobs.reset();
+        assert!(
+            jobs.shared.lock().shutdown,
+            "exhausted reset did not retire the worker"
+        );
+
+        // Completing the in-flight job after reset must not publish a stale result.
+        run_job(&jobs.shared, job);
+        assert!(
+            jobs.poll_mesh(&world).is_none(),
+            "reset guarantee violated: a stale in-flight mesh escaped cancellation"
+        );
+        // The retired controller refuses new work; the caller keeps the sync path.
+        assert!(!jobs.request_mesh(&world, key));
+    }
+
+    // A normal (non-exhausted) reset still mints a fresh token and stays available.
+    #[test]
+    fn reset_below_exhaustion_bumps_generation_and_keeps_running() {
+        let mut jobs = AsyncWorld::manual();
+        jobs.reset();
+        let queue = jobs.shared.lock();
+        assert_eq!(queue.generation, 1);
+        assert!(!queue.shutdown);
+    }
+
+    #[test]
+    fn returning_to_buffered_window_retains_it_after_other_work_finishes() {
+        let mut world = streamed(8712, [0., 4., 0.]);
+        let mut jobs = AsyncWorld::manual();
+        let a = [120., 4., 0.];
+        let b = [-120., 4., 0.];
+        assert!(jobs.request_stream(&world, a));
+        let first = take_job(&mut jobs.shared.lock());
+        run_job(&jobs.shared, first);
+        assert!(jobs.request_stream(&world, b));
+        let second = take_job(&mut jobs.shared.lock());
+        assert!(!jobs.request_stream(&world, a));
+        run_job(&jobs.shared, second);
+        assert!(
+            jobs.poll_stream(&mut world),
+            "latest requested buffered window was lost"
+        );
+        assert_eq!(world.stream_center(), World::stream_center_of(a));
+    }
+
+    #[test]
+    fn retirement_reports_unavailable_before_the_worker_exits() {
+        let mut jobs = AsyncWorld::manual();
+        let (release, waiting) = std::sync::mpsc::channel();
+        jobs.worker = Some(std::thread::spawn(move || waiting.recv().unwrap()));
+        assert!(jobs.available());
+        jobs.shared.lock().generation = u64::MAX;
+        jobs.reset();
+        let available = jobs.available();
+        release.send(()).unwrap();
+        drop(jobs);
+        assert!(
+            !available,
+            "retired worker must expose synchronous fallback immediately"
+        );
     }
 }

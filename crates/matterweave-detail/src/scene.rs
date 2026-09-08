@@ -1,8 +1,15 @@
 //! Prototype/instance scene with a bounded derived-mesh cache.
 
-use crate::{material_policy, DetailError, DetailVolume, Lod, MaterialPolicy, Result, Transform};
+use crate::select::{choose_lod, Camera, ErrorMetrics, LodConfig};
+use crate::{
+    material_policy, Bounds, DetailError, DetailVolume, InstanceLod, Lod, MaterialPolicy,
+    MeshBatch, PreparedFrame, Result, Transform,
+};
 use matterweave_core::{Mesh, Vertex};
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 pub const MAX_PROTOTYPES: usize = 4_096;
 pub const MAX_INSTANCES: usize = 200_000;
@@ -13,6 +20,19 @@ pub const MAX_SCENE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 /// Aggregate derived mesh cache: 64 MiB. Exceeding it is an error, never a
 /// silent eviction or truncation.
 pub const MAX_SCENE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Opaque identity of an authoritative scene state, suitable for asynchronous
+/// publication checks. Unrelated scenes never compare equal, even if their local
+/// revision counters match. Cloning a source snapshot retains the identity until
+/// either copy changes. Derived cache work does not change this identity.
+#[derive(Clone, Debug, Default)]
+pub struct SceneVersion(Arc<()>);
+impl PartialEq for SceneVersion {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for SceneVersion {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstanceDraw {
@@ -59,6 +79,72 @@ struct CachedMesh {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct MeshKey(String, Lod);
 
+/// Per-prototype, per-revision derived-loss and bounds summary. Computed once per
+/// source revision so selection never re-censuses occupied cells per frame.
+struct Digest {
+    revision: u64,
+    occupied: usize,
+    bounds_local: Option<Bounds>,
+    metrics: [Option<ErrorMetrics>; 3],
+}
+
+fn coarse_metric(
+    scale_m: f32,
+    factor: i32,
+    coarse_cells: usize,
+    occupied: usize,
+) -> Option<ErrorMetrics> {
+    // A derived scale outside the supported range is not a selectable level.
+    if crate::Scale::new(scale_m * factor as f32).is_err() {
+        return None;
+    }
+    let error_estimate_m = scale_m * factor as f32;
+    if occupied == 0 || coarse_cells == 0 {
+        return Some(ErrorMetrics {
+            error_estimate_m,
+            dilation_fraction: 0.0,
+        });
+    }
+    let filled = coarse_cells as f64 * (factor as f64).powi(3);
+    let dilation = (1.0 - occupied as f64 / filled).max(0.0) as f32;
+    Some(ErrorMetrics {
+        error_estimate_m,
+        dilation_fraction: dilation,
+    })
+}
+
+fn compute_digest(volume: &DetailVolume) -> Digest {
+    let scale = volume.scale().metres();
+    let mut min = [i32::MAX; 3];
+    let mut max = [i32::MIN; 3];
+    let mut half: BTreeSet<[i32; 3]> = BTreeSet::new();
+    let mut quarter: BTreeSet<[i32; 3]> = BTreeSet::new();
+    for (cell, _) in volume.iter_cells() {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(cell[axis]);
+            max[axis] = max[axis].max(cell[axis]);
+        }
+        half.insert(cell.map(|v| v.div_euclid(2)));
+        quarter.insert(cell.map(|v| v.div_euclid(4)));
+    }
+    let occupied = volume.occupied_cells();
+    let bounds_local = (occupied > 0).then(|| Bounds {
+        min: min.map(|v| v as f32 * scale),
+        max: max.map(|v| (v + 1) as f32 * scale),
+    });
+    let metrics = [
+        Some(ErrorMetrics::SOURCE),
+        coarse_metric(scale, 2, half.len(), occupied),
+        coarse_metric(scale, 4, quarter.len(), occupied),
+    ];
+    Digest {
+        revision: volume.revision(),
+        occupied,
+        bounds_local,
+        metrics,
+    }
+}
+
 fn mesh_bytes(mesh: &Mesh) -> usize {
     mesh.vertices.capacity() * std::mem::size_of::<Vertex>() + mesh.indices.capacity() * 4
 }
@@ -85,16 +171,26 @@ fn sample_instance(volume: &DetailVolume, transform: &Transform, point: [f32; 3]
 /// per instance, so repeated placements cost a transform, not new geometry.
 #[derive(Default)]
 pub struct DetailScene {
+    source_version: SceneVersion,
     prototypes: BTreeMap<String, DetailVolume>,
     instances: BTreeMap<String, Instance>,
     cache: BTreeMap<MeshKey, CachedMesh>,
     cache_bytes: usize,
     mesh_builds: u64,
+    /// Per-prototype-revision digest cache. Pure derived data; never authoritative.
+    digests: BTreeMap<String, Digest>,
+    /// Last selected level per instance id, for hysteresis across prepare calls.
+    selection: BTreeMap<String, Lod>,
 }
 
 impl DetailScene {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Constant-time token for validating work prepared from a source snapshot.
+    pub fn source_version(&self) -> SceneVersion {
+        self.source_version.clone()
     }
 
     pub fn add_prototype(&mut self, volume: DetailVolume) -> Result<()> {
@@ -108,6 +204,7 @@ impl DetailScene {
             return Err(DetailError::BudgetExceeded("scene source payload budget"));
         }
         self.prototypes.insert(volume.id().to_string(), volume);
+        self.source_version = SceneVersion::default();
         Ok(())
     }
 
@@ -125,11 +222,14 @@ impl DetailScene {
     /// most the bounded source payload (`MAX_SCENE_SOURCE_BYTES`).
     pub fn fork_source(&self) -> Self {
         Self {
+            source_version: self.source_version.clone(),
             prototypes: self.prototypes.clone(),
             instances: self.instances.clone(),
             cache: BTreeMap::new(),
             cache_bytes: 0,
             mesh_builds: self.mesh_builds,
+            digests: BTreeMap::new(),
+            selection: BTreeMap::new(),
         }
     }
 
@@ -213,6 +313,7 @@ impl DetailScene {
             .expect("validated prototype")
             .set(cell, material)?;
         if changed {
+            self.source_version = SceneVersion::default();
             self.invalidate(id);
         }
         Ok(changed)
@@ -269,6 +370,7 @@ impl DetailScene {
                 transform,
             },
         );
+        self.source_version = SceneVersion::default();
         Ok(())
     }
 
@@ -386,6 +488,188 @@ impl DetailScene {
     /// Unlike `counts`, this does not scan authoritative materials or instances.
     pub fn cached_mesh_bytes(&self) -> usize {
         self.cache_bytes
+    }
+
+    /// Immutable access to an already-built derived mesh, for adapters that ran
+    /// [`Self::prepare_batches`] and now upload the referenced geometry. Returns
+    /// `None` when the mesh is not resident (never triggers a build).
+    pub fn cached_prototype_mesh(&self, prototype_id: &str, lod: Lod) -> Option<&Mesh> {
+        self.cache
+            .get(&MeshKey(prototype_id.to_string(), lod))
+            .map(|entry| &entry.mesh)
+    }
+
+    /// Refreshes and returns the derived-loss/bounds digest for one prototype,
+    /// recomputing only when the source revision changed. Panics if the id is
+    /// unknown; callers pass ids read from live instances.
+    fn digest(&mut self, prototype_id: &str) -> &Digest {
+        let revision = self.prototypes[prototype_id].revision();
+        let stale = self
+            .digests
+            .get(prototype_id)
+            .is_none_or(|d| d.revision != revision);
+        if stale {
+            let digest = compute_digest(&self.prototypes[prototype_id]);
+            self.digests.insert(prototype_id.to_string(), digest);
+        }
+        &self.digests[prototype_id]
+    }
+
+    /// Selects a view-dependent LOD per instance and records it for hysteresis.
+    ///
+    /// Pure selection: no meshes are built and authoritative source data is never
+    /// touched. Instances are returned in stable instance-id order. Fails only on
+    /// an invalid camera or config; a placed instance always resolves to a level,
+    /// with `Source` as the retained fallback.
+    pub fn select_lods(&mut self, camera: &Camera, config: &LodConfig) -> Result<Vec<InstanceLod>> {
+        camera.validate()?;
+        config.validate()?;
+        let ids: Vec<String> = self.instances.keys().cloned().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let instance = &self.instances[&id];
+            let prototype = instance.prototype.clone();
+            let transform = instance.transform;
+            let previous = self.selection.get(&id).copied().unwrap_or(Lod::Source);
+            let (metrics, bounds_local, occupied) = {
+                let digest = self.digest(&prototype);
+                (digest.metrics, digest.bounds_local, digest.occupied)
+            };
+            // Nearest AABB depth along the camera forward axis (clamped to near),
+            // the meaningful screen-space depth; not Euclidean eye distance, which
+            // overstates depth for off-axis instances and coarsens them too soon.
+            let depth_m = match bounds_local {
+                Some(bounds) => camera.nearest_depth(&bounds.transformed(&transform)),
+                None => camera.near_m,
+            };
+            let (lod, error_estimate_m, projected_error_estimate_px) = if occupied == 0 {
+                (Lod::Source, 0.0, 0.0)
+            } else {
+                choose_lod(previous, camera, config, &metrics, depth_m)
+            };
+            self.selection.insert(id.clone(), lod);
+            out.push(InstanceLod {
+                instance: id,
+                prototype,
+                transform,
+                lod,
+                error_estimate_m,
+                projected_error_estimate_px,
+                depth_m,
+                occupied_cells: occupied,
+                fallback: false,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Ensures a derived mesh is resident, retreating to the authoritative source
+    /// when the coarse build is capped or the cache budget cannot hold it. Returns
+    /// the level actually made resident.
+    fn ensure_mesh(
+        &mut self,
+        prototype_id: &str,
+        lod: Lod,
+        config: &LodConfig,
+        coarse_builds: &mut usize,
+    ) -> Result<Lod> {
+        if lod == Lod::Source {
+            self.prototype_mesh(prototype_id, Lod::Source)?;
+            return Ok(Lod::Source);
+        }
+        let revision = self.prototypes[prototype_id].revision();
+        let key = MeshKey(prototype_id.to_string(), lod);
+        let fresh = self
+            .cache
+            .get(&key)
+            .is_some_and(|entry| entry.revision == revision);
+        if fresh {
+            return Ok(lod);
+        }
+        if let Some(cap) = config.max_coarse_builds {
+            if *coarse_builds >= cap {
+                self.prototype_mesh(prototype_id, Lod::Source)?;
+                return Ok(Lod::Source);
+            }
+        }
+        match self.prototype_mesh(prototype_id, lod) {
+            Ok(_) => {
+                *coarse_builds += 1;
+                Ok(lod)
+            }
+            Err(DetailError::BudgetExceeded(_)) | Err(DetailError::InvalidScale) => {
+                self.prototype_mesh(prototype_id, Lod::Source)?;
+                Ok(Lod::Source)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Selects LODs and synchronously, lazily and within budget realizes the
+    /// derived meshes for the selected levels, grouped into per-`(prototype, lod)`
+    /// static batches an adapter can upload directly. Coarse builds honor
+    /// `config.max_coarse_builds`; any instance whose desired mesh is unavailable
+    /// falls back to the authoritative `Source` mesh and is flagged.
+    pub fn prepare_batches(
+        &mut self,
+        camera: &Camera,
+        config: &LodConfig,
+    ) -> Result<PreparedFrame> {
+        let builds_before = self.mesh_builds;
+        let desired = self.select_lods(camera, config)?;
+        let mut resolved: BTreeMap<(String, Lod), Lod> = BTreeMap::new();
+        let mut coarse_builds = 0usize;
+        for item in &desired {
+            let key = (item.prototype.clone(), item.lod);
+            if resolved.contains_key(&key) {
+                continue;
+            }
+            let actual = self.ensure_mesh(&item.prototype, item.lod, config, &mut coarse_builds)?;
+            resolved.insert(key, actual);
+        }
+        let mut selected = Vec::with_capacity(desired.len());
+        for mut item in desired {
+            let actual = resolved[&(item.prototype.clone(), item.lod)];
+            if actual != item.lod {
+                let metric = self.digest(&item.prototype).metrics[actual.index()]
+                    .unwrap_or(ErrorMetrics::SOURCE);
+                item.error_estimate_m = metric.error_estimate_m;
+                item.projected_error_estimate_px =
+                    camera.projected_error_px(metric.error_estimate_m, item.depth_m);
+                item.lod = actual;
+                item.fallback = true;
+            }
+            selected.push(item);
+        }
+        let mut groups: BTreeMap<(String, Lod), Vec<InstanceLod>> = BTreeMap::new();
+        for item in &selected {
+            groups
+                .entry((item.prototype.clone(), item.lod))
+                .or_default()
+                .push(item.clone());
+        }
+        let batches = groups
+            .into_iter()
+            .map(|((prototype, lod), instances)| {
+                let mesh_bytes = self
+                    .cache
+                    .get(&MeshKey(prototype.clone(), lod))
+                    .map_or(0, |entry| entry.bytes);
+                MeshBatch {
+                    prototype,
+                    lod,
+                    mesh_bytes,
+                    instances,
+                }
+            })
+            .collect();
+        Ok(PreparedFrame {
+            batches,
+            selected,
+            source_version: self.source_version.clone(),
+            mesh_builds_this_call: self.mesh_builds - builds_before,
+            cached_mesh_bytes: self.cache_bytes,
+        })
     }
 
     pub fn counts(&self) -> SceneCounts {

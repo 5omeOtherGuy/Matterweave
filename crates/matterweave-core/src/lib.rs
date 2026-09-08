@@ -12,6 +12,10 @@ pub use async_world::{
 pub use mesh::{Mesh, Vertex};
 pub use ray::{RayHit, MAX_RAY_DISTANCE};
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+#[cfg(test)]
+mod snapshot_tests;
 
 pub const CHUNK_EDGE: i32 = 16;
 pub const CHUNK_VOLUME: usize = 4096;
@@ -21,7 +25,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 
 #[derive(Clone)]
 struct Chunk {
-    voxels: Box<[u8; CHUNK_VOLUME]>,
+    voxels: Arc<[u8; CHUNK_VOLUME]>,
     solid: usize,
 }
 
@@ -43,7 +47,8 @@ pub struct WorldStats {
     pub solid_voxels: usize,
     /// Stored authoritative chunk overrides, including explicit empty chunks.
     pub stored_overrides: usize,
-    /// Resident plus override voxel payload. Excludes map/allocator overhead and derived meshes.
+    /// Logical resident plus override payload size, counting shared references.
+    /// Excludes map/allocator overhead and derived meshes; not physical memory.
     pub allocated_bytes: usize,
 }
 
@@ -98,17 +103,24 @@ impl World {
             return false;
         };
         let (key, index) = address(cell);
+        // The resident and override entries refer to the same authoritative chunk.
+        // Drop our redundant reference before detaching, so subsequent edits do
+        // not copy again. All rejection checks above precede this mutation.
+        if let Some(stream) = &mut self.streaming {
+            stream.overrides.remove(&key);
+        }
         let chunk = self.chunks.entry(key).or_insert_with(|| Chunk {
-            voxels: Box::new([0; CHUNK_VOLUME]),
+            voxels: Arc::new([0; CHUNK_VOLUME]),
             solid: 0,
         });
-        if chunk.voxels[index] == 0 {
+        let voxels = Arc::make_mut(&mut chunk.voxels);
+        if voxels[index] == 0 {
             chunk.solid += 1;
         }
         if material == 0 {
             chunk.solid -= 1;
         }
-        chunk.voxels[index] = material;
+        voxels[index] = material;
         if chunk.solid == 0 {
             self.chunks.remove(&key);
         }

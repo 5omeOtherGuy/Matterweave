@@ -182,9 +182,11 @@ These are not GPU timestamps or CPU execution samples. DATA counts voxel payload
 not process memory. GPU heap sizes are queried capacities, not free memory.
 
 Terrain generation and dirty chunk meshing now use bounded background preparation.
-Collision publication, GPU uploads, snapshot copying and autosaves remain synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
-Filtered directional shadows are implemented; automatic LOD and indirect
-illumination remain future work. Physics runs
+The normal app still publishes collision and uploads GPU resources on its owner
+thread. Engine APIs additionally support background detail-collision preparation,
+shared chunk snapshots, automatic LOD and an opt-in diffuse-light reference. Greedy
+chunk meshes, conservative frustum culling and filtered cached shadows are implemented.
+See STATUS for native/Android checks and remaining scheduling/quality limits. Physics runs
 at 60 Hz with bounded catch-up and interpolated object rendering. The resident
 window, stored-override limit and save size are explicit in the core README.
 Corrupt world/session snapshots remain intact; numbered recovery snapshots are
@@ -319,3 +321,30 @@ intensity/view changes, moving geometry with unchanged revisions, chunk replacem
 and eviction, static transforms, failed update retention, sun/camera/resolution
 changes, hidden frames and renderer recreation. It verifies GPU timing availability
 for actual depth passes versus reuse. CI runs it alongside the existing Vulkan checks.
+
+## Engine indirect-light check
+
+The opt-in test runs the actual Vulkan diffuse-light cache through off/on, moving
+sun, closed/open enclosure, stale-edit rejection and light invalidation phases.
+It uses a small disposable unit-voxel fixture and does not load a sample world.
+
+```sh
+cargo run -p matterweave-explorer -- --engine-check --save /tmp/unused.json
+cat /tmp/engine-check-report.txt
+```
+
+On a debuggable Android APK, write `indirect` into the application files directory
+as `engine-check.txt` with `adb shell run-as`, then launch the activity. The request
+is consumed once before the world chooser. Read `engine-check-report.txt` from
+that directory for phase observations and the terminal `PASS indirect` marker.
+Android phases retain120 presented frames each for external screenshots; desktop
+uses6. HOME releases the renderer and resume recreates it before republishing the
+cache. A successful build alone does not count as running this check.
+
+## Engine automatic detail check
+
+Run `cargo run --locked -p matterweave-explorer -- --detail-check --save /tmp/unused.json`
+and require `PASS detail` in `/tmp/detail-check-report.txt`. On Android the same
+one-shot mechanism above accepts `detail` and writes `detail-check-report.txt`.
+The9 phases exercise retained geometry with automatic perspective/orthographic
+LOD, an edit, zero extent and recreation. See [evidence and limits](performance/detail-native-check.md).

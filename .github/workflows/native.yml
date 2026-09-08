@@ -40,6 +40,14 @@ jobs:
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/instancing-smoke.log; then exit 1; fi
           timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example shadow_cache_smoke 2>&1 | tee artifacts/shadow-cache-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/shadow-cache-smoke.log; then exit 1; fi
+          timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example indirect_smoke 2>&1 | tee artifacts/indirect-smoke.log
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/indirect-smoke.log; then exit 1; fi
+          timeout 90s xvfb-run -a target/debug/matterweave-explorer --engine-check --save artifacts/unused.json 2>&1 | tee artifacts/engine-check.log
+          grep 'PASS indirect' artifacts/engine-check-report.txt
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/engine-check.log; then exit 1; fi
+          timeout 90s xvfb-run -a target/debug/matterweave-explorer --detail-check --save artifacts/unused.json 2>&1 | tee artifacts/detail-check.log
+          grep 'PASS detail' artifacts/detail-check-report.txt
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/detail-check.log; then exit 1; fi
           python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer artifacts/gallery-tile
           python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer artifacts/gallery-flora --preset flora
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/gallery-{tile,flora}/run.log; then exit 1; fi
