@@ -126,15 +126,24 @@ fn material_policy_is_explicit_wood_collides_leaves_do_not() {
         material_policy(material::FLORA_FUNNEL_STIPE),
         MaterialPolicy::Collision
     );
-    for (_, m) in shrub.iter_cells().filter(|(_, m)| *m != material::FLORA_FUNNEL_STIPE) {
+    for (_, m) in shrub
+        .iter_cells()
+        .filter(|(_, m)| *m != material::FLORA_FUNNEL_STIPE)
+    {
         assert_eq!(
             material_policy(m),
             MaterialPolicy::Decorative,
             "shrub foliage material {m} is decorative"
         );
     }
-    assert!(assert_policy(&horsetail("h").unwrap(), MaterialPolicy::Decorative));
-    assert!(assert_policy(&marsh_lily("l").unwrap(), MaterialPolicy::Decorative));
+    assert!(assert_policy(
+        &horsetail("h").unwrap(),
+        MaterialPolicy::Decorative
+    ));
+    assert!(assert_policy(
+        &marsh_lily("l").unwrap(),
+        MaterialPolicy::Decorative
+    ));
     // No decorative holes inside the collidable wood.
     assert_eq!(
         shrub
@@ -192,7 +201,10 @@ fn horsetail_has_nodes_whorls_and_cone_not_equal_culms() {
         .iter_cells()
         .filter(|(c, m)| c[1] == 8 && *m == material::FLORA_REED_STEM)
         .count();
-    assert!(node_rib > inter_stem, "node {node_rib} wider than internode {inter_stem}");
+    assert!(
+        node_rib > inter_stem,
+        "node {node_rib} wider than internode {inter_stem}"
+    );
     assert!(count(material::FLORA_REED_LEAF) >= 100, "whorled needles");
     assert!(count(material::FLORA_REED_PLUME) >= 20, "spore cone");
     // One dominant spire plus two side shoots: the plume cells form exactly
@@ -212,7 +224,14 @@ fn horsetail_has_nodes_whorls_and_cone_not_equal_culms() {
         let mut stack = vec![*start];
         seen.insert(*start);
         while let Some(c) = stack.pop() {
-            for step in [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] {
+            for step in [
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ] {
                 let n = [c[0] + step[0], c[1] + step[1], c[2] + step[2]];
                 if plume.contains(&n) && seen.insert(n) {
                     stack.push(n);
@@ -232,27 +251,25 @@ fn lily_has_flat_notched_pads_and_a_flower() {
     let (min, max) = lily.cell_bounds().unwrap();
     let width = (max[0] - min[0]).max(max[2] - min[2]);
     let height = max[1] - min[1];
-    assert!(width >= 3 * height, "broad flat colony: {width} vs {height}");
-    // Notch: an air cell inside a pad disc's x/z bounds at pad height.
-    let mut notch = false;
-    for x in min[0]..=max[0] {
-        for z in min[2]..=max[2] {
-            if lily.get([x, 2, z]) == material::AIR
-                && lily.get([x - 1, 2, z]) != material::AIR
-                && lily.get([x + 1, 2, z]) != material::AIR
-            {
-                notch = true;
-            }
-        }
+    assert!(
+        width >= 3 * height,
+        "broad flat colony: {width} vs {height}"
+    );
+    // The leftmost pad is centred at (-7,2); its radial slit opens +X.
+    // Check the slit itself and its Z-flanking walls, not gaps between pads.
+    for x in -6..=-4 {
+        assert_eq!(lily.get([x, 2, 2]), material::AIR, "notch slit");
+        assert_ne!(lily.get([x, 2, 1]), material::AIR, "north notch wall");
+        assert_ne!(lily.get([x, 2, 3]), material::AIR, "south notch wall");
     }
-    assert!(notch, "pad notch slit");
     let count = |m: u8| lily.iter_cells().filter(|(_, mat)| *mat == m).count();
     assert!(count(material::FLORA_ROSETTE_LEAF) > 50, "pad flesh");
     assert!(count(material::FLORA_ROSETTE_SPOT) >= 5, "flower petals");
     assert_eq!(count(material::FLORA_LUMEN_DOT), 1, "one flower heart");
     // Rhizome runner at y = 0 is the only ground contact.
     assert!(
-        lily.iter_cells().any(|(c, m)| c[1] == 0 && m == material::FLORA_REED_STEM),
+        lily.iter_cells()
+            .any(|(c, m)| c[1] == 0 && m == material::FLORA_REED_STEM),
         "rhizome feet"
     );
 }
@@ -271,7 +288,10 @@ fn wetland_prototypes_round_trip_and_survive_lod_derivation() {
         let half = volume.coarsen(Lod::Half).unwrap();
         let quarter = volume.coarsen(Lod::Quarter).unwrap();
         assert_eq!(volume.snapshot(), before, "{id} source intact across LOD");
-        assert!(half.occupied_cells() > 0 && quarter.occupied_cells() > 0, "{id}");
+        assert!(
+            half.occupied_cells() > 0 && quarter.occupied_cells() > 0,
+            "{id}"
+        );
         assert!(half.occupied_cells() <= volume.occupied_cells(), "{id}");
 
         let mut scene = DetailScene::new();
@@ -281,15 +301,26 @@ fn wetland_prototypes_round_trip_and_survive_lod_derivation() {
                 Lod::Source => volume.mesh_local().unwrap(),
                 other => volume.coarsen(other).unwrap().mesh_local().unwrap(),
             };
-            assert!(!standalone.indices.is_empty(), "{id} {lod:?} meshes geometry");
+            assert!(
+                !standalone.indices.is_empty(),
+                "{id} {lod:?} meshes geometry"
+            );
             let scene_mesh = scene.prototype_mesh(id, lod).unwrap();
-            assert_eq!(scene_mesh.indices.len(), standalone.indices.len(), "{id} {lod:?}");
+            assert_eq!(
+                scene_mesh.indices.len(),
+                standalone.indices.len(),
+                "{id} {lod:?}"
+            );
             assert_eq!(
                 scene_mesh.revision,
                 volume.revision(),
                 "{id} {lod:?} carries the authoritative source revision"
             );
         }
-        assert_eq!(volume.snapshot(), before, "{id} source intact after meshing");
+        assert_eq!(
+            volume.snapshot(),
+            before,
+            "{id} source intact after meshing"
+        );
     }
 }

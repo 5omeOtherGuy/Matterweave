@@ -101,8 +101,12 @@ fn connected_components(volume: &DetailVolume) -> usize {
 const SHRUB_TWIST: [i32; 15] = [0, 0, 1, 1, 2, 2, 1, 0, -1, -1, 0, 1, 1, 0, 0];
 /// Branches: (takeoff height, direction [x, z], length). Distinct heights,
 /// directions and lengths give bounded variation without noise.
-const SHRUB_BRANCHES: [(i32, [i32; 2], i32); 4] =
-    [(5, [1, 0], 6), (7, [-1, 0], 7), (9, [0, 1], 6), (11, [0, -1], 5)];
+const SHRUB_BRANCHES: [(i32, [i32; 2], i32); 4] = [
+    (5, [1, 0], 6),
+    (7, [-1, 0], 7),
+    (9, [0, 1], 6),
+    (11, [0, -1], 5),
+];
 
 /// Fill an ellipsoid crown of leaf around `centre`; the branch-tip cell that
 /// seeds it is always inside the radii, so the crown merges with the wood.
@@ -190,7 +194,7 @@ pub fn twisted_shrub(id: &str) -> Result<DetailVolume> {
             set_path(&mut volume, prev, cell, wood)?;
             // Taper: only the first two steps carry a side cell.
             if step <= 2 {
-                let side = [cell[0], cell[1], cell[2] + 1];
+                let side = [cell[0] - dir[1], cell[1], cell[2] + dir[0]];
                 if volume.get(side) == material::AIR {
                     volume.set(side, wood)?;
                 }
@@ -228,13 +232,7 @@ const HORSETAIL_WHORL: [[i32; 2]; 8] = [
 /// One whorl of angled needles around `(cx, node, cz)`: each needle walks
 /// outward one axis at a time and lifts every second step, so diagonal needles
 /// are connected arches, not isolated voxels.
-fn whorl(
-    volume: &mut DetailVolume,
-    cx: i32,
-    node: i32,
-    cz: i32,
-    length: i32,
-) -> Result<()> {
+fn whorl(volume: &mut DetailVolume, cx: i32, node: i32, cz: i32, length: i32) -> Result<()> {
     for dir in HORSETAIL_WHORL {
         let mut cell = [cx, node, cz];
         for k in 1..=length {
@@ -266,11 +264,10 @@ fn spore_cone(volume: &mut DetailVolume, cx: i32, top: i32, cz: i32) -> Result<(
     for (dy, radius) in [(1, 2), (2, 2), (3, 1), (4, 1), (5, 0)] {
         for x in -radius..=radius {
             for z in -radius..=radius {
-                if x * x + z * z <= radius * radius && volume.get([cx + x, top + dy, cz + z]) == material::AIR {
-                    volume.set(
-                        [cx + x, top + dy, cz + z],
-                        material::FLORA_REED_PLUME,
-                    )?;
+                if x * x + z * z <= radius * radius
+                    && volume.get([cx + x, top + dy, cz + z]) == material::AIR
+                {
+                    volume.set([cx + x, top + dy, cz + z], material::FLORA_REED_PLUME)?;
                 }
             }
         }
@@ -347,11 +344,10 @@ pub fn horsetail(id: &str) -> Result<DetailVolume> {
         let node = height / 2;
         for x in -1..=1 {
             for z in -1..=1 {
-                if x * x + z * z <= 2 && volume.get([base[0] + x, node, base[1] + z]) == material::AIR {
-                    volume.set(
-                        [base[0] + x, node, base[1] + z],
-                        material::FLORA_FROND_RIB,
-                    )?;
+                if x * x + z * z <= 2
+                    && volume.get([base[0] + x, node, base[1] + z]) == material::AIR
+                {
+                    volume.set([base[0] + x, node, base[1] + z], material::FLORA_FROND_RIB)?;
                 }
             }
         }
@@ -394,7 +390,12 @@ pub fn marsh_lily(id: &str) -> Result<DetailVolume> {
     for (index, (rx, off, radius)) in LILY_PADS.into_iter().enumerate() {
         let centre = [rx + off[0], LILY_PAD_Y, off[1]];
         // Arching stem from the runner to the pad underside.
-        set_path(&mut volume, [rx, 0, 0], [centre[0], centre[1] - 1, centre[2]], stem)?;
+        set_path(
+            &mut volume,
+            [rx, 0, 0],
+            [centre[0], centre[1] - 1, centre[2]],
+            stem,
+        )?;
         volume.set(
             [centre[0], centre[1] - 1, centre[2]],
             material::FLORA_ROSETTE_HEART,
