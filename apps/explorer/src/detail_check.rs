@@ -908,6 +908,18 @@ mod tests {
     }
 
     #[test]
+    fn native_fixture_preserves_opening_while_dense_control_coarsens() {
+        let mut scene = fixture_scene();
+        let plan = phases()[1];
+        let frame = scene.prepare_batches(&plan.lod_camera(1080.0), &plan.config).unwrap();
+        let opening = frame.selected.iter().find(|s| s.instance == "opening_guard")
+            .expect("native fixture must exercise the local opening guard");
+        assert_eq!(opening.lod, Lod::Source);
+        let control = frame.selected.iter().find(|s| s.instance == NEAR_INSTANCE).unwrap();
+        assert!(control.lod > Lod::Source, "safe dense control must still coarsen");
+    }
+
+    #[test]
     fn approach_selects_source_and_retreat_coarsens_the_same_instance() {
         let plans = phases();
         let near = plans[0];
