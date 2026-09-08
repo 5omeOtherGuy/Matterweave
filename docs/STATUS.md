@@ -10,7 +10,7 @@ and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) and
 [PERFORMANCE_TASKS](PERFORMANCE_TASKS.md). The [showcase](SHOWCASE.md) is a test
 workload; further showcase polish and old demo-save compatibility must not delay
 remaining M2–M6 engine requirements. The sole current integration checkout is
-`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-light-scheduling`.
+`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-completion-03`.
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
 
@@ -84,11 +84,25 @@ failed attempt. The APK source is `9854723`; the standalone ARM64 CPU check at
 open, closed and reopened enclosure. See [background lighting](performance/async-indirect.md).
 These functional checks do not establish full GI/reflections or sustained efficiency.
 
-PR10 is draft/open; its remote `ca26d58` passed host, Android and docs CI.
-The local `70a231a` example and these final evidence records await delivery and
-final-revision checks. v0.5 is not yet released. Model availability/quota notes
-from the interrupted session are historical; the owner authorizes paid Muse 1.3
-Contributor, GLM 5.3 Flash, Hy4 and Opus 5 for this continuation.
+PR10 merged at `3ad0d27` after all final-revision host, Android and docs CI
+passed at `577dff8`. Paid Muse Contributor reviewed the controller, queue lifetime,
+Vulkan publication and standalone check without actionable findings; lead owns
+executed checks. A fresh local APK rebuild was byte-identical to the `9854723`
+artifact, passed signature/16 KiB checks and another six-phase OnePlus 13 run with
+HOME/resume and nine presentations during preparation.
+[v0.5.0](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.5.0) is published
+with APK, exact-source manifest and retained lighting/detail/collision evidence.
+See [delivery manifest](evidence/v0.5-release.json). This is an intermediate engine
+delivery; M2–M6 remain open.
+
+The next integration branch is `codex/engine-completion-03`. Bounded workers own
+ray-reference Vulkan integration (Hy4), production detail-collision publication
+(GLM) and local detail-loss protection (paid Muse 1.3 Contributor). Lead owns
+streaming stress, integration and the connected OnePlus 13. The phone is reserved
+for the ten-minute native streaming correctness gate under
+`/mnt/bench/matterweave-dev/performance/engine-03/phone-stream-ea436d3`.
+Current worker results are unaccepted until checked. Opus 5 returned a live rate
+limit rejection in this session; paid Muse works after the owner's opt-in.
 
 The frozen `b1f6c67` instrumented
 tests and four Vulkan examples passed. Per-object LCOV line union reports
@@ -185,7 +199,7 @@ not completed by that release.
 The [completion execution log](performance/logs/completion-execution.md) and
 [prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier
 accepted P00/P01/P02/P03 slices and unavailable measurement gates. Latest published
-prerelease is v0.4.0; newer engine-systems development is reported separately.
+prerelease is v0.5.0; subsequent engine development is reported separately.
 
 ## v0.3 verified Android slice
 

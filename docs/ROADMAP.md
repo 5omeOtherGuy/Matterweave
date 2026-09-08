@@ -47,6 +47,9 @@ presentations during CPU preparation; production cadence, upload costs and
 quality/latency acceptance remain open. These increments
 do not close M3/M4 acceptance.
 
+The v0.5 development prerelease now delivers these systems through PR9/10, with
+final CI and repeat Android background-light checks. It does not close M2–M6.
+
 ## M0 — Reproducible Android foundation
 
 Apply accepted ADR-0014 and resolve the Rust foundation proposal in ADR-0015. Pin compatible Rust/Cargo, edition/MSRV, JDK, Gradle wrapper, Android Gradle Plugin, SDK/NDK and shader tools; add CMake only for components requiring it. Commit the workspace lock/toolchain records. Assess existing Android integration and graphics components before custom work. Choose and document an initial Android/API/Vulkan profile; verify capabilities rather than inferring them from marketing names. Build a native ARM64 application with lifecycle, surface handling, multitouch actions, logging, capability reporting and frame instrumentation. Add Rust checks, host/native builds and APK artifacts in CI.
