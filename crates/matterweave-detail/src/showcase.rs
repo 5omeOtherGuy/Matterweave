@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 /// Frozen showcase seed (owner requirement date 2026-09-08).
 pub const SHOWCASE_SEED: u64 = 20_260_908;
 /// Bump when generated content changes; snapshot hashes are version scoped.
-pub const SHOWCASE_GENERATOR_VERSION: u32 = 1;
+pub const SHOWCASE_GENERATOR_VERSION: u32 = 2;
 
 /// Playable square edge in metres.
 pub const MAP_EDGE_M: f32 = 128.0;
@@ -53,8 +53,7 @@ pub const MAX_TERRAIN_CELL_Y: i32 = 255;
 
 /// Bytes one occupied cell can contribute to a derived mesh: 24 vertices plus
 /// 36 indices. Mirrors the private bound used by [`crate::MAX_MESH_BYTES`].
-const MESH_BYTES_PER_CELL: usize =
-    24 * std::mem::size_of::<matterweave_core::Vertex>() + 36 * 4;
+const MESH_BYTES_PER_CELL: usize = 24 * std::mem::size_of::<matterweave_core::Vertex>() + 36 * 4;
 /// Largest occupied-cell count whose `Lod::Source` mesh passes the existing
 /// preflight. Terrain is split into bands so no prototype exceeds it.
 pub const MAX_PROTOTYPE_CELLS: usize = MAX_MESH_BYTES / MESH_BYTES_PER_CELL;
@@ -178,7 +177,12 @@ fn fbm(seed: u64, x: f32, z: f32, base_freq: f32, octaves: u32) -> f32 {
     let mut amp = 1.0;
     let mut freq = base_freq;
     for octave in 0..octaves {
-        sum += amp * value_noise(seed ^ (u64::from(octave) + 1).wrapping_mul(0x9e37_79b9), x * freq, z * freq);
+        sum += amp
+            * value_noise(
+                seed ^ (u64::from(octave) + 1).wrapping_mul(0x9e37_79b9),
+                x * freq,
+                z * freq,
+            );
         norm += amp;
         amp *= 0.5;
         freq *= 2.0;
@@ -317,21 +321,16 @@ pub fn terrain_height_m(seed: u64, x: f32, z: f32) -> f32 {
         if along < 18.0 {
             continue;
         }
-        let across = (rel_x * -sz + rel_z * sx).abs()
-            + 1.6 * fbm(seed ^ (0xd5 + k as u64), x, z, 0.06, 2);
-        let depth = 2.4 * (-(across / 2.0) * (across / 2.0)).exp()
+        let across =
+            (rel_x * -sz + rel_z * sx).abs() + 1.6 * fbm(seed ^ (0xd5 + k as u64), x, z, 0.06, 2);
+        let depth = 2.4
+            * (-(across / 2.0) * (across / 2.0)).exp()
             * ((along - 18.0) / 12.0).clamp(0.0, 1.0);
         h -= depth;
     }
 
     // Authored landmark shelves.
-    h = flatten(
-        h,
-        dist2(x, z, 42.0, 62.0),
-        10.0,
-        15.4,
-        0.85,
-    ); // sheltered fungal grove
+    h = flatten(h, dist2(x, z, 42.0, 62.0), 10.0, 15.4, 0.85); // sheltered fungal grove
     h = flatten(h, dist2(x, z, 92.0, 58.0), 6.0, 18.2, 0.9); // destruction clearing
     h = flatten(h, dist2(x, z, 106.0, 30.0), 7.0, 33.5, 0.85); // high viewpoint
     h = flatten(h, dist2(x, z, 64.0, 112.0), 8.0, 14.0, 0.7); // south saddle approach
@@ -427,7 +426,9 @@ impl Terrain {
                 let h = terrain_height_m(seed, x, z);
                 let t = (h / TERRAIN_CELL_M).floor() as i32 - 1;
                 if !(0..=MAX_TERRAIN_CELL_Y).contains(&t) {
-                    return Err(DetailError::BudgetExceeded("terrain height out of cell range"));
+                    return Err(DetailError::BudgetExceeded(
+                        "terrain height out of cell range",
+                    ));
                 }
                 let idx = (xi * MAP_EDGE_CELLS + zi) as usize;
                 raw_top[idx] = t;
@@ -459,8 +460,7 @@ impl Terrain {
                 // cell this column reports as its surface.
                 if touches {
                     overhung[idx] = (0..carved_top).any(|y| {
-                        y > water_top[idx]
-                            && carved(x, (y as f32 + 0.5) * TERRAIN_CELL_M, z)
+                        y > water_top[idx] && carved(x, (y as f32 + 0.5) * TERRAIN_CELL_M, z)
                     });
                 }
             }
@@ -1189,7 +1189,10 @@ fn place_flora(
     for id in SHOWCASE_SPECIES {
         debug_assert!(
             FLORA_SPECIES.contains(&id)
-                || matches!(id, "bracket_fungus" | "twisted_shrub" | "horsetail" | "marsh_lily")
+                || matches!(
+                    id,
+                    "bracket_fungus" | "twisted_shrub" | "horsetail" | "marsh_lily"
+                )
         );
         let volume = showcase_prototype(id)?;
         prototype_cells.insert(id, volume.occupied_cells());
@@ -1234,8 +1237,8 @@ fn place_flora(
             continue;
         };
         let radius = 3.0 + unit(seed ^ 0x13, k, 3) * 5.0;
-        let plants = CLUSTER_MIN_PLANTS
-            + (hash2(seed ^ 0x14, k, 4) as usize % CLUSTER_PLANT_SPREAD);
+        let plants =
+            CLUSTER_MIN_PLANTS + (hash2(seed ^ 0x14, k, 4) as usize % CLUSTER_PLANT_SPREAD);
         for plant in 0..plants {
             let p = plant as i32;
             let u = unit(seed ^ 0x21, k, p);
@@ -1319,7 +1322,9 @@ fn place_flora(
         }
     }
     if placed_lilies == 0 {
-        return Err(DetailError::BudgetExceeded("no shallow water for marsh lily"));
+        return Err(DetailError::BudgetExceeded(
+            "no shallow water for marsh lily",
+        ));
     }
     Ok(scatter)
 }
