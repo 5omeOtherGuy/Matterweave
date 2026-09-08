@@ -306,3 +306,16 @@ python3 -m unittest discover -s tools/performance -p 'test_*.py'
 
 Only completed trial directories are analyzed. Keep separately collected batches
 separate; compare their within-pair differences after controls and image review.
+
+
+Engine shadow-cache verification (host Vulkan, no mobile performance inference):
+
+```sh
+MATTERWEAVE_VALIDATION=1 timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example shadow_cache_smoke
+```
+
+The30-frame check covers initial shadows-off initialization, stationary reuse,
+intensity/view changes, moving geometry with unchanged revisions, chunk replacement
+and eviction, static transforms, failed update retention, sun/camera/resolution
+changes, hidden frames and renderer recreation. It verifies GPU timing availability
+for actual depth passes versus reuse. CI runs it alongside the existing Vulkan checks.

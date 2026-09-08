@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Codex desktop lead exclusively. Owner revoked repeated save backup/restore work; normal showcase uses separate save paths and never overwrites legacy saves.",
+  "phone_owner": "Sole lead; idle after engine shadow-cache route validation, owned controls removed.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -281,7 +281,7 @@
       "acceptance": "39coretests/Clippy/40singleCPUrepetitions PASS; allremote host/Android/docs checks PASS. Corrects testtiming notproduction scheduler."
     },
     "completion-p02-runner": {
-      "state": "integrated-collection-active",
+      "state": "completed-three-pairs-cleanup-verified",
       "owner": "sole lead after Opus and lead corrections",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-p02-runner",
       "base": "0d8225b",
@@ -327,7 +327,7 @@
       "artifact": "d23a9f8"
     },
     "completion-paired-analysis": {
-      "state": "integrated-first-pair-analyzed",
+      "state": "three-pairs-analyzed-thermal-tradeoff",
       "owner": "lead after GLM timeout without code",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-paired-analysis",
       "base": "2b08194",
@@ -341,7 +341,7 @@
       "artifact": "4bf700e"
     },
     "completion-frame-cap": {
-      "state": "running",
+      "state": "stopped-unintegrated-engine-reassessment",
       "owner": "astra-worker via Pi",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-frame-cap",
       "base": "ce89834",
@@ -355,10 +355,18 @@
       "acceptance": "Separate cap experiment motivated by repeated thermal tradeoff. Explicit30/60 target, default60, same source/quality/fixed-step simulation. Worker host tests/review pending; no thermal win claimed."
     },
     "completion-phone-route-check": {
-      "state": "implemented-device-pending",
+      "state": "elevated-device-pass-ground-interrupt-pending",
       "owner": "lead",
       "artifact": "ce89834",
       "acceptance": "3 report-contract tests and all173 Python checks pass. Runner guards exclusively ownedfixture and actualroute endpoint/cancel identity. A4 collector ownsphone; no route script execution untilitstops."
+    },
+    "engine-shadow-reuse": {
+      "owner": "sole lead",
+      "state": "implemented-host-and-android-verified",
+      "source": "78cba4a",
+      "log": "docs/performance/shadow-reuse.md",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-01",
+      "remaining": "matched heat/energy comparison; engine M2-M6 remain open"
     }
   },
   "capacity": {

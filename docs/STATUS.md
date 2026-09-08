@@ -14,6 +14,26 @@ remaining M2–M6 engine requirements. The sole current integration checkout is
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
 
+## Current engine advancement — shadow reuse
+
+The reusable Vulkan renderer now reuses unchanged directional shadow depth and
+invalidates it for geometry, light-matrix and resource changes. Implemented at
+`78cba4a`; no sample gameplay or save behavior changed in this engine slice.
+257 workspace tests pass (3 existing ignored gates), strict Clippy passes, and
+both30-frame native Vulkan cache/app checks pass without validation errors.
+The ARM64 APK `e4f83255…` built and ran on OnePlus13 Android16:37-point continuous
+physics route passed;730 valid profile rows include284 completed shadow-map reuses
+and445 depth updates. No measured heat/energy improvement is claimed.
+See [implementation and evidence](performance/shadow-reuse.md).
+
+The P02 collector finished all3 matched pairs across A3/A4 and exited cleanly.
+The phone is idle after the engine functional check; no collector or worker owns it.
+PR8 delivery remains pending current checks. Next engine capabilities are automatic
+detail selection and indirect illumination/reflections, plus remaining streaming,
+renderer comparison and framework milestones. Do not resume demo-save/UI refinement.
+
+## Earlier continuation evidence
+
 Current verified progress (2026-09-08 continuation):
 
 - PR8 remains draft/open. All remote host, Android and docs checks pass at
@@ -31,7 +51,7 @@ Current verified progress (2026-09-08 continuation):
   six anchors and was rejected; every retained authored anchor now resolves or
   generation fails. All19 prior source tests and the new waterside gate pass.
   Muse found no source blocker; Astra's waterside coverage finding was corrected.
-- Workspace253 normal Rust tests pass with3 deliberately ignored gates. The
+- Workspace257 normal Rust tests now pass with3 deliberately ignored gates. The
   full-map Runtime gate was then explicitly run with the app suite after the
   restored-respawn correction: all64 app tests pass. Strict workspace Clippy
   and the later scoped app Clippy pass; vendored winit warning is unchanged.
@@ -59,20 +79,19 @@ Current verified progress (2026-09-08 continuation):
   installed and launched normally; touch move/jump and separate recovery2 save
   observed. A separate owned clearing fixture passed touch fracture6→29 bodies,
   settling and save. Full64-piece stress and verified grab/throw remain open.
-  The phone is now owned by the serialized paired collector, which switches
-  between frozen generator2 reference/candidate APKs. Per-trial manifests identify
+  The completed paired collector used frozen generator2 reference/candidate APKs. Per-trial manifests identify
   the installed build. Full phone routes and shadow/temporal quality remain open.
 - Actual app route replay is implemented and independently reviewed. Native Vulkan
   smoke advances it and records terminal cancellation correctly. The phone runner
   verifies complete route endpoints and deliberate touch/HOME cancellation;
-  physical execution is pending while the paired collector owns the device.
+  the elevated physical route now passes on the shadow-cache build. Ground and interruption checks remain pending.
 - The0.4.0 prerelease candidate at `8d8a3e8` built successfully in61s; APK
   `6f22ba87f7a9e3fbaac1c6763c17dd05f59fda1c4b192de329f3c9efd073faee` passes
   ARM64/16KiB and signature checks. Artifacts are under
   `completion-02/release-candidate-04`. Not installed, merged or released.
   Gradle debug uses Cargo dev/opt-level2/debug0; the earlier release-profile
   label in development evidence was corrected against actual frozen source.
-- P02 has two completed pairs across A3/A4. Source, fixture, camera, shadows and
+- P02 has three completed pairs across A3/A4; the first two are summarized here. Source, fixture, camera, shadows and
   entrance images match. Reference mean73.551/75.820ms; candidate supported mean
   24.260/24.265ms. A4 has nine history gaps (1.7547% of selected span); its whole
   selected-span mean is bounded above by24.653ms without inventing frame data.
@@ -80,8 +99,8 @@ Current verified progress (2026-09-08 continuation):
   status2 versus reference39.139/39.503C/status0. This is a throughput/thermal
   tradeoff, not a blanket efficiency win. [Analysis](performance/p02-analysis.md).
 - A3 rejected trial3 after31 cooling observations, preserving its first pair.
-  A4 owns the phone for the last pair, allowing61 observations with unchanged
-  1C battery/2C skin matching. Profiling overhead, motion/temporal quality and
+  A4 completed the remaining two pairs with unchanged1C battery/2C skin matching
+  and exited with successful cleanup. Profiling overhead, motion/temporal quality and
   sustained final-build workload gates remain pending.
 - The separate30/60Hz pacing experiment is preserved on its worker branch,
   unintegrated and unmeasured. Its worker has stopped. Reassess the engine pacing
@@ -89,8 +108,8 @@ Current verified progress (2026-09-08 continuation):
   steering. The lead discarded its own uncommitted grab/throw/break feedback UI
   patch. No measured thermal benefit from a cap is claimed.
 
-Next: finish the active matched measurement and record its thermal tradeoff, then
-advance concrete engine capabilities and their native verification. Do not make
+Next: advance concrete engine capabilities and their native verification. The
+completed matched comparison retains its measured thermal tradeoff. Do not make
 more showcase save recovery, authored route refinement or gameplay UI polish a
 prerequisite for engine work. Automatic LOD, indirect illumination/reflections,
 renderer comparison, streaming completion, second-sample reuse and remaining

@@ -89,3 +89,19 @@ CPU/memory therefore do not establish lower heat or energy. Thermal regression
 must accompany any acceptance decision. A visible30/60Hz target is being developed
 as a separate cap experiment; source density, resolution, effects and simulation
 remain fixed. No thermal benefit from that untested cap is claimed.
+
+
+## Completed third pair
+
+A4 finished at2026-09-08T10:47:19Z and removed its owned fixture without errors.
+Its second pair (third overall, candidate then reference) has no metadata mismatch
+or unsupported history gaps. Candidate mean/median/p95:24.314/16.583/33.164ms;
+reference73.034/66.344/116.094ms. Whole-process CPU core equivalents:0.463 versus
+0.591. Late skin readings49.638C/status2 versus40.964C/status0 repeat the thermal
+tradeoff. Lead reviewed both entrance images: same visible composition/camera,
+with animated water phase differences. No full temporal-equivalence claim.
+
+The final A4 analysis is `engine-01/p02-a4-final` under the existing benchmark root;
+A3 remains a separate batch. All3 planned pairs are complete; frozen hashes and
+measurement limits above still apply. These captures predate the new engine
+shadow-depth reuse at78cba4a and cannot establish its performance or thermal effect.

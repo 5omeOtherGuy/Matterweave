@@ -202,7 +202,7 @@ unavailable source.
 | `save_attempts` | Saves started since the previous row, successful or not (matches `save_wall_ms`). |
 | `save_failures` | Subset of `save_attempts` that failed. A failed save still consumed work and time. |
 | `shadow_caster_meshes` | Non-empty meshes submitted to this attempt's shadow pass, independent of camera culling. **Empty when the attempt submitted nothing**: the renderer keeps reporting the previous pass's count, so it is written only for rows carrying a `submitted_gpu_frame_id`. A submitted attempt whose presentation retried did do this shadow work. |
-| `gpu_prev_shadows` | 1 when the completed submission rendered shadows, else 0. |
+| `gpu_prev_shadows` | 1 when shadow sampling was enabled for the completed submission, else 0. Reusing an existing depth map keeps this1; `gpu_prev_shadow_ms` is empty when no new depth pass ran. |
 | `gpu_prev_shadow_map_size` | Shadow map size of that completed submission. |
 
 `voxel_bodies_total == active + sleeping + not_simulated`. Distant, unsupported

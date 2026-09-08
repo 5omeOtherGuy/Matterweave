@@ -25,10 +25,10 @@ Normal phone entry/movement/edit persistence and6-to29-body destruction have bee
 observed on development builds. Complete journal/respawn recovery is host/native
 verified; the0.4.0 candidate APK is built but not yet installed. Two matched P02
 pairs show faster presentation/lower CPU and memory with increased heating;
-separate30/60Hz cap work is underway and sustained acceptance remains open. Full phone route replay, integrated temporal
-quality, sustained workloads and delivery remain open. P02 now has one fresh
-reference capture; the remaining matched pair collection and analysis are active.
-No optimization win is accepted yet. See [current status](STATUS.md) for exact
+the third pair confirms the tradeoff. The engine now reuses unchanged shadow depth,
+with host Vulkan and Android functional checks. The separate30/60Hz experiment is
+preserved unintegrated. Automatic LOD, indirect illumination/reflections, sustained
+acceptance and remaining engine milestones are still open. See [current status](STATUS.md) for exact
 source/build/artifact distinctions.
 
 Owner steering (2026-09-08): prioritize reusable engine implementation. The
