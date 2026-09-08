@@ -1033,11 +1033,11 @@ fn classify_present(
     _acquire_suboptimal: bool,
 ) -> PresentOutcome {
     match result {
-        // SUBOPTIMAL is advisory: the swapchain still presents successfully.
-        // Android can report it persistently with compositor-managed rotation.
-        // Defer recreation to explicit resize or OUT_OF_DATE; rebuilding here
-        // recreates pipelines every frame without resolving that advisory.
-        Ok(_) => PresentOutcome::Presented { recreate: false },
+        // Measurement reference deliberately restores pre-P02 advisory
+        // recreation. This variant is an experiment, never a shipping candidate.
+        Ok(present_suboptimal) => PresentOutcome::Presented {
+            recreate: _acquire_suboptimal || present_suboptimal,
+        },
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => PresentOutcome::OutOfDate,
         Err(e) => PresentOutcome::Failed(e),
     }

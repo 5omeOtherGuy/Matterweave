@@ -23,7 +23,6 @@ pub struct DynamicMeshCache {
     previous: Vec<RenderBody>,
     next: Vec<RenderBody>,
     mesh: Mesh,
-    initialized: bool,
 }
 
 impl DynamicMeshCache {
@@ -55,9 +54,8 @@ impl DynamicMeshCache {
                 material: object.material,
             }
         }));
-        if self.initialized && self.previous == self.next {
-            return false;
-        }
+        // Measurement reference: retain identical interpolation and geometry,
+        // but rebuild/upload every frame as before P02 reuse. Never ship this.
         swap(&mut self.previous, &mut self.next);
         self.mesh.vertices.clear();
         self.mesh.indices.clear();
@@ -65,7 +63,6 @@ impl DynamicMeshCache {
         for body in &self.previous {
             append_box(&mut self.mesh, body.pose, body.dimensions, body.material);
         }
-        self.initialized = true;
         true
     }
 
