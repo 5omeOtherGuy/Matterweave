@@ -939,6 +939,11 @@ pub struct Showcase {
 }
 
 impl Showcase {
+    /// Short waterside itinerary beginning at the grove entrance.
+    pub fn waterside_route(&self) -> &[[f32; 3]] {
+        &[]
+    }
+
     /// Loop length in metres including climb.
     pub fn route_length_m(&self) -> f32 {
         polyline_length(&self.route)

@@ -889,3 +889,21 @@ fn source_radius_contains_every_occupied_voxel_corner() {
         }
     }
 }
+
+#[test]
+fn short_waterside_itinerary_is_a_recorded_contiguous_part_of_the_walked_loop() {
+    let map = map();
+    let waterside = map.waterside_route();
+    assert!(waterside.len() >= 3, "short waterside itinerary is missing");
+    assert_eq!(waterside, &map.route[..waterside.len()]);
+    let length: f32 = waterside.windows(2).map(|p| {
+        (p[1][0] - p[0][0]).hypot(p[1][2] - p[0][2])
+    }).sum();
+    assert!((20.0..=120.0).contains(&length), "waterside length {length}");
+    assert!(waterside.iter().any(|p| map.terrain.surface_at_metres(p[0], p[2])
+        .is_some_and(|surface| surface.water_depth_m > 0.0)),
+        "itinerary never reaches the actual water margin");
+    let end = waterside.last().unwrap();
+    assert!((end[0] - 42.0).hypot(end[2] - 90.0) < 5.0,
+        "waterside itinerary misses the west basin shore");
+}
