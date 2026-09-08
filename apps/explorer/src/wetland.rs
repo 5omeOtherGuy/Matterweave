@@ -1634,6 +1634,22 @@ mod journal_tests {
     }
 
     #[test]
+    fn restored_respawn_is_clear_without_moving_the_saved_eye() {
+        let world = World::new(7);
+        let mut scene = fixture();
+        let mut probe = Physics::new(&world);
+        let instances = scene.instance_ids().into_iter().collect();
+        let save = journal(vec![], vec![], [50.; 3]);
+        let spawn = [0.5, 1.6, 0.5];
+        let mut prepared = apply_journal(&mut scene, &mut probe, &instances, &save, &world, spawn).unwrap();
+        assert_eq!(prepared.physics.character_eye(), save.physics.eye);
+        assert_eq!(prepared.spawn[0], spawn[0]);
+        assert_eq!(prepared.spawn[2], spawn[2]);
+        assert!(prepared.spawn[1] > spawn[1] && prepared.spawn[1] <= spawn[1] + 1.);
+        assert!(prepared.physics.teleport(prepared.spawn));
+    }
+
+    #[test]
     fn collision_budget_rejection_keeps_source_and_accepts_later_candidate() {
         let world = World::new(7);
         let mut scene = DetailScene::new();
