@@ -5,18 +5,22 @@ an explicitly isolated fly/viewer mode, **not** native collision, not gameplay
 integration and not the required dense showcase. Worker: native gallery A1
 (bounded leaf). Session log: [logs/opus-native-gallery-a1.md](logs/opus-native-gallery-a1.md).
 
-Owned files: `apps/explorer/src/gallery.rs` (new), `apps/explorer/src/lib.rs`,
+Initial worker scope: `apps/explorer/src/gallery.rs` (new), `apps/explorer/src/lib.rs`,
 `apps/explorer/Cargo.toml`, the `Cargo.lock` local dependency edge, this document
 and the session log. No renderer, physics, core, detail, shader or shared-board
-files were changed.
+files were changed by that worker.
 
 ## What this mode is
 
 - Renders `matterweave_detail::gallery_scene(2026)` with the existing native
   Vulkan renderer, existing camera math and existing lighting defaults.
-- The scene is the accepted sparse demonstration gallery: one 16 m detail tile
-  and six ground-supported parasol mushrooms. Density, native collision and the
-  full showcase remain **NOT DONE**.
+- `tile` and parasol presets use the sparse demonstration gallery: one16m tile
+  and six ground-supported parasols. The additive `flora source` preset uses
+  reviewed `dense_tile(20260908)`:84 plants/six types plus terrain. Neither fixture
+  completes full-map density, native collision or the mandatory showcase.
+- Flora uses Source LOD only. Both request parsing and direct construction reject
+  Half/Quarter until their anatomy passes the separate quality gate. Generation
+  runs once on entry; renderer recreation reuses the already combined CPU mesh.
 - Owns no `World`, no `Physics`, no session and no save path. It cannot load,
   rename, replace or write the player's world, by construction.
 - Reports truthful counters. Systems it does not run (physics steps, voxel
@@ -64,11 +68,13 @@ Request grammar, bounded to 128 bytes, `#` comments and blank lines ignored:
 
 ```text
 <preset> [lod]
-preset: tile | parasol-front | parasol-side | parasol-underside
+preset: tile | flora | parasol-front | parasol-side | parasol-underside
 lod:    source (default) | half | quarter
 ```
 
-Examples: `tile source`, `parasol-underside half`, `parasol-front quarter`.
+Examples: `tile source`, `flora source`, `parasol-underside half`.
+Coarse parasol views are explicitly experimental; they do not establish
+close-range quality. Flora rejects coarse requests.
 
 Viewpoints are derived from the actual scene bounds of the tile and the first
 parasol instance (`bounds_world` under the instance transform), not from guessed
@@ -93,7 +99,7 @@ cargo clippy -p matterweave-explorer --all-targets --locked -- -D warnings
 cargo fmt -p matterweave-explorer --check
 cargo build --locked -p matterweave-explorer --bin matterweave-explorer
 
-dir=$(mktemp -d)
+dir=$(mktemp -d /mnt/bench/matterweave-dev/performance/gallery-smoke-XXXXXX)
 printf 'sentinel user save bytes' > "$dir/world.json"     # user data sentinel
 printf 'tile source\n' > "$dir/detail-gallery.txt"
 timeout 120s xvfb-run -a "$CARGO_TARGET_DIR/debug/matterweave-explorer" \
@@ -144,6 +150,24 @@ verification, sentinel hashes) is under
 `/mnt/bench/matterweave-dev/performance/run-01/native-gallery-a1/`, with
 `sha256-native-gallery-a1.txt` over the images and CSV.
 
+## Lead integration after the initial worker
+
+Flora source/evidence64661cf/267c2c8 merged through PR7 (`c71306d`), after
+host/Android/docs CI passed. The existing source API was preserved; no duplicate
+source audit was performed. App adapter test checks85 instances,28908 unique and
+77810 expanded occupied cells and one mesh build perprototype. A malformed first
+fixture compared `u64` with `usize`; corrected before the valid unknown-preset
+RED (`f09111e`). Lead inspection additionally caught the inherited seed2026 HUD
+label; generated scene and displayed provenance now share the tested preset seed.
+
+Combined workspace:180 tests, all-target Clippy and formatting PASS in
+`run-01/native-flora-workspace-green.log`. Explorer contributes45 tests, including
+three P02 transactional upload-state checks. Normal-mode90-frame Vulkan validation
+smoke passed edits/save/reload, grab/throw/fracture, resize and renderer recreation
+in `run-01/p02-host-smoke/run.log`. Native flora render/phone checks and independent
+combined-candidate reviews remain pending; initial worker evidence above does not
+cover those later changes.
+
 ## Remaining gaps (not done here)
 
 - No phone run: appearance, thermal, cost, peak memory and lifecycle on device
@@ -151,7 +175,7 @@ verification, sentinel hashes) is under
 - No native collision, no gameplay integration, no detail data in saves.
 - No GPU instancing, no per-instance culling, no streaming and no adaptive LOD;
   one combined draw payload per view.
-- Density, flora catalogue breadth and the full-map showcase remain outstanding.
+- Full-map density, native flora appearance and the full showcase remain outstanding.
 - Water is still opaque (no separate water pass), inherited from the foundation.
 - The underside preset places the camera close to the supporting terrain, so
   terrain can occlude part of the frame; framing refinement is follow-up work.

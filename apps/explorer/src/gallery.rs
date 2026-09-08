@@ -97,6 +97,13 @@ pub enum Preset {
 }
 
 impl Preset {
+    pub fn seed(self) -> u64 {
+        match self {
+            Self::Flora => matterweave_detail::FLORA_CANONICAL_SEED,
+            _ => GALLERY_SEED,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Tile => "tile",
@@ -171,12 +178,18 @@ impl Request {
                 "expected `<preset> [lod]` only in {line:?}"
             )));
         }
-        if preset == Preset::Flora && lod != Lod::Source {
+        let request = Self { preset, lod };
+        request.validate_lod()?;
+        Ok(request)
+    }
+
+    fn validate_lod(self) -> Result<()> {
+        if self.preset == Preset::Flora && self.lod != Lod::Source {
             return Err(GalleryError::Request(
                 "flora requires source LOD; coarse anatomy is not quality-accepted".into(),
             ));
         }
-        Ok(Self { preset, lod })
+        Ok(())
     }
 
     /// Resolves an explicit opt-in. `Ok(None)` means normal application
@@ -410,13 +423,12 @@ impl GalleryView {
     /// Builds the accepted gallery scene, one combined mesh and the viewpoint.
     /// Touches no world, session or save file.
     pub fn build(request: Request) -> Result<Self> {
+        request.validate_lod()?;
         // Scene generation and prototype meshing happen once on entry, never
         // in the frame loop or on renderer recreation.
         let mut scene = match request.preset {
-            Preset::Flora => {
-                matterweave_detail::dense_tile(matterweave_detail::FLORA_CANONICAL_SEED)?
-            }
-            _ => matterweave_detail::gallery_scene(GALLERY_SEED)?,
+            Preset::Flora => matterweave_detail::dense_tile(request.preset.seed())?,
+            _ => matterweave_detail::gallery_scene(request.preset.seed())?,
         };
         let mesh = combine(&mut scene, request.lod)?;
         let counts = scene.counts();
@@ -648,8 +660,11 @@ impl GalleryApp {
             30.,
             144.,
             &format!(
-                "POS {:.1} {:.1} {:.1} | SEED {GALLERY_SEED} | COMBINED MESH, NOT GPU INSTANCING",
-                self.camera.position.x, self.camera.position.y, self.camera.position.z
+                "POS {:.1} {:.1} {:.1} | SEED {} | COMBINED MESH, NOT GPU INSTANCING",
+                self.camera.position.x,
+                self.camera.position.y,
+                self.camera.position.z,
+                self.view.request.preset.seed()
             ),
             1.,
             muted,
@@ -1136,7 +1151,8 @@ mod tests {
         assert!(GalleryView::build(Request {
             preset: request.preset,
             lod: Lod::Half,
-        }).is_err());
+        })
+        .is_err());
         assert_eq!(view.stats.instances, 85); // 84 plants and the terrain tile.
         assert_eq!(view.stats.unique_stored_cells, 28_908);
         assert_eq!(view.stats.expanded_occupied_cells, 77_810);
