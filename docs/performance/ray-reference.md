@@ -211,3 +211,12 @@ rejected after depth re-projection. Host RADV passed the same probes. The failed
 report is retained under `engine-03/phone-ray-3f4aa5b`. Near-boundary offset probes
 were added before repair to constrain any numerical tolerance. Android is not
 yet accepted by this checkpoint.
+
+The correction stabilizes an axis only when both unprojected segment endpoints
+are within eight relative f32 ULPs of the same integer grid plane. It also accepts
+1e-5 normalized-depth re-projection roundoff at near/far before clamping output
+to [0,1]. These are disclosed numerical tolerances, not exact real-number ray
+semantics. Offset probes at 1e-4 on either side of the thin-volume boundary remain
+distinct. At large coordinates, the relative tolerance grows; broader full-image
+quality comparisons remain required. The resulting 30 probes pass on Adreno 830.
+This is a headless Vulkan executable, not APK presentation/lifecycle evidence.
