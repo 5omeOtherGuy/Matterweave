@@ -544,6 +544,141 @@ fn local_loss_config_rejects_out_of_range_fractions() {
     .expect("1.0 allows any interior loss");
 }
 
+/// 16-cell solid whose origin is `origin`, bored by a 2x2 through-channel
+/// along `axis` whose cross-section occupies the two *global* coordinates
+/// `across` and `across + 1` on both cross axes. A 2x2 channel is the
+/// joint-closure case: no single coarse fill closes it, all fills together do.
+/// The cross-section start is chosen per cross axis, near the block centre,
+/// with the requested global alignment: `Straddle` starts on an odd coordinate
+/// (splitting the factor-2 coarse cell), `Aligned` on a multiple of 4.
+#[derive(Clone, Copy, Debug)]
+enum Alignment {
+    Straddle,
+    Aligned,
+}
+
+fn channel_start(origin_axis: i32, alignment: Alignment) -> i32 {
+    (6..12)
+        .map(|local| origin_axis + local)
+        .find(|global| match alignment {
+            Alignment::Straddle => global.rem_euclid(2) == 1,
+            Alignment::Aligned => global.rem_euclid(4) == 0,
+        })
+        .expect("a start with the requested alignment exists near the centre")
+}
+
+fn wide_tunnel_at(id: &str, origin: [i32; 3], axis: usize, alignment: Alignment) -> DetailVolume {
+    let mut v = DetailVolume::new(id, Scale::new(SCALE_FINE_M).unwrap());
+    for a in 0..16 {
+        for b in 0..16 {
+            for c in 0..16 {
+                let local = [a, b, c];
+                v.set(
+                    [origin[0] + a, origin[1] + b, origin[2] + c],
+                    STONE,
+                )
+                .unwrap();
+                let others: Vec<i32> = (0..3)
+                    .filter(|i| *i != axis)
+                    .map(|i| origin[i] + local[i])
+                    .collect();
+                let starts: Vec<i32> = (0..3)
+                    .filter(|i| *i != axis)
+                    .map(|i| channel_start(origin[i], alignment))
+                    .collect();
+                if others
+                    .iter()
+                    .zip(&starts)
+                    .all(|(v, s)| *v == *s || *v == *s + 1)
+                {
+                    v.set(
+                        [origin[0] + a, origin[1] + b, origin[2] + c],
+                        material::AIR,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn joint_closure_holds_source_on_every_axis_and_on_negative_coordinates() {
+    // A channel whose global cross-section starts on an odd coordinate
+    // straddles the factor-2 coarse boundary, so no single fill closes it and
+    // only the sequential evaluation can catch the joint closure. It must be
+    // caught on every axis and at negative cell coordinates (`div_euclid`
+    // bucketing), independently of where the block itself sits.
+    let config = LodConfig::default();
+    for axis in 0..3 {
+        for origin in [[0, 0, 0], [-16, -16, -16], [-7, 3, -21]] {
+            let mut scene = DetailScene::new();
+            scene
+                .add_prototype(wide_tunnel_at("wide", origin, axis, Alignment::Straddle))
+                .unwrap();
+            scene.place("t", "wide", Transform::identity()).unwrap();
+            assert_eq!(
+                lod_of(&mut scene, &persp_at(1.0, 300.0), &config),
+                Lod::Source,
+                "axis {axis} origin {origin:?} must hold Source"
+            );
+        }
+    }
+}
+
+#[test]
+fn coarse_aligned_two_by_two_channel_coarsens_exactly_as_far_as_it_survives() {
+    // Control for the joint-closure rule: when the channel is coarse aligned
+    // at factor 2 its coarse cells are entirely air, so coarsening never fills
+    // them and the channel survives Half untouched. At factor 4 the same cells
+    // are partial and the fill would erase it, so the walk must stop at Half.
+    let config = LodConfig::default();
+    let mut scene = DetailScene::new();
+    scene
+        .add_prototype(wide_tunnel_at("aligned", [0, 0, 0], 0, Alignment::Aligned))
+        .unwrap();
+    scene.place("t", "aligned", Transform::identity()).unwrap();
+    assert_eq!(
+        lod_of(&mut scene, &persp_at(1.0, 300.0), &config),
+        Lod::Half,
+        "aligned channel survives Half and must not reach Quarter"
+    );
+    // The channel really is preserved by the Half representation: its factor-2
+    // coarse cells contain no occupied source cell at all.
+    let proto = scene.prototype("aligned").unwrap();
+    for x in 0..16 {
+        for y in [8, 9] {
+            for z in [8, 9] {
+                assert_eq!(proto.get([x, y, z]), material::AIR);
+            }
+        }
+    }
+}
+
+#[test]
+fn stepped_wedge_still_coarsens_on_negative_coordinates() {
+    // Sequential accumulated fills must not re-pin safe stepped surfaces, and
+    // the accumulation order must behave the same on negative coordinates.
+    let config = LodConfig::default();
+    let mut v = DetailVolume::new("wedge-neg", Scale::new(SCALE_FINE_M).unwrap());
+    for x in 0..16 {
+        for y in 0..16 {
+            for z in 0..=x {
+                v.set([x - 21, y - 16, z - 9], STONE).unwrap();
+            }
+        }
+    }
+    let mut scene = DetailScene::new();
+    scene.add_prototype(v).unwrap();
+    scene.place("w", "wedge-neg", Transform::identity()).unwrap();
+    assert_eq!(
+        lod_of(&mut scene, &persp_at(-1.0, 300.0), &config),
+        Lod::Quarter,
+        "negative-coordinate stepped surface must still coarsen"
+    );
+}
+
 #[test]
 fn adjacent_coarse_fills_cannot_jointly_close_a_two_by_two_tunnel() {
     for camera in [persp_at(1.0, 300.0), ortho_at(1.0, 10.0, 200.0)] {

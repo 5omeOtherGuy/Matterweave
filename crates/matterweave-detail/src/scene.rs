@@ -150,8 +150,8 @@ fn worst_interior_loss(
         // treated as protected, i.e. the pre-topology conservative verdict.
         let protected = if cost.analyzed_cells < LOCAL_TOPOLOGY_CELL_BUDGET {
             cost.analyzed_cells += 1;
-            cost.site_visits += window_sites(factor);
-            local_fill_destroys_feature(volume, *coarse, factor)
+            cost.window_site_samples += window_sites(factor);
+            local_fill_destroys_feature(volume, counts, *coarse, factor)
         } else {
             cost.budget_exhausted_cells += 1;
             true
@@ -187,11 +187,30 @@ pub struct LocalTopologyCost {
     pub analyzed_cells: usize,
     /// Cells that fell back to the conservative verdict past the budget.
     pub budget_exhausted_cells: usize,
-    /// Source-cell reads/labels performed: `analyzed_cells * (factor + 2)^3`.
-    pub site_visits: usize,
+    /// Window sites *sampled* while building occupancy:
+    /// `analyzed_cells * (factor + 2)^3`. This counts the occupancy build only
+    /// (one source read, plus at most one coarse-map lookup for an air site).
+    /// It is not a count of flood-fill or array accesses: the two labelling
+    /// passes and the neighbour scans touch the same window again, so total
+    /// array work is a small constant multiple of this figure.
+    pub window_site_samples: usize,
 }
 
-/// Does filling this coarse cell destroy a *local* air feature?
+/// Does filling this coarse cell destroy a *local* air feature, **given the
+/// coarse fills that precede it**?
+///
+/// Coarsening fills every occupied coarse cell, and per-cell independence is
+/// not sufficient: a 2x2 channel straddling coarse boundaries survives each
+/// single fill through a bypass in a neighbouring cell, yet the fills together
+/// erase it (`adjacent_coarse_fills_cannot_jointly_close_a_two_by_two_tunnel`).
+/// Cells are therefore evaluated as a *sequence* in the deterministic
+/// lexicographic `BTreeMap` key order, and the "before" occupancy of a cell
+/// virtually includes the footprints of every occupied coarse cell ordered
+/// before it (`counts` membership, no extra state). The final accumulated
+/// state is the full coarse fill, so the checks decompose the whole
+/// transformation into steps instead of testing each cell against the source.
+/// This is a per-window test at each step, not a proof of global topology
+/// preservation — see the documented limits.
 ///
 /// Bounded digital-topology test on a `(factor + 2)^3` window: the coarse
 /// footprint plus a one-cell halo. Scratch is a fixed stack array, there is no
@@ -214,7 +233,12 @@ pub struct LocalTopologyCost {
 /// An exterior staircase, wedge or curved surface satisfies neither: its air
 /// is one open region touching the halo on many sides and its air sites have
 /// at most three solid face neighbours, so it is free to coarsen.
-fn local_fill_destroys_feature(volume: &DetailVolume, coarse: [i32; 3], factor: i32) -> bool {
+fn local_fill_destroys_feature(
+    volume: &DetailVolume,
+    counts: &BTreeMap<[i32; 3], u32>,
+    coarse: [i32; 3],
+    factor: i32,
+) -> bool {
     let n = factor as usize + 2;
     let origin = [
         coarse[0] * factor - 1,
@@ -232,7 +256,13 @@ fn local_fill_destroys_feature(volume: &DetailVolume, coarse: [i32; 3], factor: 
                     origin[1] + y as i32,
                     origin[2] + z as i32,
                 ];
-                solid[index(x, y, z)] = volume.get(cell) != crate::material::AIR;
+                // `div_euclid` keeps the coarse key correct on negative
+                // coordinates, matching the digest's own bucketing.
+                let key = cell.map(|v| v.div_euclid(factor));
+                let filled_earlier =
+                    key != coarse && key < coarse && counts.contains_key(&key);
+                solid[index(x, y, z)] =
+                    filled_earlier || volume.get(cell) != crate::material::AIR;
             }
         }
     }
@@ -1034,9 +1064,9 @@ mod local_topology_cost {
                     cost.budget_exhausted_cells, 0,
                     "{name} at factor {factor} must not need the conservative fallback"
                 );
-                assert_eq!(cost.site_visits, cost.analyzed_cells * window_sites(factor));
+                assert_eq!(cost.window_site_samples, cost.analyzed_cells * window_sites(factor));
                 assert!(
-                    cost.site_visits <= LOCAL_TOPOLOGY_CELL_BUDGET * MAX_WINDOW_SITES,
+                    cost.window_site_samples <= LOCAL_TOPOLOGY_CELL_BUDGET * MAX_WINDOW_SITES,
                     "scratch/work cost stays bounded"
                 );
             }
