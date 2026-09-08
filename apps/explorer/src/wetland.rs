@@ -34,6 +34,7 @@ struct Runtime {
     empty_world: World,
     dynamic: DynamicMeshCache,
     edits: Vec<Edit>,
+    save_path: PathBuf,
     spawn: [f32; 3],
     terrain: matterweave_detail::Terrain,
     clearing: [f32; 3],
@@ -92,7 +93,9 @@ impl Runtime {
         let mut scene = built.scene;
         let mut spawn = built.spawn_eye;
         let route = built.route;
-        let saved = SavedWetland::load(&directory.join(wetland_state::SAVE_FILE), GENERATOR, SEED)?;
+        let (save_path, saved) = SavedWetland::load_recovering(
+            &directory.join(wetland_state::SAVE_FILE), GENERATOR, SEED
+        )?;
         let fresh = saved.is_none();
         if let Some(save) = &saved {
             for edit in &save.edits {
@@ -162,6 +165,7 @@ impl Runtime {
             empty_world,
             dynamic: DynamicMeshCache::default(),
             edits,
+            save_path,
             spawn,
             route,
             terrain,
@@ -178,7 +182,7 @@ impl Runtime {
         }
         Ok(runtime)
     }
-    fn save(&mut self, directory: &std::path::Path) -> Result<(), String> {
+    fn save(&mut self, _directory: &std::path::Path) -> Result<(), String> {
         let saved = SavedWetland {
             version: 1,
             generator: GENERATOR,
@@ -189,7 +193,7 @@ impl Runtime {
             pitch: self.camera.pitch,
             shadows: self.lighting.shadows,
         };
-        saved.save(&directory.join(wetland_state::SAVE_FILE))?;
+        saved.save(&self.save_path)?;
         self.dirty = false;
         Ok(())
     }
@@ -389,6 +393,7 @@ impl WetlandApp {
         if self.loading.is_some() {
             return;
         }
+        self.failed = false;
         let directory = self.directory.clone();
         let (tx, rx) = mpsc::sync_channel(1);
         self.loading = Some(rx);

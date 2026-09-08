@@ -83,6 +83,30 @@ impl SavedWetland {
         Ok(Some(save))
     }
 
+    /// Select a valid session or a fresh recovery path. Existing invalid files
+    /// stay byte-for-byte intact; recovery selection is bounded and deterministic.
+    pub fn load_recovering(
+        path: &Path, generator: u32, seed: u64,
+    ) -> Result<(std::path::PathBuf, Option<Self>), String> {
+        match Self::load(path, generator, seed) {
+            Ok(save) => return Ok((path.to_path_buf(), save)),
+            Err(error) => log::warn!("Wetland session retained at {}: {error}", path.display()),
+        }
+        let name = path.file_name().ok_or("Wetland save path has no filename")?.to_string_lossy();
+        let mut available = None;
+        let mut latest = None;
+        for sequence in 1..=128 {
+            let candidate = path.with_file_name(format!("{name}.recovery-{sequence}.json"));
+            match Self::load(&candidate, generator, seed) {
+                Ok(Some(save)) => latest = Some((candidate, Some(save))),
+                Ok(None) if available.is_none() => available = Some(candidate),
+                _ => {}
+            }
+        }
+        if let Some(recovered) = latest { return Ok(recovered); }
+        available.map(|p| (p, None)).ok_or_else(|| "Wetland recovery slots are full".into())
+    }
+
     pub fn save(&self, path: &Path) -> Result<(), String> {
         self.validate(self.generator, self.seed)?;
         let bytes = serde_json::to_vec(self).map_err(|e| e.to_string())?;
