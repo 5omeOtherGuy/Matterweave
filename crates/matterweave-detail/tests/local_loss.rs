@@ -543,3 +543,23 @@ fn local_loss_config_rejects_out_of_range_fractions() {
     .validate()
     .expect("1.0 allows any interior loss");
 }
+
+#[test]
+fn adjacent_coarse_fills_cannot_jointly_close_a_two_by_two_tunnel() {
+    for camera in [persp_at(1.0, 300.0), ortho_at(1.0, 10.0, 200.0)] {
+        let mut volume = solid_block("wide-tunnel", 16);
+        // Every cross-section straddles coarse-cell boundaries. Filling just
+        // one cell leaves a bypass through its neighbour; filling all closes it.
+        for x in 0..16 {
+            for y in 7..9 {
+                for z in 7..9 {
+                    volume.set([x,y,z], material::AIR).unwrap();
+                }
+            }
+        }
+        let mut scene = DetailScene::new();
+        scene.add_prototype(volume).unwrap();
+        scene.place("t", "wide-tunnel", Transform::identity()).unwrap();
+        assert_eq!(lod_of(&mut scene, &camera, &LodConfig::default()), Lod::Source);
+    }
+}
