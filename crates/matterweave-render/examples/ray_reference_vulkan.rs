@@ -150,6 +150,24 @@ fn probes(fixture: usize) -> Vec<Probe> {
                 normal_override: None,
             },
             Probe {
+                name: "parallel just below upper face hits",
+                origin: [-4.5, 0.9999, 0.5],
+                direction: [1.0, 0.0, 0.0],
+                normal_override: None,
+            },
+            Probe {
+                name: "parallel just above upper face misses",
+                origin: [-4.5, 1.0001, 0.5],
+                direction: [1.0, 0.0, 0.0],
+                normal_override: None,
+            },
+            Probe {
+                name: "parallel just below lower face misses",
+                origin: [-4.5, -0.0001, 0.5],
+                direction: [1.0, 0.0, 0.0],
+                normal_override: None,
+            },
+            Probe {
                 name: "thin volume from below",
                 origin: [4.5, -6.5, 0.5],
                 direction: [0.0, 1.0, 0.0],
