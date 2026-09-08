@@ -476,6 +476,9 @@ impl WetlandApp {
         false
     }
     fn action(&mut self, action: Action) {
+        if self.menu {
+            return;
+        }
         let Some(r) = &mut self.runtime else {
             return;
         };

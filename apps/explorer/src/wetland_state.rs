@@ -256,12 +256,24 @@ pub fn raycast(
             if !next.is_finite() {
                 break;
             }
-            previous = Some(cell);
             for a in 0..3 {
                 if crossings[a] <= next + 1e-6 {
                     cell[a] += if local_dir[a] > 0. { 1 } else { -1 };
                 }
             }
+            // Advance all tied axes to avoid false hits on cells touched only
+            // at an edge. Placement still needs one exposed face, not the
+            // diagonal cell occupied before a corner crossing.
+            previous = (0..3).find_map(|a| {
+                if crossings[a] > next + 1e-6 {
+                    return None;
+                }
+                let mut adjacent = cell;
+                adjacent[a] += if local_dir[a] > 0. { -1 } else { 1 };
+                (matterweave_detail::material_policy(volume.get(adjacent))
+                    != MaterialPolicy::Collision)
+                    .then_some(adjacent)
+            });
             t = next;
         }
     }
@@ -478,5 +490,18 @@ mod tests {
                 previous
             );
         }
+        // At an exact corner, an occupied side is not an exposed placement face.
+        scene
+            .edit_instance("corner", [0, 1, 0], material::BANK_STONE)
+            .unwrap();
+        let hit = raycast(&scene, [0.125; 3], [1., 1., 0.], 2.).unwrap();
+        assert_eq!(hit.previous, Some([1, 0, 0]));
+        scene
+            .edit_instance("corner", [1, 0, 0], material::BANK_STONE)
+            .unwrap();
+        assert!(raycast(&scene, [0.125; 3], [1., 1., 0.], 2.)
+            .unwrap()
+            .previous
+            .is_none());
     }
 }
