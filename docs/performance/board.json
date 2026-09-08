@@ -249,7 +249,7 @@
       "artifact": "41e8af2"
     },
     "completion-traversal": {
-      "state": "running",
+      "state": "lead-reproduced-blockers",
       "owner": "muse-free",
       "base": "7e1143e",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-traversal",
@@ -258,7 +258,20 @@
         "crates/matterweave-physics/tests/showcase_traversal.rs",
         "docs/performance/showcase/traversal-worker.md"
       ],
-      "acceptance": "Must test actual continuous Rapier walking with bounded failures; no waypoint teleporting/flying. Lead owns fixes and phone evidence."
+      "acceptance": "Muse interrupted after fixture mismatch and provider429; no worker result accepted. Lead3af4115 uses actual app entrance handling and wading speed; both continuous routes fail. Auto-step0.30/0.55m advances but still stalls. Route correction delegated separately; full traversal remains RED."
+    },
+    "completion-route-fix": {
+      "state": "running",
+      "owner": "opus-medium",
+      "base": "3af4115 with provisional0.55m autostep dependency",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-route-fix",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/route-fix-opus",
+      "paths": [
+        "crates/matterweave-detail/src/showcase.rs",
+        "crates/matterweave-detail/tests/showcase.rs",
+        "docs/performance/showcase/route-fix-opus.md"
+      ],
+      "acceptance": "Fix actual continuous ground/elevated traversal without density reductions, jumps or collision bypass. Lead owns physics, integration and phone."
     }
   },
   "capacity": {

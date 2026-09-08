@@ -14,8 +14,8 @@ is retired. This continuation owns phone, integration and delivery.
 Current verified progress (2026-09-08 continuation):
 
 - PR8 remains draft/open. Host, Android and docs CI passed at `c6e2317`;
-  the missing X11 library was already fixed. Current local source is `7e1143e`;
-  newer work has not yet been checked remotely, merged or released.
+  the missing X11 library was already fixed. PR8 source `7a30e5b` passes all remote checks. New local traversal/step work
+  follows that checkpoint; nothing from PR8 is merged or released yet.
 - The integrated 128m map contains 34,864,520 instance-expanded occupied cells,
   8,876,712 unique stored cells and 6,221 plants across four mushroom and six other
   flora archetypes. Flora contributes 5,908,389 expanded cells. Source meshes total
@@ -25,7 +25,9 @@ Current verified progress (2026-09-08 continuation):
   flora clearance, actual horizontal voxel-corner radius and carve-aware terrain.
   Independent Muse/Gemini reviews found the original radius/segment errors; both
   reviewed the corrections without substantiated new findings. Actual continuous
-  Rapier traversal is assigned to an isolated bounded worker; phone routes remain open.
+  Rapier traversal then exposed terrain blockers on both routes. The bounded30cm
+  stair fix passes45 physics tests but full routes remain RED; Opus owns an isolated
+  route correction. Phone route acceptance remains open.
 - The workspace suite passed 238 tests, with one expensive runtime test explicitly
   ignored. Running that full-map test separately passed load, standing, jump, source
   edit/collision, save and reload in 16.45s on the final ten-species map. Strict
@@ -42,8 +44,12 @@ Current verified progress (2026-09-08 continuation):
 - The initial six-species full-map development APK (`fffb3844…`) was built, passed
   ARM64/16KiB alignment and signature checks, and was installed on the OnePlus13.
   Normal chooser/entry, movement, HOME/resume and persisted session were observed.
-  The corrected ten-species APK is rebuilding from `7e1143e`; its installation,
-  full route/edit/water/destruction checks and matched performance evidence are pending.
+  The corrected ten-species APK (`35cbd2e6…`, source `7e1143e`) is now installed;
+  normal entry, movement, two source edits, process reload and HOME/resume rendering
+  passed. Captures1800/180rows validate but show only renderer epoch1.
+  [Device evidence](evidence/2026-09-08-full-wetland-development.md) retains exact
+  conditions and limits. Full routes, water/destruction, integrated shadow/temporal
+  quality and matched performance evidence remain open.
 
 Next: verify the final APK and native route replay, correct any blockers, then
 exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve

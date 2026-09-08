@@ -55,3 +55,43 @@ This is a host tooling fix, not a claimed phone rendering advantage.
 A bounded Muse worker now owns only a full-source continuous Rapier traversal
 regression and its log in `completion-traversal`, base `7e1143e`, run directory
 `completion-02/traversal-muse`. Lead retains phone ownership and integration.
+
+### Device validation and newly reproduced traversal blockers
+
+Full ten-species Android build/verify/install succeeds at7e1143e, APK35cbd2e6…;
+see [device evidence](../../evidence/2026-09-08-full-wetland-development.md).
+Source remove/place persists across relaunch, generator1 retains original bytes,
+legacy world hash unchanged. HOME/resume rendering observed; captured epochs are
+only1, so no claim of renderer destruction/recreation. Both1800/180-row captures
+validate. Final release and complete quality/performance/traversal gates remain open.
+
+Muse traversal attempt hit provider429 and incorrectly repeated the already-fixed
+raw entrance check. Lead stopped its exact runner, confirmed all children exited,
+retained partial source and wrote a smaller actual-app-equivalent regression.
+`3af4115`: both routes RED. Rapier's default disables autostep. A30cm step improves
+progress but groundpoint12/elevatedpoint8 still stall;55cm provides no further gain.
+`4575e79`: isolated quarter-stair RED. `9b7faa9`: bounded30cm stair GREEN,45physics
+tests plus Clippy pass; existing walls/ceilings/body behavior checks remain intact.
+Opus route correction owns only generator/tests/log in completion-route-fix;
+initial dependency includes provisional55cm physics and must be checked with the
+accepted30cm setting during integration. No density target may be lowered.
+
+Unused completion-map target cleaned with cargo clean (71.5MiB), after no processes
+used it. Other active/shared targets retained. PR8 title/body updated via REST
+because installed gh pr edit hit the classic-Projects GraphQL deprecation. All
+host/Android/docs checks pass at7a30e5b. PR stays draft while actual route gates fail.
+
+### Independent app audit corrections
+
+Pi Astra medium read-only review of9b7faa9 found internal DDA-corner placement
+could be diagonal and main-menu keyboard actions could edit the hidden retained
+runtime. Both reproduced under tests atcecd895. dfd7bcc advances tied ray axes
+without inventing grazing hits but selects one exposed face for placement; solid
+side faces are refused. Main-menu gameplay actions return before changing runtime.
+App50 normal tests and the explicit full-map menu/edit/collision/reload test pass;
+workspace Clippy passes. Review log: reviews/app-audit-astra.md; bounded correction
+review resumes its exact session. No GPU joining defect was identified.
+
+Ordinary phone walking also entered the deep basin; saved eye10.767m below the12m
+surface and underwater tint observed. No teleport/flying used. Full designated
+routes and destruction remain pending. App remains force-stopped after checks.

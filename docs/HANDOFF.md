@@ -14,7 +14,10 @@ campaign using all six model families, with Muse/Gemini code reviews before Astr
 review, testable worker definitions of done and engineering-log handoffs. A small,
 dense, lush, highly detailed alien map with water, complex terrain and recognizable
 mushrooms is a mandatory deliverable. The plan is written; do not delegate another
-plan-writing round. No optimization or showcase implementation is claimed yet.
+plan-writing round. Current source now implements the full dense map, fine-source
+collision, normal Android presentation and measurement tooling. Consult STATUS for
+verified development-device results and the still-open traversal/quality/comparison
+gates; this does not mark the campaign or full engine complete.
 
 ## Current implementation entry — 2026-09-08
 

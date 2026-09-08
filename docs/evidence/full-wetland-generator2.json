@@ -1,0 +1,185 @@
+{
+  "artifact": "full-showcase",
+  "cache": {
+    "aggregate_fits_cache_budget": true,
+    "aggregate_source_mesh_bytes_measured_one_at_a_time": 45328920,
+    "cache_budget_bytes": 67108864,
+    "largest_single_prototype_mesh_bytes": 250320,
+    "resident_shared_prototype_mesh_bytes": 1251096
+  },
+  "composition_hash": "f458591e7b345546",
+  "counts": {
+    "classes": {
+      "flora-decorative": {
+        "instance_expanded_cells": 418491,
+        "instances": 1496,
+        "prototypes": 5,
+        "unique_stored_cells": 1767
+      },
+      "flora-fungus": {
+        "instance_expanded_cells": 5025898,
+        "instances": 3797,
+        "prototypes": 4,
+        "unique_stored_cells": 5098
+      },
+      "flora-woody": {
+        "instance_expanded_cells": 464000,
+        "instances": 928,
+        "prototypes": 1,
+        "unique_stored_cells": 500
+      },
+      "terrain": {
+        "instance_expanded_cells": 28956131,
+        "instances": 2103,
+        "prototypes": 877,
+        "unique_stored_cells": 8869347
+      }
+    },
+    "flora_instance_expanded_cells": 5908389,
+    "flora_instances": 6221,
+    "instance_expanded_collision_cells": 34000500,
+    "instance_expanded_liquid_cells": 115161,
+    "instance_expanded_occupied_cells": 34864520,
+    "instances": 8324,
+    "overhang_columns": 2856,
+    "prototypes": 887,
+    "species_instances": {
+      "bracket_fungus": 1077,
+      "clustered_mushroom": 1062,
+      "fan_frond": 410,
+      "funnel_mushroom": 1162,
+      "horsetail": 145,
+      "marsh_lily": 121,
+      "parasol_mushroom": 496,
+      "reed_cluster": 134,
+      "rosette_groundcover": 686,
+      "twisted_shrub": 928
+    },
+    "terrain_base_instances": 1228,
+    "terrain_base_prototypes": 2,
+    "terrain_instance_expanded_cells": 28956131,
+    "terrain_shell_prototypes": 875,
+    "unique_stored_cells": 8876712
+  },
+  "debug_assertions": true,
+  "generator": "matterweave_detail::showcase::build_showcase",
+  "generator_version": 2,
+  "landmarks": [
+    {
+      "kind": "water",
+      "name": "basin",
+      "position_m": [
+        64.0,
+        9.75,
+        84.0
+      ]
+    },
+    {
+      "kind": "water",
+      "name": "creek_mouth",
+      "position_m": [
+        63.0,
+        9.25,
+        80.0
+      ]
+    },
+    {
+      "kind": "water",
+      "name": "creek_head",
+      "position_m": [
+        42.0,
+        19.0,
+        10.0
+      ]
+    },
+    {
+      "kind": "grove",
+      "name": "fungal_grove",
+      "position_m": [
+        42.0,
+        15.25,
+        62.0
+      ]
+    },
+    {
+      "kind": "clearing",
+      "name": "destruction_clearing",
+      "position_m": [
+        92.0,
+        18.0,
+        58.0
+      ]
+    },
+    {
+      "kind": "viewpoint",
+      "name": "high_viewpoint",
+      "position_m": [
+        106.0,
+        31.75,
+        30.0
+      ]
+    },
+    {
+      "kind": "pass",
+      "name": "south_saddle",
+      "position_m": [
+        64.0,
+        15.5,
+        112.0
+      ]
+    },
+    {
+      "kind": "cavity",
+      "name": "west_rock_shelter",
+      "position_m": [
+        20.0,
+        20.0,
+        74.0
+      ]
+    },
+    {
+      "kind": "cavity",
+      "name": "terrace_undercut",
+      "position_m": [
+        100.0,
+        17.0,
+        60.0
+      ]
+    },
+    {
+      "kind": "cavity",
+      "name": "west_slope_undercut",
+      "position_m": [
+        26.0,
+        19.0,
+        60.0
+      ]
+    }
+  ],
+  "measured_on": "host; not a phone measurement",
+  "navigation": {
+    "elevated_route_length_m": 80.43350219726562,
+    "ground_loop_length_m": 1162.0267333984375,
+    "ground_loop_points": 531,
+    "ground_loop_seconds_host_estimate": 193.67112731933594,
+    "spawn_eye_m": [
+      46.0,
+      15.449999809265137,
+      66.0
+    ],
+    "walk_speed_m_s": 6.0
+  },
+  "seed": 20260908,
+  "source": {
+    "largest_prototype_cells": 16384,
+    "prototype_cell_ceiling": 33288,
+    "source_budget_bytes": 33554432,
+    "source_bytes": 13000704,
+    "terrain_cell_m": 0.25
+  },
+  "timing_ms": {
+    "generate_full_map": 1455.501929,
+    "mesh_every_prototype_source_lod": 580.5729859999999,
+    "meshed_prototypes": 887
+  }
+}

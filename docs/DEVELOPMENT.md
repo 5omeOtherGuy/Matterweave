@@ -270,6 +270,7 @@ explicitly after map/collision/app changes:
 
 ```sh
 cargo test --locked -p matterweave-explorer --lib full_wetland_load_edit_collision_and_reload -- --ignored --nocapture
+cargo test --locked -p matterweave-physics --test showcase_traversal -- --ignored --nocapture --test-threads=1
 cargo build --locked -p matterweave-explorer --bin matterweave-explorer
 MATTERWEAVE_VALIDATION=1 python3 tools/performance/check_wetland_capture.py target/debug/matterweave-explorer /mnt/bench/matterweave-wetland-check
 ```
