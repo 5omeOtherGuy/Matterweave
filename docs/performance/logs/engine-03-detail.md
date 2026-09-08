@@ -156,3 +156,64 @@ Verification (`CARGO_BUILD_JOBS=1`,
   unblocked this round.
 - No device, Android or on-screen temporal-quality evidence: NOT RUN. All
   figures above are host `cargo` results on this worktree.
+
+## Round 5 — joint closure of straddling channels (worker, from 11f70da)
+
+Lead's counterexample (`detail-joint-red.log`): a 2x2 through-channel at
+`y, z ∈ {7, 8}` straddles the factor-2 coarse boundary, so each single coarse
+fill leaves a bypass through a neighbour and the round-4 per-cell test reads
+`0.0`; the fills together erase the passage. RED reproduced at 11f70da
+(`Quarter` vs `Source`).
+
+### Repair
+
+`local_fill_destroys_feature` now evaluates cells as a *sequence* in the
+deterministic lexicographic `BTreeMap` key order: a window site is virtually
+solid if the source is solid **or** its coarse key is an occupied coarse cell
+ordered before the current one. "After" adds the current footprint, as before.
+The accumulated end state is the full coarse fill, so the per-step checks
+decompose the whole transformation instead of comparing each cell to the
+untouched source. No extra state (membership in the existing `counts` map),
+no second pass, no source mutation, same fixed stack scratch, same
+`LOCAL_TOPOLOGY_CELL_BUDGET = 8192` budget and same revision-keyed cache.
+`div_euclid` bucketing keeps the ordering correct on negative coordinates.
+
+### Verification (`CARGO_BUILD_JOBS=1`, target `engine-03/detail-target`)
+
+- `--test local_loss` → 17 passed, 0 failed, including the lead's
+  counterexample, both wedge tests, tunnel, boundary pit, instance/prototype
+  edit invalidation and the dense-cuboid controls.
+- `cargo test -p matterweave-detail` → 122 passed, 0 failed across 15 targets.
+- `cargo clippy -p matterweave-detail --all-targets -- -D warnings` → clean.
+- `python3 tools/check_docs.py` → PASS.
+
+New tests: `joint_closure_holds_source_on_every_axis_and_on_negative_coordinates`
+(channel along each axis, block origins `[0,0,0]`, `[-16,-16,-16]`,
+`[-7,3,-21]`, cross-section start forced onto an odd global coordinate so it
+always straddles) and `stepped_wedge_still_coarsens_on_negative_coordinates`.
+
+### Corrections made during this round
+
+- An intermediate variant of my own test demanded `Source` for a channel whose
+  cross-section is coarse *aligned* at factor 2. That expectation was wrong,
+  not the guard: such coarse cells are entirely air, are never filled, and the
+  channel survives `Half` untouched while the factor-4 fill would erase it.
+  Pinned instead by
+  `coarse_aligned_two_by_two_channel_coarsens_exactly_as_far_as_it_survives`
+  (asserts `Half` and that the channel cells are still `AIR`).
+- `site_visits` renamed to `window_site_samples` and documented honestly: it
+  counts occupancy-build samples (`analyzed_cells * (factor + 2)^3`), not
+  flood-fill or array visits; total array work is a small constant multiple.
+- Doc claim about surfaces narrowed to smooth steps and slopes; thin
+  concavities, 1-cell crevices and rough organic surfaces remain conservative.
+  No general topology-preservation theorem is claimed; the documented gaps are
+  skipped fully occupied footprints and bypasses beyond the one-cell halo.
+
+### Cost after the change
+
+Identical analyzed cells and samples to round 4 (terrain 1488/535 cells,
+95232/115560 samples at factor 2/4; flora rows unchanged),
+`budget_exhausted_cells == 0` everywhere. Sequential evaluation only raised
+some loss values, e.g. `parasol_mushroom` 0.375 → 0.625 at factor 2.
+
+Device/Android evidence: NOT RUN. Host `cargo` results only.

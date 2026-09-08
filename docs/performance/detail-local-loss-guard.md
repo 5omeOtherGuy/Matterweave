@@ -71,12 +71,48 @@ stack scratch, no heap, no flood outside the window):
   (pinhole, blind pit, slot) — features that through-connectivity cannot see.
 
 Only cells failing one of those contribute `(expected - count) / expected`.
-An exterior staircase or wedge has one open air region touching the halo on
-many sides and at most three solid face neighbours per air site, so it reads
-`0.0` and coarsens. This is the block generalization of the simple-point
-criterion used in 3D thinning (Bertrand/Malandain); no Rust crate exposes that
-test outside a full meshing/skeletonization engine, so it is ~60 lines here
-rather than a dependency.
+A smooth stepped or sloped surface has one open air region touching the halo
+on many sides and at most three solid face neighbours per air site, so it
+reads `0.0` and coarsens. That claim is about smooth steps and slopes only:
+thin concavities, 1-cell crevices and rough organic surfaces still trip the
+pit rule and stay conservative (see the measured terrain/flora rows below).
+The test is the block generalization of the simple-point criterion used in 3D
+thinning (Bertrand/Malandain); no Rust crate exposes that test outside a full
+meshing/skeletonization engine, so it is ~60 lines here rather than a
+dependency. It is a bounded per-window check, **not** a proof of global
+topology preservation, and none is claimed.
+
+### Sequential evaluation (round 5)
+
+Per-cell independence against the source is not sufficient. A 2x2 channel
+whose cross-section straddles coarse boundaries survives every *single* fill
+through a bypass in a neighbouring coarse cell, while the fills together erase
+it — the counterexample in
+`adjacent_coarse_fills_cannot_jointly_close_a_two_by_two_tunnel`.
+
+Cells are therefore evaluated as a sequence in the deterministic lexicographic
+`BTreeMap` key order. The "before" occupancy of a cell virtually includes the
+footprint of every occupied coarse cell ordered before it (membership in the
+same `counts` map, `div_euclid` bucketing, so negative coordinates bucket
+exactly as the digest does); "after" adds the current footprint. The
+accumulated end state is the full coarse fill, so the checks decompose the
+whole transformation into steps rather than testing each cell against the
+untouched source. No extra state, no second pass, no source mutation: the
+virtual fill exists only as a predicate over `counts` while sampling a window.
+
+Known gaps, deliberately not papered over:
+
+- Fully occupied (clipped) footprints are still skipped, so the solid they add
+  *outside* the occupied bounds is included in later cells' accumulated state
+  but never itself analyzed. Analyzing them would report exterior air splits
+  that reconnect just outside the window.
+- The accumulated state is only visible inside the one-cell halo, so a bypass
+  farther than one coarse cell away is not seen at that step.
+- A channel that is exactly coarse aligned has *empty* coarse cells, which are
+  never filled: it survives that level untouched and correctly coarsens
+  (`coarse_aligned_two_by_two_channel_coarsens_exactly_as_far_as_it_survives`
+  pins Half for a factor-2-aligned 2x2 channel that the factor-4 fill would
+  erase).
 
 Analysis is bounded by `LOCAL_TOPOLOGY_CELL_BUDGET = 8192` analyzed cells per
 (revision, factor). Past the budget a partial cell keeps the pre-topology
@@ -84,7 +120,7 @@ conservative verdict, which can only hold a finer level, never select an
 unsafe one. Measured on representative prototypes (unit test
 `scene::local_topology_cost`), no fixture reaches the budget:
 
-| prototype | occupied | partial cells @2 / @4 | site visits @2 / @4 | fallback |
+| prototype | occupied | partial cells @2 / @4 | window site samples @2 / @4 | fallback |
 | --- | --- | --- | --- | --- |
 | `terrain_detail_tile` | 25076 | 1488 / 535 | 95232 / 115560 | 0 |
 | `parasol_mushroom` | 938 | 152 / 44 | 9728 / 9504 | 0 |
@@ -92,8 +128,16 @@ unsafe one. Measured on representative prototypes (unit test
 | `fan_frond` | 422 | 136 / 49 | 8704 / 10584 | 0 |
 | `reed_cluster` | 297 | 108 / 29 | 6912 / 6264 | 0 |
 
-Worst case is `8192 * 216` site visits per factor, once per source revision;
-`select_lods` still reads only the cached digest.
+`window_site_samples` counts *occupancy-build samples only*
+(`analyzed_cells * (factor + 2)^3`): one source read per site plus at most one
+`counts` lookup for an air site. It is not a count of flood-fill steps or
+array accesses — the two labelling passes and the neighbour scan revisit the
+same window, so total array work is a small constant multiple of the figure.
+Sequential evaluation added no cells and no samples (identical counts before
+and after round 5); it only raised some loss values, e.g. `parasol_mushroom`
+from 0.375 to 0.625 at factor 2. Worst case is `8192 * 216` samples per
+factor, once per source revision; `select_lods` still reads only the cached
+digest, and the source is never modified.
 
 ## Cost quantities (not device claims)
 
