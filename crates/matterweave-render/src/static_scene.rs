@@ -503,6 +503,38 @@ mod tests {
     }
 
     #[test]
+    fn instance_updates_can_select_previously_unused_geometry() {
+        let plan = plan_static_scene(&[triangle(1), triangle(2)], &[instance(0, [0.; 3], 0)]).unwrap();
+        let update = plan_instance_update(&plan.geometry, &[instance(1, [-3., 2., 4.], 1)], 16).unwrap();
+        assert_eq!(update.prototypes.len(), 1);
+        let batch = &update.prototypes[0];
+        assert_eq!((batch.first_index, batch.vertex_offset, batch.index_count), (3, 3, 3));
+        assert_eq!(batch.bounds, [[-3., 2., 3.], [-3., 3., 4.]]);
+        assert_eq!(update.instance_count, 1);
+        assert_eq!(update.instance_bytes.len(), 16);
+    }
+
+    #[test]
+    fn instance_update_rejects_invalid_inputs_before_publication() {
+        let plan = plan_static_scene(&[triangle(1), Mesh::default()], &[instance(0, [0.; 3], 0)]).unwrap();
+        for bad in [instance(2, [0.; 3], 0), instance(1, [0.; 3], 0), instance(0, [0.; 3], 4), instance(0, [f32::NAN, 0., 0.], 0)] {
+            assert!(plan_instance_update(&plan.geometry, &[bad], 16).is_err());
+        }
+        assert!(plan_instance_update(&plan.geometry, &[instance(0, [0.; 3], 0)], 15).is_err());
+        assert_eq!(plan.prototypes[0].instance_count, 1);
+    }
+
+    #[test]
+    fn clearing_instances_retains_reusable_geometry_metadata() {
+        let plan = plan_static_scene(&[triangle(1)], &[instance(0, [0.; 3], 0)]).unwrap();
+        let cleared = plan_instance_update(&plan.geometry, &[], 0).unwrap();
+        assert_eq!(cleared.instance_count, 0);
+        assert!(cleared.prototypes.is_empty());
+        let again = plan_instance_update(&plan.geometry, &[instance(0, [1.; 3], 0)], 16).unwrap();
+        assert_eq!(again.prototypes[0].bounds, [[1.; 3], [2., 2., 1.]]);
+    }
+
+    #[test]
     fn prototypes_share_packed_buffers_with_per_prototype_ranges() {
         let quad = mesh(
             &[[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]],
