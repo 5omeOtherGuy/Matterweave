@@ -240,6 +240,7 @@ fn results_from_an_old_generation_or_a_changed_world_are_rejected() {
 #[test]
 fn saturated_requests_stay_bounded_and_still_deliver_the_latest_meshes() {
     let mut world = streamed(31337, [0.0; 3]);
+    assert!(world.set([0, 20, 0], 1));
     let mut jobs = AsyncWorld::new();
     let keys = world.chunk_keys();
     assert!(keys.len() > MAX_QUEUED_MESH_JOBS);
@@ -260,6 +261,26 @@ fn saturated_requests_stay_bounded_and_still_deliver_the_latest_meshes() {
                 "{stats:?}"
             );
         }
+    }
+    // Do not start draining while the flood is still executing. Admission
+    // refusals are not result discards: a slow worker could otherwise deliver
+    // everything without ever filling the result buffer. Wait on completion,
+    // not elapsed time, so saturation is exercised under any worker schedule.
+    let end = Instant::now() + LIMIT;
+    loop {
+        let stats = jobs.stats();
+        assert!(stats.queued_meshes <= MAX_QUEUED_MESH_JOBS, "{stats:?}");
+        assert!(stats.mesh_results <= MAX_MESH_RESULTS, "{stats:?}");
+        assert!(
+            stats.inflight <= 1 && stats.queued_streams <= 1,
+            "{stats:?}"
+        );
+        if stats.queued_meshes == 0 && stats.inflight == 0 {
+            assert!(stats.discarded > 0, "flood did not saturate: {stats:?}");
+            break;
+        }
+        assert!(Instant::now() < end, "flood never completed: {stats:?}");
+        std::thread::yield_now();
     }
     // Edit after the flood: only meshes matching the current revisions are accepted.
     assert!(world.set([0, 20, 0], 7));

@@ -32,3 +32,18 @@ RED result: 0 passed, 1 failed, 6 filtered out; failure is
 `assertion failed: jobs.request_mesh(&world, [0, 1, 0])`.
 
 GREEN verification and final changes follow in the fix checkpoint.
+
+## Lead completion
+
+The bounded Pi worker timed out after its RED commit and useful uncommitted fix;
+all owned processes had exited before lead takeover. The fix creates the edited
+chunk before requesting its snapshot and waits for the undrained flood to complete
+before asserting saturation. It observes actual queue/inflight completion, with
+the existing deadline, instead of relying on worker scheduling or a sleep.
+Queue and result bounds, stale revision checks and complete latest-mesh delivery
+remain asserted. No production scheduler code changed.
+
+Lead checks: full core test suite and scoped Clippy pass. The focused saturation
+check also passed40 repetitions with every test thread pinned to one available CPU.
+Logs: `completion-02/ci-core-green.log`, `ci-core-clippy.log`,
+`ci-async-repeat.log` under the campaign artifact root. Remote CI must run the fix.
