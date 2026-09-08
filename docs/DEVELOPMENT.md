@@ -338,3 +338,11 @@ that directory for phase observations and the terminal `PASS indirect` marker.
 Android phases retain120 presented frames each for external screenshots; desktop
 uses6. HOME releases the renderer and resume recreates it before republishing the
 cache. A successful build alone does not count as running this check.
+
+## Engine automatic detail check
+
+Run `cargo run --locked -p matterweave-explorer -- --detail-check --save /tmp/unused.json`
+and require `PASS detail` in `/tmp/detail-check-report.txt`. On Android the same
+one-shot mechanism above accepts `detail` and writes `detail-check-report.txt`.
+The9 phases exercise retained geometry with automatic perspective/orthographic
+LOD, an edit, zero extent and recreation. See [evidence and limits](performance/detail-native-check.md).

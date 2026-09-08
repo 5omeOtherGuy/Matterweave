@@ -261,7 +261,7 @@ const FOV: f32 = std::f32::consts::PI / 3.0;
 
 /// The ordered phases. Approach/retreat/zoom under perspective and orthographic
 /// projection drive selection; the last three exercise edit invalidation, a work
-/// budget fallback and a renderer lifecycle recreation.
+/// resident zero-build budget and a renderer lifecycle recreation.
 pub fn phases() -> Vec<PhasePlan> {
     let origin = [0.2, 0.2, 0.0];
     let default = LodConfig::default();
@@ -294,6 +294,17 @@ pub fn phases() -> Vec<PhasePlan> {
             target: origin,
             projection: Projection::Perspective {
                 vertical_fov_rad: FOV,
+            },
+            config: default,
+            edit: false,
+            recreate: false,
+        },
+        PhasePlan {
+            name: "perspective-fov-zoom-in",
+            eye: [0.2, 0.2, 70.0],
+            target: origin,
+            projection: Projection::Perspective {
+                vertical_fov_rad: 0.03,
             },
             config: default,
             edit: false,
