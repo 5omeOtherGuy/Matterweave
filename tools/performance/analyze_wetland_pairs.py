@@ -148,6 +148,10 @@ def presentation_intervals(samples, start, end):
     stats['iqr_ms'] = percentile(values, .75) - percentile(values, .25) if values else None
     return {'dumps': len(samples), 'selected_timestamps': len(selected),
             'selected_span_s': span, 'supported': stats,
+            # Each unsupported gap contains at least one actual interval.
+            # Hidden intermediate presentations only increase the denominator.
+            'whole_selected_span_mean_upper_bound_ms': span * 1000 / len(adjacent),
+            'mean_bound_note': 'Conservative mean bound over selected span, not an imputed frame distribution.',
             'unsupported_gaps': [{'from_ns': a, 'to_ns': b, 'duration_ms': (b-a)/1e6}
                                  for a,b in gaps],
             'verified_interval_duration_fraction_of_selected_span':

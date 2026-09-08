@@ -48,6 +48,7 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(result['supported']['interval_count'], 2)
         self.assertEqual(result['unsupported_gaps'], [{'from_ns': 20, 'to_ns': 100, 'duration_ms': .00008}])
         self.assertAlmostEqual(result['verified_interval_duration_fraction_of_selected_span'], .2)
+        self.assertAlmostEqual(result['whole_selected_span_mean_upper_bound_ms'], .0001 / 3)
 
     def test_pending_and_zero_timestamps_are_excluded(self):
         result = presentation_intervals([surface(120., [0, 10, 20, 2**63-1])], 120., 240.)

@@ -68,3 +68,24 @@ to Cargo `dev` (`opt-level = 2`, `debug = 0`), as verified directly at `0e5b3be`
 The original hashed manifests remain intact; this correction accompanies them.
 The paired APKs use the same actual profile. No release-LTO performance inference
 is made from them. New build manifests name the actual Cargo profile explicitly.
+
+
+The first A4 pair (second completed pair overall) also matches metadata and the
+lead-reviewed entrance images. Reference mean/median/p95:75.820/66.329/116.066ms;
+candidate supported intervals:24.265/16.583/33.165ms. Candidate history has nine
+unsupported gaps covering1.7547% of the selected120.012-second span. A conservative
+mean upper bound over that span is24.653ms: divide total span by the count of
+known consecutive endpoint pairs, assigning at least one interval to every gap.
+Any hidden intermediate presentations increase that denominator. This bounds the
+mean without inventing a percentile distribution; it does not repair missing
+history. The analysis tool reports both supported statistics and this bound.
+
+A repeatable tradeoff is already visible in these two pairs. Reference late skin
+readings were39.139/39.503C, thermal status0; candidate49.199/49.872C, status2.
+Candidate mean process PSS was288523.25/288509.25kB, versus reference
+330632.5/326371.75kB (OS-reported units retained; no RSS/PSS addition). Candidate CPU
+core-equivalent usage0.465/0.466 versus0.599/0.615. Faster presentation and lower
+CPU/memory therefore do not establish lower heat or energy. Thermal regression
+must accompany any acceptance decision. A visible30/60Hz target is being developed
+as a separate cap experiment; source density, resolution, effects and simulation
+remain fixed. No thermal benefit from that untested cap is claimed.
