@@ -295,3 +295,14 @@ isolated fixture requirements are in [route replay](performance/showcase/route-r
 The [paired collector](performance/p02-phone-runner.md) records fresh readiness,
 serialized installs and actual compositor/app evidence; its `--help` is safe to
 run without a phone. Only one collector/device owner may run at a time.
+
+
+Offline paired summaries use the [analysis tool](performance/p02-analysis.md):
+
+```sh
+python3 tools/performance/analyze_wetland_pairs.py --input /absolute/completed-or-partial-batch --out /absolute/fresh-analysis
+python3 -m unittest discover -s tools/performance -p 'test_*.py'
+```
+
+Only completed trial directories are analyzed. Keep separately collected batches
+separate; compare their within-pair differences after controls and image review.

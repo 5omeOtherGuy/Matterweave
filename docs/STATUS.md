@@ -14,8 +14,8 @@ is retired. This continuation owns phone, integration and delivery.
 Current verified progress (2026-09-08 continuation):
 
 - PR8 remains draft/open. All remote host, Android and docs checks pass at
-  `3040a53`, including the corrected asynchronous queue saturation regression.
-  Generator3 route integration follows that checkpoint; PR8 is not merged/released.
+  `3fe93f1`, including generator3 routes and native replay integration.
+  Subsequent save restoration/analysis work is local; PR8 is not merged/released.
 - Generator3, seed20260908, composition `dfb9f40519a3c151`:34,716,467 expanded
   occupied cells,8,899,364 unique stored cells,6,192flora/10species and5,721,300
   expanded flora cells. Source meshes47,255,040bytes, within64MiB. These are host
@@ -36,7 +36,10 @@ Current verified progress (2026-09-08 continuation):
 - Entrance correction validates the actual capsule with a bounded vertical lift.
   Generator3 prevents prior layout journals replaying against changed source.
   Corrupt/old-generator sessions select separate recovery files. Invalid edit
-  references/body data rejected later in Runtime still need recovery coverage.
+  references/body data now participate in actual recovery selection. Candidate
+  source is isolated until collision, player pose, bodies and meshes all load.
+  Full Runtime round-trip and rejection tests pass; see
+  [restoration evidence](performance/showcase/save-validation.md).
 - The generator3 native Vulkan/Xvfb/lavapipe capture passed25 frames,20 valid typed rows,
   six physics bodies, isolated persistence and no validation errors. Menu rendering
   is excluded from GPU completion joins. Source prototype geometry is shared on GPU;
@@ -58,11 +61,14 @@ Current verified progress (2026-09-08 continuation):
 - Actual app route replay is implemented and independently reviewed. Native Vulkan
   smoke advances it and records terminal cancellation correctly after a headless
   focus correction. The generator3 replay APK is built but not installed yet.
-- Fresh P02 paired collection is active at `completion-02/p02-fullmap/pairs-a3`.
-  Trial1 reference completed120s warmup +120s measurement with valid capture;
-  later starts must match its fresh thermal window within1C battery/2C skin.
-  No paired speedup or energy claim has been accepted. Earlier A1/A2 attempts
-  stopped before capture on APK-path/ADB-exit-status issues, now corrected.
+- P02 A3 completed its first matched pair:120s warmup +120s measurement each.
+  Metadata/entrance images match. Descriptive mean presentation intervals were
+  73.551ms reference and24.260ms candidate; no repeated-trial acceptance yet.
+  A3 rejected trial3 before launch after31 cooling observations. A4 now owns the
+  phone for the remaining two pairs, with a61-observation cooling bound and
+  unchanged1C battery/2C skin limits. See [analysis](performance/p02-analysis.md).
+  All170 performance Python tests pass. No energy/sustained/GEN3 performance
+  claim is established. A1/A2 APK-path/ADB-status failures collected no measurements.
 
 Next: verify the final APK and native route replay, correct any blockers, then
 exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve

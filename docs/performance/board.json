@@ -285,16 +285,16 @@
       "owner": "sole lead after Opus and lead corrections",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-p02-runner",
       "base": "0d8225b",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-fullmap/pairs-a3",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-fullmap/pairs-a4",
       "session": "/mnt/bench/matterweave-dev/performance/completion-02/p02-runner-opus/session.jsonl",
       "paths": [
         "tools/performance/collect_wetland_pair.py",
         "tools/performance/test_collect_wetland_pair.py",
         "docs/performance/p02-phone-runner.md"
       ],
-      "acceptance": "160 Python tests pass. A1/A2 rejected before collection; actual ADB path/status corrections applied. A3 trial1 completed; 6-trial supervisor owns phone exclusively, remaining pairs and analysis pending.",
-      "artifact": "0f8fbdc",
-      "process_handle": 92271
+      "acceptance": "A3 first pair completed and metadata/entrance images matched; third trial rejected before launch after31 cooling observations. A4 owns phone for remaining2 pairs with61-observation bound, unchanged1C/2C limits. All170 Python tests pass after updating old cap test.",
+      "artifact": "f7c9048",
+      "process_handle": 66060
     },
     "completion-route-replay": {
       "state": "integrated-native-verified-phone-pending",
@@ -312,38 +312,40 @@
       "artifact": "2b08194"
     },
     "completion-save-validation": {
-      "state": "rerouted-running",
-      "owner": "muse-free",
+      "state": "integrated-host-verified-review-running",
+      "owner": "lead after Opus/Muse quota and Astra partial handoffs",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-save-validation",
       "base": "4e899b3",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/save-validation-muse",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/save-review-gemini",
       "paths": [
         "apps/explorer/src/wetland_state.rs",
         "apps/explorer/src/wetland.rs:Runtime validation only",
         "crates/matterweave-detail/src/scene.rs if necessary for source isolation",
         "docs/performance/showcase/save-validation.md"
       ],
-      "acceptance": "Opus hit quota429 after partial implementation. Lead rejected cell undo as incomplete COW isolation; Muse owns bounded finish and regression tests. Notintegrated."
+      "acceptance": "Workerf50f114 integrated1bc2be4; lead completed collision/pose/mesh candidate validation221f720.62 app tests including Runtime gate pass plus collision budget regression; workspace Clippy pass. Gemini candidate review running; Android/phone pending.",
+      "artifact": "221f720"
     },
     "completion-paired-analysis": {
-      "state": "running",
-      "owner": "glm-high",
+      "state": "integrated-first-pair-analyzed",
+      "owner": "lead after GLM timeout without code",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-paired-analysis",
       "base": "2b08194",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/paired-analysis-glm",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-fullmap/analysis-first-pair",
       "paths": [
         "tools/performance/analyze_wetland_pairs.py",
         "tools/performance/test_analyze_wetland_pairs.py",
         "docs/performance/p02-analysis.md"
       ],
-      "acceptance": "Offline only, completed trials and co-observed intervals; no invented app/SF joins or independent-frame inference. Lead owns interpretation."
+      "acceptance": "10 focused analysis tests pass,170 Python total. First pair metadata and entrance images match, descriptive stats recorded; repetitions and temporal-quality acceptance pending. No energy/sustained/GEN3 inference.",
+      "artifact": "4bf700e"
     }
   },
   "capacity": {
     "policy": "One lead; bounded independent Pi workers as useful. One phone owner; serialize heavy builds. Prior two-lead quota superseded by owner."
   },
   "provider_blockers": {
-    "muse": "Route review transient429 thencompleted110.36s. No perpetual blockade inferred.",
+    "muse": "Save-validation FreeUsageLimitError HTTP429; no further retry this window. Earlier route/replay reviews completed.",
     "opus": "HTTP429 five-hour allowance exhausted during save-validation; reset1788866400, no retry before reset. Partial source preserved and rerouted to Muse."
   }
 }

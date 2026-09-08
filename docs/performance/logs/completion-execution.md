@@ -170,3 +170,31 @@ identity/allocation was not restored. Muse now owns true candidate isolation and
 actual Runtime regressions. No partial recovery code is integrated. Completed
 route-fix/CI/reference private targets cleaned (316/88/588MiB); shared lead target
 and caches retained. Replay worker cleaned its private target after verification.
+
+
+### Save restoration and first paired evidence
+
+Worker Muse also exhausted free quota; Astra finished source/tests, timed out
+while documenting, then resumed100s and committedf50f114 before its final handoff
+was interrupted. Its actual log/test artifacts were inspected. Lead integrated
+1bc2be4, reproduced missing pose rejection (dae066f RED), and completed candidate
+collision/pose/body/mesh validation221f720.62 app tests including the full Runtime
+recovery pass17.43s; actual static-collider budget regression passes0.06s; strict
+workspace Clippy passes11.40s. Gemini has a bounded read-only candidate review.
+The worker's exclusive save-validation target was cleaned after its tests stopped.
+
+GLM's300s analysis attempt produced no code. Lead's offline tool4bf700e has10
+focused checks and170 total performance Python tests pass. A3's first pair matches
+metadata and visible entrance content; mean73.551/24.260ms, median66.325/16.583ms,
+p95116.065/33.166ms, no unsupported compositor gaps, process core equivalent
+0.599/0.465. These are one pair, generator2, two-minute measurements after warmup;
+not a repeated/sustained/energy/GEN3 claim. Thermal status changes remain reported.
+
+A3 trial3 failed before launch after31 cooling observations. Cleanup removed only
+owned recovery127 and stopped the app. A4 began09:56:39UTC with remaining2 pairs
+and61-observation bounded cooling allowance; temperature/readiness limits stay
+unchanged. An old cap test initially expected32 to fail; corrected to reject62
+and accept61, then all170 Python tests passed. A4 already running during that
+boundary-test correction; no capture controls changed. A4 process handle66060
+owns the phone. Combined completed ordering is planned AB/AB/BA across separate
+raw batches; no timestamps/files are spliced or relabeled.
