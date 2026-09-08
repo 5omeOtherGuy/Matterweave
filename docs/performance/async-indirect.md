@@ -53,7 +53,8 @@ continues presenting direct-only frames, then holds completed phases for120
 presentations. HOME/resume retains source/cache state and recreates GPU resources.
 The v0.5 ARM64 APK builds and passes native page-size, alignment and signing
 checks. Its first physical attempt encountered the secure Android lock screen and
-suspended before phase0. The attempt timed out and is not a functional pass. The subsequent unlocked run passed all six phases, HOME/resume and renderer
+suspended before phase0. The attempt timed out and is not a functional pass.
+The subsequent unlocked run passed all six phases, HOME/resume and renderer
 recreation on OnePlus 13 CPH2653, Android 16, Adreno 830, Vulkan 1.3.284,
 driver 2150760522. `capture.json` records `terminal_pass=true`. Request handling
 was 0.034–0.064 ms, request-to-poll 22.903–48.667 ms, and ordinary publication
@@ -74,7 +75,6 @@ correctness evidence only. Its manifest and report are under
 `/mnt/bench/matterweave-dev/performance/engine-02/phone-async-cpu`.
 The [retained manifest](../evidence/2026-09-08-async-lighting.json) records exact
 source and evidence checksums. Durable archive upload remains a delivery task.
-
 
 ## Instrumented controller coverage
 

@@ -357,3 +357,21 @@ accepts the one-shot marker value `indirect-async`. The fixture presents direct-
 frames during CPU preparation, then uploads completed matching radiance. Reports
 separate owner request/upload time from request-to-poll latency. See
 [controller evidence and limits](performance/async-indirect.md).
+
+### Standalone background-light correctness check
+
+`cargo run --locked -p matterweave-render --example async_indirect` compares all
+cells/faces of an open, closed and reopened enclosure against synchronous lighting.
+CI executes it. For Android, build the same example with the pinned NDK compiler:
+
+```sh
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
+cargo build --locked -p matterweave-render --example async_indirect --target aarch64-linux-android
+adb push "$CARGO_TARGET_DIR/aarch64-linux-android/debug/examples/async_indirect" /data/local/tmp/matterweave-async-indirect
+adb shell chmod 755 /data/local/tmp/matterweave-async-indirect
+adb shell /data/local/tmp/matterweave-async-indirect
+```
+
+Set `CARGO_TARGET_DIR` to a dedicated build directory before these commands.
+This headless test proves CPU-controller correctness only; the APK adapter check
+above separately exercises presentation, upload and lifecycle behavior.
