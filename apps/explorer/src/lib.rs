@@ -1,5 +1,6 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
+mod dynamic_upload;
 mod metrics;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
