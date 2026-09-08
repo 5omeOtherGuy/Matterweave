@@ -4,6 +4,7 @@ use crate::{
     controls::{contains, Action, Camera, Controls},
     metrics,
     wetland_metrics::Capture,
+    wetland_replay::{Replay, Route},
     wetland_state::{self, Edit, SavedWetland},
 };
 use glam::{Vec2, Vec3};
@@ -39,6 +40,7 @@ struct Runtime {
     terrain: matterweave_detail::Terrain,
     clearing: [f32; 3],
     route: Vec<[f32; 3]>,
+    elevated_route: Vec<[f32; 3]>,
     camera: Camera,
     lighting: LightingSettings,
     dirty: bool,
@@ -93,6 +95,7 @@ impl Runtime {
         let mut scene = built.scene;
         let mut spawn = built.spawn_eye;
         let route = built.route;
+        let elevated_route = built.elevated_route;
         let (save_path, saved) = SavedWetland::load_recovering(
             &directory.join(wetland_state::SAVE_FILE),
             GENERATOR,
@@ -170,6 +173,7 @@ impl Runtime {
             save_path,
             spawn,
             route,
+            elevated_route,
             terrain,
             clearing,
             camera,
@@ -358,6 +362,8 @@ pub struct WetlandApp {
     auto_start: bool,
     fps: f32,
     saved_at: Instant,
+    replay_checked: bool,
+    replay: Option<Replay>,
 }
 impl WetlandApp {
     pub fn new(directory: PathBuf, auto_start: bool, frame_limit: Option<u64>) -> Self {
@@ -384,7 +390,21 @@ impl WetlandApp {
             auto_start,
             fps: 0.,
             saved_at: Instant::now(),
+            replay_checked: false,
+            replay: None,
         }
+    }
+    fn finish_replay(&mut self) {
+        if self.replay.as_mut().is_some_and(Replay::take_finished) {
+            self.save();
+            self.capture.flush();
+        }
+    }
+    fn cancel_replay(&mut self, reason: &'static str) {
+        if let Some(replay) = &mut self.replay {
+            replay.cancel(reason);
+        }
+        self.finish_replay();
     }
     fn enter(&mut self) {
         if self.runtime.is_some() {
@@ -697,10 +717,25 @@ impl WetlandApp {
             renderer.begin_frame_diagnostics();
         }
         let now = Instant::now();
-        let dt = (now - self.last).as_secs_f32().min(0.1);
+        let frame_dt = (now - self.last).as_secs_f32();
+        let dt = frame_dt.min(0.1);
         row.draw_interval_wall_ms = Some((now - self.last).as_secs_f64() * 1000.);
         self.last = now;
         let physics_start = Instant::now();
+        if !self.menu && !self.options && self.focused && !self.replay_checked {
+            if let Some(r) = &self.runtime {
+                self.replay_checked = true;
+                match Replay::requested(
+                    &self.directory,
+                    &r.route,
+                    &r.elevated_route,
+                    r.camera.position.to_array(),
+                ) {
+                    Ok(replay) => self.replay = replay,
+                    Err(e) => log::error!("Wetland replay request rejected: {e}"),
+                }
+            }
+        }
         if !self.menu {
             if let Some(r) = &mut self.runtime {
                 let (motion, look) = self.controls.consume();
@@ -719,11 +754,35 @@ impl WetlandApp {
                 } else {
                     matterweave_detail::WALK_SPEED_M_S
                 };
-                let velocity = (forward * motion.z + right * motion.x) * speed;
+                let replay_active = self.replay.as_ref().is_some_and(Replay::active);
+                let mut velocity = (forward * motion.z + right * motion.x) * speed;
+                if let Some(replay) = self.replay.as_mut().filter(|replay| replay.active()) {
+                    let route = match replay.route() {
+                        Route::Ground => &r.route,
+                        Route::Elevated => &r.elevated_route,
+                    };
+                    replay.observe(
+                        route,
+                        r.camera.position.to_array(),
+                        r.physics.grounded(),
+                        0.,
+                        0,
+                        false,
+                    );
+                    velocity = replay.velocity(route, r.camera.position.to_array(), speed, dt);
+                    if velocity.length_squared() > 0. {
+                        r.camera.yaw = velocity.x.atan2(velocity.z);
+                    }
+                    r.camera.pitch = -0.08;
+                    r.dirty = true;
+                }
                 r.physics
                     .update_grab(r.camera.position.to_array(), r.camera.forward().to_array());
-                row.physics_fixed_steps =
-                    Some(r.physics.step(dt, velocity.to_array(), motion.y > 0.) as u32);
+                row.physics_fixed_steps = Some(r.physics.step(
+                    dt,
+                    velocity.to_array(),
+                    !replay_active && motion.y > 0.,
+                ) as u32);
                 r.camera.position = Vec3::from_array(r.physics.character_eye());
                 if motion.length_squared() > 0.
                     || look.length_squared() > 0.
@@ -731,7 +790,22 @@ impl WetlandApp {
                 {
                     r.dirty = true;
                 }
-                if r.camera.position.y < -40. {
+                let respawn = r.camera.position.y < -40.;
+                if let Some(replay) = &mut self.replay {
+                    let route = match replay.route() {
+                        Route::Ground => &r.route,
+                        Route::Elevated => &r.elevated_route,
+                    };
+                    replay.observe(
+                        route,
+                        r.camera.position.to_array(),
+                        r.physics.grounded(),
+                        frame_dt,
+                        row.physics_fixed_steps.unwrap_or(0),
+                        respawn,
+                    );
+                }
+                if respawn {
                     r.physics.teleport(r.spawn);
                 }
                 row.physics_wall_ms = Some(physics_start.elapsed().as_secs_f64() * 1000.);
@@ -845,6 +919,7 @@ impl WetlandApp {
             eprintln!("WETLAND SMOKE PASS: {} frames", self.frames);
             event_loop.exit();
         }
+        self.finish_replay();
         self.next_frame =
             capture_start + Duration::from_micros(if self.menu { 66_667 } else { 16_667 });
     }
@@ -900,6 +975,7 @@ impl ApplicationHandler for WetlandApp {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.cancel_replay("lifecycle suspended");
         self.capture.flush();
         self.save();
         self.focused = false;
@@ -910,6 +986,18 @@ impl ApplicationHandler for WetlandApp {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
+        }
+        match &event {
+            WindowEvent::KeyboardInput { .. }
+            | WindowEvent::Touch(_)
+            | WindowEvent::MouseInput { .. } => self.cancel_replay("user input"),
+            WindowEvent::Focused(false) | WindowEvent::CloseRequested => {
+                self.cancel_replay("focus lost or close")
+            }
+            WindowEvent::CursorMoved { .. } if self.controls.mouse_look => {
+                self.cancel_replay("mouse look")
+            }
+            _ => {}
         }
         match event {
             WindowEvent::CloseRequested => {
@@ -1011,6 +1099,7 @@ impl ApplicationHandler for WetlandApp {
         }
     }
     fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.cancel_replay("app exiting");
         self.capture.flush();
         self.save();
         self.renderer = None;
