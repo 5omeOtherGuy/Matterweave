@@ -953,6 +953,7 @@ dependencies = [
  "libc",
  "log",
  "matterweave-core",
+ "matterweave-detail",
  "matterweave-physics",
  "matterweave-render",
  "pollster",

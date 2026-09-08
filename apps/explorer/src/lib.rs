@@ -1,14 +1,19 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
 mod dynamic_upload;
+mod gallery;
 mod metrics;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
 use matterweave_core::{AsyncWorld, World};
-use matterweave_physics::{Physics, PhysicsSnapshot};
+use matterweave_physics::{DynamicMeshCache, Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, TouchPhase, WindowEvent},
@@ -19,6 +24,14 @@ use winit::{
 
 const SEED: u64 = 20260907;
 const EDIT_RANGE: f32 = 12.;
+
+/// Directory holding the world save, its gallery marker and capture requests.
+fn data_directory(save_path: &Path) -> &Path {
+    match save_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LightPreferences {
@@ -98,6 +111,8 @@ struct Explorer {
     stage: StageCapture,
     camera: Camera,
     physics: Physics,
+    dynamic_mesh: DynamicMeshCache,
+    dynamic_upload: dynamic_upload::DynamicUploadState,
     flying: bool,
     jump_held: bool,
     autosave_elapsed: f32,
@@ -284,6 +299,8 @@ impl Explorer {
             stage: StageCapture::default(),
             camera,
             physics,
+            dynamic_mesh: DynamicMeshCache::default(),
+            dynamic_upload: dynamic_upload::DynamicUploadState::default(),
             flying,
             jump_held: false,
             autosave_elapsed: 0.,
@@ -910,19 +927,33 @@ impl Explorer {
         if changed {
             self.mesh_ms = begin.elapsed().as_secs_f64() * 1000.;
         }
-        // Separate the dynamic mesh construction from its upload: both currently
-        // run unconditionally every frame, which the capture must show.
         let build_begin = capturing.then(Instant::now);
-        let dynamic = self.physics.dynamic_mesh();
-        let build_ms = build_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.);
-        let upload_begin = capturing.then(Instant::now);
-        renderer.upload_dynamic(&dynamic)?;
+        let rebuilt = self.dynamic_mesh.update(&self.physics);
+        let build_ms = build_begin.map(|begin| {
+            if rebuilt {
+                begin.elapsed().as_secs_f64() * 1000.
+            } else {
+                0.
+            }
+        });
+        let upload = self
+            .dynamic_upload
+            .needs_upload(rebuilt, self.renderer_epoch);
+        let mut upload_ms = capturing.then_some(0.);
+        if upload {
+            let upload_begin = capturing.then(Instant::now);
+            renderer.upload_dynamic(self.dynamic_mesh.mesh())?;
+            upload_ms = upload_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.);
+            // A failed upload must leave the new geometry pending, including
+            // an empty mesh that clears formerly visible bodies.
+            self.dynamic_upload.uploaded(self.renderer_epoch);
+        }
         self.stage = StageCapture {
             chunk_mesh_uploads: chunk_uploads,
-            dynamic_mesh_builds: 1,
-            dynamic_mesh_uploads: 1,
+            dynamic_mesh_builds: u32::from(rebuilt),
+            dynamic_mesh_uploads: u32::from(upload),
             dynamic_mesh_build_ms: build_ms,
-            dynamic_upload_ms: upload_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.),
+            dynamic_upload_ms: upload_ms,
         };
         Ok(())
     }
@@ -1388,6 +1419,7 @@ pub fn run_desktop() {
     let mut save_path = PathBuf::from("matterweave-world.json");
     let mut smoke_frames = None;
     let mut smoke_exercise = false;
+    let mut gallery_exercise = false;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -1397,6 +1429,7 @@ pub fn run_desktop() {
                 explicit_save = true;
             }
             "--smoke-exercise" => smoke_exercise = true,
+            "--gallery-exercise" => gallery_exercise = true,
             "--smoke-frames" => {
                 smoke_frames = Some(
                     args.next()
@@ -1406,7 +1439,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1414,6 +1447,59 @@ pub fn run_desktop() {
                 std::process::exit(2);
             }
         }
+    }
+    // Explicit developer opt-in is resolved before any world is loaded, so an
+    // invalid request fails without touching user data.
+    let directory = data_directory(&save_path).to_path_buf();
+    let requested = match gallery::Request::resolve(
+        &directory.join(gallery::MARKER_FILE),
+        std::env::var(gallery::ENV_VAR).ok().as_deref(),
+    ) {
+        Ok(requested) => requested,
+        Err(error) => {
+            eprintln!("Detail gallery request rejected: {error}");
+            eprintln!("No world was loaded, changed or saved. Fix or remove the request.");
+            std::process::exit(2);
+        }
+    };
+    if let Some(request) = requested {
+        if smoke_exercise {
+            eprintln!("--smoke-exercise drives gameplay edits and saves; it is not available in the detail gallery");
+            std::process::exit(2);
+        }
+        let view = match gallery::GalleryView::build(request) {
+            Ok(view) => view,
+            Err(error) => {
+                eprintln!("Detail gallery scene failed: {error}");
+                std::process::exit(1);
+            }
+        };
+        eprintln!(
+            "DETAIL GALLERY: preset {} | {} prototypes {} instances | {} triangles | viewer only, no world/save/physics",
+            request.label(),
+            view.stats.prototypes,
+            view.stats.instances,
+            view.stats.combined_triangles
+        );
+        if gallery_exercise && smoke_frames.is_none() {
+            smoke_frames = Some(30);
+        }
+        let event_loop = EventLoop::new().expect("event loop");
+        let mut app = gallery::GalleryApp::new(view, &directory, smoke_frames);
+        app.exercise = gallery_exercise;
+        event_loop.run_app(&mut app).expect("event loop run");
+        if app.failed() {
+            std::process::exit(1);
+        }
+        return;
+    }
+    if gallery_exercise {
+        eprintln!(
+            "--gallery-exercise requires an active detail gallery request ({} or {})",
+            gallery::MARKER_FILE,
+            gallery::ENV_VAR
+        );
+        std::process::exit(2);
     }
     if smoke_exercise && (!explicit_save || save_path.exists()) {
         eprintln!("--smoke-exercise requires --save with a new, disposable file path");
@@ -1444,7 +1530,26 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         log::error!("Android internal storage unavailable");
         return;
     };
-    let mut explorer = Explorer::new(directory.join("world.json"), None);
+    // Resolved before any world load: an invalid request must fail safely
+    // rather than silently starting the normal world and writing user data.
+    let requested = match gallery::Request::resolve(
+        &directory.join(gallery::MARKER_FILE),
+        std::env::var(gallery::ENV_VAR).ok().as_deref(),
+    ) {
+        Ok(requested) => requested,
+        Err(error) => {
+            log::error!("Detail gallery request rejected: {error}. No world was loaded or saved.");
+            return;
+        }
+    };
+    let gallery_view = match requested.map(gallery::GalleryView::build) {
+        None => None,
+        Some(Ok(view)) => Some(view),
+        Some(Err(error)) => {
+            log::error!("Detail gallery scene failed: {error}");
+            return;
+        }
+    };
     let event_loop = match EventLoop::builder().with_android_app(app).build() {
         Ok(e) => e,
         Err(e) => {
@@ -1452,6 +1557,15 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             return;
         }
     };
+    if let Some(view) = gallery_view {
+        log::info!("Detail gallery: {} (viewer only)", view.request.label());
+        let mut gallery_app = gallery::GalleryApp::new(view, &directory, None);
+        if let Err(e) = event_loop.run_app(&mut gallery_app) {
+            log::error!("Event loop failed: {e}");
+        }
+        return;
+    }
+    let mut explorer = Explorer::new(directory.join("world.json"), None);
     if let Err(e) = event_loop.run_app(&mut explorer) {
         log::error!("Event loop failed: {e}");
     }
@@ -1651,6 +1765,56 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), original);
         std::fs::remove_file(path).unwrap();
         std::fs::remove_file(app.save_path).unwrap();
+    }
+    #[test]
+    fn without_a_request_the_normal_application_path_is_unchanged() {
+        let mut app = fixture();
+        let directory = data_directory(&app.save_path).to_path_buf();
+        assert!(directory.is_dir());
+        // No marker beside the save and no host environment request.
+        let marker = directory.join(gallery::MARKER_FILE);
+        assert!(!marker.exists(), "test directory must have no marker");
+        assert_eq!(gallery::Request::resolve(&marker, None).unwrap(), None);
+        assert_eq!(gallery::Request::resolve(&marker, Some("")).unwrap(), None);
+        // Normal gameplay still edits, autosaves and reloads authoritative cells.
+        app.action(Action::Place);
+        assert_eq!(app.world.get([0, 0, 1]), 4);
+        assert_eq!(World::load(&app.save_path).unwrap().get([0, 0, 1]), 4);
+        std::fs::remove_file(&app.save_path).unwrap();
+    }
+    #[test]
+    fn an_invalid_gallery_request_is_rejected_before_any_world_is_touched() {
+        let directory = std::env::temp_dir().join(format!(
+            "matterweave-explorer-gallery-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let save = directory.join("world.json");
+        std::fs::write(&save, b"sentinel user data").unwrap();
+        let marker = directory.join(gallery::MARKER_FILE);
+        std::fs::write(&marker, "not-a-preset").unwrap();
+        let error = gallery::Request::resolve(&marker, None).unwrap_err();
+        assert!(error.to_string().contains("invalid detail gallery request"));
+        assert_eq!(std::fs::read(&save).unwrap(), b"sentinel user data");
+        let mut entries: Vec<String> = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
+        assert_eq!(entries, vec![gallery::MARKER_FILE, "world.json"]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn data_directory_falls_back_to_the_working_directory() {
+        assert_eq!(
+            data_directory(Path::new("matterweave-world.json")),
+            Path::new(".")
+        );
+        assert_eq!(
+            data_directory(Path::new("/tmp/saves/world.json")),
+            Path::new("/tmp/saves")
+        );
     }
     #[test]
     fn home_finds_clear_spawn_and_blocked_flight_switch_stays_in_flight() {

@@ -1,3 +1,23 @@
+/// CPU geometry changes and GPU residency are separate. A failed upload never
+/// acknowledges either, and a new renderer needs even unchanged geometry.
+#[derive(Default)]
+pub(super) struct DynamicUploadState {
+    dirty: bool,
+    uploaded_epoch: Option<u64>,
+}
+
+impl DynamicUploadState {
+    pub(super) fn needs_upload(&mut self, rebuilt: bool, renderer_epoch: u64) -> bool {
+        self.dirty |= rebuilt;
+        self.dirty || self.uploaded_epoch != Some(renderer_epoch)
+    }
+
+    pub(super) fn uploaded(&mut self, renderer_epoch: u64) {
+        self.dirty = false;
+        self.uploaded_epoch = Some(renderer_epoch);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::DynamicUploadState;
