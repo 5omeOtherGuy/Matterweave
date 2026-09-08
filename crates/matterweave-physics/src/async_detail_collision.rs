@@ -8,9 +8,9 @@
 //! world, so background work can never delete a wall, publish shapes for a scene
 //! the caller has since edited, or resurrect a superseded state.
 //!
-//! Reuse: this mirrors the bounded-queue / generation / snapshot-revalidation
-//! shape of `matterweave_core::AsyncWorld` (one worker, `Condvar` wake, a poll
-//! that revalidates against the live authoritative state) rather than adding a
+//! Reuse: this mirrors the bounded-queue / snapshot-revalidation shape of
+//! `matterweave_core::AsyncWorld` (one worker, `Condvar` wake, a poll that
+//! revalidates against the live authoritative state) rather than adding a
 //! generic job framework. The differences are inherent to this workload: the
 //! job identity is the scene's opaque [`SceneVersion`] rather than a chunk key,
 //! and there is a single pending/running/completed slot instead of a chunk
@@ -24,15 +24,6 @@
 //! The worker never blocks on a full result slot: it replaces the single slot
 //! and records the drop, so shutdown is always observable after one bounded job
 //! and the join in [`Drop`] cannot deadlock. No thread is ever detached.
-//!
-//! Memory: the retained cost is the source snapshots and the built shapes, not a
-//! measured RSS. At most three source snapshots are live at once (pending,
-//! running, and one transient clone while replacing a pending job), each a
-//! [`DetailScene::fork_source`] copy bounded by the detail crate's
-//! `MAX_SCENE_SOURCE_BYTES` (32 MiB) authoritative payload. At most one built
-//! result is buffered, whose shape cost is bounded by the existing
-//! [`crate::MAX_DETAIL_BOXES`] / [`crate::MAX_DETAIL_COLLIDERS`] caps enforced by
-//! `build`. These are documented upper bounds, not device measurements.
 
 use crate::PreparedDetailCollision;
 use matterweave_detail::{DetailScene, SceneVersion};
@@ -50,8 +41,7 @@ pub struct AsyncDetailStats {
     pub results: usize,
     /// Results dropped by supersession, cancellation, reset or a stale poll.
     pub discarded: u64,
-    /// Advances on every [`AsyncDetailCollision::reset`]; invalidates in-flight
-    /// and buffered work from an earlier generation.
+    /// Advances on every [`AsyncDetailCollision::reset`].
     pub generation: u64,
 }
 
@@ -62,9 +52,14 @@ struct Job {
     generation: u64,
 }
 
+/// Identity of the job currently running on the worker.
+struct Running {
+    version: SceneVersion,
+    generation: u64,
+}
+
 /// One completed preparation, tagged with the identity it was built from.
 struct Prepared {
-    /// `Ok` shapes ready for publication, or the build error for this source.
     outcome: Result<PreparedDetailCollision, String>,
     version: SceneVersion,
     generation: u64,
@@ -74,14 +69,109 @@ struct Prepared {
 struct Queue {
     /// Latest requested source not yet started. Replacing it supersedes.
     pending: Option<Job>,
-    /// Identity of the job currently running, for deduplication.
-    running: Option<SceneVersion>,
+    /// The job currently running, for deduplication.
+    running: Option<Running>,
     /// Single completed slot.
     result: Option<Prepared>,
     inflight: usize,
     shutdown: bool,
     generation: u64,
     discarded: u64,
+}
+
+impl Queue {
+    /// Applies a request for `version`, honoring latest-request-wins and dedup.
+    /// Returns whether a new build job was enqueued; `fork` is called only then.
+    fn enqueue_request(
+        &mut self,
+        version: SceneVersion,
+        fork: impl FnOnce() -> DetailScene,
+    ) -> bool {
+        let already = self.running.as_ref().is_some_and(|r| r.version == version)
+            || self.result.as_ref().is_some_and(|r| r.version == version)
+            || self
+                .pending
+                .as_ref()
+                .is_some_and(|job| job.version == version);
+        if already {
+            return false;
+        }
+        let superseded = self
+            .pending
+            .replace(Job {
+                scene: fork(),
+                version,
+                generation: self.generation,
+            })
+            .is_some();
+        self.discarded += u64::from(superseded);
+        true
+    }
+
+    /// Worker: take the pending job and mark it running.
+    fn begin_job(&mut self) -> Job {
+        let job = self.pending.take().expect("nonempty pending queue");
+        self.running = Some(Running {
+            version: job.version.clone(),
+            generation: job.generation,
+        });
+        self.inflight = 1;
+        job
+    }
+
+    /// Worker: buffer the built result if it is still current, else discard it.
+    fn finish_job(&mut self, job: Job, outcome: Result<PreparedDetailCollision, String>) {
+        self.inflight = 0;
+        self.running = None;
+        if self.shutdown || self.generation != job.generation {
+            self.discarded += 1;
+            return;
+        }
+        let superseded = self
+            .result
+            .replace(Prepared {
+                outcome,
+                version: job.version,
+                generation: job.generation,
+            })
+            .is_some();
+        self.discarded += u64::from(superseded);
+    }
+
+    /// Poll: consume and return the buffered result only if it is current for
+    /// `version`; drop a reset-cancelled result; leave a foreign-source result.
+    fn take_result(
+        &mut self,
+        version: &SceneVersion,
+    ) -> Option<Result<PreparedDetailCollision, String>> {
+        match self.result.as_ref() {
+            None => return None,
+            Some(result) if result.generation != self.generation => {
+                self.result = None;
+                self.discarded += 1;
+                return None;
+            }
+            Some(result) if result.version != *version => return None,
+            Some(_) => {}
+        }
+        Some(self.result.take().expect("result present").outcome)
+    }
+
+    /// Reset: cancel pending and buffered work and advance the generation.
+    fn cancel(&mut self) {
+        let dropped = usize::from(self.pending.is_some())
+            + usize::from(self.result.is_some())
+            + self.inflight;
+        self.discarded += dropped as u64;
+        self.pending = None;
+        self.result = None;
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    #[cfg(test)]
+    fn set_generation(&mut self, generation: u64) {
+        self.generation = generation;
+    }
 }
 
 struct Shared {
@@ -156,43 +246,22 @@ impl AsyncDetailCollision {
         if queue.shutdown {
             return false;
         }
-        let duplicate = queue.running.as_ref() == Some(&version)
-            || queue
-                .pending
-                .as_ref()
-                .is_some_and(|job| job.version == version)
-            || queue
-                .result
-                .as_ref()
-                .is_some_and(|res| res.version == version);
-        if duplicate {
-            return false;
-        }
-        let generation = queue.generation;
-        // Clone the bounded authoritative source under the lock. Only the worker
-        // could otherwise touch the queue, and the clone frees no invariants.
-        let superseded = queue
-            .pending
-            .replace(Job {
-                scene: scene.fork_source(),
-                version,
-                generation,
-            })
-            .is_some();
-        queue.discarded += u64::from(superseded);
+        // Clone the bounded authoritative source under the lock only when a job
+        // is actually enqueued. Only the worker could otherwise touch the queue.
+        let queued = queue.enqueue_request(version, || scene.fork_source());
         drop(queue);
-        self.shared.wake.notify_all();
-        true
+        if queued {
+            self.shared.wake.notify_all();
+        }
+        queued
     }
 
-    /// Returns at most one completed preparation that is *current* for `current`:
-    /// its source identity still matches and it belongs to the live generation.
+    /// Returns at most one completed preparation that is *current* for `current`.
     ///
     /// A cancelled (reset) result is dropped here; a result for a *different*
     /// source is left buffered and `None` is returned, so polling with the wrong
     /// scene is harmless and an error produced for some other (already-replaced)
-    /// source can never reject the current one. Only a result whose identity
-    /// matches `current` is consumed and returned. On `Some(Ok(prepared))` the
+    /// source can never reject the current one. On `Some(Ok(prepared))` the
     /// simulation owner publishes via [`Physics::publish_detail_scene`]; on
     /// `Some(Err(_))` the current source genuinely failed preparation.
     /// Nonblocking.
@@ -202,37 +271,15 @@ impl AsyncDetailCollision {
     ) -> Option<Result<PreparedDetailCollision, String>> {
         let version = current.source_version();
         let mut queue = self.shared.lock();
-        match queue.result.as_ref() {
-            None => return None,
-            Some(result) if result.generation != queue.generation => {
-                // Cancelled by a reset: it can never become current again.
-                queue.result = None;
-                queue.discarded += 1;
-                return None;
-            }
-            // Built for a different source: leave it buffered until its own
-            // scene polls it or a newer result supersedes it.
-            Some(result) if result.version != version => return None,
-            Some(_) => {}
-        }
-        Some(queue.result.take().expect("result present").outcome)
+        queue.take_result(&version)
     }
 
     /// Cancels the pending snapshot and any buffered result, and invalidates the
-    /// job in flight by advancing the generation. Use on scene replacement or
-    /// load. A fresh [`request`](Self::request) is accepted immediately after.
+    /// job in flight. Use on scene replacement or load. A fresh
+    /// [`request`](Self::request) is accepted immediately after.
     pub fn reset(&mut self) {
         let mut queue = self.shared.lock();
-        let dropped = usize::from(queue.pending.is_some())
-            + usize::from(queue.result.is_some())
-            + queue.inflight;
-        queue.discarded += dropped as u64;
-        queue.pending = None;
-        queue.result = None;
-        queue.generation = queue.generation.saturating_add(1);
-        drop(queue);
-        // Nothing waits on the worker here; the generation bump makes any
-        // in-flight or later-arriving result from the old generation unpollable.
+        queue.cancel();
     }
 
     /// False after worker startup failure or an unexpected worker exit.
@@ -281,9 +328,7 @@ fn run(shared: &Shared) {
         if queue.shutdown {
             return;
         }
-        let job = queue.pending.take().expect("nonempty pending queue");
-        queue.running = Some(job.version.clone());
-        queue.inflight = 1;
+        let job = queue.begin_job();
         drop(queue);
 
         // Build shapes off the simulation thread. This may fail (over budget);
@@ -291,21 +336,111 @@ fn run(shared: &Shared) {
         let outcome = PreparedDetailCollision::build(&job.scene);
 
         let mut queue = shared.lock();
-        queue.inflight = 0;
-        queue.running = None;
-        if queue.shutdown || queue.generation != job.generation {
-            // Cancelled or reset while running: never buffer the stale result.
-            queue.discarded += 1;
-            continue;
-        }
-        let superseded = queue
-            .result
-            .replace(Prepared {
-                outcome,
-                version: job.version,
-                generation: job.generation,
-            })
-            .is_some();
-        queue.discarded += u64::from(superseded);
+        queue.finish_job(job, outcome);
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+    use matterweave_detail::{material, DetailScene, DetailVolume, Scale, Transform, Yaw};
+
+    /// A distinct one-cell floor scene per `tag`, each with its own opaque
+    /// source identity even though their revision counters match.
+    fn scene(tag: i32) -> DetailScene {
+        let mut volume = DetailVolume::new("floor", Scale::new(0.25).expect("scale"));
+        volume.set([0, 0, 0], material::BANK_STONE).expect("cell");
+        let mut scene = DetailScene::new();
+        scene.add_prototype(volume).expect("prototype");
+        scene
+            .place(
+                "floor.0",
+                "floor",
+                Transform::new([tag as f32, 0.0, 0.0], Yaw::Deg0).expect("transform"),
+            )
+            .expect("placement");
+        scene
+    }
+
+    #[test]
+    fn fresh_request_is_accepted_after_reset_while_the_old_build_runs() {
+        let a = scene(0);
+        let mut q = Queue::default();
+        assert!(q.enqueue_request(a.source_version(), || a.fork_source()));
+        let _running = q.begin_job();
+        // Reset cancels; the old build keeps running under its old generation.
+        q.cancel();
+        // The now-authoritative request for the SAME scene must be accepted.
+        let queued = q.enqueue_request(a.source_version(), || a.fork_source());
+        assert!(
+            queued,
+            "a fresh request after reset must be accepted, not deduped against the retired build"
+        );
+        assert!(q.pending.is_some());
+    }
+
+    #[test]
+    fn requesting_the_running_source_drops_a_superseded_pending() {
+        let a = scene(0);
+        let b = scene(1);
+        let mut q = Queue::default();
+        assert!(q.enqueue_request(a.source_version(), || a.fork_source()));
+        let _running = q.begin_job();
+        // B is queued behind the running A.
+        assert!(q.enqueue_request(b.source_version(), || b.fork_source()));
+        assert!(q.pending.is_some());
+        // The latest request is A (already running): B must be dropped and no
+        // new build is queued.
+        let queued = q.enqueue_request(a.source_version(), || a.fork_source());
+        assert!(!queued, "A is already running; no new build is queued");
+        assert!(
+            q.pending.is_none(),
+            "the superseded pending B must be dropped so B is not published over A"
+        );
+    }
+
+    #[test]
+    fn latest_distinct_request_supersedes_pending() {
+        let a = scene(0);
+        let b = scene(1);
+        let c = scene(2);
+        let mut q = Queue::default();
+        assert!(q.enqueue_request(a.source_version(), || a.fork_source()));
+        let _running = q.begin_job();
+        assert!(q.enqueue_request(b.source_version(), || b.fork_source()));
+        assert!(q.enqueue_request(c.source_version(), || c.fork_source()));
+        assert!(
+            q.pending.as_ref().expect("pending").version == c.source_version(),
+            "the newest distinct source wins the single pending slot"
+        );
+    }
+
+    #[test]
+    fn duplicate_pending_request_is_refused() {
+        let a = scene(0);
+        let mut q = Queue::default();
+        assert!(q.enqueue_request(a.source_version(), || a.fork_source()));
+        assert!(
+            !q.enqueue_request(a.source_version(), || a.fork_source()),
+            "an unchanged pending source is not queued twice"
+        );
+    }
+
+    #[test]
+    fn reset_work_never_validates_after_generation_saturates() {
+        let a = scene(0);
+        let mut q = Queue::default();
+        // Push the display counter to the wrap boundary.
+        q.set_generation(u64::MAX);
+        assert!(q.enqueue_request(a.source_version(), || a.fork_source()));
+        let job = q.begin_job();
+        // Reset while the job is in flight.
+        q.cancel();
+        // The worker finishes and tries to buffer its now-retired result.
+        q.finish_job(job, Err("built".into()));
+        assert!(
+            q.result.is_none(),
+            "a job retired by reset must never buffer a result, even when the display generation saturated"
+        );
     }
 }
