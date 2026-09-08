@@ -86,13 +86,18 @@ impl SavedWetland {
     /// Select a valid session or a fresh recovery path. Existing invalid files
     /// stay byte-for-byte intact; recovery selection is bounded and deterministic.
     pub fn load_recovering(
-        path: &Path, generator: u32, seed: u64,
+        path: &Path,
+        generator: u32,
+        seed: u64,
     ) -> Result<(std::path::PathBuf, Option<Self>), String> {
         match Self::load(path, generator, seed) {
             Ok(save) => return Ok((path.to_path_buf(), save)),
             Err(error) => log::warn!("Wetland session retained at {}: {error}", path.display()),
         }
-        let name = path.file_name().ok_or("Wetland save path has no filename")?.to_string_lossy();
+        let name = path
+            .file_name()
+            .ok_or("Wetland save path has no filename")?
+            .to_string_lossy();
         let mut available = None;
         let mut latest = None;
         for sequence in 1..=128 {
@@ -103,8 +108,12 @@ impl SavedWetland {
                 _ => {}
             }
         }
-        if let Some(recovered) = latest { return Ok(recovered); }
-        available.map(|p| (p, None)).ok_or_else(|| "Wetland recovery slots are full".into())
+        if let Some(recovered) = latest {
+            return Ok(recovered);
+        }
+        available
+            .map(|p| (p, None))
+            .ok_or_else(|| "Wetland recovery slots are full".into())
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
@@ -311,8 +320,11 @@ mod tests {
     }
     #[test]
     fn corrupt_wetland_recovers_without_overwriting_prior_sessions() {
-        let dir = std::env::temp_dir().join(format!("wetland-recovery-{}-{}",
-            std::process::id(), NEXT_SAVE.fetch_add(1, Ordering::Relaxed)));
+        let dir = std::env::temp_dir().join(format!(
+            "wetland-recovery-{}-{}",
+            std::process::id(),
+            NEXT_SAVE.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::create_dir(&dir).unwrap();
         let path = dir.join(SAVE_FILE);
         fs::write(&path, b"broken original").unwrap();
@@ -324,9 +336,18 @@ mod tests {
         assert!(save.is_none());
         assert_ne!(first, second);
         let saved = SavedWetland {
-            version: 1, generator: 1, seed: 7, edits: vec![],
-            physics: PhysicsSnapshot { version: 1, eye: [2., 3., 4.], bodies: vec![] },
-            yaw: 0.2, pitch: 0.1, shadows: true,
+            version: 1,
+            generator: 1,
+            seed: 7,
+            edits: vec![],
+            physics: PhysicsSnapshot {
+                version: 1,
+                eye: [2., 3., 4.],
+                bodies: vec![],
+            },
+            yaw: 0.2,
+            pitch: 0.1,
+            shadows: true,
         };
         saved.save(&second).unwrap();
         let (selected, save) = SavedWetland::load_recovering(&path, 1, 7).unwrap();
@@ -338,6 +359,28 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"broken original");
         assert_eq!(fs::read(&first).unwrap(), b"broken recovery");
         assert!(SavedWetland::load(&second, 1, 7).unwrap().is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn old_showcase_sessions_are_not_replayed_on_changed_layout() {
+        let dir = std::env::temp_dir().join(format!("wetland-layout-version-{}-{}",
+            std::process::id(), NEXT_SAVE.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join(SAVE_FILE);
+        let old = SavedWetland {
+            version: 1, generator: 1, seed: matterweave_detail::SHOWCASE_SEED,
+            edits: vec![Edit { instance: "flora_989_11".into(), cell: [0, 1, 0], material: 0 }],
+            physics: PhysicsSnapshot { version: 1, eye: [46., 14., 71.], bodies: vec![] },
+            yaw: 0., pitch: 0., shadows: true,
+        };
+        old.save(&path).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let (selected, save) = SavedWetland::load_recovering(&path,
+            matterweave_detail::SHOWCASE_GENERATOR_VERSION, matterweave_detail::SHOWCASE_SEED).unwrap();
+        assert_ne!(selected, path, "changed placement catalog reuses old generator identity");
+        assert!(save.is_none(), "old instance edits must not attach to new placements");
+        assert_eq!(fs::read(&path).unwrap(), bytes);
         fs::remove_dir_all(dir).unwrap();
     }
 
