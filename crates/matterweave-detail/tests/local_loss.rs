@@ -75,6 +75,34 @@ fn solid_block_negative(id: &str, edge: i32) -> DetailVolume {
     v
 }
 
+/// 16-cell box carrying a 45-degree stepped surface (`z <= x`): an *organic*
+/// safe surface with no opening, channel or cavity. Every coarse cell along
+/// the diagonal is partially filled, so an occupancy-only local guard reads a
+/// large loss and pins the prototype at `Source` forever. Filling those cells
+/// only moves the exterior surface, which is exactly what coarsening is for.
+fn stepped_wedge(id: &str) -> DetailVolume {
+    let mut v = DetailVolume::new(id, Scale::new(SCALE_FINE_M).unwrap());
+    for x in 0..16 {
+        for y in 0..16 {
+            for z in 0..=x {
+                v.set([x, y, z], STONE).unwrap();
+            }
+        }
+    }
+    v
+}
+
+/// Same 16-cell solid as `block_with_through_tunnel`, but the channel is filled
+/// with `WATER` instead of `AIR`. Documented limitation: the local guard is an
+/// *occupancy* guard, so a non-air fill is invisible to it.
+fn block_with_water_channel(id: &str) -> DetailVolume {
+    let mut v = solid_block(id, 16);
+    for x in 0..16 {
+        v.set([x, 8, 8], material::WATER).unwrap();
+    }
+    v
+}
+
 fn thin_sheet(id: &str) -> DetailVolume {
     let mut v = DetailVolume::new(id, Scale::new(SCALE_FINE_M).unwrap());
     for x in 0..16 {
@@ -216,7 +244,32 @@ fn unaligned_dense_cuboids_still_coarsen_including_negatives() {
             Transform::new([20.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
         )
         .unwrap();
+    let build = || {
+        let mut scene = DetailScene::new();
+        scene.add_prototype(solid_block("odd", 15)).unwrap();
+        scene.add_prototype(solid_block_negative("neg", 15)).unwrap();
+        scene.add_prototype(thin_sheet("sheet")).unwrap();
+        scene.place("o", "odd", Transform::identity()).unwrap();
+        scene
+            .place(
+                "n",
+                "neg",
+                Transform::new([-20.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+            )
+            .unwrap();
+        scene
+            .place(
+                "h",
+                "sheet",
+                Transform::new([20.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+            )
+            .unwrap();
+        scene
+    };
+    // Fresh scene per projection: hysteresis must not carry a coarse selection
+    // from the perspective pass into the orthographic assertion.
     for camera in [persp_at(1.0, 300.0), ortho_at(1.0, 10.0, 200.0)] {
+        let mut scene = build();
         let selected = scene.select_lods(&camera, &config).unwrap();
         let at = |id: &str| selected.iter().find(|s| s.instance == id).unwrap().lod;
         assert_eq!(at("o"), Lod::Quarter, "odd-edge dense cuboid coarsens");
@@ -354,6 +407,114 @@ fn selection_and_preparation_leave_authoritative_source_unchanged() {
         Some(STONE)
     );
     assert!(scene.is_collidable_world_metres(solid_centre).unwrap());
+}
+
+#[test]
+fn stepped_wedge_surface_coarsens_under_the_default_guard() {
+    // A safe exterior staircase has no channel, pit or cavity to protect:
+    // the default guard must let it coarsen instead of defaulting every
+    // non-cuboid prototype to Source. Fresh scene per projection.
+    let config = LodConfig::default();
+    let wedge = || {
+        let mut scene = DetailScene::new();
+        scene.add_prototype(stepped_wedge("wedge")).unwrap();
+        scene.place("w", "wedge", Transform::identity()).unwrap();
+        scene
+    };
+    assert_eq!(
+        lod_of(&mut wedge(), &persp_at(1.0, 300.0), &config),
+        Lod::Quarter,
+        "stepped surface must coarsen far away"
+    );
+    assert_eq!(
+        lod_of(&mut wedge(), &ortho_at(1.0, 10.0, 200.0), &config),
+        Lod::Quarter,
+        "stepped surface must coarsen zoomed out orthographically"
+    );
+    // Near/zoomed-in still resolves the authoritative level.
+    assert_eq!(
+        lod_of(&mut wedge(), &persp_at(1.0, 1.0), &config),
+        Lod::Source
+    );
+}
+
+#[test]
+fn material_filled_channel_is_outside_the_occupancy_guard() {
+    // Scoped limitation, pinned deliberately: the guard reads occupancy, so a
+    // WATER-filled channel is not protected and coarsens like solid rock,
+    // while the same geometry in AIR is held at Source. Authoritative source
+    // and collision are unaffected either way.
+    let config = LodConfig::default();
+    let scene_with = |proto: DetailVolume| {
+        let mut scene = DetailScene::new();
+        scene.add_prototype(proto).unwrap();
+        scene.place("c", "chan", Transform::identity()).unwrap();
+        scene
+    };
+    let mut air = scene_with(block_with_through_tunnel("chan"));
+    assert_eq!(
+        lod_of(&mut air, &persp_at(1.0, 300.0), &config),
+        Lod::Source,
+        "air channel is protected"
+    );
+    let mut water = scene_with(block_with_water_channel("chan"));
+    assert!(
+        lod_of(&mut water, &persp_at(1.0, 300.0), &config) > Lod::Source,
+        "documented limitation: a non-air channel fill is invisible to the \
+         occupancy guard and coarsens"
+    );
+    // The limitation is a derived-representation limitation only.
+    let centre = [8.5 * SCALE_FINE_M, 8.5 * SCALE_FINE_M, 8.5 * SCALE_FINE_M];
+    assert_eq!(
+        water.sample_world_metres(centre).unwrap().map(|hit| hit.1),
+        Some(material::WATER)
+    );
+}
+
+#[test]
+fn prototype_edit_carving_a_channel_reverts_the_wedge_to_source() {
+    // Guard invalidation: a coarsening prototype that gains a through-channel
+    // by edit must drop back to Source on the next selection.
+    let config = LodConfig::default();
+    let mut scene = DetailScene::new();
+    scene.add_prototype(stepped_wedge("wedge")).unwrap();
+    scene.place("w", "wedge", Transform::identity()).unwrap();
+    assert_eq!(lod_of(&mut scene, &persp_at(1.0, 300.0), &config), Lod::Quarter);
+    for y in 0..16 {
+        scene
+            .edit_prototype("wedge", [12, y, 4], material::AIR)
+            .unwrap();
+    }
+    assert_eq!(
+        lod_of(&mut scene, &persp_at(1.0, 300.0), &config),
+        Lod::Source,
+        "edited-in channel must invalidate the cached guard verdict"
+    );
+}
+
+#[test]
+fn instance_edit_holds_only_the_edited_instance_at_source() {
+    let config = LodConfig::default();
+    let mut scene = DetailScene::new();
+    scene.add_prototype(stepped_wedge("wedge")).unwrap();
+    scene.place("a", "wedge", Transform::identity()).unwrap();
+    scene
+        .place(
+            "b",
+            "wedge",
+            Transform::new([5.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+        )
+        .unwrap();
+    let camera = persp_at(1.0, 300.0);
+    let first = scene.select_lods(&camera, &config).unwrap();
+    assert!(first.iter().all(|s| s.lod == Lod::Quarter));
+    for y in 0..16 {
+        scene.edit_instance("a", [12, y, 4], material::AIR).unwrap();
+    }
+    let selected = scene.select_lods(&camera, &config).unwrap();
+    let at = |id: &str| selected.iter().find(|s| s.instance == id).unwrap().lod;
+    assert_eq!(at("a"), Lod::Source, "edited instance drops to Source");
+    assert_eq!(at("b"), Lod::Quarter, "sibling instance keeps coarsening");
 }
 
 #[test]
