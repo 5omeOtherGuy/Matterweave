@@ -180,7 +180,7 @@ fn fixtures() -> Vec<Fixture> {
     vec![
         Fixture {
             name: "thin-plate-vs-block",
-            cells: thin,
+            cells: thin.clone(),
             split: 0,
             camera: Cam {
                 eye: [12.0, 6.0, 14.0],
@@ -189,6 +189,19 @@ fn fixtures() -> Vec<Fixture> {
                 extent: 0.9,
             },
             edit: Some(([-3, 4, 4], 1)),
+            marker: [4, 1, 1],
+        },
+        Fixture {
+            name: "orthographic-opening-removal",
+            cells: thin,
+            split: 0,
+            camera: Cam {
+                eye: [12.0, 6.0, 14.0],
+                target: [0.0, 1.5, 1.5],
+                orthographic: true,
+                extent: 5.0,
+            },
+            edit: Some(([-3, 2, 2], 0)),
             marker: [4, 1, 1],
         },
         Fixture {
