@@ -13,6 +13,8 @@ struct Uniform {
     view_proj: [[f32; 4]; 4],
     sun: [f32; 4],
     params: [f32; 4],
+    indirect_origin: [i32; 4],
+    indirect_dimensions: [u32; 4],
 }
 
 /// Validity follows submitted depth contents, never a recording attempt. Geometry
@@ -39,6 +41,10 @@ pub(crate) struct Shadow {
     device: Arc<Device>,
     depth: Option<Depth>,
     uniform: Option<Buffer>,
+    indirect: Option<Buffer>,
+    indirect_origin: [i32; 4],
+    indirect_dimensions: [u32; 4],
+    indirect_sun: Option<[f32; 4]>,
     pass: vk::RenderPass,
     frame: vk::Framebuffer,
     pipeline: vk::Pipeline,
@@ -60,6 +66,10 @@ impl Shadow {
             device,
             depth: None,
             uniform: None,
+            indirect: None,
+            indirect_origin: [0; 4],
+            indirect_dimensions: [0; 4],
+            indirect_sun: None,
             pass: vk::RenderPass::null(),
             frame: vk::Framebuffer::null(),
             pipeline: vk::Pipeline::null(),
@@ -99,6 +109,11 @@ impl Shadow {
                 bytemuck::bytes_of(&Uniform::zeroed()),
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
             )?);
+            out.indirect = Some(Buffer::new(
+                d.clone(),
+                bytemuck::cast_slice(&[[0.0f32; 4]]),
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+            )?);
             // Nearest comparison samples plus explicit 3x3 PCF need no optional
             // linear-filtering capability for the selected depth format.
             out.sampler = d
@@ -123,6 +138,7 @@ impl Shadow {
                 vk::DescriptorType::UNIFORM_BUFFER,
                 vk::DescriptorType::SAMPLED_IMAGE,
                 vk::DescriptorType::SAMPLER,
+                vk::DescriptorType::STORAGE_BUFFER,
             ];
             let bindings: Vec<_> = types
                 .iter()
@@ -169,6 +185,9 @@ impl Shadow {
             let buffers = [vk::DescriptorBufferInfo::default()
                 .buffer(out.uniform.as_ref().unwrap().raw)
                 .range(std::mem::size_of::<Uniform>() as u64)];
+            let indirect_buffers = [vk::DescriptorBufferInfo::default()
+                .buffer(out.indirect.as_ref().unwrap().raw)
+                .range(16)];
             let images = [vk::DescriptorImageInfo::default()
                 .image_view(out.depth.as_ref().unwrap().view)
                 .image_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)];
@@ -190,6 +209,11 @@ impl Shadow {
                         .dst_binding(2)
                         .descriptor_type(types[2])
                         .image_info(&samplers),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(out.set)
+                        .dst_binding(3)
+                        .descriptor_type(types[3])
+                        .buffer_info(&indirect_buffers),
                 ],
                 &[],
             );
@@ -272,11 +296,18 @@ impl Shadow {
     ) -> Result<()> {
         self.camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
         let sun = self.camera.direction;
+        if self.indirect_sun != Some(crate::indirect::light_key(settings.sun)?) {
+            self.indirect_sun = None;
+        }
+        let mut indirect_dimensions = self.indirect_dimensions;
+        indirect_dimensions[3] = u32::from(self.indirect_sun.is_some());
         self.uniform
             .as_ref()
             .unwrap()
             .write(bytemuck::bytes_of(&Uniform {
                 view_proj: self.camera.view_proj,
+                indirect_origin: self.indirect_origin,
+                indirect_dimensions,
                 sun: [sun[0], sun[1], sun[2], settings.sun.intensity],
                 // World-space bias preserves its scale when the fitted depth span changes.
                 params: [
@@ -290,6 +321,54 @@ impl Shadow {
 
     pub fn invalidate(&mut self) {
         self.reuse.invalidate();
+        self.disable_indirect();
+    }
+
+    pub fn disable_indirect(&mut self) {
+        self.indirect_sun = None;
+    }
+
+    pub fn indirect_enabled(&self) -> bool {
+        self.indirect_sun.is_some()
+    }
+
+    /// Caller has waited the frame fence; no submitted descriptor uses this buffer.
+    pub fn upload_indirect(&mut self, volume: &crate::indirect::IndirectVolume) -> Result<()> {
+        self.disable_indirect();
+        let bytes = bytemuck::cast_slice(&volume.values);
+        if bytes.len() > self.indirect.as_ref().unwrap().size {
+            let buffer = Buffer::new(
+                self.device.clone(),
+                bytes,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+            )?;
+            let infos = [vk::DescriptorBufferInfo::default()
+                .buffer(buffer.raw)
+                .range(bytes.len() as u64)];
+            // SAFETY: idle descriptor; the replacement buffer is retained by self.
+            unsafe {
+                self.device.raw.update_descriptor_sets(
+                    &[vk::WriteDescriptorSet::default()
+                        .dst_set(self.set)
+                        .dst_binding(3)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos)],
+                    &[],
+                );
+            }
+            self.indirect = Some(buffer);
+        } else {
+            self.indirect.as_ref().unwrap().write(bytes)?;
+        }
+        self.indirect_origin = [volume.origin[0], volume.origin[1], volume.origin[2], 0];
+        self.indirect_dimensions = [
+            volume.dimensions[0],
+            volume.dimensions[1],
+            volume.dimensions[2],
+            1,
+        ];
+        self.indirect_sun = volume.cached_sun();
+        Ok(())
     }
 
     /// Called only after queue_submit succeeds for a recorded shadow pass.
