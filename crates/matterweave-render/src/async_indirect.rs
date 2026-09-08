@@ -179,44 +179,123 @@ impl Queue {
     /// rejected by the caller before this runs and can never displace queued
     /// work.
     fn enqueue_request(&mut self, key: SourceKey, sun: Sun, fork: impl FnOnce() -> World) -> bool {
-        todo!("RED: state machine")
+        self.requested = Some(key.clone());
+        if self.pending.as_ref().is_some_and(|job| job.key == key) {
+            return false;
+        }
+        let already = self
+            .running
+            .as_ref()
+            .is_some_and(|r| Arc::ptr_eq(&r.generation, &self.generation) && r.key == key)
+            || self
+                .result
+                .as_ref()
+                .is_some_and(|r| Arc::ptr_eq(&r.generation, &self.generation) && r.key == key);
+        if already {
+            self.discarded = self
+                .discarded
+                .saturating_add(u64::from(self.pending.take().is_some()));
+            return false;
+        }
+        let superseded = self
+            .pending
+            .replace(Job {
+                world: fork(),
+                key,
+                sun,
+                generation: self.generation.clone(),
+            })
+            .is_some();
+        self.discarded = self.discarded.saturating_add(u64::from(superseded));
+        true
     }
 
     /// Worker: take the pending job and mark it running.
     fn adopt_job(&mut self) -> Option<Job> {
-        todo!("RED: state machine")
+        if self.running.is_some() || self.shutdown {
+            return None;
+        }
+        let job = self.pending.take()?;
+        self.running = Some(Running {
+            key: job.key.clone(),
+            generation: job.generation.clone(),
+        });
+        self.inflight = 1;
+        Some(job)
     }
 
     /// Worker: clear the running slot when it no longer matches the latest
     /// request, the current generation or a shutdown. Checked between update
     /// slices and while waiting, bounding cancellation latency and drop joins.
     fn retire_stale_running(&mut self) -> bool {
-        todo!("RED: state machine")
+        let stale = self.running.as_ref().is_some_and(|r| {
+            self.shutdown
+                || !Arc::ptr_eq(&r.generation, &self.generation)
+                || self.requested.as_ref() != Some(&r.key)
+        });
+        if stale {
+            self.running = None;
+            self.inflight = 0;
+            self.discarded = self.discarded.saturating_add(1);
+        }
+        stale
     }
 
     /// Worker: buffer the completed result if it is still current, else
     /// discard it. Never blocks on the occupied slot.
     fn finish_job(&mut self, job: Job, outcome: Result<IndirectVolume, String>) {
-        todo!("RED: state machine")
+        self.inflight = 0;
+        self.running = None;
+        if self.shutdown
+            || !Arc::ptr_eq(&self.generation, &job.generation)
+            || self.requested.as_ref() != Some(&job.key)
+        {
+            self.discarded = self.discarded.saturating_add(1);
+            return;
+        }
+        self.completed = self.completed.saturating_add(1);
+        let superseded = self
+            .result
+            .replace(Prepared {
+                outcome,
+                key: job.key,
+                generation: job.generation,
+            })
+            .is_some();
+        self.discarded = self.discarded.saturating_add(u64::from(superseded));
     }
 
     /// Poll: consume and return the buffered result only if it is current for
     /// `key`; drop a reset-cancelled result; leave a foreign-source result so
     /// a stale poll cannot erase newer work.
     fn take_result(&mut self, key: &SourceKey) -> Option<Result<IndirectVolume, String>> {
-        todo!("RED: state machine")
+        match self.result.as_ref() {
+            None => return None,
+            Some(result) if !Arc::ptr_eq(&result.generation, &self.generation) => {
+                self.result = None;
+                self.discarded = self.discarded.saturating_add(1);
+                return None;
+            }
+            Some(result) if result.key != *key || self.requested.as_ref() != Some(key) => {
+                return None;
+            }
+            Some(_) => {}
+        }
+        Some(self.result.take().expect("result present").outcome)
     }
 
     /// Reset: cancel pending and buffered work and retire the in-flight job
     /// via a fresh opaque generation. A fresh identical request is accepted.
     fn cancel(&mut self) {
-        todo!("RED: state machine")
+        let dropped = usize::from(self.pending.is_some()) + usize::from(self.result.is_some());
+        self.discarded = self.discarded.saturating_add(dropped as u64);
+        self.pending = None;
+        self.result = None;
+        self.requested = None;
+        self.resets = self.resets.saturating_add(1);
+        self.generation = Arc::new(());
     }
 
-    #[cfg(test)]
-    fn set_resets(&mut self, resets: u64) {
-        todo!("RED")
-    }
 }
 
 struct Shared {
@@ -369,5 +448,55 @@ impl Drop for AsyncIndirectLight {
 }
 
 fn run(shared: &Shared, config: &AsyncIndirectConfig) {
-    todo!("RED: worker loop")
+    'worker: loop {
+        // Adopt work, retiring anything stale between slices. Waiting here is
+        // the only place the worker blocks, and only while it has no job.
+        let job = {
+            let mut queue = shared.lock();
+            loop {
+                queue.retire_stale_running();
+                if let Some(job) = queue.adopt_job() {
+                    break job;
+                }
+                if queue.shutdown {
+                    return;
+                }
+                queue = shared
+                    .wake
+                    .wait(queue)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        };
+        let mut volume = match config.build() {
+            Ok(volume) => volume,
+            Err(e) => {
+                // Allocation can still fail after configuration validation;
+                // return that failure tagged with its source identity.
+                shared.lock().finish_job(job, Err(e));
+                continue;
+            }
+        };
+        // Slice the authoritative bounded update; between slices, give up the
+        // job when it is no longer the latest request or the runtime stopped.
+        let outcome = loop {
+            let stats = match volume.update(&job.world, job.key.epoch, job.sun, WORKER_BUDGET) {
+                Ok(stats) => stats,
+                // Sun validated at request; a failure here is still carried
+                // back tagged with the source identity.
+                Err(e) => break Err(e),
+            };
+            let mut queue = shared.lock();
+            if queue.retire_stale_running() {
+                if queue.shutdown {
+                    return;
+                }
+                continue 'worker;
+            }
+            drop(queue);
+            if stats.complete {
+                break Ok(volume);
+            }
+        };
+        shared.lock().finish_job(job, outcome);
+    }
 }
