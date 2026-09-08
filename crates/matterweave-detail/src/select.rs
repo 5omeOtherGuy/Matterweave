@@ -1,33 +1,36 @@
 //! Automatic view-dependent LOD selection and derived-mesh preparation.
 //!
 //! This module turns a camera plus the crate's existing `Source`/`Half`/`Quarter`
-//! derived representations into a per-instance LOD selection with a projected
-//! geometric-error bound, hysteresis against boundary chatter, an explicit
-//! thin-feature/opening guard and a retained authoritative fallback. It never
-//! changes authoritative source data: world queries and collision keep using the
-//! finest source (see [`crate::DetailScene::is_collidable_world_metres`]).
+//! derived representations into a per-instance LOD selection with a screen-space
+//! error *estimate*, hysteresis against boundary chatter, a thin-feature/opening
+//! *bias* and a retained authoritative fallback. It never changes authoritative
+//! source data: world queries and collision keep using the finest source (see
+//! [`crate::DetailScene::is_collidable_world_metres`]).
 //!
-//! ## Geometric error
+//! ## Honesty of the error model
 //!
-//! Coarsening replaces a `factor^3` block of source cells with one coarse cell
-//! that is occupied when *any* source cell inside it is occupied. Two derived
-//! quantities describe the loss, both cheap to compute once per prototype
-//! revision:
+//! Any-occupied coarsening does not admit a cheap tight geometric bound, so this
+//! module deals in *estimates*, not guarantees:
 //!
-//! - `error_m = scale * factor`: a conservative bound on how far the coarse
-//!   surface can move from the source surface (one coarse cell). This is the
-//!   length projected to screen space and compared against a pixel budget.
-//! - `dilation_fraction = 1 - occupied / (coarse_cells * factor^3)`: the fraction
-//!   of the coarse solid that is *newly filled* by any-occupied expansion. Thin
-//!   fronds, stems and narrow openings drive this high because their coarse cells
-//!   are mostly air; solid blobs keep it near zero. A prototype whose fraction
-//!   exceeds the quality cap is held at the finer level, so thin features and
-//!   openings keep their source silhouette instead of the visually rejected
-//!   coarse flora.
+//! - `error_estimate_m = scale * factor` is the coarse cell size. It is a
+//!   heuristic magnitude for how much a face can move, **not** a conservative
+//!   Hausdorff bound: filling a long narrow cavity deletes interior faces
+//!   arbitrarily far from the remaining coarse surface, and a lone diagonal
+//!   protrusion moves by up to the cell diagonal, which already exceeds one edge.
+//! - `dilation_fraction = 1 - occupied / (coarse_cells * factor^3)` is the
+//!   fraction of the coarse solid newly filled by expansion, aggregated over the
+//!   whole prototype. It *biases* thin, perforated prototypes (fronds, stems,
+//!   sheets) toward finer levels, but it is global: a small deep opening inside a
+//!   large solid contributes a negligible fraction and is **not** guaranteed to be
+//!   preserved. Callers needing a specific opening kept must cap the level.
+//! - The pixel figure is a *working estimate* for prioritization, never a proof of
+//!   temporal visual quality. Approach/retreat/zoom capture review on-device is
+//!   still owed before trusting a coarse level.
 //!
-//! The pixel budget is a *working bound*, not a proof of temporal visual quality:
-//! it controls a conservative displacement estimate, and callers still owe
-//! approach/retreat/zoom capture review before trusting a coarse level on-device.
+//! The perspective projection uses the nearest depth of the instance AABB along
+//! the camera forward axis (clamped to the near plane), which is the meaningful
+//! depth for screen-space size; it is not Euclidean eye distance, which
+//! overstates depth for off-axis instances and would coarsen them too eagerly.
 
 use crate::{Bounds, DetailError, Lod, Result, Transform, MAX_CELL_COORD, MAX_SCALE_M};
 
@@ -45,18 +48,22 @@ impl Lod {
     }
 }
 
-/// Derived-loss description for one prototype at one LOD.
+/// Derived-loss *estimates* for one prototype at one LOD. See the module docs:
+/// these are heuristics for prioritization, not guaranteed geometric bounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ErrorMetrics {
-    /// Conservative surface-displacement bound in metres (coarse cell size).
-    pub error_m: f32,
-    /// Fraction of the coarse solid newly filled by any-occupied expansion.
+    /// Coarse cell size in metres (`scale * factor`); a heuristic error magnitude,
+    /// not a conservative surface-displacement bound.
+    pub error_estimate_m: f32,
+    /// Fraction of the coarse solid newly filled by any-occupied expansion,
+    /// aggregated over the whole prototype. A thin-feature bias, not a per-opening
+    /// guarantee.
     pub dilation_fraction: f32,
 }
 
 impl ErrorMetrics {
     pub(crate) const SOURCE: Self = Self {
-        error_m: 0.0,
+        error_estimate_m: 0.0,
         dilation_fraction: 0.0,
     };
 }
@@ -68,7 +75,7 @@ pub enum Projection {
     /// Symmetric perspective by vertical field of view in radians.
     Perspective { vertical_fov_rad: f32 },
     /// Orthographic: `view_height_m` world metres map to the full viewport height.
-    /// Smaller `view_height_m` is a zoom-in; projected size is distance independent.
+    /// Smaller `view_height_m` is a zoom-in; projected size is depth independent.
     Orthographic { view_height_m: f32 },
 }
 
@@ -78,20 +85,29 @@ pub enum Projection {
 pub struct Camera {
     /// Eye position in world metres.
     pub eye_m: [f32; 3],
+    /// View direction in world metres (need not be unit length; must be nonzero).
+    /// Perspective depth is measured along this axis.
+    pub forward_m: [f32; 3],
     /// Viewport height in pixels; the vertical axis defines the pixel budget.
     pub viewport_height_px: f32,
-    /// Near-plane distance in metres. Distances are clamped to this for the
-    /// perspective pixels-per-metre estimate so an instance at or behind the eye
-    /// resolves to the finest level rather than an infinite projected error.
+    /// Near-plane distance in metres. Depth is clamped to this for the perspective
+    /// pixels-per-metre estimate so an instance at or behind the eye resolves to
+    /// the finest level rather than an infinite projected estimate.
     pub near_m: f32,
     pub projection: Projection,
 }
 
 impl Camera {
+    fn forward_norm(&self) -> f32 {
+        let f = self.forward_m;
+        (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt()
+    }
+
     pub fn validate(&self) -> Result<()> {
-        let bound =
-            crate::scene::MAX_SCENE_TRANSLATION_M + (MAX_CELL_COORD + 1) as f32 * MAX_SCALE_M;
+        let bound = crate::scene::MAX_SCENE_TRANSLATION_M + (MAX_CELL_COORD + 1) as f32 * MAX_SCALE_M;
         let eye_ok = self.eye_m.iter().all(|v| v.is_finite() && v.abs() <= bound);
+        let forward_finite = self.forward_m.iter().all(|v| v.is_finite());
+        let forward_ok = forward_finite && self.forward_norm() >= 1e-4;
         let viewport_ok = self.viewport_height_px.is_finite() && self.viewport_height_px > 0.0;
         let near_ok = self.near_m.is_finite() && self.near_m > 0.0;
         let projection_ok = match self.projection {
@@ -104,44 +120,51 @@ impl Camera {
                 view_height_m.is_finite() && view_height_m > 0.0
             }
         };
-        if eye_ok && viewport_ok && near_ok && projection_ok {
+        if eye_ok && forward_ok && viewport_ok && near_ok && projection_ok {
             Ok(())
         } else {
             Err(DetailError::InvalidPoint)
         }
     }
 
-    /// Screen pixels spanned by one world metre at `distance_m`.
-    pub fn pixels_per_metre(&self, distance_m: f32) -> f32 {
+    /// Screen pixels spanned by one world metre at `depth_m` along the view axis.
+    pub fn pixels_per_metre(&self, depth_m: f32) -> f32 {
         match self.projection {
             Projection::Perspective { vertical_fov_rad } => {
-                let d = distance_m.max(self.near_m);
+                let d = depth_m.max(self.near_m);
                 self.viewport_height_px / (2.0 * d * (0.5 * vertical_fov_rad).tan())
             }
             Projection::Orthographic { view_height_m } => self.viewport_height_px / view_height_m,
         }
     }
 
-    /// Projected screen-space error in pixels for a world-metre error at a distance.
-    pub fn projected_error_px(&self, error_m: f32, distance_m: f32) -> f32 {
-        error_m * self.pixels_per_metre(distance_m)
+    /// Projected screen-space error estimate in pixels for a world-metre error at
+    /// a view-axis depth.
+    pub fn projected_error_px(&self, error_m: f32, depth_m: f32) -> f32 {
+        error_m * self.pixels_per_metre(depth_m)
     }
 
-    /// Nearest distance in metres from the eye to a world-space box; zero inside.
-    pub fn distance_to_bounds(&self, bounds: &Bounds) -> f32 {
-        let mut sum = 0.0f32;
-        for axis in 0..3 {
-            let v = self.eye_m[axis];
-            let d = if v < bounds.min[axis] {
-                bounds.min[axis] - v
-            } else if v > bounds.max[axis] {
-                v - bounds.max[axis]
-            } else {
-                0.0
-            };
-            sum += d * d;
+    /// Nearest depth in metres of a world-space box along the camera forward axis,
+    /// clamped to the near plane. This is the conservative (smallest) depth over
+    /// the box, so an instance partly in front resolves by its closest point.
+    pub fn nearest_depth(&self, bounds: &Bounds) -> f32 {
+        let inv = 1.0 / self.forward_norm();
+        let mut min_depth = f32::INFINITY;
+        for corner in 0..8u8 {
+            let p: [f32; 3] = std::array::from_fn(|axis| {
+                if corner >> axis & 1 == 1 {
+                    bounds.max[axis]
+                } else {
+                    bounds.min[axis]
+                }
+            });
+            let depth = (0..3)
+                .map(|axis| (p[axis] - self.eye_m[axis]) * self.forward_m[axis])
+                .sum::<f32>()
+                * inv;
+            min_depth = min_depth.min(depth);
         }
-        sum.sqrt()
+        min_depth.max(self.near_m)
     }
 }
 
@@ -149,16 +172,16 @@ impl Camera {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodConfig {
     /// Screen-space error budget in pixels. A coarser level is chosen only while
-    /// its projected error stays within this budget (with hysteresis).
+    /// its projected error estimate stays within this budget (with hysteresis).
     pub error_budget_px: f32,
     /// Hysteresis fraction `>= 0`. The switch-to-coarser threshold is
     /// `budget / (1 + hysteresis)` and switch-to-finer is `budget * (1 + hysteresis)`,
-    /// so a level is left only after the error clears a dead-band, not on a boundary.
+    /// so a level is left only after the estimate clears a dead-band.
     pub hysteresis: f32,
     /// Quality cap: the coarsest level ever selected. `Lod::Source` disables LOD.
     pub max_lod: Lod,
-    /// Thin-feature/opening guard: a level whose `dilation_fraction` exceeds this
-    /// is never selected (nor any coarser level), preserving source silhouettes.
+    /// Thin-feature/opening bias: a level whose `dilation_fraction` exceeds this is
+    /// never selected (nor any coarser level). Global, not a per-opening guarantee.
     pub max_dilation_fraction: f32,
     /// Optional cap on *new coarse* mesh builds per prepare call. When reached,
     /// remaining instances fall back to the authoritative `Source` mesh instead of
@@ -202,19 +225,20 @@ impl LodConfig {
     }
 }
 
-/// One instance's chosen LOD with the evidence behind the choice.
+/// One instance's chosen LOD with the estimates behind the choice.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstanceLod {
     pub instance: String,
     pub prototype: String,
     pub transform: Transform,
     pub lod: Lod,
-    /// Geometric error in metres of the *selected* level (0 for `Source`).
-    pub error_m: f32,
-    /// Projected screen-space error in pixels of the selected level.
-    pub projected_error_px: f32,
-    /// Nearest eye-to-instance distance in metres used for the projection.
-    pub distance_m: f32,
+    /// Geometric error *estimate* in metres of the selected level (0 for `Source`).
+    /// Not a guaranteed bound; see module docs.
+    pub error_estimate_m: f32,
+    /// Projected screen-space error *estimate* in pixels of the selected level.
+    pub projected_error_estimate_px: f32,
+    /// Nearest instance-AABB depth in metres along the camera forward axis.
+    pub depth_m: f32,
     /// Source occupied cells of this instance's prototype. Camera independent.
     pub occupied_cells: usize,
     /// True when the selected level was downgraded from the ideal level because
@@ -249,23 +273,23 @@ pub struct PreparedFrame {
 }
 
 /// Chooses the coarsest acceptable level for one instance, honoring the quality
-/// cap, thin-feature guard and hysteresis relative to the previously chosen level.
+/// cap, thin-feature bias and hysteresis relative to the previously chosen level.
 ///
 /// `metrics[lod.index()] == None` marks a level whose derived scale is out of the
 /// supported range; the walk stops there because every coarser level is also out
-/// of range. Returns the chosen level and its `(error_m, projected_error_px)`.
+/// of range. Returns the chosen level and its `(error_estimate_m, projected_px)`.
 pub(crate) fn choose_lod(
     previous: Lod,
     camera: &Camera,
     config: &LodConfig,
     metrics: &[Option<ErrorMetrics>; 3],
-    distance_m: f32,
+    depth_m: f32,
 ) -> (Lod, f32, f32) {
     let low = config.error_budget_px / (1.0 + config.hysteresis);
     let high = config.error_budget_px * (1.0 + config.hysteresis);
     let mut chosen = Lod::Source;
     let mut chosen_error_m = 0.0;
-    let mut chosen_projected = camera.projected_error_px(0.0, distance_m);
+    let mut chosen_projected = camera.projected_error_px(0.0, depth_m);
     for &lod in &LOD_ORDER[1..] {
         if lod > config.max_lod {
             break;
@@ -276,13 +300,13 @@ pub(crate) fn choose_lod(
         if metric.dilation_fraction > config.max_dilation_fraction {
             break;
         }
-        let projected = camera.projected_error_px(metric.error_m, distance_m);
-        // Already at least this coarse: keep it until the error clears `high`.
-        // Currently finer: only descend when the error is comfortably under `low`.
+        let projected = camera.projected_error_px(metric.error_estimate_m, depth_m);
+        // Already at least this coarse: keep it until the estimate clears `high`.
+        // Currently finer: only descend when the estimate is comfortably under `low`.
         let threshold = if previous >= lod { high } else { low };
         if projected <= threshold {
             chosen = lod;
-            chosen_error_m = metric.error_m;
+            chosen_error_m = metric.error_estimate_m;
             chosen_projected = projected;
         } else {
             break;
