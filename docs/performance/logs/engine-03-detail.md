@@ -66,8 +66,32 @@ renderer/app/physics edits. Renderer adapter and Android captures are lead-owned
 
 - The two guards are complements, not substitutes: interior-loss sees tunnels
   in bulk (dilation ~0.004, silent) while dilation sees isolated thin
-  stock (local loss exactly 0, no interior footprint). Either guard alone
-  leaves a blind spot; together the measured fixtures all resolve correctly.
-- Cost is one `u32` count per coarse cell in the per-revision digest
-  (entries bounded by the occupied-cell count) plus one footprint check per
-  occupied coarse cell per factor; per-frame selection stays a table lookup.
+  stock (local loss exactly 0, fully occupied clipped footprint). Either guard
+  alone leaves a blind spot; the fixtures tested here resolve correctly with
+  both. Anything untested is unclaimed — round 2 below is what happens when
+  that scoping is taken seriously.
+- Cost is one 4-byte count payload per coarse entry in the per-revision
+  digest (entries bounded by the occupied-cell count; node overhead and
+  padding are additional allocation under the same entry-count bound, not
+  byte-exact) plus one footprint check per occupied coarse cell per factor;
+  per-frame selection stays a table lookup.
+
+## Round 2: boundary-notch blind spot (lead review)
+
+- RED: added `boundary_face_pit_is_held_at_source_far_away` (2-cell pit in a
+  13-cell solid face; old code selects unsafe `Half`, dilation ~0.20) plus
+  `unaligned_dense_cuboids_still_coarsen_including_negatives` (odd-edge
+  positive/negative dense controls reach `Quarter`, thin sheet stays held).
+  Verified RED (`left: Half, right: Source`), committed as `7a298a6` before
+  any source change.
+- Fix: `worst_interior_loss` now evaluates `(expected - count) / expected`
+  against each footprint *clipped to the occupied integer bounds* instead of
+  skipping non-fully-inside footprints. Unaligned dense cuboids still read
+  exactly `0`; the face pit reads `0.5` at factor 2 (`0.125` at factor 4).
+- GREEN: `cargo test -p matterweave-detail` → 113 passed (14 suites);
+  strict Clippy clean. Committed as checkpoint (see handoff).
+- Doc corrections in the same pass: payload-vs-allocation wording (4-byte
+  count payload per entry; node overhead/padding additional under the same
+  entry-count bound), single-cell void fraction `1/f^3` (was misstated as
+  `1 - 1/f^3` in `select.rs` docs), and `together` claims rescoped to tested
+  fixtures only.
