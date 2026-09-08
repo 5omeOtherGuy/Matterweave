@@ -24,7 +24,16 @@ capacity 8,386,560 bytes, below 8,388,608. Strict example Clippy passes after
 replacing modulo predicates with the pinned toolchain's `is_multiple_of`. This
 adds a correctness gate without changing production algorithms.
 
-The ten-minute ARM64 Android run is in progress; it is not yet counted as passed.
+The ten-minute ARM64 Android run passed at `ea436d3`: 600.013 seconds, 39,761
+cycles, 219,832 verified meshes, 9,296 resets and 3,615 save/reloads. Peak queue
+was 32; peak result capacity 8,387,904 bytes stayed below 8 MiB. The process
+completed normally and removed its disposable save.
+
+See [device summary](../evidence/2026-09-08-stream-stress.json) for the exact
+binary checksum, OS fingerprint, build configuration and sampled health values.
+Health samples are observations at roughly ten-second intervals, not continuous
+peak monitoring. The fixture ran headless with no GPU workload; these results
+do not establish a supported gameplay frame rate or a thermal improvement.
 Raw evidence: `/mnt/bench/matterweave-dev/performance/engine-03/phone-stream-ea436d3`.
 This is a CPU streaming/meshing/persistence stress workload, not a graphics frame
 benchmark or evidence of comparative thermal efficiency. Rendering, collision,

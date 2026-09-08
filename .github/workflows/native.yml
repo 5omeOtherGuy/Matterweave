@@ -44,6 +44,9 @@ jobs:
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/shadow-cache-smoke.log; then exit 1; fi
           timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example indirect_smoke 2>&1 | tee artifacts/indirect-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/indirect-smoke.log; then exit 1; fi
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT timeout 90s cargo run --locked -p matterweave-render --example ray_reference_vulkan 2>&1 | tee artifacts/ray-reference.log
+          grep '30 checks, 0 failures' artifacts/ray-reference.log
+          if grep -E 'Validation Error|VUID-' artifacts/ray-reference.log; then exit 1; fi
           timeout 90s xvfb-run -a target/debug/matterweave-explorer --engine-check --save artifacts/unused.json 2>&1 | tee artifacts/engine-check.log
           grep 'PASS indirect' artifacts/engine-check-report.txt
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/engine-check.log; then exit 1; fi

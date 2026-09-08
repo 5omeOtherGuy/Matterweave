@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; engine-03 ten-minute native streaming gate, connected at 192.168.178.93:43537.",
+  "phone_owner": "Sole lead; streaming stress and ray probes passed; available for next engine check.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -484,30 +484,36 @@
     "E03-ray": {
       "attempt": 1,
       "owner": "Hy4",
-      "state": "running",
+      "state": "accepted",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/ray-hy4-01",
-      "acceptance": "Unaccepted; lead review and native/Android verification required."
+      "acceptance": "Lead recovered timeout, corrected sync and Adreno precision; 73 renderer tests, Clippy, host validation and 30 phone probes pass. Full-image comparison separate."
     },
     "E03-collision": {
       "attempt": 1,
       "owner": "GLM 5.3 Flash high",
       "state": "running",
-      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/collision-glm-01",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/collision-glm-02",
       "acceptance": "Unaccepted; lead review and native/Android verification required."
     },
     "E03-detail": {
       "attempt": 2,
       "owner": "Paid Muse 1.3 Contributor high",
       "state": "running",
-      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/detail-muse-02",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/detail-muse-03",
       "acceptance": "Unaccepted; lead review and native/Android verification required."
     },
     "E03-stream-stress": {
       "attempt": 1,
       "owner": "Sole lead",
-      "state": "running",
+      "state": "accepted",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/phone-stream-ea436d3",
-      "acceptance": "Host gate and strict example Clippy pass; ten-minute Android gate running."
+      "acceptance": "600.013-second Android gate passes 39,761 cycles and 219,832 mesh checks within bounds. Thermal status reached 3; no efficiency claim."
+    },
+    "E03-comparison": {
+      "owner": "Hy4",
+      "state": "running",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/comparison-hy4-01",
+      "acceptance": "Unaccepted full-image ray/raster/hybrid harness; lead owns Android and path selection."
     }
   },
   "capacity": {

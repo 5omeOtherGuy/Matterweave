@@ -98,9 +98,11 @@ delivery; M2–M6 remain open.
 The next integration branch is `codex/engine-completion-03`. Bounded workers own
 ray-reference Vulkan integration (Hy4), production detail-collision publication
 (GLM) and local detail-loss protection (paid Muse 1.3 Contributor). Lead owns
-streaming stress, integration and the connected OnePlus 13. The phone is reserved
-for the ten-minute native streaming correctness gate under
+streaming stress, integration and the connected OnePlus 13. The ten-minute native streaming correctness gate passed: 39,761 cycles,
+219,832 verified meshes and 3,615 save/reloads within all queue/residency limits.
+See [streaming stress](performance/stream-stress.md). Raw evidence is under
 `/mnt/bench/matterweave-dev/performance/engine-03/phone-stream-ea436d3`.
+The phone is now available for ray-reference validation.
 Current worker results are unaccepted until checked. Opus 5 returned a live rate
 limit rejection in this session; paid Muse works after the owner's opt-in.
 
@@ -110,6 +112,23 @@ tests and four Vulkan examples passed. Per-object LCOV line union reports
 [coverage evidence](performance/engine-coverage.md). This is not Android/shader
 coverage or an engine-completion percentage. The stopped temporary coverage
 build target was removed; profile/report evidence was retained.
+
+## Engine-03 renderer reference
+
+The bounded authoritative ray-volume pack and Naga shader now execute through
+a headless Vulkan probe harness. All 73 renderer tests and strict scoped Clippy
+pass. Lead corrected 48 host synchronization hazards, then two Adreno precision
+failures; the expanded 30-probe suite now passes host synchronization validation
+and physical Android. The [manifest](evidence/2026-09-08-ray-reference.json)
+retains source/binary checksum and the complete phone report. See
+[ray reference](performance/ray-reference.md) for bounds and numerical tolerances.
+This is shader correctness evidence only; the full-image same-quality ray/raster/
+hybrid comparison and primary-path selection remain in progress.
+
+The ten-minute streaming run sampled RSS between 7,052 and 16,128 KiB, and battery
+temperature rose 28.3 to 37.5 C with Android thermal status reaching 3. These are
+headless CPU-fixture observations, not a graphics-efficiency claim. See its
+[exact summary](evidence/2026-09-08-stream-stress.json).
 
 ## Earlier continuation evidence (historical pre-release checkpoints)
 
