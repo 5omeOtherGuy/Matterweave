@@ -1430,6 +1430,7 @@ pub fn run_desktop() {
     let mut showcase = false;
     let mut sandbox = false;
     let mut engine_check = false;
+    let mut async_engine_check = false;
     let mut detail_check = false;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
@@ -1442,6 +1443,7 @@ pub fn run_desktop() {
             "--showcase" => showcase = true,
             "--sandbox" => sandbox = true,
             "--engine-check" => engine_check = true,
+            "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
             "--smoke-exercise" => smoke_exercise = true,
             "--gallery-exercise" => gallery_exercise = true,
@@ -1463,9 +1465,14 @@ pub fn run_desktop() {
             }
         }
     }
-    if engine_check {
-        let mut check =
-            engine_check::IndirectCheck::new(save_path.with_file_name("engine-check-report.txt"));
+    if engine_check || async_engine_check {
+        let mut check = if async_engine_check {
+            engine_check::IndirectCheck::new_async(
+                save_path.with_file_name("async-engine-check-report.txt"),
+            )
+        } else {
+            engine_check::IndirectCheck::new(save_path.with_file_name("engine-check-report.txt"))
+        };
         EventLoop::new()
             .expect("event loop")
             .run_app(&mut check)
@@ -1587,7 +1594,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         .map(|s| s.trim().to_string());
     if matches!(
         requested_check.as_deref(),
-        Some("indirect") | Some("detail")
+        Some("indirect") | Some("detail") | Some("indirect-async")
     ) {
         // Remove only the consumed request marker; never any world or save.
         if let Err(e) = std::fs::remove_file(&request) {
@@ -1597,6 +1604,11 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         let result = if requested_check.as_deref() == Some("detail") {
             let mut check =
                 detail_check::DetailCheck::new(directory.join("detail-check-report.txt"));
+            event_loop.run_app(&mut check)
+        } else if requested_check.as_deref() == Some("indirect-async") {
+            let mut check = engine_check::IndirectCheck::new_async(
+                directory.join("async-engine-check-report.txt"),
+            );
             event_loop.run_app(&mut check)
         } else {
             let mut check =

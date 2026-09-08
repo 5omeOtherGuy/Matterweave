@@ -348,3 +348,12 @@ and require `PASS detail` in `/tmp/detail-check-report.txt`. On Android the same
 one-shot mechanism above accepts `detail` and writes `detail-check-report.txt`.
 The9 phases exercise retained geometry with automatic perspective/orthographic
 LOD, an edit, zero extent and recreation. See [evidence and limits](performance/detail-native-check.md).
+
+## Background indirect-light check
+
+Run `cargo run --locked -p matterweave-explorer -- --async-engine-check --save /tmp/unused.json`
+and require `PASS async indirect` in `/tmp/async-engine-check-report.txt`. Android
+accepts the one-shot marker value `indirect-async`. The fixture presents direct-only
+frames during CPU preparation, then uploads completed matching radiance. Reports
+separate owner request/upload time from request-to-poll latency. See
+[controller evidence and limits](performance/async-indirect.md).

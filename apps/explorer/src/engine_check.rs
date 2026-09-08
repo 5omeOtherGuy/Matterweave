@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3};
 use matterweave_core::World;
 use matterweave_render::{
+    async_indirect::{AsyncIndirectConfig, AsyncIndirectLight},
     indirect::{IndirectVolume, UpdateBudget},
     FrameResult, Hud, LightingSettings, Renderer, Sun,
 };
@@ -68,10 +69,34 @@ pub(crate) struct IndirectCheck {
     prepared: Option<u32>,
     phase_applied: Option<u32>,
     lighting: LightingSettings,
+    worker: Option<AsyncIndirectLight>,
+    pending_started: Option<std::time::Instant>,
+    request_ms: f64,
+    waiting_frames: u32,
+    total_waiting_frames: u32,
 }
 impl IndirectCheck {
     pub fn new(report_path: std::path::PathBuf) -> Self {
+        Self::with_background(report_path, false)
+    }
+    pub fn new_async(report_path: std::path::PathBuf) -> Self {
+        Self::with_background(report_path, true)
+    }
+    fn with_background(report_path: std::path::PathBuf, background: bool) -> Self {
+        let worker = background.then(|| {
+            AsyncIndirectLight::new(
+                AsyncIndirectConfig::new([-3, -1, -3], [7, 5, 7], 64, 32., palette()).unwrap(),
+            )
+        });
+        if let Some(worker) = &worker {
+            assert!(worker.available());
+        }
         Self {
+            worker,
+            pending_started: None,
+            request_ms: 0.0,
+            waiting_frames: 0,
+            total_waiting_frames: 0,
             report_path,
             report: Vec::new(),
             renderer: None,
@@ -130,6 +155,7 @@ impl ApplicationHandler for IndirectCheck {
     }
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         if let WindowEvent::Resized(size) = event {
+            self.prepared = None;
             if let Some(r) = &mut self.renderer {
                 r.resize(size.width, size.height);
             }
@@ -144,6 +170,7 @@ impl ApplicationHandler for IndirectCheck {
         }
         let phase = self.frame / PHASE_FRAMES;
         let mut phase_report = None;
+        let mut ready = true;
         let r = self.renderer.as_mut().unwrap();
         if self.prepared != Some(phase) {
             if self.phase_applied != Some(phase) {
@@ -174,6 +201,48 @@ impl ApplicationHandler for IndirectCheck {
             } else if phase == 0 || phase == 5 {
                 r.disable_indirect();
                 phase_report = Some(format!("phase={phase} indirect=off"));
+            } else if let Some(worker) = &mut self.worker {
+                if !self.cache.valid_for(&self.world, 0, self.lighting.sun) {
+                    r.disable_indirect();
+                    if self.pending_started.is_none() {
+                        let start = std::time::Instant::now();
+                        assert!(worker.request(&self.world, 0, self.lighting.sun).unwrap());
+                        self.request_ms = start.elapsed().as_secs_f64() * 1000.;
+                        self.pending_started = Some(start);
+                        self.waiting_frames = 0;
+                    }
+                    if let Some(result) = worker.poll(&self.world, 0, self.lighting.sun) {
+                        self.cache = result.expect("background indirect preparation");
+                    } else {
+                        assert!(worker.available(), "lighting worker exited");
+                        assert!(
+                            self.pending_started.unwrap().elapsed().as_secs() < 30,
+                            "background preparation did not complete"
+                        );
+                        ready = false;
+                    }
+                }
+                if ready {
+                    let latency_ms = self
+                        .pending_started
+                        .take()
+                        .map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.);
+                    let sample = self.cache.sample([-3, 1, 0], 0);
+                    if phase == 3 {
+                        assert_eq!(sample, [0.; 3]);
+                    } else {
+                        assert!(sample[0] > 0.02);
+                    }
+                    let start = std::time::Instant::now();
+                    r.upload_indirect(&self.cache, &self.world, 0).unwrap();
+                    phase_report = Some(format!(
+                        "phase={phase} async=on request_ms={:.3} worker_to_poll_ms={latency_ms:.3} upload_ms={:.3} waiting_presentations={} bytes={} sample={sample:?}",
+                        self.request_ms, start.elapsed().as_secs_f64() * 1000.,
+                        self.waiting_frames, self.cache.resident_bytes()
+                    ));
+                    self.request_ms = 0.0;
+                    self.waiting_frames = 0;
+                }
             } else {
                 let start = std::time::Instant::now();
                 let mut rays = 0;
@@ -212,7 +281,9 @@ impl ApplicationHandler for IndirectCheck {
                     self.cache.resident_bytes()
                 ));
             }
-            self.prepared = Some(phase);
+            if ready {
+                self.prepared = Some(phase);
+            }
         }
         let size = self.window.as_ref().unwrap().inner_size();
         if size.width == 0 || size.height == 0 {
@@ -232,8 +303,13 @@ impl ApplicationHandler for IndirectCheck {
             &self.lighting,
         ) {
             FrameResult::Presented => {
-                assert_eq!(r.indirect_enabled(), (1..=4).contains(&phase));
-                self.frame += 1;
+                assert_eq!(r.indirect_enabled(), ready && (1..=4).contains(&phase));
+                if ready {
+                    self.frame += 1;
+                } else {
+                    self.waiting_frames += 1;
+                    self.total_waiting_frames += 1;
+                }
             }
             FrameResult::Retry => {
                 self.prepared = None;
@@ -244,7 +320,15 @@ impl ApplicationHandler for IndirectCheck {
         if phase == 6 {
             self.renderer = None;
             self.window = None;
-            self.record("PASS indirect: off/on, moving sun, closed/open enclosure, stale edit and light invalidation".into());
+            if self.worker.is_some() {
+                assert!(
+                    self.total_waiting_frames > 0,
+                    "no presentation during background work"
+                );
+                self.record(format!("PASS async indirect: off/on, moving sun, closed/open enclosure, stale edit and light invalidation; {} presentations continued during background preparation", self.total_waiting_frames));
+            } else {
+                self.record("PASS indirect: off/on, moving sun, closed/open enclosure, stale edit and light invalidation".into());
+            }
             el.exit();
         }
         if let Some(report) = phase_report {
