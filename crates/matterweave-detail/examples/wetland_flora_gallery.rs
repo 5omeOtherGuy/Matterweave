@@ -1,6 +1,6 @@
 //! Writes the deterministic wetland support-flora gallery: content manifest,
 //! raw mesh buffers (little-endian f32 vertices / u32 indices) and prototype
-//! snapshots for source, half and quarter LODs, plus a host-only timing file.
+//! source snapshots, meshes at source/half/quarter LODs, and host-only timings.
 //!
 //! Usage: `cargo run -p matterweave-detail --example wetland_flora_gallery -- <out_dir>`
 //! No image, window or renderer dependency is used. Layout mirrors
@@ -67,7 +67,7 @@ fn main() -> Result<()> {
             mesh_bytes_total += vertices.len() + indices.len();
             meshes.push(serde_json::json!({
                 "prototype": id,
-                "class": flora_class(&id),
+                "class": if id == "twisted_shrub" { "flora-woody" } else { "flora-decorative" },
                 "lod_factor": lod.factor(),
                 "cell_size_m": base_scale * lod.factor() as f32,
                 "source_revision": mesh.revision,
@@ -105,7 +105,7 @@ fn main() -> Result<()> {
         }
         prototypes.push(serde_json::json!({
             "id": id,
-            "class": flora_class(&id),
+            "class": if id == "twisted_shrub" { "flora-woody" } else { "flora-decorative" },
             "cell_size_m": volume.scale().metres(),
             "occupied_cells": volume.occupied_cells(),
             "fits_prototype_mesh_cap_33288": volume.occupied_cells() < 33_288,
