@@ -58,7 +58,8 @@ fn irregular_solid(id: &str) -> DetailVolume {
     }
     // A short protrusion beyond the cube face.
     for y in 0..3 {
-        v.set([8, y, 0], material::BANK_STONE).expect("protrusion cell");
+        v.set([8, y, 0], material::BANK_STONE)
+            .expect("protrusion cell");
     }
     v
 }
@@ -115,6 +116,7 @@ pub fn fixture_scene() -> DetailScene {
 /// each in the static-scene geometry pool. Built once per renderer.
 pub struct StaticCatalog {
     pub meshes: Vec<Mesh>,
+    source_version: matterweave_detail::SceneVersion,
     index: BTreeMap<(String, Lod), usize>,
     /// Per `(prototype, Lod)` derived-mesh revision, traced against source.
     revisions: BTreeMap<(String, Lod), u64>,
@@ -170,6 +172,7 @@ impl StaticCatalog {
             return Err("fixture produced no nonempty prototypes".into());
         }
         Ok(Self {
+            source_version: scene.source_version(),
             meshes,
             index,
             revisions,
@@ -202,6 +205,9 @@ pub fn instances_for_frame(
     frame: &PreparedFrame,
     catalog: &StaticCatalog,
 ) -> Result<Vec<StaticInstance>, String> {
+    if frame.source_version != catalog.source_version {
+        return Err("prepared frame and resident catalog source versions differ".into());
+    }
     let mut out = Vec::with_capacity(frame.selected.len());
     for item in &frame.selected {
         let prototype = catalog
@@ -325,7 +331,7 @@ pub fn phases() -> Vec<PhasePlan> {
             recreate: false,
         },
         PhasePlan {
-            name: "budget-fallback-to-source",
+            name: "resident-zero-build-budget",
             eye: [0.2, 0.2, 220.0],
             target: origin,
             projection: Projection::Perspective {
@@ -426,6 +432,7 @@ pub(crate) struct DetailCheck {
     frame: u32,
     prepared: Option<u32>,
     edited: bool,
+    recreated: bool,
     finished: bool,
 }
 
@@ -453,12 +460,15 @@ impl DetailCheck {
             frame: 0,
             prepared: None,
             edited: false,
+            recreated: false,
             finished: false,
         }
     }
 
     fn record(&mut self, entry: String) {
         log::info!("{entry}");
+        #[cfg(not(target_os = "android"))]
+        eprintln!("{entry}");
         self.report.push(entry);
         std::fs::write(&self.report_path, self.report.join("\n") + "\n")
             .expect("write detail check report");
@@ -480,7 +490,10 @@ impl DetailCheck {
             .prepare_batches(&plan.lod_camera(height), &plan.config)
             .map_err(|e| e.to_string())?;
         let instances = instances_for_frame(&frame, &catalog)?;
-        let renderer = self.renderer.as_mut().ok_or("no renderer for static scene")?;
+        let renderer = self
+            .renderer
+            .as_mut()
+            .ok_or("no renderer for static scene")?;
         renderer
             .replace_static_scene(&catalog.meshes, &instances)
             .map_err(|e| format!("replace_static_scene: {e}"))?;
@@ -495,10 +508,6 @@ impl DetailCheck {
             .as_ref()
             .map(|w| w.inner_size().height.max(1) as f32)
             .unwrap_or(480.0);
-
-        if plan.recreate {
-            return Ok(format!("phase={phase} {} pending-recreate", plan.name));
-        }
 
         if plan.edit && !self.edited {
             let before = self.scene.source_version();
@@ -611,9 +620,23 @@ impl DetailCheck {
             .update_static_instances(&instances)
             .map_err(|e| format!("update_static_instances: {e}"))?;
 
+        let selections = frame
+            .selected
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}:{}:{:?}:r{}",
+                    s.instance,
+                    s.prototype,
+                    s.lod,
+                    catalog.revision(&s.prototype, s.lod).unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         let counts = self.scene.counts();
         Ok(format!(
-            "phase={phase} {} proj={} lods[{}] instances={} builds_this_call={} cached_bytes={} source_cells={} source_bytes={} sheet=Source",
+            "phase={phase} {} proj={} lods[{}] instances={} builds_this_call={} cached_bytes={} source_cells={} source_bytes={} sheet=Source selected=[{selections}] resident_prototypes={}",
             plan.name,
             match plan.projection {
                 Projection::Perspective { .. } => "perspective",
@@ -625,6 +648,7 @@ impl DetailCheck {
             frame.cached_mesh_bytes,
             counts.unique_stored_cells,
             counts.source_bytes,
+            catalog.meshes.len(),
         ))
     }
 
@@ -692,6 +716,7 @@ impl ApplicationHandler for DetailCheck {
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::Resized(size) => {
+                self.prepared = None;
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
@@ -713,7 +738,24 @@ impl ApplicationHandler for DetailCheck {
         if self.prepared != Some(phase as u32) {
             // The lifecycle-recreate phase drops and recreates the renderer,
             // which re-preloads geometry and re-installs the static scene.
-            if plan.recreate {
+            if plan.recreate && !self.recreated {
+                self.recreated = true;
+                let r = self.renderer.as_mut().unwrap();
+                r.resize(0, 0);
+                if !matches!(
+                    r.render_with_lighting(
+                        plan.view_projection(1.0),
+                        plan.eye,
+                        &Hud::new(1.0, 1.0),
+                        &self.lighting
+                    ),
+                    FrameResult::Retry
+                ) {
+                    self.record("FAIL detail: zero extent did not return Retry".into());
+                    el.exit();
+                    return;
+                }
+                self.record("zero-extent=Retry; recreating renderer".into());
                 self.suspended(el);
                 self.resumed(el);
                 if self.renderer.is_none() {
@@ -727,14 +769,7 @@ impl ApplicationHandler for DetailCheck {
                 ));
             }
             match self.apply_phase(phase) {
-                Ok(entry) => {
-                    // recreate phase already installed; still record the entry.
-                    if !plan.recreate {
-                        self.record(entry);
-                    } else {
-                        self.record(entry);
-                    }
-                }
+                Ok(entry) => self.record(entry),
                 Err(error) => {
                     self.record(format!("FAIL detail: phase {phase}: {error}"));
                     el.exit();
@@ -756,15 +791,14 @@ impl ApplicationHandler for DetailCheck {
         let matrix = plan.view_projection(aspect);
         let eye = plan.eye;
         let hud = Hud::new(size.width as f32, size.height as f32);
-        match self
-            .renderer
-            .as_mut()
-            .unwrap()
-            .render_with_lighting(matrix, eye, &hud, &self.lighting)
-        {
+        match self.renderer.as_mut().unwrap().render_with_lighting(
+            matrix,
+            eye,
+            &hud,
+            &self.lighting,
+        ) {
             FrameResult::Presented => self.frame += 1,
             FrameResult::Retry => {
-                self.prepared = None;
                 return;
             }
             other => {
@@ -781,7 +815,7 @@ impl ApplicationHandler for DetailCheck {
                     let seen: Vec<String> =
                         self.lods_seen.iter().map(|l| format!("{l:?}")).collect();
                     self.record(format!(
-                        "PASS detail: approach/retreat/zoom perspective+orthographic selection over {} phases; LODs chosen {}; thin sheet held at Source; source collision/query invariant; edit invalidation rebuilt once; budget fallback and lifecycle recreation verified",
+                        "PASS detail: approach/retreat/zoom perspective+orthographic selection over {} phases; LODs chosen {}; thin sheet held at Source; source collision/query invariant; edit invalidation rebuilt once; resident zero-build budget, zero extent and lifecycle recreation verified (cold-cache fallback: unit test only)",
                         self.plans.len(),
                         seen.join("/")
                     ));
@@ -821,9 +855,13 @@ mod tests {
     fn stale_catalog_is_rejected_after_source_edit() {
         let mut scene = fixture_scene();
         let catalog = StaticCatalog::preload(&mut scene).unwrap();
-        scene.edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE).unwrap();
+        scene
+            .edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE)
+            .unwrap();
         let plan = phases()[0];
-        let frame = scene.prepare_batches(&plan.lod_camera(480.0), &plan.config).unwrap();
+        let frame = scene
+            .prepare_batches(&plan.lod_camera(480.0), &plan.config)
+            .unwrap();
         assert!(instances_for_frame(&frame, &catalog).is_err());
     }
 
@@ -845,7 +883,12 @@ mod tests {
         // Distinct pool indices.
         let mut indices: Vec<usize> = LODS
             .iter()
-            .flat_map(|&lod| [catalog.instance_index(BOULDER, lod), catalog.instance_index(SHEET, lod)])
+            .flat_map(|&lod| {
+                [
+                    catalog.instance_index(BOULDER, lod),
+                    catalog.instance_index(SHEET, lod),
+                ]
+            })
             .map(|i| i.unwrap())
             .collect();
         indices.sort();
@@ -885,7 +928,9 @@ mod tests {
 
     #[test]
     fn thin_sheet_stays_at_source_across_default_camera_phases() {
-        for plan in phases().into_iter().filter(|p| !p.edit && p.config.max_coarse_builds.is_none())
+        for plan in phases()
+            .into_iter()
+            .filter(|p| !p.edit && p.config.max_coarse_builds.is_none())
         {
             let mut scene = fixture_scene();
             let frame = scene
@@ -979,7 +1024,9 @@ mod tests {
         for (instance, selected) in instances.iter().zip(&frame.selected) {
             assert_eq!(
                 instance.prototype,
-                catalog.instance_index(&selected.prototype, selected.lod).unwrap()
+                catalog
+                    .instance_index(&selected.prototype, selected.lod)
+                    .unwrap()
             );
             assert_eq!(instance.translation, selected.transform.translation_m);
             assert_eq!(instance.yaw_quarters, yaw_quarters(selected.transform.yaw));

@@ -1585,7 +1585,10 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     let requested_check = std::fs::read_to_string(&request)
         .ok()
         .map(|s| s.trim().to_string());
-    if matches!(requested_check.as_deref(), Some("indirect") | Some("detail")) {
+    if matches!(
+        requested_check.as_deref(),
+        Some("indirect") | Some("detail")
+    ) {
         // Remove only the consumed request marker; never any world or save.
         if let Err(e) = std::fs::remove_file(&request) {
             log::error!("Engine check request: {e}");
