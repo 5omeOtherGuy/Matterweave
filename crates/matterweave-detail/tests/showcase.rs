@@ -8,10 +8,9 @@ use matterweave_detail::{
     build_showcase, carved, composition_hash, material, material_policy, showcase_class,
     species_source_radius_m, DetailScene, Lod, MaterialPolicy, Showcase, BASE_ROCK_ID,
     BASE_SOIL_ID, BASIN_WATER_LEVEL_M, LILY_PAD_HEIGHT_M, MAP_EDGE_CELLS, MAP_EDGE_M,
-    MAX_PROTOTYPE_CELLS, MAX_SCENE_CACHE_BYTES, MAX_SCENE_SOURCE_BYTES,
-    ROUTE_PLAYER_CLEARANCE_M, SHOWCASE_EXPANDED_CELLS_MIN, SHOWCASE_FLORA_CELLS_MIN,
-    SHOWCASE_PLANTS_MIN, SHOWCASE_SEED, SHOWCASE_SPECIES, SPECIES_LILY, TERRAIN_CELL_M,
-    TILE_CELLS, WALK_SPEED_M_S,
+    MAX_PROTOTYPE_CELLS, MAX_SCENE_CACHE_BYTES, MAX_SCENE_SOURCE_BYTES, ROUTE_PLAYER_CLEARANCE_M,
+    SHOWCASE_EXPANDED_CELLS_MIN, SHOWCASE_FLORA_CELLS_MIN, SHOWCASE_PLANTS_MIN, SHOWCASE_SEED,
+    SHOWCASE_SPECIES, SPECIES_LILY, TERRAIN_CELL_M, TILE_CELLS, WALK_SPEED_M_S,
 };
 use std::sync::OnceLock;
 
@@ -107,7 +106,11 @@ fn canonical_counts_meet_showcase_targets() {
     // Woody and fungal populations are reported separately, so no manifest can
     // present shrubs as mushrooms.
     let woody = manifest.classes.get("flora-woody").expect("woody class");
-    assert!(woody.instances >= 100, "woody instances {}", woody.instances);
+    assert!(
+        woody.instances >= 100,
+        "woody instances {}",
+        woody.instances
+    );
     let fungus = manifest.classes.get("flora-fungus").expect("fungus class");
     assert!(fungus.instances >= 500);
     let fungus_species: usize = [
@@ -158,13 +161,20 @@ fn map_is_a_full_128_m_source_map_not_a_single_tile() {
             max[axis] = max[axis].max(draw.transform.translation_m[axis]);
         }
     }
-    assert!(min[0] <= 1.0 && min[2] <= 1.0, "map does not start at origin");
+    assert!(
+        min[0] <= 1.0 && min[2] <= 1.0,
+        "map does not start at origin"
+    );
     assert!(
         max[0] >= MAP_EDGE_M - 8.0 && max[2] >= MAP_EDGE_M - 8.0,
         "placed content spans only {max:?}, not a 128 m map"
     );
     // Vertical extent must be real relief, not a flat slab.
-    assert!(max[1] - min[1] >= 24.0, "vertical extent {}", max[1] - min[1]);
+    assert!(
+        max[1] - min[1] >= 24.0,
+        "vertical extent {}",
+        max[1] - min[1]
+    );
     assert_eq!(TERRAIN_CELL_M, 0.25, "terrain source stays at 25 cm");
 }
 
@@ -394,6 +404,19 @@ fn out_of_map_and_negative_inputs_are_rejected_not_clamped() {
 #[test]
 fn surface_query_reports_real_solid_in_cavity_intersected_columns() {
     let showcase = map();
+    // Terrain queries exclude independently placed plants. A mushroom cap may
+    // validly occupy the air above a carved terrain column (regression below).
+    let terrain: Vec<_> = showcase.scene.draws().into_iter()
+        .filter(|d| showcase_class(&d.prototype) == "terrain")
+        .map(|d| {
+            let source = showcase.scene.prototype(&d.prototype).unwrap();
+            let bounds = source.bounds_world(&d.transform).unwrap().unwrap();
+            (d.transform, source, bounds)
+        }).collect();
+    let solid_terrain = |point: [f32; 3]| terrain.iter().any(|(transform, source, bounds)| {
+        (0..3).all(|a| point[a] >= bounds.min[a] && point[a] < bounds.max[a])
+            && material_policy(source.sample_world_metres(transform, point).unwrap()) == MaterialPolicy::Collision
+    });
     let mut lowered = 0usize;
     let mut roofed = 0usize;
     for xi in 0..MAP_EDGE_CELLS {
@@ -418,10 +441,7 @@ fn surface_query_reports_real_solid_in_cavity_intersected_columns() {
                     assert!(carved(x, cy, z));
                     if surface.water_depth_m == 0.0 {
                         assert!(
-                            !showcase
-                                .scene
-                                .is_collidable_world_metres([x, cy, z])
-                                .expect("valid point"),
+                            !solid_terrain([x, cy, z]),
                             "solid voxel above the reported surface at {x},{z},{cy}"
                         );
                     }
@@ -430,19 +450,9 @@ fn surface_query_reports_real_solid_in_cavity_intersected_columns() {
             if surface.overhung {
                 roofed += 1;
                 // The reported top is solid, and there is real air below it.
-                assert!(showcase
-                    .scene
-                    .is_collidable_world_metres([x, top_y, z])
-                    .expect("valid point"));
+                assert!(solid_terrain([x, top_y, z]));
                 assert!((0..surface.top_cell).any(|y| {
-                    !showcase
-                        .scene
-                        .is_collidable_world_metres([
-                            x,
-                            (y as f32 + 0.5) * TERRAIN_CELL_M,
-                            z,
-                        ])
-                        .expect("valid point")
+                    !solid_terrain([x, (y as f32 + 0.5) * TERRAIN_CELL_M, z])
                 }));
             }
         }
@@ -619,7 +629,13 @@ fn plant_source_geometry_clears_both_routes_including_its_own_radius() {
             ("ground", &showcase.route),
             ("elevated", &showcase.elevated_route),
         ] {
-            for point in route {
+            // Check intermediate positions as well as the stored route vertices.
+            // Point-only exclusion misses plants halfway between the 2m samples.
+            for point in route.windows(2).flat_map(|pair| (0..=16).map(move |step| {
+                let t = step as f32 / 16.;
+                [pair[0][0] + t * (pair[1][0] - pair[0][0]), 0.,
+                 pair[0][2] + t * (pair[1][2] - pair[0][2])]
+            })) {
                 let d = ((point[0] - x).powi(2) + (point[2] - z).powi(2)).sqrt();
                 assert!(
                     d >= limit,
@@ -756,7 +772,11 @@ fn flora_is_rooted_clustered_and_off_the_route() {
             cluster_cells.insert(((x / 8.0) as i32, (z / 8.0) as i32));
             continue;
         }
-        assert!(surface.is_dry_land(), "plant {} stands in water", draw.instance);
+        assert!(
+            surface.is_dry_land(),
+            "plant {} stands in water",
+            draw.instance
+        );
         assert!(surface.slope <= 0.85);
         assert!(
             surface.material == material::MOSS_TURF || surface.material == material::DETAIL_SOIL,
@@ -809,4 +829,39 @@ fn a_different_seed_produces_a_different_map() {
     assert!(other.scene.counts().expanded_occupied_cells >= SHOWCASE_EXPANDED_CELLS_MIN);
     assert!(other.manifest.flora_expanded_cells >= SHOWCASE_FLORA_CELLS_MIN);
     assert!(other.manifest.flora_instances >= SHOWCASE_PLANTS_MIN);
+}
+
+#[test]
+fn cavity_column_discriminates_terrain_from_placed_flora() {
+    let showcase = map();
+    let point = [97.375, 16.125, 58.125];
+    let mut terrain_solids = Vec::new();
+    for draw in showcase.scene.draws() {
+        let source = showcase.scene.prototype(&draw.prototype).unwrap();
+        let sampled = source.sample_world_metres(&draw.transform, point).unwrap();
+        if material_policy(sampled) == MaterialPolicy::Collision {
+            eprintln!("cavity intersection: {} / {} / material {}", draw.instance, draw.prototype, sampled);
+            if showcase_class(&draw.prototype) == "terrain" {
+                terrain_solids.push(draw.instance);
+            }
+        }
+    }
+    assert!(terrain_solids.is_empty(), "carved column contains terrain: {terrain_solids:?}");
+}
+
+#[test]
+fn source_radius_contains_every_occupied_voxel_corner() {
+    for species in SHOWCASE_SPECIES {
+        let source = matterweave_detail::showcase_prototype(species).unwrap();
+        let radius = species_source_radius_m(species).unwrap();
+        let scale = source.scale().metres();
+        for (cell, _) in source.iter_cells() {
+            for dx in [0, 1] { for dz in [0, 1] {
+                let x = (cell[0] + dx) as f32 * scale;
+                let z = (cell[2] + dz) as f32 * scale;
+                assert!(x.hypot(z) <= radius + 1e-5,
+                    "{species} corner [{x},{z}] exceeds protected radius {radius}");
+            }}
+        }
+    }
 }
