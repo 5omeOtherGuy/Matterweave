@@ -13,43 +13,44 @@ is retired. This continuation owns phone, integration and delivery.
 
 Current verified progress (2026-09-08 continuation):
 
-- PR8 remains draft/open. Host, Android and docs CI passed at `c6e2317`;
-  the missing X11 library was already fixed. PR8 source `7a30e5b` passes all remote checks. New local traversal/step work
-  follows that checkpoint; nothing from PR8 is merged or released yet.
-- The integrated 128m map contains 34,864,520 instance-expanded occupied cells,
-  8,876,712 unique stored cells and 6,221 plants across four mushroom and six other
-  flora archetypes. Flora contributes 5,908,389 expanded cells. Source meshes total
-  45,328,920 bytes. Generator 2, seed 20260908, composition hash `f458591e7b345546`.
-  These are generated-data/host results, not mobile residency or performance claims.
-- The final map's 19 source tests pass, including every continuous route segment's
-  flora clearance, actual horizontal voxel-corner radius and carve-aware terrain.
-  Independent Muse/Gemini reviews found the original radius/segment errors; both
-  reviewed the corrections without substantiated new findings. Actual continuous
-  Rapier traversal then exposed terrain blockers on both routes. The bounded30cm
-  stair fix passes45 physics tests but full routes remain RED; Opus owns an isolated
-  route correction. Phone route acceptance remains open.
-- The workspace suite passed 238 tests, with one expensive runtime test explicitly
-  ignored. Running that full-map test separately passed load, standing, jump, source
-  edit/collision, save and reload in 16.45s on the final ten-species map. Strict
-  Clippy passes for workspace code (one upstream vendored winit warning remains).
-  Python tooling has 130 passing tests; the historical 226 count double-counted tests.
-- Entrance correction validates the actual capsule with a bounded vertical adjustment.
-  Corrupt/old-generator saves retain their bytes and select separate recovery files.
-  Invalid edit references/body data rejected later in runtime still need recovery
-  coverage. Generator 2 prevents old layout edit journals replaying against new plants.
-- The final native Vulkan/Xvfb/lavapipe capture passed 25 frames, 20 valid typed rows,
+- PR8 remains draft/open. All remote host, Android and docs checks pass at
+  `3040a53`, including the corrected asynchronous queue saturation regression.
+  Generator3 route integration follows that checkpoint; PR8 is not merged/released.
+- Generator3, seed20260908, composition `dfb9f40519a3c151`:34,716,467 expanded
+  occupied cells,8,899,364 unique stored cells,6,192flora/10species and5,721,300
+  expanded flora cells. Source meshes47,255,040bytes, within64MiB. These are host
+  generated-data results, not mobile residency or performance claims. See the
+  [manifest](evidence/full-wetland-generator3.json), including recorded routes.
+- Graded paths and source-derived connectivity now pass actual continuous Rapier
+  traversal: ground632points/197.46667simulation seconds; elevated37/11.35;
+  waterside21-point ground prefix/7.1166673. No jumps or intermediate teleports.
+  The accepted0.30m autostep is used. An earlier257-second trial silently missed
+  six anchors and was rejected; every retained authored anchor now resolves or
+  generation fails. All19 prior source tests and the new waterside gate pass.
+  Muse found no source blocker; Astra's waterside coverage finding was corrected.
+- Workspace240 normal Rust tests pass before the additive waterside check;
+  generator3 full Runtime load/jump/edit/collision/reload passes separately16.85s.
+  Both route tests pass in integration. Python tooling had130 passing tests;
+  the new phone collector is under review, not yet integrated or executed.
+- Entrance correction validates the actual capsule with a bounded vertical lift.
+  Generator3 prevents prior layout journals replaying against changed source.
+  Corrupt/old-generator sessions select separate recovery files. Invalid edit
+  references/body data rejected later in Runtime still need recovery coverage.
+- The generator3 native Vulkan/Xvfb/lavapipe capture passed25 frames,20 valid typed rows,
   six physics bodies, isolated persistence and no validation errors. Menu rendering
   is excluded from GPU completion joins. Source prototype geometry is shared on GPU;
   source LOD remains fixed. No automatic LOD or optimization win is claimed.
 - The initial six-species full-map development APK (`fffb3844…`) was built, passed
   ARM64/16KiB alignment and signature checks, and was installed on the OnePlus13.
   Normal chooser/entry, movement, HOME/resume and persisted session were observed.
-  The corrected ten-species APK (`35cbd2e6…`, source `7e1143e`) is now installed;
+  The corrected ten-species APK (`35cbd2e6…`, source `7e1143e`) was installed;
   normal entry, movement, two source edits, process reload and HOME/resume rendering
   passed. Captures1800/180rows validate but show only renderer epoch1.
   [Device evidence](evidence/2026-09-08-full-wetland-development.md) retains exact
-  conditions and limits. Full routes, water/destruction, integrated shadow/temporal
-  quality and matched performance evidence remain open.
+  conditions and limits. Generator3 development APK `4e47b6d9…` (`0d8225b`)
+  now installs and launches normally; touch move/jump and separate recovery2 save
+  observed. Full phone routes, destruction, shadow/temporal quality and matched
+  performance evidence remain open.
 
 Next: verify the final APK and native route replay, correct any blockers, then
 exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve

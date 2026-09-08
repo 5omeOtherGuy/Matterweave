@@ -235,7 +235,7 @@
       "artifact": "41e8af2"
     },
     "completion-app": {
-      "state": "integrated-device-functional-final-map-pending",
+      "state": "integrated-generator3-phone-functional",
       "owner": "sole desktop lead",
       "paths": [
         "apps/explorer/src/wetland.rs",
@@ -245,11 +245,11 @@
         "apps/explorer/src/lib.rs",
         "apps/explorer/src/controls.rs"
       ],
-      "acceptance": "Runtime load/jump/edit/reload regression passes; corrupt-file recovery and generator-version isolation pass. Native strict capture passes. Initial fullmap APK fffb3844 installed, normal menu/entry/movement/Home-resume/save observed. Final10-species map and full traversal/edit/measurement/release gates pending.",
-      "artifact": "41e8af2"
+      "acceptance": "Runtimefullmap/edit/reloadPASS16.85s; AndroidAPK4e47b6d9 signature/alignment/install/menu/move/jump/separaterecovery2 PASS. Fullphone routes,destruction,matchedperformancepending.",
+      "artifact": "0d8225b"
     },
     "completion-traversal": {
-      "state": "lead-reproduced-blockers",
+      "state": "integrated-host-verified",
       "owner": "muse-free",
       "base": "7e1143e",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-traversal",
@@ -258,11 +258,11 @@
         "crates/matterweave-physics/tests/showcase_traversal.rs",
         "docs/performance/showcase/traversal-worker.md"
       ],
-      "acceptance": "Muse interrupted after fixture mismatch and provider429; no worker result accepted. Lead3af4115 uses actual app entrance handling and wading speed; both continuous routes fail. Auto-step0.30/0.55m advances but still stalls. Route correction delegated separately; full traversal remains RED."
+      "acceptance": "Lead regression3af4115 first reproduced bothblockers; generator3 now passes bothactualroutes pluswatersideprefix. Rawlogscompletion-02/generator3-all-itineraries-walk.log. Phonepending."
     },
     "completion-route-fix": {
-      "state": "running",
-      "owner": "opus-medium",
+      "state": "integrated-host-verified",
+      "owner": "sole Codex lead after bounded Opus handoff",
       "base": "3af4115 with provisional0.55m autostep dependency",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-route-fix",
       "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/route-fix-opus",
@@ -271,13 +271,49 @@
         "crates/matterweave-detail/tests/showcase.rs",
         "docs/performance/showcase/route-fix-opus.md"
       ],
-      "acceptance": "Fix actual continuous ground/elevated traversal without density reductions, jumps or collision bypass. Lead owns physics, integration and phone."
+      "acceptance": "Worker039ad6f failed generation; leadd58c85e corrected connectivity/clearance/missinganchors. Both actualRapier routes PASS197.46667/11.35simseconds,19contenttestsPASS; Muse nofindings,Astra watersidecoverage addressedf887d67. Phonepending.",
+      "artifact": "0d8225b"
+    },
+    "completion-ci-async": {
+      "state": "integrated-ci-verified",
+      "owner": "lead after Pi Astra partial handoff",
+      "artifact": "3040a53",
+      "acceptance": "39coretests/Clippy/40singleCPUrepetitions PASS; allremote host/Android/docs checks PASS. Corrects testtiming notproduction scheduler."
+    },
+    "completion-p02-runner": {
+      "state": "correction-running",
+      "owner": "opus-medium",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-p02-runner",
+      "base": "0d8225b",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-runner-correction",
+      "session": "/mnt/bench/matterweave-dev/performance/completion-02/p02-runner-opus/session.jsonl",
+      "paths": [
+        "tools/performance/collect_wetland_pair.py",
+        "tools/performance/test_collect_wetland_pair.py",
+        "docs/performance/p02-phone-runner.md"
+      ],
+      "acceptance": "Initial749bd56 host142testsPASS but leadfoundunownedfilecleanup/missingbase/slot128/finitevalidation defects. NOT EXECUTED. Bounded correctionrequested; leadownsreview/phone."
+    },
+    "completion-route-replay": {
+      "state": "running",
+      "owner": "astra-worker via Pi; separate leaf",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-route-replay",
+      "base": "0d8225b",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/route-replay-astra",
+      "paths": [
+        "apps/explorer/src/wetland_replay.rs",
+        "apps/explorer/src/wetland.rs",
+        "apps/explorer/src/lib.rs",
+        "docs/performance/showcase/route-replay.md"
+      ],
+      "acceptance": "Opt-in actualapp route diagnostic withnormalphysics/render/wading, nointermediate teleport; boundedstall/cancel/results. Leadownsphoneandacceptance."
     }
   },
   "capacity": {
     "policy": "One lead; bounded independent Pi workers as useful. One phone owner; serialize heavy builds. Prior two-lead quota superseded by owner."
   },
   "provider_blockers": {
-    "opus": "Desktop HTTP429; no retries before1788838200 or paid fallback. Native worker already completed."
+    "muse": "Route review transient429 thencompleted110.36s. No perpetual blockade inferred.",
+    "opus": "Current route/phone-runner sessions callable; historical429 no longer treated as current."
   }
 }

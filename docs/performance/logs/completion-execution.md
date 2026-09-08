@@ -95,3 +95,38 @@ review resumes its exact session. No GPU joining defect was identified.
 Ordinary phone walking also entered the deep basin; saved eye10.767m below the12m
 surface and underwater tint observed. No teleport/flying used. Full designated
 routes and destruction remain pending. App remains force-stopped after checks.
+
+## Generator3 integration and independent review
+
+`cce16dd` preserves Opus's failed route experiment; `0d8225b` applies the lead
+correction. See route-fix-opus.md for rejected anchors/duration trials. Final
+immutable authored profile removes per-column locks; solid cave roofs supply real
+walking support; flood-filled edges prevent snapping isolated terraces. Density
+thresholds unchanged. Source manifest generation completed with composition
+`dfb9f40519a3c151`,34,716,467expanded cells,6,192plants/10species,47,255,040meshbytes.
+A manifest command accidentally used the route worktree target from integration;
+final manifest regenerated from the exclusive lead target, same content hash.
+
+Actual checks: workspace240PASS; full Runtime16.85sPASS; detail19PASS and new
+waterside gatePASS; both continuous integration routesPASS197.46667/11.35simsec,
+watersideprefix7.1166673simsec. Native/phone timing are distinct. Muse and PiAstra
+source reviews complete; Astra watersidegap corrected60abc39/f887d67. First
+waterside endpoint predicate missed the quantized anchor and produced492m; gate
+rejected it. Correct westshore predicate yields21points with actualwater access.
+
+Android0d8225b APK4e47b6d98a2a7ab1a71ba70387334cf3571a8b06b95524d75a4fbca04e378e70
+built61s, signature/16KiBchecksPASS, installedOnePlus13. Normalchooser/entry,
+movement/jump andgenerator3recovery2 save observed. Deviceartifactscompletion-02/
+phone-generator3. Phoneforce-stopped afterward. Not merged/released; no fullphone
+route or optimization result claimed.
+
+P02gen2 candidate6e50f5fe/reference4736de6f APKs frozen but NOT MEASURED. The new
+collector749bd56 was NOT EXECUTED: lead caught cleanup deleting unowned127/profile
+on preflight failure, missingbase/slot128 selection gaps, finite/scenevalidation
+gaps. Exact Opus session resumed for correction and fault-injection tests.
+A separate PiAstra leaf owns opt-in actualapp route diagnostics; phoneowner remains
+lead. No old user-save backup/restore ritual is used.
+
+Generator3 native Vulkan/Xvfb/lavapipe capture PASS:25frames/20valid typed rows,
+six bodies, separate save and no validation errors. Artifactcompletion-02/
+wetland-capture-generator3. No mobile performance inference.
