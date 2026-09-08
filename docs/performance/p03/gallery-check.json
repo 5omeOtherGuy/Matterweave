@@ -1,0 +1,53 @@
+{
+  "result": "PASS",
+  "scope": "host exported geometry/counts, not device or quality qualification",
+  "meshes": [
+    {
+      "prototype": "parasol_mushroom",
+      "lod": 1,
+      "surface_area_m2": 5.2265625
+    },
+    {
+      "prototype": "parasol_mushroom",
+      "lod": 2,
+      "surface_area_m2": 5.34375
+    },
+    {
+      "prototype": "parasol_mushroom",
+      "lod": 4,
+      "surface_area_m2": 7.375
+    },
+    {
+      "prototype": "terrain_tile_16m",
+      "lod": 1,
+      "surface_area_m2": 870.75
+    },
+    {
+      "prototype": "terrain_tile_16m",
+      "lod": 2,
+      "surface_area_m2": 863.5
+    },
+    {
+      "prototype": "terrain_tile_16m",
+      "lod": 4,
+      "surface_area_m2": 876.0
+    }
+  ],
+  "artifact_sha256": {
+    "parasol_mushroom.snapshot.json": "fd09a34c848342ed5de0f2733e92f56541d04d26416f712a235c6b902c6526aa",
+    "terrain_tile_16m.snapshot.json": "ebacf602bc6e3f9563c6806611aee0be91702413bbad67df3c14237436649187",
+    "parasol_mushroom.lod1.vertices.le.bin": "52c7b4bfff63009b79e8465e464b5981a1b0ae93dbeed3e4f92f1e50fbbf8a26",
+    "parasol_mushroom.lod1.indices.le.bin": "adb0639062b374071b79130c737ef4ad8af3aeed071330e5ceac7dd6883b8488",
+    "parasol_mushroom.lod2.vertices.le.bin": "514646f181f9a3a96fd45705d9fbee00524ba3fd7a23ebd25fbf4581eb1e1330",
+    "parasol_mushroom.lod2.indices.le.bin": "4a8338f4cdaffc53b6fb33d8f016b8051a8e23cf832b9dd627655cf8d06e9538",
+    "parasol_mushroom.lod4.vertices.le.bin": "51ea1c313b54bfd27beded788e42054dfbf0d4de82e2ec79fa9b8d2c0f4e3e4c",
+    "parasol_mushroom.lod4.indices.le.bin": "a1d5d663a50accc5f622dec9d3ec4b51f0f09da9e5162ceb50217115cf690273",
+    "terrain_tile_16m.lod1.vertices.le.bin": "c042679360c927c3bbb7fbf2d54bea6f030d4ebdfe0bcf32ac339f67281b65ea",
+    "terrain_tile_16m.lod1.indices.le.bin": "503e3143fd2060dbd30cf51547f240cb17077a33ec6db426084f36e8548c7f95",
+    "terrain_tile_16m.lod2.vertices.le.bin": "324fa41ae7abc1ab32259cf45870ba79847a2f72ffb2a3963b610e5220f1c51c",
+    "terrain_tile_16m.lod2.indices.le.bin": "a2f9dfd283d9b5f427a3be59dfe9aa432596e7e618750be72769b55b8475fdda",
+    "terrain_tile_16m.lod4.vertices.le.bin": "c7b410df1b878f5c8eba5ee7e1e48d14ed4256ae40828c43025e301399b840f1",
+    "terrain_tile_16m.lod4.indices.le.bin": "b80fb1734c43393a32e2897e1fa92dbfb26dbdd7ea91fe7d2628ac9d503a5d6e"
+  },
+  "composition_sha256": "b66816d504aa596a53abfa3a0c47e7db414ab142fcca4c6f07be73e82cca69a8"
+}

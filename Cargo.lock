@@ -934,6 +934,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "matterweave-detail"
+version = "0.3.0"
+dependencies = [
+ "bytemuck",
+ "matterweave-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "matterweave-explorer"
 version = "0.3.0"
 dependencies = [
