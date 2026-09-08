@@ -722,7 +722,14 @@ impl WetlandApp {
         row.draw_interval_wall_ms = Some((now - self.last).as_secs_f64() * 1000.);
         self.last = now;
         let physics_start = Instant::now();
-        if !self.menu && !self.options && self.focused && !self.replay_checked {
+        // Explicit bounded headless smoke runs already render without X11 focus.
+        // Apply the same allowance to replay startup; normal phone runs still
+        // require focus and every subsequent focus-loss event cancels the run.
+        if !self.menu
+            && !self.options
+            && (self.focused || self.frame_limit.is_some())
+            && !self.replay_checked
+        {
             if let Some(r) = &self.runtime {
                 self.replay_checked = true;
                 match Replay::requested(
