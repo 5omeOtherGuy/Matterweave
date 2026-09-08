@@ -286,6 +286,38 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn corrupt_wetland_recovers_without_overwriting_prior_sessions() {
+        let dir = std::env::temp_dir().join(format!("wetland-recovery-{}-{}",
+            std::process::id(), NEXT_SAVE.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join(SAVE_FILE);
+        fs::write(&path, b"broken original").unwrap();
+        let (first, save) = SavedWetland::load_recovering(&path, 1, 7).unwrap();
+        assert!(save.is_none());
+        assert_ne!(first, path);
+        fs::write(&first, b"broken recovery").unwrap();
+        let (second, save) = SavedWetland::load_recovering(&path, 1, 7).unwrap();
+        assert!(save.is_none());
+        assert_ne!(first, second);
+        let saved = SavedWetland {
+            version: 1, generator: 1, seed: 7, edits: vec![],
+            physics: PhysicsSnapshot { version: 1, eye: [2., 3., 4.], bodies: vec![] },
+            yaw: 0.2, pitch: 0.1, shadows: true,
+        };
+        saved.save(&second).unwrap();
+        let (selected, save) = SavedWetland::load_recovering(&path, 1, 7).unwrap();
+        assert_eq!(selected, second);
+        assert_eq!(save.unwrap().physics.eye, [2., 3., 4.]);
+        let (next_version, save) = SavedWetland::load_recovering(&path, 2, 7).unwrap();
+        assert!(save.is_none());
+        assert_ne!(next_version, second);
+        assert_eq!(fs::read(&path).unwrap(), b"broken original");
+        assert_eq!(fs::read(&first).unwrap(), b"broken recovery");
+        assert!(SavedWetland::load(&second, 1, 7).unwrap().is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn ray_hits_transformed_source_and_skips_decorative_overlap() {
         let mut scene = DetailScene::new();
         let mut stone = DetailVolume::new("stone", Scale::new(0.125).unwrap());
