@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/matterweave-core", "crates/matterweave-render", "crates/matterweave-physics", "apps/explorer"]
+members = ["crates/matterweave-core", "crates/matterweave-detail", "crates/matterweave-render", "crates/matterweave-physics", "apps/explorer"]
 resolver = "2"
 exclude = ["vendor/winit"]
 
