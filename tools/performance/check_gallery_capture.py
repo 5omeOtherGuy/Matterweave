@@ -13,12 +13,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("artifacts", type=Path, help="fresh directory; retained on failure")
+    parser.add_argument("--preset", choices=("tile", "flora"), default="tile")
     args = parser.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=False)
     sentinel = b"user save sentinel: deliberately invalid JSON\n"
     world = args.artifacts / "world.json"
     world.write_bytes(sentinel)
-    (args.artifacts / "detail-gallery.txt").write_text("tile source\n")
+    (args.artifacts / "detail-gallery.txt").write_text(args.preset + " source\n")
     (args.artifacts / "profile-frames.txt").write_text("20\n")
     with (args.artifacts / "run.log").open("wb") as log:
         subprocess.run(

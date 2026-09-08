@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "run": "performance-01",
+  "authority": "sole lead-written board; workers must not edit this file",
+  "base": "755620472e8457d8e55760165e759b6d8013c6db",
+  "phone_owner": "Pi lead exclusively; original save restored byte-identically. Candidate02 functional files pulled (1000 rows epoch1;581 rows epochs1/2/3). Initial assertion used incorrect expected header; validator qualification pending.",
+  "tasks": {
+    "P00-handoff": {
+      "attempt": 2,
+      "owner": "muse-p00-a2",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p00-candidate-02/sha256.json",
+      "log": "docs/performance/logs/muse-p00-a2.md",
+      "history": "docs/performance/p00-accepted-task.json"
+    },
+    "P01-instrumentation": {
+      "attempt": 2,
+      "owner": "opus-p01-a2",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p01-candidate-02/sha256.json",
+      "log": "docs/performance/logs/opus-p01-a2.md",
+      "acceptance": "Code slice accepted: independent reviews then lead checks;106 Rust tests,host90 rows,Android1000/581rows valid (epochs1/2/3). Full P01 overhead/counters still pending.",
+      "history": "docs/performance/p01-instrumentation-accepted-task.json"
+    },
+    "P01-conditions": {
+      "attempt": 1,
+      "owner": "glm-p01-a1",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/conditions-candidate-02/sha256.json",
+      "log": "docs/performance/logs/glm-p01-a1.md",
+      "history": "docs/performance/p01-conditions-accepted-task.json"
+    },
+    "P01-fixtures": {
+      "attempt": 1,
+      "owner": "muse-p01-fixtures-a1",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p01-candidate-02/sha256.json",
+      "log": "docs/performance/logs/muse-p01-fixtures-a1.md",
+      "history": "docs/performance/p01-fixtures-accepted-task.json"
+    },
+    "P01-profile-validator": {
+      "attempt": 3,
+      "owner": "muse-profile-a3",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/profile-candidate-02/sha256.json",
+      "log": "docs/performance/logs/muse-profile-a3.md",
+      "history": "docs/performance/p01-profile-validator-accepted-task.json"
+    },
+    "P03-source-tile": {
+      "attempt": 1,
+      "owner": "codex-desktop-lead",
+      "state": "accepted",
+      "base": "755620472e8457d8e55760165e759b6d8013c6db",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-detail",
+      "branch": "codex/performance-detail",
+      "source_base": "94dc2ca9b480dfa808f306e4fd4e8804a1056459",
+      "worker_profile": "opus-medium",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/desktop-01/opus-detail-a1",
+      "brief": "/mnt/bench/matterweave-dev/performance/desktop-01/opus-detail-a1-brief.md",
+      "worker_timeout_s": 900,
+      "paths": [
+        "crates/matterweave-detail/**",
+        "Cargo.toml (workspace member only)",
+        "Cargo.lock (necessary dependency delta only)",
+        "docs/performance/p03/**"
+      ],
+      "interfaces": {
+        "detail_volume": "new experimental v1; metre units, explicit voxel scale/transform/revision; no legacy schema changes"
+      },
+      "dependencies": [],
+      "log": "docs/performance/p03/desktop-log.md",
+      "acceptance": "Source-only PR6 merged524f29eb; docs/host/Android CI pass. Integrated into P01 branch. Native gallery/density/cost pending.",
+      "artifact": "f9251d7480c748cdcbe9506c203f55188729fba9"
+    },
+    "P03-flora-tile": {
+      "attempt": 2,
+      "owner": "codex-desktop-lead",
+      "state": "accepted",
+      "base": "f9251d7480c748cdcbe9506c203f55188729fba9",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-flora",
+      "paths": [
+        "crates/matterweave-detail/src/flora*",
+        "crates/matterweave-detail/tests/flora*.rs",
+        "crates/matterweave-detail/examples/new flora gallery",
+        "crates/matterweave-detail/src/lib.rs: module export/additive palette30..63 only",
+        "docs/performance/p03/flora/**"
+      ],
+      "interfaces": {
+        "detail_volume": 1
+      },
+      "dependencies": [
+        "P03-source-tile"
+      ],
+      "acceptance": "Source accepted; PR7 merged c71306d after host/Android/docs CI. SourceLOD first; native/full-showcase gates remain.",
+      "branch": "codex/performance-flora",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/desktop-02/opus-flora-repair",
+      "profile": "opus-medium",
+      "artifact": "267c2c88ae2f988ef2a3360ab35537a72a523c07"
+    },
+    "P03-native-gallery": {
+      "attempt": 1,
+      "owner": "opus-native-gallery-a1",
+      "profile": "opus-medium",
+      "state": "accepted",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+      "paths": [
+        "apps/explorer/src/gallery.rs",
+        "apps/explorer/src/lib.rs",
+        "apps/explorer/Cargo.toml",
+        "Cargo.lock: app detail dependency",
+        "docs/performance/p03/native-gallery.md",
+        "docs/performance/p03/logs/opus-native-gallery-a1.md"
+      ],
+      "dependencies": [
+        "P03-source-tile"
+      ],
+      "interfaces": {
+        "detail_volume": 1,
+        "measurement": 2
+      },
+      "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/opus-native-gallery-a1",
+      "acceptance": "Source accepted; phone85 instances/120582triangles,2194rows/epochs1-2 HOME/resume pass. User save unchanged. Full quality/collision/cost gates open.",
+      "artifact": "6fac9a5"
+    },
+    "P02-cache": {
+      "attempt": 1,
+      "owner": "pi-lead",
+      "state": "accepted",
+      "paths": [
+        "crates/matterweave-physics/src/dynamic_cache.rs",
+        "crates/matterweave-physics/tests/dynamic_cache.rs",
+        "apps/explorer/src/dynamic_upload.rs",
+        "apps/explorer/src/lib.rs: dynamic cache integration"
+      ],
+      "log": "docs/performance/p02.md",
+      "acceptance": "11 focused tests + independent reviews; native2190rows/epochs1-2, resume build0/upload1; settled work0. Matched comparison still pending.",
+      "artifact": "6fac9a5"
+    },
+    "P03-detail-collision": {
+      "attempt": 1,
+      "owner": "codex-desktop-lead",
+      "state": "running",
+      "workspace": "isolated; desktop to report",
+      "paths": [
+        "crates/matterweave-physics/src/detail_collision.rs",
+        "crates/matterweave-physics/tests/detail_collision.rs",
+        "crates/matterweave-physics/src/lib.rs: additive collision hooks",
+        "crates/matterweave-physics/Cargo.toml",
+        "Cargo.lock: detail dependency",
+        "docs/performance/p03/collision/**"
+      ],
+      "acceptance": "GO sent via coordination; awaiting desktop branch/run report. Finest-source transactional collision replacement; native caller/phone lead-owned."
+    },
+    "P02-wsi": {
+      "attempt": 1,
+      "owner": "pi-lead",
+      "state": "running",
+      "artifact": "21c060c",
+      "log": "docs/performance/p02.md",
+      "acceptance": "Source/final reviews + host/native functional checks pass. Paired558274 stopped safely before capture: current26.3/26.078C versus old31.3/31.483C reference. Save restored. Establish fresh cold reference; no win qualified."
+    }
+  },
+  "capacity": {
+    "total": 4,
+    "leads": 2,
+    "worker_slots": 2,
+    "pi_lead_slots": 1,
+    "desktop_lead_slots": 1,
+    "policy": "No borrowing or replacement until explicit agreement and verified previous-worker inactivity."
+  },
+  "provider_blockers": {
+    "opus": "Desktop HTTP429; no retries before1788838200 or paid fallback. Native worker already completed."
+  }
+}

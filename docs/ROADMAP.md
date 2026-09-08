@@ -17,6 +17,12 @@ trustworthy measurements and redundant-work reduction. Its required
 [dense alien showcase](SHOWCASE.md) supplies demanding real workloads throughout.
 Use unplugged, matched thermal conditions and the [benchmark protocol](BENCHMARKS.md).
 The numeric showcase/performance budgets are working targets, not achieved results.
+Campaign progress: reviewed foundation/flora source merged through PR6/7; the
+SourceLOD84-plant fixture now renders natively on the phone with a successful
+HOME/resume check. P02 cache and advisory-WSI fixes have unit/host/native functional
+evidence; matched performance acceptance awaits a fresh cold reference. Full-map density,
+fine-source collision integration, water/lighting fidelity and remaining P01/P04–P07
+gates are not complete. See [current status](STATUS.md) for precise artifacts.
 
 ## M0 — Reproducible Android foundation
 

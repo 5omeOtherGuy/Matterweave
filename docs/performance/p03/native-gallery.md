@@ -47,8 +47,10 @@ not the full-scale selected architecture.
 Index arithmetic is validated, not assumed: prototype index counts must be a
 multiple of three, every source index must lie inside its prototype's vertex
 count, the running vertex base is `u32::try_from`-checked and
-`checked_add`-checked, and the projected combined size is checked against
-`MAX_COMBINED_MESH_BYTES` (64 MiB) before each append. No chunk coordinates are
+`checked_add`-checked, and the projected logical combined payload is checked against
+`MAX_COMBINED_MESH_BYTES` (64 MiB) before each append. This is NOT a strict
+allocated-capacity cap: Vec growth can exceed logical length. Current built-in
+fixtures fit well below it; generic larger scenes need a separate allocation gate. No chunk coordinates are
 fabricated as instance identifiers; the renderer's chunk map is not used at all.
 
 Authoritative source data is untouched: source bytes, stored cells and expanded
@@ -168,10 +170,29 @@ in `run-01/p02-host-smoke/run.log`. Native flora render/phone checks and indepen
 combined-candidate reviews remain pending; initial worker evidence above does not
 cover those later changes.
 
+## Actual phone functional evidence
+
+The reviewed/corrected6fac9a5 candidate ran on the unplugged OnePlus13. Normal
+mode2190 rows and flora2194 rows both span renderer epochs1–2 across HOME/resume,
+with no missing attempts/unmatched completions. On normal resume, the first row
+correctly rebuilt0/uploaded1: CPU geometry reuse does not suppress new-renderer
+residency. SourceLOD flora rendered85 instances/120582 triangles, with no dynamic
+pipeline work reported. The gallery's user-world bytes stayed unchanged; the
+trial restored the original save after normal gameplay and at closeout.
+
+![SourceLOD flora on OnePlus13 after HOME/resume](images/flora-source-phone.png)
+
+This is an actual native overview, not a close-anatomy, water/lighting, traversal
+or full-showcase acceptance. Source payload280KiB/prototype cache1219KiB/combined
+capacity12117KiB are construction/geometry accounting, not retained-source RSS or
+allocator-inclusive process memory. Cold scene-generation latency was not isolated.
+Exact APK/capture/image hashes are in [native-device.json](native-device.json).
+Raw captures and before/after-resume images: `run-01/device/native-p02-functional`.
+
 ## Remaining gaps (not done here)
 
-- No phone run: appearance, thermal, cost, peak memory and lifecycle on device
-  are unverified. A successful APK build is not device evidence.
+- Basic phone presentation and one HOME/resume cycle passed. Close-range anatomy,
+  visual temporal stability, sustained thermal/cost and peak memory remain open.
 - No native collision, no gameplay integration, no detail data in saves.
 - No GPU instancing, no per-instance culling, no streaming and no adaptive LOD;
   one combined draw payload per view.
@@ -179,5 +200,5 @@ cover those later changes.
 - Water is still opaque (no separate water pass), inherited from the foundation.
 - The underside preset places the camera close to the supporting terrain, so
   terrain can occlude part of the frame; framing refinement is follow-up work.
-- `docs/DEVELOPMENT.md` still lacks the gallery commands; the lead owns that file
-  in this session.
+- Developer commands and tile/flora native capture acceptance are now wired into
+  `docs/DEVELOPMENT.md` and host CI; CI for this integration is still to run.

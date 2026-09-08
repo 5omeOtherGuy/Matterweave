@@ -1,0 +1,22 @@
+{
+  "attempt": 1,
+  "owner": "glm-p01-a1",
+  "profile": "glm-high",
+  "state": "accepted",
+  "base": "755620472e8457d8e55760165e759b6d8013c6db",
+  "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+  "paths": [
+    "tools/performance/validate_conditions.py",
+    "tools/performance/test_validate_conditions.py",
+    "docs/performance/logs/glm-p01-a1.md"
+  ],
+  "interfaces": {
+    "device_health": 1
+  },
+  "dependencies": [],
+  "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/glm-p01-a1",
+  "session": "/mnt/bench/matterweave-dev/performance/run-01/glm-p01-a1/session.jsonl",
+  "artifact": "/mnt/bench/matterweave-dev/performance/run-01/conditions-candidate-02/sha256.json",
+  "log": "docs/performance/logs/glm-p01-a1.md",
+  "acceptance": "65 tests/real cooling pass; final Muse/Gemini then lead. Gemini float(str) OverflowError claim rejected by runtime reproduction: inf rejected as ValueError."
+}

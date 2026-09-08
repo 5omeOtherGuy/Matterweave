@@ -28,6 +28,11 @@ Gradle or shell configuration. Existing SDK installations are supported.
 Allow several GB for the SDK, native build outputs and dependency caches. You may
 set `CARGO_TARGET_DIR` and `GRADLE_USER_HOME` to directories on a larger volume;
 these are optional location overrides, never committed machine-specific paths.
+Use a separate target directory for worktrees with different source revisions:
+sharing one caused stale Android local-crate metadata during the performance
+campaign (missing a newly exported type despite correct source). Dependency
+caches can be shared; compiled local-crate targets must not be assumed portable
+between worktrees.
 The Gradle wrapper validates its distribution and Maven artifact checksums.
 Android ABI/minimum profile is ARM64, API 28 and Vulkan 1.1. This is a development
 profile, not a store compatibility or device-performance guarantee.
@@ -144,6 +149,31 @@ window/renderer, and exits after the requested presented-frame count. Failure
 exits nonzero. This exercises shared code, not Android lifecycle callbacks on a
 phone. Inspect validation output as well as exit status.
 
+## Opt-in native detail/flora viewer
+
+See [gallery mode](performance/p03/native-gallery.md) for marker grammar, strict
+user-save isolation and remaining device/quality limits. `flora source` loads the
+reviewed84-plant fixture once; it does not select an accepted full-map showcase.
+
+```sh
+export CARGO_TARGET_DIR=/mnt/bench/matterweave-dev/performance/target
+cargo build --locked -p matterweave-explorer --bin matterweave-explorer
+python3 tools/performance/check_gallery_capture.py "$CARGO_TARGET_DIR/debug/matterweave-explorer" /mnt/bench/matterweave-dev/performance/gallery-tile-check
+python3 tools/performance/check_gallery_capture.py "$CARGO_TARGET_DIR/debug/matterweave-explorer" /mnt/bench/matterweave-dev/performance/gallery-flora-check --preset flora
+```
+
+Choose fresh artifact directories on repeats. These actual Vulkan/Xvfb checks
+retain logs,20 schema-valid capture rows and a deliberately invalid user-world
+sentinel. A compatibility-mesh upload must not be mislabeled as dynamic-body
+work. CI runs both checks after building the native binary; inspect their logs
+for validation errors too.
+
+For device recipes, stop the app **after** installing/reinstalling an APK before
+restoring its save. Use `adb shell -T run-as ...` with the shell exit-status protocol
+for synchronous writes; verify original bytes afterwards. Stream app-scoped
+logcat before launch for startup diagnostics; a late dump can lose early lines.
+Do not weaken Android security properties to obtain simpleperf access.
+
 ## Diagnostics and current limits
 
 FRAME is a smoothed interval between redraws; MAIN is wall time inside draw,
@@ -183,7 +213,7 @@ For a deliberate Gradle dependency update, regenerate verification metadata from
 trusted upstreams with `--write-verification-metadata sha256`, review it, then rerun
 a normal verification-enforced build. Do not disable verification to bypass failures.
 
-## Opt-in frame capture (v0.3 development)
+## Opt-in frame capture (performance campaign development)
 
 Place an integer count (1..240000) in `profile-frames.txt` beside the world save
 before launching the app. On Android this is the app-private `files` directory,
@@ -192,16 +222,36 @@ consumed after a new timestamped `frame-profile-*.csv` opens successfully. Captu
 never overwrite an existing file, stop at the requested count and flush on suspend
 or exit. Invalid requests remain for correction. Normal runs create no frame log.
 
-Rows contain the presented-frame counter, draw-interval/main-thread/stream/mesh-
-upload/save wall times and optional prior-completed GPU timings. CPU fields are
-wall times, not CPU busy time. Retry draws may repeat the presented counter. Missing
-GPU values remain empty when unavailable. Completed GPU frame ID, shadow enable
-state and map size accompany those values; IDs reset on renderer recreation.
-GPU total interval can include waiting on swapchain acquisition and is not pure
-active GPU execution.
-GPU queries and compositor presentation timestamps are distinct measurements.
+The current development branch writes [typed schema v2](performance/measurement-v2.md)
+to `frame-profile-v2-*.csv`; the shipped v0.3 APK writes the historical v1 format.
+Do not parse either format as the other. V2 records exact draw/submission/completion
+IDs and renderer epochs, main-thread CPU busy time where supported, stage walls,
+separate mesh-sync/render fence waits and actual work/save-attempt counters. Retries
+may occur before or after submission; successful present API calls are not scanouts.
+Missing measurements remain empty, never fabricated zeroes. GPU timestamp spans can
+include queue stalls and are not pure shader execution or compositor timestamps.
+
 Copy captures under `/mnt/bench` and preserve build/scene/conditions before making
-performance comparisons. Profiling overhead must be considered.
+performance comparisons. New instrumentation overhead and same-build repeatability
+must be qualified on the phone; host correctness and an APK build do not establish
+that qualification.
+
+Performance tool and deterministic host-fixture checks:
+
+```bash
+python3 -m unittest discover -s tools/performance -p 'test_*.py'
+cargo test --locked -p matterweave-core --test performance_replay
+```
+
+`tools/performance/check_handoff.py BOARD_JSON SUBMISSION_JSON ARTIFACT` validates
+a frozen patch admission against the sole lead-written board; see
+[the handoff contract](performance/README.md). It is not a process supervisor.
+`tools/performance/validate_conditions.py HEALTH_JSONL` checks two-minute **idle
+readiness**, not app performance. Rows use actual `elapsed_s` and `data.battery` /
+`data.thermalservice` raw dumps; current HAL skin readings, actual power-state
+fields and non-overridden thermal status are required. Never substitute synthetic
+times into real readiness evidence. The replay fixture currently proves host world
+regressions only; app/phone input-replay integration remains outstanding.
 
 Coordination startup/recovery checks:
 

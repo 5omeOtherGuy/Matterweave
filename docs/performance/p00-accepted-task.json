@@ -1,0 +1,21 @@
+{
+  "attempt": 2,
+  "owner": "muse-p00-a2",
+  "profile": "muse-free",
+  "state": "accepted",
+  "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+  "paths": [
+    "tools/performance/check_handoff.py",
+    "tools/performance/test_check_handoff.py",
+    "docs/performance/logs/muse-p00-a2.md"
+  ],
+  "interfaces": {
+    "handoff": 1
+  },
+  "dependencies": [],
+  "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/muse-p00-a2",
+  "session": "/mnt/bench/matterweave-dev/performance/run-01/muse-p00-a1/session.jsonl",
+  "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p00-candidate-02/sha256.json",
+  "log": "docs/performance/logs/muse-p00-a2.md",
+  "acceptance": "Candidate-02 hashes verified; 31 tests pass; independent Muse/Gemini delta reviews then lead inspection. See p00.md; no engine performance claim."
+}
