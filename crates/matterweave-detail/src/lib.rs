@@ -32,6 +32,7 @@ mod fixtures;
 mod flora;
 mod scene;
 mod serial;
+mod wetland_flora;
 
 pub use fixtures::{
     column_top, gallery_scene, parasol_mushroom, terrain_detail_tile, FIXTURE_GENERATOR_VERSION,
@@ -49,6 +50,10 @@ pub use scene::{
     MAX_SCENE_SOURCE_BYTES, MAX_SCENE_TRANSLATION_M,
 };
 pub use serial::{VolumeSnapshot, MAX_SNAPSHOT_JSON_BYTES, MAX_SNAPSHOT_RUNS, SNAPSHOT_VERSION};
+pub use wetland_flora::{
+    horsetail, marsh_lily, twisted_shrub, wetland_prototype, WETLAND_FLORA_SPECIES,
+    WETLAND_LEAF_SCALE_M, WETLAND_SPIRE_SCALE_M,
+};
 
 use matterweave_core::{Mesh, Vertex, World, CHUNK_EDGE, CHUNK_VOLUME};
 
