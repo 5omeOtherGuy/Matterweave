@@ -156,11 +156,16 @@ impl Request {
                 "request exceeds {MAX_REQUEST_BYTES} bytes"
             )));
         }
-        let line = text
+        let mut lines = text
             .lines()
             .map(|line| line.split('#').next().unwrap_or("").trim())
-            .find(|line| !line.is_empty())
+            .filter(|line| !line.is_empty());
+        let line = lines
+            .next()
             .ok_or_else(|| GalleryError::Request("empty request".into()))?;
+        if lines.next().is_some() {
+            return Err(GalleryError::Request("expected one request line".into()));
+        }
         let mut tokens = line.split_whitespace();
         let preset = tokens.next().and_then(Preset::parse).ok_or_else(|| {
             GalleryError::Request(format!(
@@ -472,7 +477,6 @@ pub struct GalleryApp {
     uploaded: bool,
     uploads: u64,
     upload_ms: Option<f64>,
-    frame_upload_ms: Option<f64>,
     /// Bounded viewer lifecycle check. It never edits, saves or simulates.
     pub exercise: bool,
     exercise_stage: u8,
@@ -521,7 +525,6 @@ impl GalleryApp {
             uploaded: false,
             uploads: 0,
             upload_ms: None,
-            frame_upload_ms: None,
             exercise: false,
             exercise_stage: 0,
             resize_seen: false,
@@ -724,7 +727,7 @@ impl GalleryApp {
         self.camera.update(motion, look, dt);
         let mesh_begin = Instant::now();
         match self.ensure_uploaded() {
-            Ok(uploaded) => self.frame_upload_ms = uploaded,
+            Ok(_) => {}
             Err(error) => {
                 log::error!("Gallery mesh upload failed: {error}");
                 eprintln!("Gallery mesh upload failed: {error}");
@@ -804,7 +807,9 @@ impl GalleryApp {
                 mesh_sync_wall_ms: Some(mesh_work_ms),
                 mesh_sync_fence_wait_wall_ms: diagnostics.and_then(|d| d.upload_fence_wait_ms),
                 dynamic_mesh_build_wall_ms: None,
-                dynamic_upload_wall_ms: self.frame_upload_ms,
+                // Whole-world compatibility upload belongs to mesh_sync;
+                // this viewer has no dynamic-body pipeline to time or count.
+                dynamic_upload_wall_ms: None,
                 render_wall_ms: render_ms,
                 save_wall_ms: Some(0.),
                 render_fence_wait_wall_ms: diagnostics.and_then(|d| d.render_fence_wait_ms),
@@ -822,7 +827,7 @@ impl GalleryApp {
                 voxel_bodies_not_simulated: Some(0),
                 chunk_mesh_uploads: Some(0),
                 dynamic_mesh_builds: Some(0),
-                dynamic_mesh_uploads: Some(u32::from(self.frame_upload_ms.is_some())),
+                dynamic_mesh_uploads: Some(0),
                 save_attempts: Some(0),
                 save_failures: Some(0),
                 shadow_caster_meshes: metrics::shadow_casters_for_attempt(
@@ -849,7 +854,6 @@ impl GalleryApp {
                 renderer.set_diagnostics_enabled(false);
             }
         }
-        self.frame_upload_ms = None;
         if self.exercise && !self.failed {
             self.run_exercise(event_loop);
         }
