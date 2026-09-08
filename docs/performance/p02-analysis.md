@@ -60,3 +60,11 @@ process names containing parentheses, process restarts, mismatched scene/quality
 and mutual temperature matching. GLM's earlier 300-second worker timed out without
 producing code; the lead implemented and verified this tool. No trial-level
 optimization acceptance is inferred from that worker or these software tests.
+
+
+Build-profile correction: the original candidate build JSON incorrectly says
+“Rust Android release profile.” Both frozen sources map Gradle `assembleDebug`
+to Cargo `dev` (`opt-level = 2`, `debug = 0`), as verified directly at `0e5b3be`.
+The original hashed manifests remain intact; this correction accompanies them.
+The paired APKs use the same actual profile. No release-LTO performance inference
+is made from them. New build manifests name the actual Cargo profile explicitly.

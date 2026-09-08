@@ -3,7 +3,9 @@
 This is installed development evidence, not showcase acceptance or a release.
 Source `7e1143ea7807b759d8cb4314bba0955056ccdf86` built without concurrent source
 edits. APK SHA256 `35cbd2e666c3c4457d230fbc8d11b15011603c5b49a7366654d16cbaee6720cc`.
-Gradle debug package uses the project's optimized Rust Android release profile.
+Gradle debug package uses Rust's `dev` profile with `opt-level = 2` and
+`debug = 0`. An earlier version of this note incorrectly called it the release
+profile; the frozen Gradle mapping is `Debug: dev`, `Release: release`.
 ARM64 ELF/ZIP16KiB alignment and APK v2 signature verification pass.
 
 OnePlus13 CPH2653, Android16, fingerprint
