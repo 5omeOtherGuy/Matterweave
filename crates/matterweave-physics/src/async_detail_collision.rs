@@ -427,6 +427,21 @@ mod queue_tests {
     }
 
     #[test]
+    fn returning_to_buffered_source_rejects_newer_inflight_result() {
+        let a = scene(0);
+        let b = scene(1);
+        let mut q = Queue::default();
+        q.enqueue_request(a.source_version(), || a.fork_source());
+        let first = q.begin_job();
+        q.finish_job(first, Err("A".into()));
+        q.enqueue_request(b.source_version(), || b.fork_source());
+        let second = q.begin_job();
+        assert!(!q.enqueue_request(a.source_version(), || a.fork_source()));
+        q.finish_job(second, Err("B".into()));
+        assert!(matches!(q.take_result(&a.source_version()), Some(Err(e)) if e == "A"));
+    }
+
+    #[test]
     fn reset_work_never_validates_after_generation_saturates() {
         let a = scene(0);
         let mut q = Queue::default();
