@@ -76,14 +76,21 @@ Astra repaired its test assumptions. All25 focused async tests pass at `2267ad5`
 The native Vulkan adapter at `da96b8e` presented15 frames while lighting was
 pending, then correctly published sun/edit/enclosure results. The combined351-test suite and corrected strict Clippy pass. Production-controller
 coverage is92.31% of lines with all27 functions exercised. The v0.5 ARM64 APK
-build/signature/alignment pass, but its physical attempt stopped at Android secure
-keyguard before phase0. Unlock was requested; that device gate is pending. See
-[background lighting](performance/async-indirect.md). Full GI/reflections and M4
-quality remain open.
+build/signature/alignment and physical OnePlus 13 Android 16 checks pass. The final
+capture records all six phases, nine presentations during preparation, HOME/resume
+and renderer recreation. The earlier secure-keyguard timeout remains a separate
+failed attempt. The APK source is `9854723`; the standalone ARM64 CPU check at
+`70a231a` additionally matches every cell/face against synchronous lighting for an
+open, closed and reopened enclosure. See [background lighting](performance/async-indirect.md).
+These functional checks do not establish full GI/reflections or sustained efficiency.
 
-Opus4.8/high's current five-hour allowance is exhausted (next reset2026-09-08
-16:20UTC). Muse returned429; Hy4's bounded review timed out without findings.
-No incomplete review is counted as completed. The frozen `b1f6c67` instrumented
+PR10 is draft/open; its remote `ca26d58` passed host, Android and docs CI.
+The local `70a231a` example and these final evidence records await delivery and
+final-revision checks. v0.5 is not yet released. Model availability/quota notes
+from the interrupted session are historical; the owner authorizes paid Muse 1.3
+Contributor, GLM 5.3 Flash, Hy4 and Opus 5 for this continuation.
+
+The frozen `b1f6c67` instrumented
 tests and four Vulkan examples passed. Per-object LCOV line union reports
 94.62–97.01% across the four engine crates with explicit scope/diagnostics; see
 [coverage evidence](performance/engine-coverage.md). This is not Android/shader

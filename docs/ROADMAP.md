@@ -41,7 +41,10 @@ chunk snapshots are host-tested on the integration branch. Automatic detail sele
 Vulkan gate; background collision preparation/publication passes a direct native
 Android floor creation/removal gate. Production frame-loop scheduling remains open. The first
 diffuse indirect reference passes Android functional/lifecycle checks; its current
-39–45ms full preparation/upload phases still need scheduling. These increments
+39–45ms synchronous full preparation/upload phases motivated background scheduling.
+The background adapter now passes host and Android checks with nine Android
+presentations during CPU preparation; production cadence, upload costs and
+quality/latency acceptance remain open. These increments
 do not close M3/M4 acceptance.
 
 ## M0 — Reproducible Android foundation

@@ -53,8 +53,28 @@ continues presenting direct-only frames, then holds completed phases for120
 presentations. HOME/resume retains source/cache state and recreates GPU resources.
 The v0.5 ARM64 APK builds and passes native page-size, alignment and signing
 checks. Its first physical attempt encountered the secure Android lock screen and
-suspended before phase0. The attempt timed out and is not a functional pass. User
-unlock was requested; physical validation remains pending.
+suspended before phase0. The attempt timed out and is not a functional pass. The subsequent unlocked run passed all six phases, HOME/resume and renderer
+recreation on OnePlus 13 CPH2653, Android 16, Adreno 830, Vulkan 1.3.284,
+driver 2150760522. `capture.json` records `terminal_pass=true`. Request handling
+was 0.034–0.064 ms, request-to-poll 22.903–48.667 ms, and ordinary publication
+uploads 3.429–4.931 ms. Nine frames presented during preparation; recreation
+re-uploaded cached radiance in 0.185 ms. These are short functional observations,
+not sustained frame-time or thermal evidence. Phone Vulkan validation was disabled.
+
+APK source: `9854723876e075c908cf1524d2b27b6bf60fcb61`; SHA-256:
+`dc1d7108d01de4f861a95cadb54085b58248685c466ae8dfde5a6ccc08b807ad`.
+Raw evidence: `/mnt/bench/matterweave-dev/performance/engine-02/phone-async-indirect`.
+The separate `locked-attempt-01` is retained as failed evidence.
+
+The standalone `async_indirect` example at `70a231a` also passed as an ARM64
+Android executable. It compares every cell/face of open, closed and reopened
+voxel enclosures with the synchronous producer. Open/reopened samples were
+`[0.25312495, 0.014062502, 0.005625]`; closed was zero. This supplies CPU
+correctness evidence only. Its manifest and report are under
+`/mnt/bench/matterweave-dev/performance/engine-02/phone-async-cpu`.
+The [retained manifest](../evidence/2026-09-08-async-lighting.json) records exact
+source and evidence checksums. Durable archive upload remains a delivery task.
+
 
 ## Instrumented controller coverage
 
