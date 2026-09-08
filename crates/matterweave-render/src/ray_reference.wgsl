@@ -33,8 +33,21 @@ struct FragmentOutput {
     let near_h = camera.inverse_view_projection * vec4(v.ndc, 0.0, 1.0);
     let far_h = camera.inverse_view_projection * vec4(v.ndc, 1.0, 1.0);
     if near_h.w == 0.0 || far_h.w == 0.0 { discard; }
-    let ray_origin = near_h.xyz / near_h.w;
-    let segment = far_h.xyz / far_h.w - ray_origin;
+    var ray_origin = near_h.xyz / near_h.w;
+    var far_point = far_h.xyz / far_h.w;
+    // Inverse-projection arithmetic can move an exactly parallel grid-plane
+    // ray by a few f32 ULPs on mobile GPUs. Stabilize only coordinates whose
+    // BOTH segment endpoints lie within eight relative ULPs of the same integer
+    // plane. Other rays, including near-boundary offsets, retain their slope.
+    for (var axis = 0u; axis < 3u; axis += 1u) {
+        let plane = round(ray_origin[axis]);
+        let tolerance = 0.00000095367431640625 * max(1.0, abs(plane));
+        if abs(ray_origin[axis] - plane) <= tolerance && abs(far_point[axis] - plane) <= tolerance {
+            ray_origin[axis] = plane;
+            far_point[axis] = plane;
+        }
+    }
+    let segment = far_point - ray_origin;
     let ray_length = length(segment);
     if ray_length == 0.0 { discard; }
     let direction = segment / ray_length;
@@ -96,14 +109,17 @@ struct FragmentOutput {
             let clip = camera.view_projection * vec4(world, 1.0);
             if clip.w == 0.0 { discard; }
             let depth = clip.z / clip.w;
-            if depth < 0.0 || depth > 1.0 { discard; }
+            // The clipped ray segment already limits hits to near/far. Permit
+            // small re-projection roundoff at either plane, never an arbitrary
+            // behind-camera hit, then emit legal Vulkan depth.
+            if depth < -0.00001 || depth > 1.00001 { discard; }
             let sunlight = max(dot(normal, camera.sun.xyz), 0.0);
             let ambient = 0.28 + 0.12 * max(normal.y, 0.0);
             let lit = palette[material].xyz * (ambient + sunlight * camera.sun.w);
             let fog = 1.0 - exp(-length(world - camera.eye.xyz) * 0.013);
             var out: FragmentOutput;
             out.color = vec4(mix(lit, vec3(0.16, 0.24, 0.29), fog), 1.0);
-            out.depth = depth;
+            out.depth = clamp(depth, 0.0, 1.0);
             return out;
         }
         // Recompute from integer planes instead of accumulating tDelta error.
