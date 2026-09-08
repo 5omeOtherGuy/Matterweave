@@ -1,7 +1,8 @@
 # Performance optimization campaign — execution handoff
 
-Status: **planned, not implemented**. Written by the lead on 2026-09-08 after the
-owner explicitly requested planning the actual work, not delegating plan writing.
+Status: **execution active; acceptance and release incomplete**. This plan was
+written on2026-09-08; [STATUS](STATUS.md) and the sole
+[board](performance/board.json) record actual implementation and open gates.
 Baseline release: v0.3.0, source `2ce6ce3157e791ab6dd49ed00cd865ee5c1cacc6`.
 
 ## Start here in a fresh session

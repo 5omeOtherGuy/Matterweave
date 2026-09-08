@@ -312,7 +312,7 @@
       "artifact": "2b08194"
     },
     "completion-save-validation": {
-      "state": "integrated-host-verified-review-running",
+      "state": "integrated-reviewed-host-and-native-verified",
       "owner": "lead after Opus/Muse quota and Astra partial handoffs",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-save-validation",
       "base": "4e899b3",
@@ -323,8 +323,8 @@
         "crates/matterweave-detail/src/scene.rs if necessary for source isolation",
         "docs/performance/showcase/save-validation.md"
       ],
-      "acceptance": "Workerf50f114 integrated1bc2be4; lead completed collision/pose/mesh candidate validation221f720.62 app tests including Runtime gate pass plus collision budget regression; workspace Clippy pass. Gemini candidate review running; Android/phone pending.",
-      "artifact": "221f720"
+      "acceptance": "Gemini candidate review completed after bounded continuation. Lead verified and fixed stored respawn gap; saved orientation retained intentionally.64 app tests including full Runtime gate and strict app Clippy pass. Native0.4 capture/replay cancellation passes. Android0.4 APK builds/alignment/signature pass; not installed.",
+      "artifact": "d23a9f8"
     },
     "completion-paired-analysis": {
       "state": "integrated-first-pair-analyzed",
@@ -337,8 +337,28 @@
         "tools/performance/test_analyze_wetland_pairs.py",
         "docs/performance/p02-analysis.md"
       ],
-      "acceptance": "10 focused analysis tests pass,170 Python total. First pair metadata and entrance images match, descriptive stats recorded; repetitions and temporal-quality acceptance pending. No energy/sustained/GEN3 inference.",
+      "acceptance": "Two pairs matchmetadata/entranceimages. A4 candidate9missinggaps cover1.7547% ofselectedspan; meanupperbound24.653ms vsreference75.820. Repeatedcandidateheating/status2 vsreference0 prevents blanketefficiencyclaim. Thirdpair and profilingoverhead pending.",
       "artifact": "4bf700e"
+    },
+    "completion-frame-cap": {
+      "state": "running",
+      "owner": "astra-worker via Pi",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-frame-cap",
+      "base": "ce89834",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/frame-cap-astra",
+      "process_handle": 90982,
+      "paths": [
+        "apps/explorer/src/wetland.rs",
+        "apps/explorer/src/wetland_state.rs",
+        "docs/performance/showcase/frame-cap.md"
+      ],
+      "acceptance": "Separate cap experiment motivated by repeated thermal tradeoff. Explicit30/60 target, default60, same source/quality/fixed-step simulation. Worker host tests/review pending; no thermal win claimed."
+    },
+    "completion-phone-route-check": {
+      "state": "implemented-device-pending",
+      "owner": "lead",
+      "artifact": "ce89834",
+      "acceptance": "3 report-contract tests and all173 Python checks pass. Runner guards exclusively ownedfixture and actualroute endpoint/cancel identity. A4 collector ownsphone; no route script execution untilitstops."
     }
   },
   "capacity": {

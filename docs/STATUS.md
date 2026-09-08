@@ -28,11 +28,12 @@ Current verified progress (2026-09-08 continuation):
   six anchors and was rejected; every retained authored anchor now resolves or
   generation fails. All19 prior source tests and the new waterside gate pass.
   Muse found no source blocker; Astra's waterside coverage finding was corrected.
-- Workspace240 normal Rust tests pass before the additive waterside check;
-  generator3 full Runtime load/jump/edit/collision/reload passes separately16.85s.
-  Both route tests pass in integration. Python tooling had130 passing tests;
-  the paired collector is now integrated and all160 Python tests pass.
-  Replay integration passes55 app tests, with the full Runtime test separate.
+- Workspace253 normal Rust tests pass with3 deliberately ignored gates. The
+  full-map Runtime gate was then explicitly run with the app suite after the
+  restored-respawn correction: all64 app tests pass. Strict workspace Clippy
+  and the later scoped app Clippy pass; vendored winit warning is unchanged.
+  All173 performance Python tests pass, including offline analysis and phone
+  route-report checks. Native0.4 Vulkan capture/replay cancellation also passes.
 - Entrance correction validates the actual capsule with a bounded vertical lift.
   Generator3 prevents prior layout journals replaying against changed source.
   Corrupt/old-generator sessions select separate recovery files. Invalid edit
@@ -59,16 +60,29 @@ Current verified progress (2026-09-08 continuation):
   between frozen generator2 reference/candidate APKs. Per-trial manifests identify
   the installed build. Full phone routes and shadow/temporal quality remain open.
 - Actual app route replay is implemented and independently reviewed. Native Vulkan
-  smoke advances it and records terminal cancellation correctly after a headless
-  focus correction. The generator3 replay APK is built but not installed yet.
-- P02 A3 completed its first matched pair:120s warmup +120s measurement each.
-  Metadata/entrance images match. Descriptive mean presentation intervals were
-  73.551ms reference and24.260ms candidate; no repeated-trial acceptance yet.
-  A3 rejected trial3 before launch after31 cooling observations. A4 now owns the
-  phone for the remaining two pairs, with a61-observation cooling bound and
-  unchanged1C battery/2C skin limits. See [analysis](performance/p02-analysis.md).
-  All170 performance Python tests pass. No energy/sustained/GEN3 performance
-  claim is established. A1/A2 APK-path/ADB-status failures collected no measurements.
+  smoke advances it and records terminal cancellation correctly. The phone runner
+  verifies complete route endpoints and deliberate touch/HOME cancellation;
+  physical execution is pending while the paired collector owns the device.
+- The0.4.0 prerelease candidate at `8d8a3e8` built successfully in61s; APK
+  `6f22ba87f7a9e3fbaac1c6763c17dd05f59fda1c4b192de329f3c9efd073faee` passes
+  ARM64/16KiB and signature checks. Artifacts are under
+  `completion-02/release-candidate-04`. Not installed, merged or released.
+  Gradle debug uses Cargo dev/opt-level2/debug0; the earlier release-profile
+  label in development evidence was corrected against actual frozen source.
+- P02 has two completed pairs across A3/A4. Source, fixture, camera, shadows and
+  entrance images match. Reference mean73.551/75.820ms; candidate supported mean
+  24.260/24.265ms. A4 has nine history gaps (1.7547% of selected span); its whole
+  selected-span mean is bounded above by24.653ms without inventing frame data.
+  Candidate CPU and PSS are lower, but skin reaches49.199/49.872C and thermal
+  status2 versus reference39.139/39.503C/status0. This is a throughput/thermal
+  tradeoff, not a blanket efficiency win. [Analysis](performance/p02-analysis.md).
+- A3 rejected trial3 after31 cooling observations, preserving its first pair.
+  A4 owns the phone for the last pair, allowing61 observations with unchanged
+  1C battery/2C skin matching. Profiling overhead, motion/temporal quality and
+  sustained final-build workload gates remain pending.
+- A bounded Pi Astra worker is adding a visible30/60Hz target as a separate
+  experiment, default60 and unchanged geometry/effects/simulation. It is not
+  integrated or measured; any reduced heating benefit remains a hypothesis.
 
 Next: verify the final APK and native route replay, correct any blockers, then
 exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve

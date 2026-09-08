@@ -22,7 +22,10 @@ full128m source terrain, fine-source collision/editing, water,6,192plants across
 10species and ordinary Android chooser/controls. Generator3 ground/elevated routes
 pass continuous host physics; the short waterside itinerary is recorded too.
 Normal phone entry/movement/edit persistence and6-to29-body destruction have been
-observed on development builds. Full phone route replay, integrated temporal
+observed on development builds. Complete journal/respawn recovery is host/native
+verified; the0.4.0 candidate APK is built but not yet installed. Two matched P02
+pairs show faster presentation/lower CPU and memory with increased heating;
+separate30/60Hz cap work is underway and sustained acceptance remains open. Full phone route replay, integrated temporal
 quality, sustained workloads and delivery remain open. P02 now has one fresh
 reference capture; the remaining matched pair collection and analysis are active.
 No optimization win is accepted yet. See [current status](STATUS.md) for exact
