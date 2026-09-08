@@ -73,9 +73,11 @@ APK test build starts from `1abe19b`; do not attribute those changes to v0.4.0.
 Opus4.8/high's current five-hour allowance is exhausted (next reset2026-09-08
 16:20UTC). GLM5.3 Flash/high owns a separate bounded background indirect-light
 controller experiment; it is not integrated. Hy4/high reached its240-second review deadline without a result; no
-queue findings or review completion are claimed. Astra audits counter mismatches in the frozen `b1f6c67`
-instrumented coverage report. Host tests and four instrumented Vulkan examples
-passed, but the combined percentage remains provisional pending that audit.
+queue findings or review completion are claimed. The frozen `b1f6c67` instrumented tests and four Vulkan examples passed.
+The combined LLVM aggregate has order-sensitive duplicate mappings; a per-object
+LCOV line union reports94.62–97.01% across the four engine crates with explicit
+scope and remaining diagnostics. See [coverage evidence](performance/engine-coverage.md);
+this is not Android/shader coverage or an engine-completion percentage.
 
 ## Earlier continuation evidence (historical pre-release checkpoints)
 
