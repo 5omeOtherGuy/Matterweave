@@ -442,6 +442,43 @@ impl Physics {
         Ok(stats)
     }
 
+    /// Whether publishing `prepared` now would place any *new* collider through
+    /// a dynamic body (the character capsule or a dynamic voxel object).
+    ///
+    /// A prepared collider is "new" when its world-space AABB does not exactly
+    /// match a live detail collider; removals and unchanged instances never
+    /// gate. This is the enforced safety gate behind the cadence: new collision
+    /// must never materialise inside a body that moved into its region while
+    /// preparation was pending, so such a publication is deferred, not
+    /// transformed or dropped. Callers keep the preparation buffered and retry.
+    pub fn detail_publication_blocked(&self, prepared: &PreparedDetailCollision) -> bool {
+        let live: Vec<Aabb> = self
+            .detail
+            .iter()
+            .map(|handle| self.colliders[*handle].compute_aabb())
+            .collect();
+        let added: Vec<Aabb> = prepared
+            .pending
+            .iter()
+            .map(|(pose, shape)| shape.compute_local_aabb().transform_by(pose))
+            .filter(|aabb| !live.contains(aabb))
+            .collect();
+        if added.is_empty() {
+            return false;
+        }
+        let blocked = |aabb: &Aabb| added.iter().any(|region| region.intersects(aabb));
+        if blocked(&self.colliders[self.character_collider].compute_aabb()) {
+            return true;
+        }
+        self.objects.iter().any(|object| {
+            self.bodies[object.handle].colliders().iter().any(|collider| {
+                self.colliders
+                    .get(*collider)
+                    .is_some_and(|collider| blocked(&collider.compute_aabb()))
+            })
+        })
+    }
+
     /// Counters of the last accepted detail replacement. A rejected replacement
     /// leaves these unchanged, matching the preserved colliders.
     pub fn detail_collision_stats(&self) -> DetailCollisionStats {

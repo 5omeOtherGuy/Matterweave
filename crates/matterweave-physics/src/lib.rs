@@ -1,8 +1,10 @@
 //! Fixed-step voxel physics. Backend handles never cross the public boundary.
 mod async_detail_collision;
+mod detail_cadence;
 mod detail_collision;
 mod dynamic_cache;
 pub use async_detail_collision::{AsyncDetailCollision, AsyncDetailStats};
+pub use detail_cadence::DetailCollisionCadence;
 pub use detail_collision::{
     DetailCollisionStats, PreparedDetailCollision, MAX_DETAIL_BOXES, MAX_DETAIL_COLLIDERS,
     MAX_DETAIL_SCRATCH_CHUNKS, MAX_DETAIL_SOURCE_COLLISION_CELLS,
