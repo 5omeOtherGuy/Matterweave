@@ -941,7 +941,11 @@ pub struct Showcase {
 impl Showcase {
     /// Short waterside itinerary beginning at the grove entrance.
     pub fn waterside_route(&self) -> &[[f32; 3]] {
-        &[]
+        // Follow the initial shoreward section to the west basin bend. It is
+        // an exact prefix, so the full continuous traversal also tests this
+        // itinerary without inventing a shortcut across uncrossable terrain.
+        let end = self.route.iter().position(|p| p[2] >= 90.0 && p[0] <= 48.0);
+        end.map_or(&[], |end| &self.route[..=end])
     }
 
     /// Loop length in metres including climb.
@@ -1072,11 +1076,9 @@ const ELEVATED_SPINE: [[f32; 2]; 10] = [
 
 /// Largest rise a walking character may take between adjacent 25 cm terrain
 /// cells: one source cell, 0.25 m, well inside the character controller's
-/// autostep. A 0.50 m step is admitted by the controller but was measured to
-/// trap the capsule on narrow treads, so routes do not use one.
+/// autostep. A rejected 0.55 m controller experiment trapped the capsule on
+/// narrow treads; the accepted controller and routes use the smaller bounds.
 const NAV_STEP_CELLS: i32 = 1;
-/// Rise taken without penalty. Single-cell steps are preferred, so a route
-/// only uses the taller step where the terrain offers nothing gentler.
 /// Local quantized slope allowance. A gentle diagonal ramp can report sqrt(0.5)
 /// from quarter-metre central differences. Capsule shoulder clearance and edge
 /// heights below impose the actual walking constraints; source tests are followed

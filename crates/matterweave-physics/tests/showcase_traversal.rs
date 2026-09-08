@@ -13,6 +13,7 @@ fn traverse(elevated: bool) {
     } else {
         &map.route
     };
+    let waterside_last = map.waterside_route().len().saturating_sub(1);
     let mut physics = Physics::new(&matterweave_core::World::new(SHOWCASE_SEED));
     physics.replace_detail_scene(&map.scene).unwrap();
     let start = route[0];
@@ -64,6 +65,13 @@ fn traverse(elevated: bool) {
                 false,
             );
             steps += 1;
+        }
+        if !elevated && index == waterside_last {
+            eprintln!(
+                "WATERSIDE TRAVERSAL PASS points={} sim_seconds={}",
+                index + 1,
+                steps as f32 * FIXED_DT
+            );
         }
     }
     let seconds = steps as f32 * FIXED_DT;
