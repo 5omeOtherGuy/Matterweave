@@ -13,6 +13,7 @@ use matterweave_detail::{DetailScene, Lod, Yaw};
 use matterweave_physics::{BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance};
 use std::{
+    collections::BTreeSet,
     path::PathBuf,
     sync::{mpsc, Arc},
     time::{Duration, Instant},
@@ -81,6 +82,52 @@ fn graphics(scene: &mut DetailScene) -> Result<(Vec<Mesh>, Vec<StaticInstance>),
     Ok((meshes, instances))
 }
 
+/// Applies one candidate journal to the authoritative source scene and validates
+/// its body payload against the real physics contract.
+///
+/// Isolation: the candidate is applied to a transient [`DetailScene::fork_source`]
+/// copy of the authoritative data — never to the live scene — and the body
+/// payload is checked with [`Physics::restore`] on a separate empty probe world,
+/// which validates the whole snapshot *before* touching any body, so the physics
+/// rules are not restated here. Only a fully accepted candidate replaces the live
+/// scene; a rejected fork (including any private prototype minted by the first
+/// shared-prototype edit) is dropped, so cell-by-cell undo of the live scene —
+/// which could not retract that private prototype, its revision or its source
+/// accounting — is never attempted, and later candidates start pristine.
+fn apply_journal(
+    scene: &mut DetailScene,
+    probe: &mut Physics,
+    instances: &BTreeSet<String>,
+    save: &SavedWetland,
+) -> Result<(), String> {
+    for edit in &save.edits {
+        if !instances.contains(&edit.instance) {
+            return Err(format!(
+                "saved edit names absent placement {}",
+                edit.instance
+            ));
+        }
+    }
+    probe.restore(&save.physics)?;
+    let mut fork = scene.fork_source();
+    for edit in &save.edits {
+        fork.edit_instance(&edit.instance, edit.cell, edit.material)
+            .map_err(|error| error.to_string())?;
+    }
+    *scene = fork;
+    Ok(())
+}
+
+/// First pose at or bounded-above `desired` that the actual source colliders
+/// accept. The lift is one metre in eighth-metre steps; collision is
+/// never disabled and the horizontal position is never moved.
+fn clear_pose(physics: &mut Physics, desired: [f32; 3]) -> Option<[f32; 3]> {
+    (0..=8).find_map(|step| {
+        let pose = [desired[0], desired[1] + step as f32 * 0.125, desired[2]];
+        physics.teleport(pose).then_some(pose)
+    })
+}
+
 impl Runtime {
     fn load(directory: PathBuf) -> Result<Self, String> {
         let started = Instant::now();
@@ -96,21 +143,20 @@ impl Runtime {
         let mut spawn = built.spawn_eye;
         let route = built.route;
         let elevated_route = built.elevated_route;
-        let (save_path, saved) = SavedWetland::load_recovering(
+        let empty_world = World::new(SEED);
+        let mut physics = Physics::new(&empty_world);
+        // Separate empty world: validating a candidate body payload must not add
+        // bodies to the physics that a later candidate or the session itself uses.
+        let mut probe = Physics::new(&empty_world);
+        let instances: BTreeSet<String> = scene.instance_ids().into_iter().collect();
+        let (save_path, saved) = SavedWetland::load_recovering_with(
             &directory.join(wetland_state::SAVE_FILE),
             GENERATOR,
             SEED,
+            |save| apply_journal(&mut scene, &mut probe, &instances, save),
         )?;
+        drop(probe);
         let fresh = saved.is_none();
-        if let Some(save) = &saved {
-            for edit in &save.edits {
-                scene
-                    .edit_instance(&edit.instance, edit.cell, edit.material)
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        let empty_world = World::new(SEED);
-        let mut physics = Physics::new(&empty_world);
         let collision = physics.replace_detail_scene(&scene)?;
         let mut camera = Camera {
             position: Vec3::from_array(spawn),
@@ -119,8 +165,28 @@ impl Runtime {
         };
         let mut lighting = LightingSettings::default();
         let edits = if let Some(save) = saved {
-            physics.restore(&save.physics)?;
-            camera.position = Vec3::from_array(save.physics.eye);
+            // The saved edits and bodies are authoritative and are restored whole.
+            // Only the viewpoint is correctable: saved source edits (or an older
+            // generator's settled pose) can leave the capsule inside solid source,
+            // and restore deliberately keeps an exact pose. Probe the real source
+            // colliders before the bodies exist, so resting on a saved body is not
+            // mistaken for being buried, and lift within the same bounded step used
+            // at the entrance, falling back to the validated entrance pose.
+            let desired = save.physics.eye;
+            let eye = clear_pose(&mut physics, desired)
+                .or_else(|| clear_pose(&mut physics, spawn))
+                .ok_or("Wetland save and entrance both overlap solid geometry")?;
+            if eye != desired {
+                log::warn!(
+                    "Wetland saved viewpoint {desired:?} was inside source; moved to {eye:?}"
+                );
+                eprintln!("WETLAND POSE CORRECTED: {desired:?} -> {eye:?}");
+            }
+            physics.restore(&PhysicsSnapshot {
+                eye,
+                ..save.physics
+            })?;
+            camera.position = Vec3::from_array(eye);
             camera.yaw = save.yaw;
             camera.pitch = save.pitch;
             lighting.shadows = save.shadows;
@@ -130,18 +196,8 @@ impl Runtime {
             // neighbouring quarter-metre steps. Find a clear standing pose above
             // that same entrance using actual source colliders, with a bounded
             // one-metre lift. Never disable collision or move to a different route.
-            let desired = spawn;
-            let mut clear = false;
-            for step in 0..=8 {
-                spawn[1] = desired[1] + step as f32 * 0.125;
-                if physics.teleport(spawn) {
-                    clear = true;
-                    break;
-                }
-            }
-            if !clear {
-                return Err("Wetland entrance overlaps solid geometry".into());
-            }
+            spawn = clear_pose(&mut physics, spawn)
+                .ok_or("Wetland entrance overlaps solid geometry")?;
             camera.position = Vec3::from_array(spawn);
             Vec::new()
         };
@@ -1168,9 +1224,34 @@ mod integration_tests {
         let edit = runtime.edits.last().unwrap().clone();
         runtime.save(&directory).unwrap();
         let saved_eye = runtime.physics.character_eye();
+        let saved_bodies = runtime.physics.snapshot().bodies;
         drop(runtime);
-        let restored = Runtime::load(directory.clone()).expect("reload edited full wetland");
+        let primary = directory.join(wetland_state::SAVE_FILE);
+        let recovery = directory.join(format!("{}.recovery-1.json", wetland_state::SAVE_FILE));
+        std::fs::rename(&primary, &recovery).unwrap();
+        let valid_bytes = std::fs::read(&recovery).unwrap();
+        let mut invalid = SavedWetland::load(&recovery, GENERATOR, SEED)
+            .unwrap()
+            .unwrap();
+        invalid.edits.push(Edit {
+            instance: "absent-placement".into(),
+            cell: [0; 3],
+            material: 0,
+        });
+        invalid.save(&primary).unwrap();
+        let primary_bytes = std::fs::read(&primary).unwrap();
+        invalid.edits.pop();
+        invalid.physics.bodies[0].material = 0;
+        let bad_body = directory.join(format!("{}.recovery-2.json", wetland_state::SAVE_FILE));
+        invalid.save(&bad_body).unwrap();
+        let body_bytes = std::fs::read(&bad_body).unwrap();
+        let restored = Runtime::load(directory.clone()).expect("recover edited full wetland");
+        assert_eq!(restored.save_path, recovery);
+        assert_eq!(std::fs::read(&primary).unwrap(), primary_bytes);
+        assert_eq!(std::fs::read(&bad_body).unwrap(), body_bytes);
+        assert_eq!(std::fs::read(&recovery).unwrap(), valid_bytes);
         assert_eq!(restored.physics.character_eye(), saved_eye);
+        assert_eq!(restored.physics.snapshot().bodies, saved_bodies);
         assert_eq!(restored.scene.counts().expanded_occupied_cells, before - 1);
         assert_eq!(restored.edits, vec![edit.clone()]);
         let draw = restored
@@ -1190,5 +1271,353 @@ mod integration_tests {
         assert_eq!(std::fs::read(legacy).unwrap(), b"legacy world sentinel");
         drop(restored);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+/// Save-candidate validation against the real source/collision and physics
+/// contracts, on small fixtures (never the full showcase map).
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+    use matterweave_detail::{material, DetailVolume, Scale, Transform};
+
+    fn fixture() -> DetailScene {
+        // One shared prototype placed three times: the first accepted edit of any
+        // instance mints a private prototype, which is exactly the state
+        // cell-by-cell undo could not retract.
+        let mut scene = DetailScene::new();
+        let mut rock = DetailVolume::new("rock", Scale::new(1.0).unwrap());
+        rock.set([0, 0, 0], material::BANK_STONE).unwrap();
+        scene.add_prototype(rock).unwrap();
+        scene.place("a", "rock", Transform::identity()).unwrap();
+        scene
+            .place(
+                "c",
+                "rock",
+                Transform::new([20., 0., 0.], Yaw::Deg0).unwrap(),
+            )
+            .unwrap();
+        scene
+            .place(
+                "b",
+                "rock",
+                Transform::new([10., 0., 0.], Yaw::Deg0).unwrap(),
+            )
+            .unwrap();
+        scene
+    }
+
+    fn journal(edits: Vec<Edit>, bodies: Vec<BodySnapshot>, eye: [f32; 3]) -> SavedWetland {
+        SavedWetland {
+            version: 1,
+            generator: 99,
+            seed: 7,
+            edits,
+            physics: PhysicsSnapshot {
+                version: 1,
+                eye,
+                bodies,
+            },
+            yaw: 0.,
+            pitch: 0.,
+            shadows: false,
+        }
+    }
+
+    fn good_body() -> BodySnapshot {
+        BodySnapshot {
+            position: [0., 50., 0.],
+            rotation: [0., 0., 0., 1.],
+            velocity: [0.; 3],
+            angular_velocity: [0.; 3],
+            dimensions: [2; 3],
+            material: 8,
+        }
+    }
+
+    fn proto_of(scene: &DetailScene, instance: &str) -> String {
+        scene
+            .draws()
+            .into_iter()
+            .find(|d| d.instance == instance)
+            .unwrap()
+            .prototype
+    }
+
+    #[test]
+    fn rejected_cell_undo_approach_leaks_a_private_prototype() {
+        // RED record for the rejected approach: applying a valid edit and then
+        // writing old cells back cannot retract the private prototype minted
+        // by the first shared-prototype mutation, so the live scene keeps
+        // extra identities, revisions and source accounting.
+        let mut scene = fixture();
+        let before = scene.prototype_ids();
+        let before_counts = scene.counts();
+        let old = scene.prototype("rock").unwrap().get([1, 0, 0]);
+        scene
+            .edit_instance("a", [1, 0, 0], material::BANK_STONE)
+            .unwrap();
+        scene.edit_instance("a", [1, 0, 0], old).unwrap();
+        assert_ne!(
+            scene.prototype_ids(),
+            before,
+            "legacy undo left the private prototype behind"
+        );
+        assert_ne!(scene.counts(), before_counts);
+        assert_eq!(proto_of(&scene, "b"), "rock");
+    }
+
+    #[test]
+    fn rejected_candidate_leaves_live_source_pristine() {
+        // A shallow-valid journal edits a shared prototype, then fails when
+        // the next shared edit collides with an existing private prototype ID.
+        // It must leave identities, counts and cells untouched,
+        // so a later valid recovery still sees the original accounting.
+        let world = World::new(7);
+        let mut scene = fixture();
+        let mut probe = Physics::new(&world);
+        let instances: BTreeSet<String> = scene.instance_ids().into_iter().collect();
+        scene
+            .add_prototype(DetailVolume::new(
+                "__instance_edit:b",
+                Scale::new(1.0).unwrap(),
+            ))
+            .unwrap();
+        let before = scene.prototype_ids();
+        let before_counts = scene.counts();
+        let bad = journal(
+            vec![
+                Edit {
+                    instance: "a".into(),
+                    cell: [1, 0, 0],
+                    material: material::BANK_STONE,
+                },
+                Edit {
+                    instance: "b".into(),
+                    cell: [2, 0, 0],
+                    material: material::BANK_STONE,
+                },
+            ],
+            vec![],
+            [50., 50., 50.],
+        );
+        assert!(bad.validate(99, 7).is_ok(), "journal must be shallow-valid");
+        let error = apply_journal(&mut scene, &mut probe, &instances, &bad).unwrap_err();
+        assert!(
+            error.contains("__instance_edit:b"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(scene.prototype_ids(), before);
+        assert_eq!(scene.counts(), before_counts);
+        assert_eq!(scene.prototype("rock").unwrap().get([1, 0, 0]), 0);
+        // The same probe still validates a later valid journal: nothing
+        // from the rejection accumulated in the physics used afterwards.
+        let good = journal(
+            vec![Edit {
+                instance: "a".into(),
+                cell: [2, 0, 0],
+                material: material::BANK_STONE,
+            }],
+            vec![good_body()],
+            [50., 50., 50.],
+        );
+        apply_journal(&mut scene, &mut probe, &instances, &good).unwrap();
+        assert_eq!(
+            proto_of(&scene, "b"),
+            "rock",
+            "untouched instance kept identity"
+        );
+        assert_ne!(proto_of(&scene, "a"), "rock");
+        assert_eq!(
+            scene
+                .prototype(&proto_of(&scene, "a"))
+                .unwrap()
+                .get([2, 0, 0]),
+            material::BANK_STONE
+        );
+        assert_eq!(scene.prototype("rock").unwrap().get([2, 0, 0]), 0);
+    }
+
+    #[test]
+    fn invalid_body_payload_is_rejected_by_the_physics_contract() {
+        // `material: 0` passes shallow `validate` (bodies are not inspected
+        // there) but the real `Physics::restore` rejects it; the scene and
+        // the probe stay usable for the next candidate.
+        let world = World::new(7);
+        let mut scene = fixture();
+        let mut probe = Physics::new(&world);
+        let instances: BTreeSet<String> = scene.instance_ids().into_iter().collect();
+        let before = scene.prototype_ids();
+        let mut bad_body = good_body();
+        bad_body.material = 0;
+        let bad = journal(vec![], vec![bad_body], [50., 50., 50.]);
+        assert!(bad.validate(99, 7).is_ok(), "journal must be shallow-valid");
+        assert!(apply_journal(&mut scene, &mut probe, &instances, &bad).is_err());
+        assert_eq!(scene.prototype_ids(), before);
+        let good = journal(vec![], vec![good_body()], [50., 50., 50.]);
+        apply_journal(&mut scene, &mut probe, &instances, &good).unwrap();
+        assert_eq!(probe.snapshot().bodies.len(), 1);
+        assert_eq!(probe.snapshot().eye, [50., 50., 50.]);
+    }
+
+    #[test]
+    fn unrestorable_primary_falls_back_to_valid_recovery_intact() {
+        // Actual file selection must discard a fork after a successful COW edit
+        // followed by failure, then apply only the valid recovery's edit.
+        let dir =
+            std::env::temp_dir().join(format!("wetland-journal-select-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let world = World::new(7);
+        let mut scene = fixture();
+        let mut probe = Physics::new(&world);
+        let instances: BTreeSet<String> = scene.instance_ids().into_iter().collect();
+        scene
+            .add_prototype(DetailVolume::new(
+                "__instance_edit:b",
+                Scale::new(1.0).unwrap(),
+            ))
+            .unwrap();
+        let before_prototypes = scene.prototype_ids().len();
+        let path = dir.join(wetland_state::SAVE_FILE);
+        let bad = journal(
+            vec![
+                Edit {
+                    instance: "a".into(),
+                    cell: [1, 0, 0],
+                    material: material::BANK_STONE,
+                },
+                Edit {
+                    instance: "b".into(),
+                    cell: [2, 0, 0],
+                    material: material::BANK_STONE,
+                },
+            ],
+            vec![],
+            [50., 50., 50.],
+        );
+        bad.save(&path).unwrap();
+        let recovery = dir.join(format!("{}.recovery-5.json", wetland_state::SAVE_FILE));
+        let good = journal(
+            vec![Edit {
+                instance: "a".into(),
+                cell: [3, 0, 0],
+                material: material::BANK_STONE,
+            }],
+            vec![],
+            [50., 50., 50.],
+        );
+        good.save(&recovery).unwrap();
+        let primary_bytes = std::fs::read(&path).unwrap();
+        let recovery_bytes = std::fs::read(&recovery).unwrap();
+        let (selected, saved) = SavedWetland::load_recovering_with(&path, 99, 7, |save| {
+            apply_journal(&mut scene, &mut probe, &instances, save)
+        })
+        .unwrap();
+        assert_eq!(selected, recovery);
+        assert_eq!(scene.prototype_ids().len(), before_prototypes + 1);
+        assert_eq!(proto_of(&scene, "b"), "rock");
+        assert_eq!(
+            scene
+                .prototype(&proto_of(&scene, "a"))
+                .unwrap()
+                .get([1, 0, 0]),
+            0
+        );
+        assert_eq!(saved.unwrap().edits.len(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), primary_bytes);
+        assert_eq!(std::fs::read(&recovery).unwrap(), recovery_bytes);
+        assert!(SavedWetland::load(&recovery, 99, 7).unwrap().is_some());
+        assert_eq!(
+            scene
+                .prototype(&proto_of(&scene, "a"))
+                .unwrap()
+                .get([3, 0, 0]),
+            material::BANK_STONE
+        );
+        std::fs::remove_file(&recovery).unwrap();
+        let mut pristine = fixture();
+        pristine
+            .add_prototype(DetailVolume::new(
+                "__instance_edit:b",
+                Scale::new(1.0).unwrap(),
+            ))
+            .unwrap();
+        let original_counts = pristine.counts();
+        let original_ids = pristine.prototype_ids();
+        let (fresh_path, saved) = SavedWetland::load_recovering_with(&path, 99, 7, |save| {
+            apply_journal(&mut pristine, &mut probe, &instances, save)
+        })
+        .unwrap();
+        assert!(saved.is_none());
+        assert_eq!(
+            fresh_path,
+            dir.join(format!("{}.recovery-1.json", wetland_state::SAVE_FILE))
+        );
+        assert_eq!(pristine.counts(), original_counts);
+        assert_eq!(pristine.prototype_ids(), original_ids);
+        assert_eq!(proto_of(&pristine, "a"), "rock");
+        assert_eq!(std::fs::read(&path).unwrap(), primary_bytes);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn buried_pose_is_lifted_but_clear_pose_is_kept() {
+        // Real source colliders: a buried saved eye is lifted straight up
+        // within the bounded step, while a valid grounded pose is preserved.
+        let world = World::new(7);
+        let mut scene = DetailScene::new();
+        let mut floor = DetailVolume::new("floor", Scale::new(0.25).unwrap());
+        for x in -8..8 {
+            for z in -8..8 {
+                floor.set([x, -1, z], material::BANK_STONE).unwrap();
+            }
+        }
+        scene.add_prototype(floor).unwrap();
+        scene
+            .place("floor", "floor", Transform::identity())
+            .unwrap();
+        let mut physics = Physics::new(&world);
+        physics.replace_detail_scene(&scene).unwrap();
+        let standing = [0.125, 1.6, 0.125];
+        assert!(
+            physics.teleport(standing),
+            "fixture standing pose must clear"
+        );
+        assert_eq!(clear_pose(&mut physics, standing), Some(standing));
+        // A saved edit raises the floor half a metre under the player.
+        for x in -2..2 {
+            for z in -2..2 {
+                scene
+                    .edit_prototype("floor", [x, 0, z], material::BANK_STONE)
+                    .unwrap();
+                scene
+                    .edit_prototype("floor", [x, 1, z], material::BANK_STONE)
+                    .unwrap();
+            }
+        }
+        physics.replace_detail_scene(&scene).unwrap();
+        assert!(
+            !physics.teleport(standing),
+            "raised floor must bury the pose"
+        );
+        let corrected = clear_pose(&mut physics, standing).expect("bounded lift must clear");
+        assert_eq!(corrected[0], standing[0]);
+        assert_eq!(corrected[2], standing[2]);
+        assert!(corrected[1] > standing[1] && corrected[1] - standing[1] <= 1.0);
+        assert!(physics.teleport(corrected));
+        // A tall solid column blocks every one of the nine tested positions.
+        // A point below a thin floor would be clear, not a valid burial fixture.
+        for x in -2..2 {
+            for z in -2..2 {
+                for y in 0..16 {
+                    scene
+                        .edit_prototype("floor", [x, y, z], material::BANK_STONE)
+                        .unwrap();
+                }
+            }
+        }
+        physics.replace_detail_scene(&scene).unwrap();
+        assert_eq!(clear_pose(&mut physics, standing), None);
     }
 }

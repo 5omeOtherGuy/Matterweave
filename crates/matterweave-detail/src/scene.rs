@@ -115,6 +115,24 @@ impl DetailScene {
         self.prototypes.get(id)
     }
 
+    /// Authoritative-data-only clone for save-candidate validation: every
+    /// prototype payload and instance record is copied, while derived meshes
+    /// stay behind (an empty cache rebuilds lazily from source revisions).
+    /// A rejected candidate's fork — including private prototypes minted by
+    /// [`Self::edit_instance`] — is simply dropped, so cell-by-cell undo of
+    /// the live scene is never needed and later candidates see pristine
+    /// source accounting. One transient fork is live at a time; it holds at
+    /// most the bounded source payload (`MAX_SCENE_SOURCE_BYTES`).
+    pub fn fork_source(&self) -> Self {
+        Self {
+            prototypes: self.prototypes.clone(),
+            instances: self.instances.clone(),
+            cache: BTreeMap::new(),
+            cache_bytes: 0,
+            mesh_builds: self.mesh_builds,
+        }
+    }
+
     /// Edit one placed object without changing other instances of a shared
     /// prototype. The first real edit privately copies its bounded source.
     /// Deterministic instance IDs give deterministic private IDs across replay.

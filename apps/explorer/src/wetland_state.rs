@@ -85,35 +85,77 @@ impl SavedWetland {
 
     /// Select a valid session or a fresh recovery path. Existing invalid files
     /// stay byte-for-byte intact; recovery selection is bounded and deterministic.
+    /// Shallow-only selection kept for callers without a live scene/physics
+    /// pair (covered by tests); the wetland runtime uses
+    /// [`Self::load_recovering_with`] with real restoration instead.
+    #[allow(dead_code)]
     pub fn load_recovering(
         path: &Path,
         generator: u32,
         seed: u64,
     ) -> Result<(std::path::PathBuf, Option<Self>), String> {
+        Self::load_recovering_with(path, generator, seed, |_| Ok(()))
+    }
+
+    /// Recovery selection where a candidate is accepted only once `restore` has
+    /// actually applied it to the live scene and physics. Shallow field checks
+    /// cannot see an edit naming a placement that does not exist, a body payload
+    /// the physics contract rejects, or any other restoration failure, so a
+    /// journal that passes [`Self::validate`] and still cannot be restored is
+    /// treated exactly like corrupt JSON: retained byte-for-byte, skipped, and
+    /// replaced by an older valid session or a fresh recovery slot.
+    ///
+    /// `restore` must leave no effect behind when it returns `Err`; only the
+    /// accepted candidate's effects survive this call. Candidates are visited
+    /// newest-first so the first acceptance is the selected one and accepted
+    /// state never has to be rolled back for a later winner.
+    pub fn load_recovering_with(
+        path: &Path,
+        generator: u32,
+        seed: u64,
+        mut restore: impl FnMut(&Self) -> Result<(), String>,
+    ) -> Result<(std::path::PathBuf, Option<Self>), String> {
         match Self::load(path, generator, seed) {
-            Ok(save) => return Ok((path.to_path_buf(), save)),
+            Ok(None) => return Ok((path.to_path_buf(), None)),
+            Ok(Some(save)) => match restore(&save) {
+                Ok(()) => return Ok((path.to_path_buf(), Some(save))),
+                Err(error) => log::warn!(
+                    "Wetland session not restorable at {}: {error}",
+                    path.display()
+                ),
+            },
             Err(error) => log::warn!("Wetland session retained at {}: {error}", path.display()),
         }
         let name = path
             .file_name()
             .ok_or("Wetland save path has no filename")?
-            .to_string_lossy();
-        let mut available = None;
-        let mut latest = None;
-        for sequence in 1..=128 {
-            let candidate = path.with_file_name(format!("{name}.recovery-{sequence}.json"));
+            .to_string_lossy()
+            .into_owned();
+        let slot = |sequence: u32| path.with_file_name(format!("{name}.recovery-{sequence}.json"));
+        for sequence in (1..=128).rev() {
+            let candidate = slot(sequence);
             match Self::load(&candidate, generator, seed) {
-                Ok(Some(save)) => latest = Some((candidate, Some(save))),
-                Ok(None) if available.is_none() => available = Some(candidate),
-                _ => {}
+                Ok(Some(save)) => match restore(&save) {
+                    Ok(()) => return Ok((candidate, Some(save))),
+                    Err(error) => log::warn!(
+                        "Wetland recovery not restorable at {}: {error}",
+                        candidate.display()
+                    ),
+                },
+                Ok(None) => {}
+                Err(error) => log::warn!(
+                    "Wetland recovery retained at {}: {error}",
+                    candidate.display()
+                ),
             }
         }
-        if let Some(recovered) = latest {
-            return Ok(recovered);
+        for sequence in 1..=128 {
+            let candidate = slot(sequence);
+            if matches!(Self::load(&candidate, generator, seed), Ok(None)) {
+                return Ok((candidate, None));
+            }
         }
-        available
-            .map(|p| (p, None))
-            .ok_or_else(|| "Wetland recovery slots are full".into())
+        Err("Wetland recovery slots are full".into())
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
