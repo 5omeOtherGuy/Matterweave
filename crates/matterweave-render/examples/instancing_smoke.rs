@@ -244,13 +244,64 @@ impl ApplicationHandler for App {
                     );
                     renderer.resize(800, 600);
                 }
+                6 => {
+                    // Upload both LOD-like prototypes, initially using only one.
+                    renderer
+                        .replace_static_scene(
+                            &[
+                                box_prototype([0.4; 3], [0.8, 0.4, 0.3], 8),
+                                box_prototype([0.2; 3], [0.3, 0.7, 0.5], 8),
+                            ],
+                            &[instances()[0]],
+                        )
+                        .unwrap();
+                }
+                7 => {
+                    let before = renderer.static_scene_stats().unwrap();
+                    let after = renderer
+                        .update_static_instances(&[StaticInstance {
+                            prototype: 1,
+                            translation: [-0.4, 0., 0.],
+                            yaw_quarters: 3,
+                        }])
+                        .unwrap();
+                    assert_eq!(
+                        (after.vertices, after.indices, after.source_bytes),
+                        (before.vertices, before.indices, before.source_bytes)
+                    );
+                    assert_eq!(after.allocated_bytes, before.allocated_bytes);
+                    assert!(renderer
+                        .update_static_instances(&[StaticInstance {
+                            prototype: 2,
+                            translation: [0.; 3],
+                            yaw_quarters: 0,
+                        }])
+                        .is_err());
+                    assert_eq!(renderer.static_scene_stats(), Some(after));
+                }
+                8 => {
+                    let before = renderer.static_scene_stats().unwrap();
+                    let after = renderer.update_static_instances(&instances()).unwrap();
+                    assert_eq!(after.instances, 5);
+                    assert_eq!(after.source_bytes, before.source_bytes);
+                    assert_eq!(after.allocated_bytes, before.allocated_bytes + 4 * 16);
+                }
+                9 => {
+                    let before = renderer.static_scene_stats().unwrap();
+                    let after = renderer.update_static_instances(&[]).unwrap();
+                    assert_eq!(after.instances, 0);
+                    assert_eq!(after.allocated_bytes, before.allocated_bytes);
+                }
+                10 => {
+                    renderer.update_static_instances(&[instances()[0]]).unwrap();
+                }
                 _ => {}
             }
             self.prepared_frame = Some(self.frame);
         }
         let size = self.window.as_ref().unwrap().inner_size();
         let lighting = LightingSettings {
-            shadows: matches!(self.frame, 0 | 2 | 4 | 6),
+            shadows: matches!(self.frame, 0 | 2 | 4 | 6..=10),
             ..Default::default()
         };
         match renderer.render_with_lighting(
@@ -273,11 +324,11 @@ impl ApplicationHandler for App {
             FrameResult::Retry => return,
             result => panic!("Unexpected render result: {result:?}"),
         }
-        if self.frame == 7 {
+        if self.frame == 11 {
             self.renderer = None;
             self.window = None;
             println!(
-                "instancing_smoke: seven frames passed; two prototypes/five instances/four yaws, \
+                "instancing_smoke: eleven frames passed; instance-only reselect/grow/hide/restore; two prototypes/five instances/four yaws, \
                  whole-scene replacement, invalid-update retention (index/prototype/NaN/yaw), \
                  empty clear, identity chunk fallback, shadow batches, resize/zero extent/recreation"
             );
