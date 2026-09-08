@@ -32,6 +32,7 @@ mod fixtures;
 mod flora;
 mod scene;
 mod serial;
+mod showcase;
 mod wetland_flora;
 
 pub use fixtures::{
@@ -48,6 +49,14 @@ pub use flora::{
 pub use scene::{
     DetailScene, InstanceDraw, SceneCounts, MAX_INSTANCES, MAX_PROTOTYPES, MAX_SCENE_CACHE_BYTES,
     MAX_SCENE_SOURCE_BYTES, MAX_SCENE_TRANSLATION_M,
+};
+pub use showcase::{
+    build_showcase, carved, cell_centre_m, composition_hash, showcase_class, terrain_height_m, ClassCounts,
+    ContentManifest, Landmark, Showcase, SurfacePoint, Terrain, BASE_ROCK_ID, BASE_SOIL_ID,
+    BASIN_CENTRE_M, BASIN_WATER_LEVEL_M, BAND_CELLS, EYE_HEIGHT_M, MAP_EDGE_CELLS, MAP_EDGE_M,
+    MAX_PROTOTYPE_CELLS, MAX_TERRAIN_CELL_Y, ROUTE_STEP_M, SHOWCASE_EXPANDED_CELLS_MIN,
+    SHOWCASE_FLORA_CELLS_MIN, SHOWCASE_GENERATOR_VERSION, SHOWCASE_PLANTS_MIN, SHOWCASE_SEED,
+    TERRAIN_CELL_M, TILES_PER_EDGE, TILE_CELLS, WALK_SPEED_M_S,
 };
 pub use serial::{VolumeSnapshot, MAX_SNAPSHOT_JSON_BYTES, MAX_SNAPSHOT_RUNS, SNAPSHOT_VERSION};
 pub use wetland_flora::{
