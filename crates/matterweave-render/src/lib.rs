@@ -2,6 +2,7 @@
 mod frustum;
 mod hud;
 mod lighting;
+pub mod indirect;
 #[cfg(test)]
 mod indirect_tests;
 mod shadow;
