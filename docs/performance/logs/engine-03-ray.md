@@ -20,3 +20,9 @@ synchronization validation reports no errors after correction. Android pending.
 **Insights:** Numeric readback agreement on one driver does not establish correct
 GPU synchronization. The native check must examine validation output as well as
 its terminal count.
+
+**Android correction:** The initial Adreno run failed two of 24 numeric probes,
+retained in phone-ray-3f4aa5b/report.txt. Boundary and near-plane precision were
+reproduced at b6fede0, then stabilized with explicit tolerances. Six offset probes
+constrain the grid-plane snap. Adreno now passes 30/30; host synchronization
+validation is rerun on the same expanded harness before integration.
