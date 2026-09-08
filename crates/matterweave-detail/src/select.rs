@@ -23,18 +23,16 @@
 //!   sheets) toward finer levels, but it is global: a small deep opening inside a
 //!   large solid contributes a negligible fraction on its own. That case is
 //!   caught by the companion `local_loss_fraction` guard below instead.
-//! - `local_loss_fraction` is the worst per-coarse-cell expansion over occupied
-//!   coarse cells whose source footprint lies fully inside the prototype's
-//!   occupied cell bounds: `max(1 - count / factor^3)`, or `0` when no such
-//!   cell is partial. A through-tunnel or deep pinhole leaves every surrounding
-//!   coarse cell interior yet partially filled, so the worst cell reads `0.25`
-//!   at factor 2 (up to `1 - 1/factor^3` for a single-cell void) while a dense
-//!   aligned solid reads exactly `0`. Boundary cells are excluded: their
-//!   footprints extend past the occupied bounds, so ordinary surface steps do
-//!   not trip this guard. It is still conservative, not a visual proof: it
-//!   cannot tell an enclosed void (invisible until cut open) from a
-//!   through-tunnel, and it holds the whole prototype at the finer level.
-//!   Callers that can tolerate a specific opening set `max_local_loss_fraction`.
+//! - `local_loss_fraction` is the worst per-coarse-cell expansion, evaluated
+//!   against each footprint *clipped to the prototype's occupied cell bounds*:
+//!   `max((expected - count) / expected)`, or `0` when every clipped cell is
+//!   full. A through-tunnel, deep pinhole or face-pit leaves a surrounding
+//!   coarse cell partially filled, so the worst cell reads `0.25` at factor 2
+//!   (`1/8` for a single missing cell) while an unaligned dense cuboid reads
+//!   exactly `0`. It is still conservative, not a visual proof: it cannot tell
+//!   an enclosed void (invisible until cut open) from a through-tunnel, and
+//!   it holds the whole prototype at the finer level. Callers that can
+//!   tolerate a specific opening set `max_local_loss_fraction`.
 //! - The pixel figure is a *working estimate* for prioritization, never a proof of
 //!   temporal visual quality. Approach/retreat/zoom capture review on-device is
 //!   still owed before trusting a coarse level.
@@ -71,11 +69,11 @@ pub struct ErrorMetrics {
     /// aggregated over the whole prototype. A thin-feature bias, not a per-opening
     /// guarantee (see `local_loss_fraction`).
     pub dilation_fraction: f32,
-    /// Worst per-coarse-cell expansion over occupied coarse cells whose source
-    /// footprint lies fully inside the prototype's occupied cell bounds:
-    /// `max(1 - count / factor^3)`, `0` when no interior cell is partial.
-    /// Catches small tunnels/pinholes the global dilation misses; conservative
-    /// (enclosed voids trip it too) and boundary-silent by construction.
+    /// Worst per-coarse-cell expansion, each footprint clipped to the
+    /// prototype's occupied cell bounds: `max((expected - count) / expected)`,
+    /// `0` when every clipped cell is full. Catches tunnels, pinholes and
+    /// boundary notches the global dilation misses; unaligned dense geometry
+    /// reads exactly `0` by construction.
     pub local_loss_fraction: f32,
 }
 

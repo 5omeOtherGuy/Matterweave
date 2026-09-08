@@ -116,37 +116,37 @@ fn coarse_metric(
     })
 }
 
-/// Worst interior expansion for one coarsening factor: over occupied coarse
-/// cells whose source footprint lies fully inside the occupied cell bounds,
-/// the maximum `1 - count / factor^3`. Boundary cells (footprint extends past
-/// the bounds) are ordinary surface steps and are excluded, so dense solids
-/// read exactly `0` while tunnels, pinholes and enclosed voids read `> 0`.
-/// Integer arithmetic only; footprints cannot overflow (`|cell| <= 2^16` and
-/// `factor <= 4`).
+/// Worst local expansion for one coarsening factor: over occupied coarse
+/// cells, the maximum `(expected - count) / expected`, where `expected` is
+/// the footprint size *clipped to the occupied cell bounds*. Clipping keeps
+/// unaligned dense cuboids at exactly `0` (boundary partial cells are fully
+/// occupied in-bounds) while a notch or tunnel mouth inside a boundary cell
+/// reads `> 0`. Integer arithmetic only; footprints cannot overflow
+/// (`|cell| <= 2^16` and `factor <= 4`), and the clipped range always covers
+/// the cell's own source cell, so `expected >= 1` for occupied cells.
 fn worst_interior_loss(
     counts: &BTreeMap<[i32; 3], u32>,
     min: [i32; 3],
     max: [i32; 3],
     factor: i32,
 ) -> f32 {
-    let full = (factor as f32).powi(3);
     let mut worst = 0.0f32;
     for (coarse, count) in counts {
-        let count = *count as f32;
-        if count >= full {
-            continue;
-        }
-        let mut interior = true;
+        let mut expected: u32 = 1;
         for axis in 0..3 {
             let base = coarse[axis] * factor;
-            if base < min[axis] || base + factor - 1 > max[axis] {
-                interior = false;
+            let lo = base.max(min[axis]);
+            let hi = (base + factor - 1).min(max[axis]);
+            if hi < lo {
+                expected = 0;
                 break;
             }
+            expected *= (hi - lo + 1) as u32;
         }
-        if interior {
-            worst = worst.max((full - count) / full);
+        if expected == 0 || *count >= expected {
+            continue;
         }
+        worst = worst.max((expected - *count) as f32 / expected as f32);
     }
     worst
 }
@@ -156,9 +156,11 @@ fn compute_digest(volume: &DetailVolume) -> Digest {
     let mut min = [i32::MAX; 3];
     let mut max = [i32::MIN; 3];
     // Per-coarse-cell occupied counts. Entries are bounded by the occupied-cell
-    // count (one entry per occupied source cell, worst case) plus 4 bytes per
-    // entry over the previous presence sets; still within the volume cell
-    // budget and computed once per source revision in the digest cache.
+    // count (one entry per occupied source cell, worst case); each entry adds
+    // a 4-byte count payload over the previous presence sets, plus the map's
+    // own node overhead and padding under the same entry-count bound. Still
+    // within the volume cell budget and computed once per source revision in
+    // the digest cache.
     let mut half: BTreeMap<[i32; 3], u32> = BTreeMap::new();
     let mut quarter: BTreeMap<[i32; 3], u32> = BTreeMap::new();
     for (cell, _) in volume.iter_cells() {
