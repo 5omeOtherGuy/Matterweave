@@ -364,6 +364,12 @@ impl DetailScene {
         Ok(false)
     }
 
+    /// Allocated vertex/index capacity currently held by the derived mesh cache.
+    /// Unlike `counts`, this does not scan authoritative materials or instances.
+    pub fn cached_mesh_bytes(&self) -> usize {
+        self.cache_bytes
+    }
+
     pub fn counts(&self) -> SceneCounts {
         let mut unique_stored_cells = 0;
         let mut source_bytes = 0;
