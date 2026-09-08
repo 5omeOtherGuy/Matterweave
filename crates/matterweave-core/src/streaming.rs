@@ -1,5 +1,6 @@
 use crate::{address, hash, Chunk, World, CHUNK_EDGE, CHUNK_VOLUME};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 pub const STREAM_RADIUS_CHUNKS: i32 = 3;
 pub const WORLD_LIMIT: i32 = 256;
@@ -180,9 +181,10 @@ impl World {
 
 fn generated_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
     let mut chunk = Chunk {
-        voxels: Box::new([0; CHUNK_VOLUME]),
+        voxels: Arc::new([0; CHUNK_VOLUME]),
         solid: 0,
     };
+    let voxels = Arc::make_mut(&mut chunk.voxels);
     for x in key[0] * 16..key[0] * 16 + 16 {
         for z in key[2] * 16..key[2] * 16 + 16 {
             // Match the closest legacy edge falloff (positive edge 31, negative
@@ -215,7 +217,7 @@ fn generated_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
                 } else {
                     3
                 };
-                chunk.voxels[address([x, y, z]).1] = material;
+                voxels[address([x, y, z]).1] = material;
                 chunk.solid += 1;
             }
         }

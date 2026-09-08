@@ -17,7 +17,10 @@ fn snapshots_share_payloads_and_detach_only_changed_chunks() {
     assert!(snapshot.set(cell, old.wrapping_add(1)));
     assert_eq!(source.get(cell), old);
     for key in source.chunk_keys() {
-        assert_eq!(payload(&source, key) == payload(&snapshot, key), key != touched);
+        assert_eq!(
+            payload(&source, key) == payload(&snapshot, key),
+            key != touched
+        );
     }
     let detached = payload(&snapshot, touched);
     assert!(snapshot.set(cell, old.wrapping_add(2)));
@@ -34,7 +37,10 @@ fn streaming_overrides_share_and_repeated_edits_do_not_copy_again() {
     let snapshot = world.clone();
     let old = snapshot.get([0, -8, 0]);
     let override_ptr = |world: &World| -> *const [u8; CHUNK_VOLUME] {
-        &*world.streaming.as_ref().unwrap().overrides[&key].as_ref().unwrap().voxels
+        &*world.streaming.as_ref().unwrap().overrides[&key]
+            .as_ref()
+            .unwrap()
+            .voxels
     };
     assert_eq!(payload(&world, key), override_ptr(&world));
     assert_eq!(payload(&world, key), payload(&snapshot, key));
