@@ -90,7 +90,7 @@ impl Runtime {
             .ok_or("Showcase clearing missing")?;
         let terrain = built.terrain;
         let mut scene = built.scene;
-        let spawn = built.spawn_eye;
+        let mut spawn = built.spawn_eye;
         let route = built.route;
         let saved = SavedWetland::load(&directory.join(wetland_state::SAVE_FILE), GENERATOR, SEED)?;
         let fresh = saved.is_none();
@@ -118,9 +118,23 @@ impl Runtime {
             lighting.shadows = save.shadows;
             save.edits
         } else {
-            if !physics.teleport(spawn) {
+            // The terrain sample describes one column, while the capsule spans
+            // neighbouring quarter-metre steps. Find a clear standing pose above
+            // that same entrance using actual source colliders, with a bounded
+            // one-metre lift. Never disable collision or move to a different route.
+            let desired = spawn;
+            let mut clear = false;
+            for step in 0..=8 {
+                spawn[1] = desired[1] + step as f32 * 0.125;
+                if physics.teleport(spawn) {
+                    clear = true;
+                    break;
+                }
+            }
+            if !clear {
                 return Err("Wetland entrance overlaps solid geometry".into());
             }
+            camera.position = Vec3::from_array(spawn);
             Vec::new()
         };
         let counts = scene.counts();
