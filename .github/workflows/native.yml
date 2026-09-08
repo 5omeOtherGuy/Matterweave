@@ -30,7 +30,7 @@ jobs:
       - name: Native Vulkan smoke
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb mesa-vulkan-drivers vulkan-validationlayers
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 mesa-vulkan-drivers vulkan-validationlayers
           mkdir -p artifacts
           timeout 90s xvfb-run -a cargo run --locked -p matterweave-explorer -- --smoke-exercise --smoke-frames 30 --save artifacts/smoke-world.json 2>&1 | tee artifacts/host-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/host-smoke.log; then exit 1; fi

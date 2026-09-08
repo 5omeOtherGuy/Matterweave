@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "run": "performance-01",
-  "authority": "sole lead-written board; workers must not edit this file",
+  "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Pi lead exclusively; original save restored byte-identically. Candidate02 functional files pulled (1000 rows epoch1;581 rows epochs1/2/3). Initial assertion used incorrect expected header; validator qualification pending.",
+  "phone_owner": "Codex desktop lead exclusively. Owner revoked repeated save backup/restore work; normal showcase uses separate save paths and never overwrites legacy saves.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -139,7 +139,7 @@
     "P03-detail-collision": {
       "attempt": 1,
       "owner": "codex-desktop-lead",
-      "state": "running",
+      "state": "pending",
       "workspace": "isolated; desktop to report",
       "paths": [
         "crates/matterweave-physics/src/detail_collision.rs",
@@ -149,7 +149,7 @@
         "Cargo.lock: detail dependency",
         "docs/performance/p03/collision/**"
       ],
-      "acceptance": "GO sent via coordination; awaiting desktop branch/run report. Finest-source transactional collision replacement; native caller/phone lead-owned."
+      "acceptance": "Verified no implementation or active worker exists; new assignment pending."
     },
     "P02-wsi": {
       "attempt": 1,
@@ -161,12 +161,7 @@
     }
   },
   "capacity": {
-    "total": 4,
-    "leads": 2,
-    "worker_slots": 2,
-    "pi_lead_slots": 1,
-    "desktop_lead_slots": 1,
-    "policy": "No borrowing or replacement until explicit agreement and verified previous-worker inactivity."
+    "policy": "One lead; bounded independent Pi workers as useful. One phone owner; serialize heavy builds. Prior two-lead quota superseded by owner."
   },
   "provider_blockers": {
     "opus": "Desktop HTTP429; no retries before1788838200 or paid fallback. Native worker already completed."
