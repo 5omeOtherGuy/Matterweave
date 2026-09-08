@@ -1,4 +1,6 @@
 //! Fixed-step voxel physics. Backend handles never cross the public boundary.
+mod dynamic_cache;
+pub use dynamic_cache::DynamicMeshCache;
 use matterweave_core::{Mesh, Vertex, World};
 use rapier3d::{control::KinematicCharacterController, prelude::*};
 use serde::{Deserialize, Serialize};

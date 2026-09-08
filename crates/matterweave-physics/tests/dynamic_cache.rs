@@ -1,6 +1,8 @@
 //! Cache equivalence/work tests, not mobile performance measurements.
 use matterweave_core::{Mesh, World};
-use matterweave_physics::{BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot, FIXED_DT, MAX_BODIES};
+use matterweave_physics::{
+    BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot, FIXED_DT, MAX_BODIES,
+};
 
 fn body(position: [f32; 3]) -> BodySnapshot {
     BodySnapshot {
@@ -13,12 +15,20 @@ fn body(position: [f32; 3]) -> BodySnapshot {
     }
 }
 fn restore(physics: &mut Physics, bodies: Vec<BodySnapshot>) {
-    physics.restore(&PhysicsSnapshot { version: 1, eye: [0., 3., 6.], bodies }).unwrap();
+    physics
+        .restore(&PhysicsSnapshot {
+            version: 1,
+            eye: [0., 3., 6.],
+            bodies,
+        })
+        .unwrap();
 }
 fn floor() -> World {
     let mut world = World::new(5);
     for x in -8..8 {
-        for z in -8..8 { world.set([x, 0, z], 3); }
+        for z in -8..8 {
+            world.set([x, 0, z], 3);
+        }
     }
     world
 }
@@ -26,10 +36,15 @@ fn equivalent(actual: &Mesh, reference: &Mesh) {
     assert_eq!(actual.indices, reference.indices);
     assert_eq!(actual.vertices.len(), reference.vertices.len());
     for (a, b) in actual.vertices.iter().zip(&reference.vertices) {
-        for (x, y) in a.position.iter().chain(&a.normal).chain(&a.color)
-            .zip(b.position.iter().chain(&b.normal).chain(&b.color)) {
+        for (x, y) in a
+            .position
+            .iter()
+            .chain(&a.normal)
+            .chain(&a.color)
+            .zip(b.position.iter().chain(&b.normal).chain(&b.color))
+        {
             // Stable identical poses may bypass a numerically noisy slerp.
-            assert!((x-y).abs() <= 0.0001, "{x} != {y}");
+            assert!((x - y).abs() <= 0.0001, "{x} != {y}");
         }
     }
 }
@@ -64,12 +79,20 @@ fn fractional_interpolation_changes_without_fixed_step_revision_change() {
     equivalent(cache.mesh(), &physics.dynamic_mesh());
     let current_y = physics.snapshot().bodies[0].position[1];
     let expected_min_y = 5. + (current_y - 5.) * 0.5 - 0.5;
-    let min_y = cache.mesh().vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
+    let min_y = cache
+        .mesh()
+        .vertices
+        .iter()
+        .map(|v| v.position[1])
+        .fold(f32::INFINITY, f32::min);
     assert!((min_y - expected_min_y).abs() < 0.0001);
     let revision = physics.dynamic_mesh().revision;
     assert_eq!(physics.step_objects(FIXED_DT * 0.25), 0);
     assert_eq!(physics.dynamic_mesh().revision, revision);
-    assert!(cache.update(&physics), "fixed-step revision is not a render key");
+    assert!(
+        cache.update(&physics),
+        "fixed-step revision is not a render key"
+    );
     equivalent(cache.mesh(), &physics.dynamic_mesh());
 }
 
@@ -80,7 +103,9 @@ fn settled_rotated_body_stays_cached_across_fractional_steps() {
     let mut b = body([0., 5., 0.]);
     b.rotation = [0., 0.25881904, 0., 0.9659258];
     restore(&mut physics, vec![b]);
-    for _ in 0..600 { physics.step_objects(FIXED_DT); }
+    for _ in 0..600 {
+        physics.step_objects(FIXED_DT);
+    }
     assert_eq!(physics.body_activity().sleeping, 1);
     let mut cache = DynamicMeshCache::default();
     assert!(cache.update(&physics));
@@ -96,11 +121,17 @@ fn removal_of_support_wakes_and_updates_visible_geometry() {
     let mut world = floor();
     let mut physics = Physics::new(&world);
     restore(&mut physics, vec![body([0., 5., 0.])]);
-    for _ in 0..600 { physics.step_objects(FIXED_DT); }
+    for _ in 0..600 {
+        physics.step_objects(FIXED_DT);
+    }
     assert_eq!(physics.body_activity().sleeping, 1);
     let mut cache = DynamicMeshCache::default();
     cache.update(&physics);
-    for x in -2..=2 { for z in -2..=2 { world.set([x, 0, z], 0); } }
+    for x in -2..=2 {
+        for z in -2..=2 {
+            world.set([x, 0, z], 0);
+        }
+    }
     physics.sync_world(&world);
     physics.step_objects(FIXED_DT * 1.5);
     assert!(cache.update(&physics));
@@ -122,11 +153,24 @@ fn restores_invalidate_size_material_pose_and_empty_geometry() {
     restore(&mut physics, vec![b.clone()]);
     assert!(cache.update(&physics));
     equivalent(cache.mesh(), &physics.dynamic_mesh());
-    b.rotation = [0., std::f32::consts::FRAC_1_SQRT_2, 0., std::f32::consts::FRAC_1_SQRT_2];
+    b.rotation = [
+        0.,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.,
+        std::f32::consts::FRAC_1_SQRT_2,
+    ];
     restore(&mut physics, vec![b]);
     assert!(cache.update(&physics));
-    let min_x = cache.mesh().vertices.iter().map(|v| v.position[0]).fold(f32::INFINITY, f32::min);
-    assert!((min_x + 0.5).abs() < 0.0001, "quarter turn swaps unequal box extents");
+    let min_x = cache
+        .mesh()
+        .vertices
+        .iter()
+        .map(|v| v.position[0])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (min_x + 0.5).abs() < 0.0001,
+        "quarter turn swaps unequal box extents"
+    );
     equivalent(cache.mesh(), &physics.dynamic_mesh());
     restore(&mut physics, vec![]);
     assert!(cache.update(&physics));
@@ -147,7 +191,10 @@ fn fracture_rebuilds_then_equivalent_snapshot_can_reuse() {
     equivalent(cache.mesh(), &physics.dynamic_mesh());
     let snapshot = physics.snapshot();
     physics.restore(&snapshot).unwrap();
-    assert!(!cache.update(&physics), "new backend handles alone don't change geometry");
+    assert!(
+        !cache.update(&physics),
+        "new backend handles alone don't change geometry"
+    );
 }
 
 #[test]
@@ -170,7 +217,10 @@ fn retained_payload_is_bounded_across_full_budget_and_clears() {
     let mut physics = Physics::new(&World::new(5));
     let mut cache = DynamicMeshCache::default();
     for _ in 0..20 {
-        restore(&mut physics, (0..MAX_BODIES).map(|i| body([i as f32, 5., 0.])).collect());
+        restore(
+            &mut physics,
+            (0..MAX_BODIES).map(|i| body([i as f32, 5., 0.])).collect(),
+        );
         assert!(cache.update(&physics));
         assert!(!cache.update(&physics));
         assert!(cache.retained_bytes() <= 256 * 1024);
