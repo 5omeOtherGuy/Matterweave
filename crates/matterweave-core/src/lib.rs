@@ -13,6 +13,9 @@ pub use mesh::{Mesh, Vertex};
 pub use ray::{RayHit, MAX_RAY_DISTANCE};
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+mod snapshot_tests;
+
 pub const CHUNK_EDGE: i32 = 16;
 pub const CHUNK_VOLUME: usize = 4096;
 pub const FORMAT_VERSION: u32 = 2;
