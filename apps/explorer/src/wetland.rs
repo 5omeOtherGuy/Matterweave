@@ -85,6 +85,7 @@ fn graphics(scene: &mut DetailScene) -> Result<(Vec<Mesh>, Vec<StaticInstance>),
 }
 
 struct PreparedJournal {
+    spawn: [f32; 3],
     physics: Physics,
     collision: DetailCollisionStats,
     meshes: Vec<Mesh>,
@@ -129,9 +130,10 @@ fn apply_journal(
     let collision = physics.replace_detail_scene(&fork)?;
     // Validate source collision before restoring bodies: contact with a saved
     // dynamic body must not itself relocate the player.
+    let entrance = clear_pose(&mut physics, spawn);
     let desired = save.physics.eye;
     let eye = clear_pose(&mut physics, desired)
-        .or_else(|| clear_pose(&mut physics, spawn))
+        .or(entrance)
         .ok_or("Wetland save and entrance both overlap solid geometry")?;
     physics.restore(&PhysicsSnapshot {
         eye,
@@ -144,6 +146,9 @@ fn apply_journal(
     }
     *scene = fork;
     Ok(PreparedJournal {
+        // If edits completely block the entrance, the validated saved viewpoint
+        // is the recovery point. Never retain a known overlapping respawn pose.
+        spawn: entrance.unwrap_or(eye),
         physics,
         collision,
         meshes,
@@ -173,7 +178,7 @@ impl Runtime {
             .ok_or("Showcase clearing missing")?;
         let terrain = built.terrain;
         let mut scene = built.scene;
-        let mut spawn = built.spawn_eye;
+        let spawn = built.spawn_eye;
         let route = built.route;
         let elevated_route = built.elevated_route;
         let empty_world = World::new(SEED);
@@ -201,6 +206,7 @@ impl Runtime {
         drop(probe);
         let fresh = saved.is_none();
         let PreparedJournal {
+            mut spawn,
             mut physics,
             collision,
             meshes,
@@ -212,6 +218,7 @@ impl Runtime {
                 let collision = physics.replace_detail_scene(&scene)?;
                 let (meshes, instances) = graphics(&mut scene)?;
                 PreparedJournal {
+                    spawn,
                     physics,
                     collision,
                     meshes,
@@ -1641,12 +1648,22 @@ mod journal_tests {
         let instances = scene.instance_ids().into_iter().collect();
         let save = journal(vec![], vec![], [50.; 3]);
         let spawn = [0.5, 1.6, 0.5];
-        let mut prepared = apply_journal(&mut scene, &mut probe, &instances, &save, &world, spawn).unwrap();
+        let mut prepared =
+            apply_journal(&mut scene, &mut probe, &instances, &save, &world, spawn).unwrap();
         assert_eq!(prepared.physics.character_eye(), save.physics.eye);
         assert_eq!(prepared.spawn[0], spawn[0]);
         assert_eq!(prepared.spawn[2], spawn[2]);
         assert!(prepared.spawn[1] > spawn[1] && prepared.spawn[1] <= spawn[1] + 1.);
         assert!(prepared.physics.teleport(prepared.spawn));
+        for y in 1..6 {
+            scene
+                .edit_prototype("rock", [0, y, 0], material::BANK_STONE)
+                .unwrap();
+        }
+        let prepared =
+            apply_journal(&mut scene, &mut probe, &instances, &save, &world, spawn).unwrap();
+        assert_eq!(prepared.spawn, save.physics.eye);
+        assert_eq!(prepared.physics.character_eye(), save.physics.eye);
     }
 
     #[test]
