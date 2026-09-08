@@ -90,6 +90,7 @@ type Result<T> = std::result::Result<T, GalleryError>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preset {
     Tile,
+    Flora,
     ParasolFront,
     ParasolSide,
     ParasolUnderside,
@@ -99,6 +100,7 @@ impl Preset {
     pub fn label(self) -> &'static str {
         match self {
             Self::Tile => "tile",
+            Self::Flora => "flora",
             Self::ParasolFront => "parasol-front",
             Self::ParasolSide => "parasol-side",
             Self::ParasolUnderside => "parasol-underside",
@@ -107,6 +109,7 @@ impl Preset {
     fn parse(token: &str) -> Option<Self> {
         Some(match token {
             "tile" => Self::Tile,
+            "flora" => Self::Flora,
             "parasol-front" => Self::ParasolFront,
             "parasol-side" => Self::ParasolSide,
             "parasol-underside" => Self::ParasolUnderside,
@@ -154,7 +157,7 @@ impl Request {
         let mut tokens = line.split_whitespace();
         let preset = tokens.next().and_then(Preset::parse).ok_or_else(|| {
             GalleryError::Request(format!(
-                "expected one of tile, parasol-front, parasol-side, parasol-underside in {line:?}"
+                "expected one of tile, flora, parasol-front, parasol-side, parasol-underside in {line:?}"
             ))
         })?;
         let lod = match tokens.next() {
@@ -167,6 +170,11 @@ impl Request {
             return Err(GalleryError::Request(format!(
                 "expected `<preset> [lod]` only in {line:?}"
             )));
+        }
+        if preset == Preset::Flora && lod != Lod::Source {
+            return Err(GalleryError::Request(
+                "flora requires source LOD; coarse anatomy is not quality-accepted".into(),
+            ));
         }
         Ok(Self { preset, lod })
     }
@@ -345,7 +353,7 @@ fn look_at(eye: [f32; 3], target: [f32; 3]) -> Result<(f32, f32)> {
 /// Viewpoint derived from actual scene bounds for one preset.
 pub fn viewpoint(scene: &DetailScene, preset: Preset) -> Result<([f32; 3], f32, f32)> {
     let bounds = match preset {
-        Preset::Tile => instance_bounds(scene, TILE_PROTOTYPE)?,
+        Preset::Tile | Preset::Flora => instance_bounds(scene, TILE_PROTOTYPE)?,
         _ => instance_bounds(scene, PARASOL_PROTOTYPE)?,
     };
     let centre = [
@@ -360,7 +368,7 @@ pub fn viewpoint(scene: &DetailScene, preset: Preset) -> Result<([f32; 3], f32, 
     ];
     let extent = size.iter().copied().fold(0.0_f32, f32::max).max(0.5);
     let (eye, target) = match preset {
-        Preset::Tile => (
+        Preset::Tile | Preset::Flora => (
             [
                 centre[0] + extent * 0.55,
                 bounds.max[1] + extent * 0.65,
@@ -402,7 +410,14 @@ impl GalleryView {
     /// Builds the accepted gallery scene, one combined mesh and the viewpoint.
     /// Touches no world, session or save file.
     pub fn build(request: Request) -> Result<Self> {
-        let mut scene = matterweave_detail::gallery_scene(GALLERY_SEED)?;
+        // Scene generation and prototype meshing happen once on entry, never
+        // in the frame loop or on renderer recreation.
+        let mut scene = match request.preset {
+            Preset::Flora => {
+                matterweave_detail::dense_tile(matterweave_detail::FLORA_CANONICAL_SEED)?
+            }
+            _ => matterweave_detail::gallery_scene(GALLERY_SEED)?,
+        };
         let mesh = combine(&mut scene, request.lod)?;
         let counts = scene.counts();
         let stats = GalleryStats {
@@ -1116,14 +1131,26 @@ mod tests {
         let request = Request::parse("flora source").expect("reviewed flora preset");
         let view = GalleryView::build(request).unwrap();
         assert_eq!(view.request.preset.label(), "flora");
+        assert_eq!(view.request.preset.seed(), 20260908);
+        assert_eq!(Preset::Tile.seed(), 2026);
+        assert!(GalleryView::build(Request {
+            preset: request.preset,
+            lod: Lod::Half,
+        }).is_err());
         assert_eq!(view.stats.instances, 85); // 84 plants and the terrain tile.
         assert_eq!(view.stats.unique_stored_cells, 28_908);
         assert_eq!(view.stats.expanded_occupied_cells, 77_810);
-        assert_eq!(view.stats.mesh_builds, u64::try_from(view.stats.prototypes).unwrap());
+        assert_eq!(
+            view.stats.mesh_builds,
+            u64::try_from(view.stats.prototypes).unwrap()
+        );
         assert!(!view.mesh.indices.is_empty());
         assert!(view.eye.iter().all(|v| v.is_finite()));
         for request in ["flora half", "flora quarter"] {
-            assert!(Request::parse(request).is_err(), "coarse flora quality not accepted");
+            assert!(
+                Request::parse(request).is_err(),
+                "coarse flora quality not accepted"
+            );
         }
     }
 
