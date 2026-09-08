@@ -1,0 +1,61 @@
+{
+  "method": "orthographic, two-sided simple host lighting; not native shader/GPU/temporal evidence",
+  "prototype_angles": [
+    [
+      "Front",
+      [
+        0,
+        0.15,
+        1
+      ],
+      false
+    ],
+    [
+      "Side",
+      [
+        1,
+        0.15,
+        0
+      ],
+      false
+    ],
+    [
+      "Underside",
+      [
+        0.4,
+        -1,
+        0.6
+      ],
+      false
+    ],
+    [
+      "Above",
+      [
+        0.6,
+        1,
+        0.8
+      ],
+      false
+    ],
+    [
+      "Silhouette",
+      [
+        0,
+        0,
+        1
+      ],
+      true
+    ],
+    [
+      "Side silhouette",
+      [
+        1,
+        0,
+        0
+      ],
+      true
+    ]
+  ],
+  "lod_projection": "one bounding union across all LODs per prototype, same camera direction",
+  "scene_triangles": 120582
+}

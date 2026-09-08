@@ -1,0 +1,2251 @@
+{
+  "budgets": {
+    "max_cell_coord": 65536,
+    "max_mesh_bytes": 33554432,
+    "max_scene_cache_bytes": 67108864,
+    "max_scene_source_bytes": 33554432,
+    "max_snapshot_json_bytes": 16777216,
+    "max_snapshot_runs": 2000000,
+    "max_volume_cells": 4194304,
+    "max_volume_chunks": 1024,
+    "max_volume_source_bytes": 4194304,
+    "note": "conservative desktop prototype budgets, enforced before allocation; not a phone feasibility claim"
+  },
+  "camera": {
+    "note": "suggested inspection framing only; no renderer is involved here",
+    "scene_bounds_m": {
+      "max": [
+        9.125,
+        3.5,
+        9.125
+      ],
+      "min": [
+        -8.375,
+        -2.75,
+        -8.0
+      ]
+    },
+    "target_m": [
+      0.375,
+      0.375,
+      0.5625
+    ],
+    "views": [
+      "front +z",
+      "side +x",
+      "underside -y",
+      "top -y silhouette"
+    ]
+  },
+  "content_only": "deterministic; host timings are in timing.json",
+  "corridor": {
+    "note": "north-south plant-origin exclusion; canopy overhang possible; native traversal NOT RUN",
+    "tile_columns_x": [
+      -4,
+      4
+    ],
+    "world_x_range_m": [
+      -1.0,
+      1.0
+    ],
+    "z_extent_m": [
+      -8.0,
+      8.0
+    ]
+  },
+  "counts": {
+    "derived_mesh_builds": 21,
+    "distinct_flora_types": 6,
+    "excluded_from_flora_cells": "the single terrain tile instance",
+    "expanded_collision_cells": 66296,
+    "expanded_flora_cells": 52686,
+    "expanded_liquid_cells": 548,
+    "expanded_occupied_cells": 77810,
+    "instances": 85,
+    "instances_by_prototype": {
+      "clustered_mushroom": 14,
+      "fan_frond": 12,
+      "funnel_mushroom": 16,
+      "parasol_mushroom": 12,
+      "reed_cluster": 14,
+      "rosette_groundcover": 16,
+      "terrain_tile_16m": 1
+    },
+    "prototypes": 7,
+    "terrain_cells": 25124,
+    "unique_stored_cells": 28908,
+    "vegetation_instances": 84
+  },
+  "fixture_generator_version": 1,
+  "generator_version": 2,
+  "ground_contact": [
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-0",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-1",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-10",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-11",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-12",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-13",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-2",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-3",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-4",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-5",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-6",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-7",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-8",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "clustered-9",
+      "prototype": "clustered_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 5
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-0",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-1",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-10",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-11",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-2",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-3",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-4",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-5",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-6",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-7",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-8",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "fan_frond-9",
+      "prototype": "fan_frond",
+      "support_material": "moss_turf",
+      "support_top_cell": 5
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-0",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-1",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-10",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-11",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-12",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 8
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-13",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-14",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 5
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-15",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-2",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 5
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-3",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-4",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-5",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-6",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-7",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-8",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 7
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "funnel-9",
+      "prototype": "funnel_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 5
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-0",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-1",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-10",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-11",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-2",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-3",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-4",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 5
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-5",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-6",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-7",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-8",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "parasol-9",
+      "prototype": "parasol_mushroom",
+      "support_material": "moss_turf",
+      "support_top_cell": 6
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-0",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-1",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-10",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-11",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-12",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-13",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-2",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-3",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-4",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-5",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-6",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-7",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-8",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "reed_cluster-9",
+      "prototype": "reed_cluster",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-0",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-1",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-10",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-11",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-12",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-13",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-14",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-15",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 2
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-2",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-3",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-4",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-5",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-6",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 1
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-7",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-8",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 4
+    },
+    {
+      "gap_m": 0.0,
+      "instance": "rosette_groundcover-9",
+      "prototype": "rosette_groundcover",
+      "support_material": "moss_turf",
+      "support_top_cell": 3
+    }
+  ],
+  "instances": [
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-0",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -2.625,
+        0.75,
+        1.125
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-1",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -1.125,
+        1.0,
+        6.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-10",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        7.125,
+        2.0,
+        -4.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-11",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -2.625,
+        0.75,
+        3.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-12",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -4.875,
+        1.0,
+        1.125
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-13",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -1.375,
+        1.0,
+        4.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-2",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        7.125,
+        2.0,
+        -3.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-3",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -1.625,
+        1.0,
+        1.125
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-4",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -1.125,
+        1.25,
+        7.125
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-5",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -3.875,
+        1.0,
+        1.125
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-6",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -1.375,
+        1.0,
+        5.125
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-7",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -3.125,
+        1.0,
+        2.125
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-8",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        -2.625,
+        0.5,
+        6.125
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "clustered-9",
+      "occupied_cells": 912,
+      "prototype": "clustered_mushroom",
+      "translation_m": [
+        6.125,
+        1.5,
+        -3.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-0",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        5.375,
+        2.0,
+        1.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-1",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        4.125,
+        2.0,
+        1.375
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-10",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        -6.125,
+        1.0,
+        4.625
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-11",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        1.125,
+        1.25,
+        -3.875
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-2",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        5.375,
+        2.0,
+        2.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-3",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        -4.625,
+        1.0,
+        4.375
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-4",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        5.375,
+        1.75,
+        -0.125
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-5",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        -4.625,
+        1.0,
+        7.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-6",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        -3.125,
+        0.5,
+        -4.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-7",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        7.375,
+        1.75,
+        1.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-8",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        -4.375,
+        1.0,
+        3.125
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "fan_frond-9",
+      "occupied_cells": 422,
+      "prototype": "fan_frond",
+      "translation_m": [
+        2.875,
+        1.5,
+        1.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-0",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        -7.125,
+        0.5,
+        2.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-1",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        5.625,
+        1.75,
+        3.625
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-10",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        6.625,
+        1.75,
+        3.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-11",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        6.625,
+        1.25,
+        5.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-12",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        7.625,
+        2.25,
+        7.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-13",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        -6.125,
+        0.75,
+        1.875
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-14",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        5.375,
+        1.5,
+        4.625
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-15",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        -7.125,
+        0.5,
+        0.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-2",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        6.625,
+        1.5,
+        6.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-3",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        -7.125,
+        0.5,
+        1.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-4",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        6.625,
+        2.0,
+        7.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-5",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        7.625,
+        1.75,
+        6.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-6",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        -6.125,
+        1.0,
+        2.875
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-7",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        5.625,
+        1.75,
+        6.875
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-8",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        6.375,
+        2.0,
+        2.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "funnel-9",
+      "occupied_cells": 1106,
+      "prototype": "funnel_mushroom",
+      "translation_m": [
+        4.125,
+        1.5,
+        3.125
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-0",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -1.625,
+        1.0,
+        3.125
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-1",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        7.625,
+        1.75,
+        -0.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-10",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -7.375,
+        0.75,
+        -7.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-11",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -3.625,
+        0.5,
+        -5.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-2",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -2.625,
+        0.5,
+        4.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-3",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -1.375,
+        0.75,
+        2.125
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-4",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        6.625,
+        1.5,
+        -0.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-5",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -3.625,
+        0.5,
+        4.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-6",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -7.375,
+        0.5,
+        -6.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-7",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -4.625,
+        0.5,
+        -6.125
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-8",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        -3.625,
+        0.5,
+        5.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-fungus",
+      "instance": "parasol-9",
+      "occupied_cells": 938,
+      "prototype": "parasol_mushroom",
+      "translation_m": [
+        6.375,
+        1.75,
+        0.875
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-0",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -1.375,
+        0.75,
+        -3.625
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-1",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        1.125,
+        1.0,
+        -0.875
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-10",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -6.875,
+        0.5,
+        -3.875
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-11",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -3.875,
+        0.75,
+        -0.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-12",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -7.625,
+        0.5,
+        -3.875
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-13",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -4.625,
+        0.75,
+        -0.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-2",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -2.375,
+        0.5,
+        -3.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-3",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -3.125,
+        0.5,
+        -3.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-4",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -3.875,
+        0.5,
+        -3.625
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-5",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -1.375,
+        1.0,
+        -0.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-6",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -4.625,
+        0.75,
+        -3.375
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-7",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -2.375,
+        0.75,
+        -0.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-8",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -5.625,
+        0.75,
+        -3.375
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "reed_cluster-9",
+      "occupied_cells": 297,
+      "prototype": "reed_cluster",
+      "translation_m": [
+        -3.125,
+        0.75,
+        -0.375
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-0",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.375,
+        1.25,
+        6.375
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-1",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -5.625,
+        0.5,
+        -4.375
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-10",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -6.625,
+        1.25,
+        7.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-11",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -5.875,
+        1.25,
+        6.375
+      ],
+      "yaw": "Deg270"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-12",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -4.875,
+        0.5,
+        -5.125
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-13",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -4.125,
+        0.5,
+        -4.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-14",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.125,
+        0.5,
+        -4.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-15",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.375,
+        0.75,
+        4.125
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-2",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.375,
+        1.0,
+        5.625
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-3",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.375,
+        1.25,
+        7.125
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-4",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -6.625,
+        1.25,
+        6.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-5",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -4.875,
+        0.5,
+        -4.375
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-6",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -6.375,
+        0.5,
+        -4.625
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-7",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.375,
+        1.0,
+        4.875
+      ],
+      "yaw": "Deg0"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-8",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -7.375,
+        1.25,
+        7.875
+      ],
+      "yaw": "Deg180"
+    },
+    {
+      "class": "flora-decorative",
+      "instance": "rosette_groundcover-9",
+      "occupied_cells": 109,
+      "prototype": "rosette_groundcover",
+      "translation_m": [
+        -6.625,
+        1.0,
+        5.625
+      ],
+      "yaw": "Deg90"
+    },
+    {
+      "class": "terrain",
+      "instance": "tile-0",
+      "occupied_cells": 25124,
+      "prototype": "terrain_tile_16m",
+      "translation_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "yaw": "Deg0"
+    }
+  ],
+  "memory_bytes": {
+    "cached_mesh": 1750896,
+    "excludes": "BTreeMap/allocator overhead, instance records, GPU buffers, any renderer or engine state",
+    "exported_mesh_total": 1750896,
+    "snapshot_json_total": 90615,
+    "source_payload": 286720
+  },
+  "meshes": [
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.0625,
+      "class": "flora-fungus",
+      "index_bytes": 27696,
+      "index_file": "clustered_mushroom.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "clustered_mushroom",
+      "source_revision": 912,
+      "triangles": 2308,
+      "vertex_bytes": 166176,
+      "vertex_file": "clustered_mushroom.lod1.vertices.le.bin",
+      "vertices": 4616
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.125,
+      "class": "flora-fungus",
+      "index_bytes": 9312,
+      "index_file": "clustered_mushroom.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "clustered_mushroom",
+      "source_revision": 912,
+      "triangles": 776,
+      "vertex_bytes": 55872,
+      "vertex_file": "clustered_mushroom.lod2.vertices.le.bin",
+      "vertices": 1552
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "flora-fungus",
+      "index_bytes": 2592,
+      "index_file": "clustered_mushroom.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "clustered_mushroom",
+      "source_revision": 912,
+      "triangles": 216,
+      "vertex_bytes": 15552,
+      "vertex_file": "clustered_mushroom.lod4.vertices.le.bin",
+      "vertices": 432
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.125,
+      "class": "flora-decorative",
+      "index_bytes": 15288,
+      "index_file": "fan_frond.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "fan_frond",
+      "source_revision": 422,
+      "triangles": 1274,
+      "vertex_bytes": 91728,
+      "vertex_file": "fan_frond.lod1.vertices.le.bin",
+      "vertices": 2548
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "flora-decorative",
+      "index_bytes": 5664,
+      "index_file": "fan_frond.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "fan_frond",
+      "source_revision": 422,
+      "triangles": 472,
+      "vertex_bytes": 33984,
+      "vertex_file": "fan_frond.lod2.vertices.le.bin",
+      "vertices": 944
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.5,
+      "class": "flora-decorative",
+      "index_bytes": 2448,
+      "index_file": "fan_frond.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "fan_frond",
+      "source_revision": 422,
+      "triangles": 204,
+      "vertex_bytes": 14688,
+      "vertex_file": "fan_frond.lod4.vertices.le.bin",
+      "vertices": 408
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.0625,
+      "class": "flora-fungus",
+      "index_bytes": 22944,
+      "index_file": "funnel_mushroom.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "funnel_mushroom",
+      "source_revision": 1106,
+      "triangles": 1912,
+      "vertex_bytes": 137664,
+      "vertex_file": "funnel_mushroom.lod1.vertices.le.bin",
+      "vertices": 3824
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.125,
+      "class": "flora-fungus",
+      "index_bytes": 6096,
+      "index_file": "funnel_mushroom.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "funnel_mushroom",
+      "source_revision": 1106,
+      "triangles": 508,
+      "vertex_bytes": 36576,
+      "vertex_file": "funnel_mushroom.lod2.vertices.le.bin",
+      "vertices": 1016
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "flora-fungus",
+      "index_bytes": 1608,
+      "index_file": "funnel_mushroom.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "funnel_mushroom",
+      "source_revision": 1106,
+      "triangles": 134,
+      "vertex_bytes": 9648,
+      "vertex_file": "funnel_mushroom.lod4.vertices.le.bin",
+      "vertices": 268
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.0625,
+      "class": "flora-fungus",
+      "index_bytes": 14688,
+      "index_file": "parasol_mushroom.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "parasol_mushroom",
+      "source_revision": 938,
+      "triangles": 1224,
+      "vertex_bytes": 88128,
+      "vertex_file": "parasol_mushroom.lod1.vertices.le.bin",
+      "vertices": 2448
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.125,
+      "class": "flora-fungus",
+      "index_bytes": 4272,
+      "index_file": "parasol_mushroom.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "parasol_mushroom",
+      "source_revision": 938,
+      "triangles": 356,
+      "vertex_bytes": 25632,
+      "vertex_file": "parasol_mushroom.lod2.vertices.le.bin",
+      "vertices": 712
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "flora-fungus",
+      "index_bytes": 1968,
+      "index_file": "parasol_mushroom.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "parasol_mushroom",
+      "source_revision": 938,
+      "triangles": 164,
+      "vertex_bytes": 11808,
+      "vertex_file": "parasol_mushroom.lod4.vertices.le.bin",
+      "vertices": 328
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.125,
+      "class": "flora-decorative",
+      "index_bytes": 12432,
+      "index_file": "reed_cluster.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "reed_cluster",
+      "source_revision": 313,
+      "triangles": 1036,
+      "vertex_bytes": 74592,
+      "vertex_file": "reed_cluster.lod1.vertices.le.bin",
+      "vertices": 2072
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "flora-decorative",
+      "index_bytes": 3216,
+      "index_file": "reed_cluster.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "reed_cluster",
+      "source_revision": 313,
+      "triangles": 268,
+      "vertex_bytes": 19296,
+      "vertex_file": "reed_cluster.lod2.vertices.le.bin",
+      "vertices": 536
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.5,
+      "class": "flora-decorative",
+      "index_bytes": 1368,
+      "index_file": "reed_cluster.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "reed_cluster",
+      "source_revision": 313,
+      "triangles": 114,
+      "vertex_bytes": 8208,
+      "vertex_file": "reed_cluster.lod4.vertices.le.bin",
+      "vertices": 228
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.125,
+      "class": "flora-decorative",
+      "index_bytes": 4872,
+      "index_file": "rosette_groundcover.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "rosette_groundcover",
+      "source_revision": 109,
+      "triangles": 406,
+      "vertex_bytes": 29232,
+      "vertex_file": "rosette_groundcover.lod1.vertices.le.bin",
+      "vertices": 812
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "flora-decorative",
+      "index_bytes": 1848,
+      "index_file": "rosette_groundcover.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "rosette_groundcover",
+      "source_revision": 109,
+      "triangles": 154,
+      "vertex_bytes": 11088,
+      "vertex_file": "rosette_groundcover.lod2.vertices.le.bin",
+      "vertices": 308
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.5,
+      "class": "flora-decorative",
+      "index_bytes": 888,
+      "index_file": "rosette_groundcover.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "rosette_groundcover",
+      "source_revision": 109,
+      "triangles": 74,
+      "vertex_bytes": 5328,
+      "vertex_file": "rosette_groundcover.lod4.vertices.le.bin",
+      "vertices": 148
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.25,
+      "class": "terrain",
+      "index_bytes": 80424,
+      "index_file": "terrain_tile_16m.lod1.indices.le.bin",
+      "lod_factor": 1,
+      "prototype": "terrain_tile_16m",
+      "source_revision": 25124,
+      "triangles": 6702,
+      "vertex_bytes": 482544,
+      "vertex_file": "terrain_tile_16m.lod1.vertices.le.bin",
+      "vertices": 13404
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 0.5,
+      "class": "terrain",
+      "index_bytes": 24168,
+      "index_file": "terrain_tile_16m.lod2.indices.le.bin",
+      "lod_factor": 2,
+      "prototype": "terrain_tile_16m",
+      "source_revision": 25124,
+      "triangles": 2014,
+      "vertex_bytes": 145008,
+      "vertex_file": "terrain_tile_16m.lod2.vertices.le.bin",
+      "vertices": 4028
+    },
+    {
+      "byte_order": "little_endian",
+      "cell_size_m": 1.0,
+      "class": "terrain",
+      "index_bytes": 6336,
+      "index_file": "terrain_tile_16m.lod4.indices.le.bin",
+      "lod_factor": 4,
+      "prototype": "terrain_tile_16m",
+      "source_revision": 25124,
+      "triangles": 528,
+      "vertex_bytes": 38016,
+      "vertex_file": "terrain_tile_16m.lod4.vertices.le.bin",
+      "vertices": 1056
+    }
+  ],
+  "origin_convention": "local cell c spans [c*scale, (c+1)*scale] metres; transform is quarter-turn yaw then an arbitrary fractional translation in world metres",
+  "prototypes": [
+    {
+      "bounds_local_m": {
+        "max": [
+          0.75,
+          1.25,
+          0.625
+        ],
+        "min": [
+          -0.625,
+          0.0,
+          -0.6875
+        ]
+      },
+      "cell_size_m": 0.0625,
+      "cells_by_material": {
+        "flora_cluster_cap": 360,
+        "flora_cluster_gill": 60,
+        "flora_cluster_rim": 116,
+        "flora_cluster_stipe": 376
+      },
+      "cells_by_policy": {
+        "collision": 912
+      },
+      "chunks": 7,
+      "class": "flora-fungus",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "clustered_mushroom",
+      "occupied_cells": 912,
+      "revision": 912,
+      "snapshot_json_bytes": 6027,
+      "snapshot_runs": 404,
+      "source_payload_bytes": 28672
+    },
+    {
+      "bounds_local_m": {
+        "max": [
+          1.625,
+          0.75,
+          1.75
+        ],
+        "min": [
+          -1.5,
+          0.0,
+          -1.125
+        ]
+      },
+      "cell_size_m": 0.125,
+      "cells_by_material": {
+        "flora_frond_blade": 276,
+        "flora_frond_rib": 132,
+        "flora_frond_stem": 14
+      },
+      "cells_by_policy": {
+        "decorative": 422
+      },
+      "chunks": 4,
+      "class": "flora-decorative",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "fan_frond",
+      "occupied_cells": 422,
+      "revision": 422,
+      "snapshot_json_bytes": 3479,
+      "snapshot_runs": 242,
+      "source_payload_bytes": 16384
+    },
+    {
+      "bounds_local_m": {
+        "max": [
+          0.625,
+          1.1875,
+          0.625
+        ],
+        "min": [
+          -0.5625,
+          0.0,
+          -0.5625
+        ]
+      },
+      "cell_size_m": 0.0625,
+      "cells_by_material": {
+        "flora_fungus_lumen": 16,
+        "flora_funnel_cap": 724,
+        "flora_funnel_gill": 48,
+        "flora_funnel_rim": 164,
+        "flora_funnel_stipe": 154
+      },
+      "cells_by_policy": {
+        "collision": 1106
+      },
+      "chunks": 8,
+      "class": "flora-fungus",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "funnel_mushroom",
+      "occupied_cells": 1106,
+      "revision": 1106,
+      "snapshot_json_bytes": 6833,
+      "snapshot_runs": 456,
+      "source_payload_bytes": 32768
+    },
+    {
+      "bounds_local_m": {
+        "max": [
+          0.625,
+          1.375,
+          0.625
+        ],
+        "min": [
+          -0.5625,
+          0.0,
+          -0.5625
+        ]
+      },
+      "cell_size_m": 0.0625,
+      "cells_by_material": {
+        "mushroom_cap": 569,
+        "mushroom_gill": 72,
+        "mushroom_rim": 116,
+        "mushroom_stipe": 181
+      },
+      "cells_by_policy": {
+        "collision": 938
+      },
+      "chunks": 8,
+      "class": "flora-fungus",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "parasol_mushroom",
+      "occupied_cells": 938,
+      "revision": 938,
+      "snapshot_json_bytes": 5030,
+      "snapshot_runs": 336,
+      "source_payload_bytes": 32768
+    },
+    {
+      "bounds_local_m": {
+        "max": [
+          0.75,
+          2.5,
+          0.75
+        ],
+        "min": [
+          -0.625,
+          0.0,
+          -0.625
+        ]
+      },
+      "cell_size_m": 0.125,
+      "cells_by_material": {
+        "flora_lumen_dot": 9,
+        "flora_reed_leaf": 81,
+        "flora_reed_plume": 86,
+        "flora_reed_stem": 121
+      },
+      "cells_by_policy": {
+        "decorative": 297
+      },
+      "chunks": 8,
+      "class": "flora-decorative",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "reed_cluster",
+      "occupied_cells": 297,
+      "revision": 313,
+      "snapshot_json_bytes": 3497,
+      "snapshot_runs": 239,
+      "source_payload_bytes": 32768
+    },
+    {
+      "bounds_local_m": {
+        "max": [
+          0.75,
+          0.625,
+          0.75
+        ],
+        "min": [
+          -0.625,
+          0.0,
+          -0.625
+        ]
+      },
+      "cell_size_m": 0.125,
+      "cells_by_material": {
+        "flora_rosette_heart": 27,
+        "flora_rosette_leaf": 78,
+        "flora_rosette_spot": 4
+      },
+      "cells_by_policy": {
+        "decorative": 109
+      },
+      "chunks": 4,
+      "class": "flora-decorative",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "rosette_groundcover",
+      "occupied_cells": 109,
+      "revision": 109,
+      "snapshot_json_bytes": 964,
+      "snapshot_runs": 62,
+      "source_payload_bytes": 16384
+    },
+    {
+      "bounds_local_m": {
+        "max": [
+          8.0,
+          2.25,
+          8.0
+        ],
+        "min": [
+          -8.0,
+          -2.75,
+          -8.0
+        ]
+      },
+      "cell_size_m": 0.25,
+      "cells_by_material": {
+        "bank_stone": 12288,
+        "detail_soil": 8717,
+        "moss_turf": 3571,
+        "water": 548
+      },
+      "cells_by_policy": {
+        "collision": 24576,
+        "liquid": 548
+      },
+      "chunks": 31,
+      "class": "terrain",
+      "fits_prototype_mesh_cap_33288": true,
+      "id": "terrain_tile_16m",
+      "occupied_cells": 25124,
+      "revision": 25124,
+      "snapshot_json_bytes": 64785,
+      "snapshot_runs": 4069,
+      "source_payload_bytes": 126976
+    }
+  ],
+  "reserved_species": [
+    "bracket_shelf"
+  ],
+  "scene_note": "dense 16 m representative tile: a density sample toward the full 128 m map goal, NOT full showcase acceptance and NOT a phone claim",
+  "seed": 20260908,
+  "snapshot_version": 1,
+  "species": [
+    "parasol_mushroom",
+    "funnel_mushroom",
+    "clustered_mushroom",
+    "fan_frond",
+    "reed_cluster",
+    "rosette_groundcover"
+  ],
+  "thresholds": {
+    "flora_cells_min": 40000,
+    "met": true,
+    "per_species_min": 4,
+    "types_min": 5,
+    "vegetation_min": 64
+  }
+}
