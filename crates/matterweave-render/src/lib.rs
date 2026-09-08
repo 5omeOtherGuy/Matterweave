@@ -1965,3 +1965,15 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod async_indirect_api_gate {
+    #[test]
+    fn creates_background_lighting_controller() {
+        let config = crate::async_indirect::AsyncIndirectConfig::new(
+            [0; 3], [1; 3], 1, 1.0, [[0.5; 3]; 256],
+        ).unwrap();
+        let controller = crate::async_indirect::AsyncIndirectLight::new(config);
+        assert!(controller.available());
+    }
+}
