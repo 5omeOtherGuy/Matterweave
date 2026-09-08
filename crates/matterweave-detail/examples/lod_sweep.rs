@@ -80,6 +80,7 @@ fn main() -> Result<()> {
     for (frame, &distance) in distances.iter().enumerate() {
         let camera = Camera {
             eye_m: [0.25, 0.25, 0.5 + distance],
+            forward_m: [0.0, 0.0, -1.0],
             viewport_height_px: 1080.0,
             near_m: 0.1,
             projection: Projection::Perspective {

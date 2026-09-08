@@ -98,17 +98,17 @@ fn coarse_metric(
     if crate::Scale::new(scale_m * factor as f32).is_err() {
         return None;
     }
-    let error_m = scale_m * factor as f32;
+    let error_estimate_m = scale_m * factor as f32;
     if occupied == 0 || coarse_cells == 0 {
         return Some(ErrorMetrics {
-            error_m,
+            error_estimate_m,
             dilation_fraction: 0.0,
         });
     }
     let filled = coarse_cells as f64 * (factor as f64).powi(3);
     let dilation = (1.0 - occupied as f64 / filled).max(0.0) as f32;
     Some(ErrorMetrics {
-        error_m,
+        error_estimate_m,
         dilation_fraction: dilation,
     })
 }
@@ -535,14 +535,31 @@ impl DetailScene {
                 let digest = self.digest(&prototype);
                 (digest.metrics, digest.bounds_local, digest.occupied)
             };
-            let distance_m = match bounds_local {
-                Some(bounds) => camera.distance_to_bounds(&bounds.transformed(&transform)),
-                None => 0.0,
+            // RED: Euclidean nearest eye distance. This overstates depth for
+            // off-axis instances; replaced by camera.nearest_depth in the fix.
+            let depth_m = match bounds_local {
+                Some(bounds) => {
+                    let wb = bounds.transformed(&transform);
+                    let mut sum = 0.0f32;
+                    for axis in 0..3 {
+                        let e = camera.eye_m[axis];
+                        let d = if e < wb.min[axis] {
+                            wb.min[axis] - e
+                        } else if e > wb.max[axis] {
+                            e - wb.max[axis]
+                        } else {
+                            0.0
+                        };
+                        sum += d * d;
+                    }
+                    sum.sqrt().max(camera.near_m)
+                }
+                None => camera.near_m,
             };
-            let (lod, error_m, projected_error_px) = if occupied == 0 {
+            let (lod, error_estimate_m, projected_error_estimate_px) = if occupied == 0 {
                 (Lod::Source, 0.0, 0.0)
             } else {
-                choose_lod(previous, camera, config, &metrics, distance_m)
+                choose_lod(previous, camera, config, &metrics, depth_m)
             };
             self.selection.insert(id.clone(), lod);
             out.push(InstanceLod {
@@ -550,9 +567,9 @@ impl DetailScene {
                 prototype,
                 transform,
                 lod,
-                error_m,
-                projected_error_px,
-                distance_m,
+                error_estimate_m,
+                projected_error_estimate_px,
+                depth_m,
                 occupied_cells: occupied,
                 fallback: false,
             });
@@ -630,9 +647,9 @@ impl DetailScene {
             if actual != item.lod {
                 let metric = self.digest(&item.prototype).metrics[actual.index()]
                     .unwrap_or(ErrorMetrics::SOURCE);
-                item.error_m = metric.error_m;
-                item.projected_error_px =
-                    camera.projected_error_px(metric.error_m, item.distance_m);
+                item.error_estimate_m = metric.error_estimate_m;
+                item.projected_error_estimate_px =
+                    camera.projected_error_px(metric.error_estimate_m, item.depth_m);
                 item.lod = actual;
                 item.fallback = true;
             }

@@ -42,6 +42,7 @@ fn thin_sheet(id: &str, mat: u8) -> DetailVolume {
 fn persp(distance: f32) -> Camera {
     Camera {
         eye_m: [0.25, 0.25, 0.5 + distance],
+        forward_m: [0.0, 0.0, -1.0],
         viewport_height_px: 1080.0,
         near_m: 0.1,
         projection: Projection::Perspective {
@@ -53,6 +54,7 @@ fn persp(distance: f32) -> Camera {
 fn ortho(distance: f32, view_height_m: f32) -> Camera {
     Camera {
         eye_m: [0.25, 0.25, 0.5 + distance],
+        forward_m: [0.0, 0.0, -1.0],
         viewport_height_px: 1080.0,
         near_m: 0.1,
         projection: Projection::Orthographic { view_height_m },
@@ -286,10 +288,13 @@ fn selection_reports_error_and_projected_error_evidence() {
     let selected = scene.select_lods(&persp(300.0), &config).unwrap();
     let item = &selected[0];
     assert_eq!(item.lod, Lod::Quarter);
-    // Quarter of a 0.0625 m source is a 0.25 m displacement bound.
-    assert!((item.error_m - 0.25).abs() < 1e-4);
-    assert!(item.projected_error_px > 0.0 && item.projected_error_px <= config.error_budget_px);
-    assert!(item.distance_m > 299.0 && item.distance_m < 301.0);
+    // Quarter of a 0.0625 m source is a 0.25 m coarse-cell error estimate.
+    assert!((item.error_estimate_m - 0.25).abs() < 1e-4);
+    assert!(
+        item.projected_error_estimate_px > 0.0
+            && item.projected_error_estimate_px <= config.error_budget_px
+    );
+    assert!(item.depth_m > 299.0 && item.depth_m < 301.0);
     // Source cell count is camera independent identity, always the finest count.
     assert_eq!(item.occupied_cells, 8 * 8 * 8);
     assert!(!item.fallback);
