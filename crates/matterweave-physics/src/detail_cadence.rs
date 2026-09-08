@@ -20,49 +20,77 @@
 //!   be updated immediately, as the explorer does). While a publication is
 //!   pending, a newly added wall is therefore visible but not yet solid, and a
 //!   removed wall is solid but not yet visible. That window is bounded by
-//!   preparation time, and the publication gate below guarantees it can never
-//!   trap a body.
-//! - **Publication gate**: a prepared result publishes only when no dynamic
-//!   body overlaps any collider it would *add* ([`Physics::detail_publication_blocked`]).
-//!   When a body has advanced into the region of a pending new wall, the result
-//!   is *retained* in the controller's buffer and retried on later frames; it
-//!   is never dropped and never placed through the body. The wall appears only
-//!   once the body has left the region. Removals and unchanged colliders never
-//!   gate, so the common "remove a wall while walking toward it" edit still
-//!   publishes as soon as preparation completes.
+//!   preparation time, and the publication gate below guarantees added solid
+//!   material can never trap a body.
+//! - **Publication gate**: every [`on_edit`](DetailCollisionCadence::on_edit)
+//!   call names the world-space regions where it added solid collision
+//!   material (`None` when the change is not expressible as added cells, e.g.
+//!   added/removed/moved instances). A prepared result publishes only when no
+//!   dynamic body AABB overlaps any accumulated added region
+//!   ([`Physics::detail_added_blocked`]). When a body has advanced into the
+//!   region of a pending new wall, the result is *retained* and retried on
+//!   later frames; it is never dropped and never placed through the body. The
+//!   wall appears only once the body has left the region. Removals never gate,
+//!   so the common "remove a wall while walking toward it" edit still
+//!   publishes as soon as preparation completes. Regions accumulate across
+//!   rapid edits and clear on every accepted publication, so the gate always
+//!   covers the full diff against the last accepted publication. A structural
+//!   (`None`) change latches a conservative mode that defers while any body
+//!   overlaps any prepared collider; it clears on publication. The region list
+//!   is bounded by [`MAX_PENDING_ADDED`]; overflow latches the same
+//!   conservative mode.
+//! - Why regions, not collider comparison: a whole-collider AABB equality
+//!   check cannot establish unchanged shape — filling an interior hole leaves
+//!   the outer AABB identical while new solid material appears inside it. The
+//!   journal-sourced added region covers exactly that case at cell
+//!   granularity, including AABB overlap (not shape contact), which is the
+//!   sound direction: publication may defer spuriously, but never through a
+//!   body.
 //! - [`DetailCollisionCadence::step`] publishes **at most one** result per
 //!   call. This is structural, not a convention: the controller buffers at
-//!   most one completed result, so one `step` can never publish two. The
-//!   once-*per-frame* part is the caller's convention — call `step` once on
-//!   the simulation thread before stepping, never concurrently with stepping.
+//!   most one completed result (plus at most one staged synchronous result),
+//!   so one `step` can never publish two. The once-*per-frame* part is the
+//!   caller's convention — call `step` once on the simulation thread before
+//!   stepping, never concurrently with stepping.
 //! - Every result is tagged with the scene's opaque
 //!   [`SceneVersion`](matterweave_detail::SceneVersion). A superseded result (a
 //!   newer edit arrived), a reset-cancelled result, or a result built before a
 //!   scene replacement never publishes; the controller drops or retains them
 //!   per its documented bounds and `step` simply finds nothing.
 //! - If preparation of the **current** scene fails (deterministic budget
-//!   rejection), `step` returns the error with live collision untouched. The
-//!   owner must restore consistency: revert the offending edit against the
-//!   authoritative scene and queue that reverted source again. The reverted
-//!   source matches the still-live collision, so movement stays correct the
-//!   whole time.
-//! - If the worker is unavailable (startup failure or exit),
-//!   [`DetailCollisionCadence::on_edit`] falls back to the synchronous
-//!   [`Physics::replace_detail_scene`] path so collision never silently
-//!   diverges from the authoritative scene, and `step` applies the same
-//!   fallback for any source version that has not yet published. The race
-//!   "worker dies right after an edit was queued" is bounded: the very next
-//!   `step` observes `available() == false` and republishes that source
-//!   synchronously (at most one rebuild per new source version, tracked by
-//!   [`DetailCollisionCadence::published_version`]); pending work whose
-//!   *current* result already buffered still publishes first.
+//!   rejection), `step` returns the error with live collision untouched and
+//!   the accumulated gate region cleared. The owner must restore consistency:
+//!   revert the offending edits against the authoritative scene (restoring the
+//!   exact prior save-journal entries, not just scene materials) and queue
+//!   that reverted source again. The reverted source matches the still-live
+//!   collision, so movement stays correct the whole time.
+//! - If the worker is unavailable (startup failure or exit), `on_edit` builds
+//!   the preparation **synchronously on the calling thread** and applies the
+//!   *same gate*: a clear source publishes immediately (`Ok(false)`); a
+//!   blocked source is staged in a single bounded slot and publishes from a
+//!   later `step` once the body clears (`Ok(true)`). There is no ungated
+//!   synchronous path: the fallback runs during pending runtime edits, not
+//!   just at load, so bypassing the check would publish new walls through
+//!   bodies. Cost truthfully stated: the synchronous build is a full-scene
+//!   rebuild on the simulation thread (same cost class as
+//!   [`Physics::replace_detail_scene`]) plus at most one staged rebuild per
+//!   new source version in `step`; use only when the worker is gone.
 //! - `pending_edits` bookkeeping (the host's own revert journal) is bounded by
 //!   coalescing: at most one entry per (instance, cell), the entry carrying
-//!   the material the cell held at the last accepted publication.
+//!   the scene material *and* the save-journal entry the cell held at the last
+//!   accepted publication, so rollback restores confirmed history instead of
+//!   deleting it.
 
 use crate::Physics;
 use crate::{AsyncDetailCollision, AsyncDetailStats, DetailCollisionStats};
 use matterweave_detail::{DetailScene, SceneVersion};
+use rapier3d::prelude::*;
+
+/// Largest number of accumulated added-solid regions held between
+/// publications. One entry per edited cell is the normal case; reaching the
+/// cap latches the conservative structural gate instead of growing, so pending
+/// state stays bounded at ~[`MAX_PENDING_ADDED`] × 24 B.
+pub const MAX_PENDING_ADDED: usize = 4096;
 
 /// Edit-to-collision cadence controller for one live scene/physics pair.
 ///
@@ -75,6 +103,22 @@ pub struct DetailCollisionCadence {
     /// worker is unavailable, a source version other than this one is
     /// republished synchronously once, instead of pending forever.
     published_version: Option<SceneVersion>,
+    /// World-space regions where unconfirmed edits added solid collision
+    /// material, relative to the last accepted publication. Cleared on every
+    /// accepted publication and on preparation failure (the owner reverts the
+    /// burst, restoring the empty diff).
+    added: Vec<Aabb>,
+    /// Latched by a structural/unknown change or region overflow: gate
+    /// conservatively against every prepared collider until publication.
+    structural: bool,
+    /// Synchronously built preparation retained by the gate while the worker
+    /// is unavailable. At most one: a newer staged source replaces it.
+    staged: Option<PreparedSync>,
+}
+
+struct PreparedSync {
+    prepared: crate::PreparedDetailCollision,
+    version: SceneVersion,
 }
 
 impl Default for DetailCollisionCadence {
@@ -89,17 +133,65 @@ impl DetailCollisionCadence {
         Self {
             controller: AsyncDetailCollision::new(),
             published_version: None,
+            added: Vec::new(),
+            structural: false,
+            staged: None,
+        }
+    }
+
+    /// Fallback-path constructor: behaves exactly as if the worker failed to
+    /// start, so tests and hosts without threads exercise the synchronous
+    /// staged path. Every other semantic is unchanged.
+    pub fn without_worker() -> Self {
+        Self {
+            controller: AsyncDetailCollision::without_worker(),
+            published_version: None,
+            added: Vec::new(),
+            structural: false,
+            staged: None,
         }
     }
 
     /// Queues preparation of `scene` after an authoritative edit.
     ///
-    /// Returns `Ok(true)` when preparation was queued asynchronously,
-    /// `Ok(false)` when the worker was unavailable and the scene was instead
-    /// published synchronously (collision is already current), and
-    /// `Err(_)` when even the synchronous fallback rejected the source; the
-    /// caller must then revert the edit. Live collision is unchanged on `Err`.
-    pub fn on_edit(&mut self, scene: &DetailScene, physics: &mut Physics) -> Result<bool, String> {
+    /// `added` names the world-space `(min, max)` boxes where this edit added
+    /// solid collision material (cells whose material newly maps to
+    /// [`MaterialPolicy::Collision`](matterweave_detail::MaterialPolicy));
+    /// pass an empty slice for edits that removed solid material or changed
+    /// nothing solid, and `None` for changes not expressible as added cells
+    /// (added/removed/moved instances), which latches the conservative
+    /// structural gate until the next publication.
+    ///
+    /// Returns `Ok(true)` when preparation is pending (asynchronous or staged
+    /// synchronous), `Ok(false)` when the source published synchronously
+    /// (worker unavailable and the gate clear; collision is already current),
+    /// and `Err(_)` when preparation rejected the source; the caller must
+    /// then revert the edit. Live collision is unchanged on `Err`, and the
+    /// accumulated gate region is rolled back to its entry state.
+    pub fn on_edit(
+        &mut self,
+        scene: &DetailScene,
+        physics: &mut Physics,
+        added: Option<&[([f32; 3], [f32; 3])]>,
+    ) -> Result<bool, String> {
+        let baseline = self.added.len();
+        let structural_baseline = self.structural;
+        match added {
+            Some(regions) => {
+                if self.added.len() + regions.len() > MAX_PENDING_ADDED {
+                    self.structural = true;
+                    self.added.clear();
+                } else {
+                    self.added.extend(regions.iter().map(|(lo, hi)| {
+                        Aabb::new((*lo).into(), (*hi).into())
+                    }));
+                }
+            }
+            None => {
+                self.structural = true;
+                self.added.clear();
+            }
+        }
         if self.controller.request(scene) {
             return Ok(true);
         }
@@ -112,65 +204,151 @@ impl DetailCollisionCadence {
             }
         }
         // No worker, or no tracked work despite a refusal (worker exited
-        // between the checks): publish synchronously so collision cannot
-        // silently lag the authoritative scene. This is the load-time path.
+        // between the checks): build synchronously and apply the same gate.
+        // An ungated publish here would place a new wall through a body that
+        // moved while earlier edits were pending, exactly the hazard the
+        // asynchronous gate exists for.
         let version = scene.source_version();
-        physics.replace_detail_scene(scene)?;
+        let prepared = match crate::PreparedDetailCollision::build(scene) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.added.truncate(baseline);
+                self.structural = structural_baseline;
+                return Err(error);
+            }
+        };
+        if gate_blocked(self.structural, &self.added, physics, Some(&prepared)) {
+            self.staged = Some(PreparedSync { prepared, version });
+            return Ok(true);
+        }
+        let _stats = physics.publish_detail_scene(scene, prepared)?;
         self.published_version = Some(version);
+        self.added.clear();
+        self.structural = false;
+        self.staged = None;
         Ok(false)
     }
 
     /// Per-frame publication. Polls the controller once and, if a result
-    /// current for `scene` is buffered *and* safe to publish, publishes it.
-    /// Returns `Ok(Some)` with the accepted publication stats, `Ok(None)` when
-    /// nothing was published this frame — including a result retained by the
-    /// publication gate because a dynamic body overlaps a collider it would
-    /// add — and `Err(_)` when preparation of the current scene failed (live
-    /// collision preserved; revert the edit).
+    /// current for `scene` is buffered *and* the publication gate is clear,
+    /// publishes it. Returns `Ok(Some)` with the accepted publication stats,
+    /// `Ok(None)` when nothing was published this frame — including a result
+    /// retained by the publication gate because a dynamic body overlaps an
+    /// added-solid region — and `Err(_)` when preparation of the current
+    /// scene failed (live collision preserved; the gate region is cleared and
+    /// the owner reverts the burst).
     pub fn step(
         &mut self,
         scene: &DetailScene,
         physics: &mut Physics,
     ) -> Result<Option<DetailCollisionStats>, String> {
+        // Snapshot the gate inputs: the poll closure cannot borrow `self`
+        // while `self.controller` is borrowed mutably for the call.
+        let structural = self.structural;
+        let added = self.added.clone();
         if !self.controller.available() {
-            // Worker gone: nothing will ever complete. Republish the current
-            // source synchronously (once per new source version) so an edit
-            // cannot stay pending forever; the publication gate does not
-            // apply to this load-time path because the owner serializes it
-            // with stepping the same way.
+            // Worker gone: a buffered result from before the exit still
+            // publishes first (gated); otherwise the current source is built
+            // synchronously, at most one build per new source version, and
+            // gated the same way.
+            if let Some(prepared) = self.controller.poll_retaining(scene, |outcome| {
+                outcome.is_err()
+                    || !gate_blocked(structural, &added, physics, outcome.as_ref().ok())
+            }) {
+                return self.publish_prepared(scene, physics, prepared);
+            }
             let version = scene.source_version();
+            if let Some(staged) = &self.staged {
+                if staged.version == version {
+                    if gate_blocked(structural, &added, physics, Some(&staged.prepared)) {
+                        return Ok(None);
+                    }
+                    let staged = self.staged.take().expect("staged present");
+                    let stats = physics.publish_detail_scene(scene, staged.prepared)?;
+                    self.published_version = Some(version);
+                    self.added.clear();
+                    self.structural = false;
+                    return Ok(Some(stats));
+                }
+                self.staged = None;
+            }
             if self.published_version.as_ref() == Some(&version) {
                 return Ok(None);
             }
-            let stats = physics.replace_detail_scene(scene)?;
-            self.published_version = Some(version);
-            return Ok(Some(stats));
+            let outcome = crate::PreparedDetailCollision::build(scene);
+            match outcome {
+                Err(error) => {
+                    self.added.clear();
+                    self.structural = false;
+                    self.staged = None;
+                    return Err(error);
+                }
+                Ok(prepared) => {
+                    if gate_blocked(structural, &added, physics, Some(&prepared)) {
+                        self.staged = Some(PreparedSync { prepared, version });
+                        return Ok(None);
+                    }
+                    let stats = physics.publish_detail_scene(scene, prepared)?;
+                    self.published_version = Some(version);
+                    self.added.clear();
+                    self.structural = false;
+                    return Ok(Some(stats));
+                }
+            }
         }
         let Some(prepared) = self.controller.poll_retaining(scene, |outcome| match outcome {
-            // Gate: defer publication while a dynamic body overlaps any
-            // collider the preparation would add. Errors pass through.
-            Ok(prepared) => !physics.detail_publication_blocked(prepared),
+            // Gate: defer publication while a dynamic body overlaps an
+            // added-solid region (or any prepared collider after a structural
+            // change). Errors pass through.
+            Ok(prepared) => !gate_blocked(structural, &added, physics, Some(prepared)),
             Err(_) => true,
         }) else {
             return Ok(None);
         };
+        self.publish_prepared(scene, physics, prepared)
+    }
+
+    fn publish_prepared(
+        &mut self,
+        scene: &DetailScene,
+        physics: &mut Physics,
+        prepared: Result<crate::PreparedDetailCollision, String>,
+    ) -> Result<Option<DetailCollisionStats>, String> {
         match prepared {
             Ok(prepared) => {
                 let stats = physics.publish_detail_scene(scene, prepared)?;
                 self.published_version = Some(scene.source_version());
+                self.added.clear();
+                self.structural = false;
+                self.staged = None;
                 Ok(Some(stats))
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                self.added.clear();
+                self.structural = false;
+                self.staged = None;
+                Err(error)
+            }
         }
     }
 
     /// Scene replacement or load: cancels pending and buffered work and
     /// invalidates the job in flight, so nothing prepared for a retired scene
-    /// can ever publish. A fresh [`on_edit`](Self::on_edit) works immediately.
+    /// can ever publish. Clears the gate region, the structural latch and any
+    /// staged result. A fresh [`on_edit`](Self::on_edit) works immediately.
     /// The next unavailable-worker fallback republishes after a reset, too:
     /// [`Self::forget_publication`] clears the version tracked here.
+    ///
+    /// The replacement itself must be published synchronously by the owner
+    /// with bodies pre-validated (the load path), or queued via
+    /// `on_edit(.., None)` for the conservative structural gate: after a
+    /// reset the cadence holds no region for the new scene, so an ungated
+    /// publish would be unsound.
     pub fn reset(&mut self) {
         self.controller.reset();
+        self.added.clear();
+        self.structural = false;
+        self.staged = None;
         self.forget_publication();
     }
 
@@ -182,7 +360,7 @@ impl DetailCollisionCadence {
     }
 
     /// False after worker startup failure or an unexpected worker exit; edits
-    /// then take the synchronous fallback in [`on_edit`](Self::on_edit).
+    /// then take the synchronous staged fallback in [`on_edit`](Self::on_edit).
     pub fn available(&self) -> bool {
         self.controller.available()
     }
@@ -191,4 +369,27 @@ impl DetailCollisionCadence {
     pub fn stats(&self) -> AsyncDetailStats {
         self.controller.stats()
     }
+}
+
+/// Whether the gate currently defers `prepared`: an added-solid overlap, or
+/// any prepared-collider overlap after a structural change. A free function
+/// so poll closures can snapshot the inputs without borrowing the cadence
+/// while its controller is borrowed mutably.
+fn gate_blocked(
+    structural: bool,
+    added: &[Aabb],
+    physics: &Physics,
+    prepared: Option<&crate::PreparedDetailCollision>,
+) -> bool {
+    let Some(prepared) = prepared else {
+        return false;
+    };
+    if structural {
+        let blockers = prepared.collider_aabbs();
+        return physics
+            .dynamic_body_aabbs()
+            .iter()
+            .any(|body| blockers.iter().any(|region| region.intersects(body)));
+    }
+    physics.detail_added_blocked(added)
 }
