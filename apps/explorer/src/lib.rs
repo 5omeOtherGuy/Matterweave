@@ -1,8 +1,12 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
 mod dynamic_upload;
+mod experience;
 mod gallery;
 mod metrics;
+mod wetland;
+mod wetland_metrics;
+mod wetland_state;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
 use matterweave_core::{AsyncWorld, World};
@@ -1420,6 +1424,8 @@ pub fn run_desktop() {
     let mut smoke_frames = None;
     let mut smoke_exercise = false;
     let mut gallery_exercise = false;
+    let mut showcase = false;
+    let mut sandbox = false;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -1428,6 +1434,8 @@ pub fn run_desktop() {
                 save_path = PathBuf::from(args.next().expect("--save requires a path"));
                 explicit_save = true;
             }
+            "--showcase" => showcase = true,
+            "--sandbox" => sandbox = true,
             "--smoke-exercise" => smoke_exercise = true,
             "--gallery-exercise" => gallery_exercise = true,
             "--smoke-frames" => {
@@ -1509,6 +1517,14 @@ pub fn run_desktop() {
         smoke_frames = Some(30);
     }
     let event_loop = EventLoop::new().expect("event loop");
+    if showcase || (!sandbox && !smoke_exercise && smoke_frames.is_none()) {
+        let mut experience = experience::Experience::new(save_path, showcase, smoke_frames);
+        event_loop.run_app(&mut experience).expect("event loop run");
+        if experience.failed() {
+            std::process::exit(1);
+        }
+        return;
+    }
     let mut explorer = Explorer::new(save_path, smoke_frames);
     explorer.smoke_exercise = smoke_exercise;
     event_loop.run_app(&mut explorer).expect("event loop run");
@@ -1530,26 +1546,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         log::error!("Android internal storage unavailable");
         return;
     };
-    // Resolved before any world load: an invalid request must fail safely
-    // rather than silently starting the normal world and writing user data.
-    let requested = match gallery::Request::resolve(
-        &directory.join(gallery::MARKER_FILE),
-        std::env::var(gallery::ENV_VAR).ok().as_deref(),
-    ) {
-        Ok(requested) => requested,
-        Err(error) => {
-            log::error!("Detail gallery request rejected: {error}. No world was loaded or saved.");
-            return;
-        }
-    };
-    let gallery_view = match requested.map(gallery::GalleryView::build) {
-        None => None,
-        Some(Ok(view)) => Some(view),
-        Some(Err(error)) => {
-            log::error!("Detail gallery scene failed: {error}");
-            return;
-        }
-    };
+    // The normal Android entry always presents the world chooser. Historical
+    // development-gallery marker files cannot trap upgrades in the old viewer.
     let event_loop = match EventLoop::builder().with_android_app(app).build() {
         Ok(e) => e,
         Err(e) => {
@@ -1557,16 +1555,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             return;
         }
     };
-    if let Some(view) = gallery_view {
-        log::info!("Detail gallery: {} (viewer only)", view.request.label());
-        let mut gallery_app = gallery::GalleryApp::new(view, &directory, None);
-        if let Err(e) = event_loop.run_app(&mut gallery_app) {
-            log::error!("Event loop failed: {e}");
-        }
-        return;
-    }
-    let mut explorer = Explorer::new(directory.join("world.json"), None);
-    if let Err(e) = event_loop.run_app(&mut explorer) {
+    let mut experience = experience::Experience::new(directory.join("world.json"), false, None);
+    if let Err(e) = event_loop.run_app(&mut experience) {
         log::error!("Event loop failed: {e}");
     }
 }

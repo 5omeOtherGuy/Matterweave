@@ -121,6 +121,32 @@ impl Controls {
         self.fingers.insert(id, role);
         None
     }
+    /// Gesture roles for the wetland HUD, independent of sandbox buttons.
+    pub fn start_wetland(&mut self, id: u64, p: Vec2) {
+        let role = if contains([910., 367., 64., 55.], p) {
+            self.jump_pressed = true;
+            Finger::Up
+        } else if contains([60., 410., 142., 142.], p)
+            && !self
+                .fingers
+                .values()
+                .any(|f| matches!(f, Finger::Move { .. }))
+        {
+            Finger::Move {
+                origin: p,
+                current: p,
+            }
+        } else if !self
+            .fingers
+            .values()
+            .any(|f| matches!(f, Finger::Look { .. }))
+        {
+            Finger::Look { previous: p }
+        } else {
+            Finger::Button
+        };
+        self.fingers.insert(id, role);
+    }
     pub fn moved(&mut self, id: u64, p: Vec2) {
         if let Some(f) = self.fingers.get_mut(&id) {
             match f {
