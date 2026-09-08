@@ -1,0 +1,62 @@
+# P02 paired analysis
+
+`tools/performance/analyze_wetland_pairs.py` reads completed trials from the phone
+collector manifest and writes a fresh JSON/Markdown summary directory. It does
+not contact the device. Example:
+
+```sh
+python3 tools/performance/analyze_wetland_pairs.py --input /absolute/pairs-run --out /absolute/new-analysis
+python3 -m unittest discover -s tools/performance -p 'test_analyze_wetland_pairs.py' -v
+```
+
+The statistical-analysis workflow is descriptive: each trial pair is one
+replicate; individual frames are correlated. Three planned pairs do not establish
+reliable confidence intervals or statistical significance. Means, medians,
+percentiles, IQR, missing observations and raw paired differences are retained.
+No observations are discarded as outliers.
+
+Compositor presentation timestamps use column two, deduplicated across repeated
+histories. Both endpoints must first appear within the measurement window and
+must have been observed consecutively in an actual dump. Unobserved history gaps
+are reported separately, never invented as long frames. First-observation window
+boundaries are approximate. Verified interval duration divided by selected span
+is not coverage of the entire requested window.
+
+The process CPU interval uses independent host midpoint times, CLK_TCK and stable
+PID/start ticks. App CSV stage distributions cover the entire capture, including
+startup/warmup: the CSV has no absolute timestamp anchor for an exact compositor
+window join. CPU utilization is not energy measurement.
+
+Pair controls check source composition/generator, recorded environment, fixture
+hash, final camera/eye, shadow settings and total body count. Mutual start
+temperature differences must stay within 1 C battery and 2 C skin; matching both
+trials independently to an earlier reference alone is insufficient. Screenshots
+still require human/lead inspection; metadata cannot prove visual equivalence.
+Thermal and memory summaries retain all reported observations, including heating
+and thermal-status changes during measurement.
+
+## Executed evidence, 2026-09-08
+
+The first two trials of `completion-02/p02-fullmap/pairs-a3` were analyzed offline.
+All metadata controls matched. The lead inspected both `entered.png` captures:
+same visible terrain, flora, water, camera and UI, with only animated water phase
+differences apparent. These are entrance snapshots, not temporal-stability proof.
+
+| First pair | Mean presentation ms | Median ms | p95 ms | Unsupported gaps | Process core equivalent |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reference | 73.551 | 66.325 | 116.065 | 0 | 0.599 |
+| Candidate | 24.260 | 16.583 | 33.166 | 0 | 0.465 |
+
+This is one two-minute measurement after two minutes of warmup for each build on
+the OnePlus 13, using frozen generator-2 content. Repeats remain pending; this is
+not a sustained-run, energy, generator-3 or release-performance claim. Exact build
+hashes, environment and raw trial provenance remain in collector trial manifests.
+Large raw files stay under `/mnt/bench/matterweave-dev/performance/completion-02`;
+release artifact publication remains pending.
+
+Ten focused Python tests passed: overlapping history deduplication, warmup/end
+boundaries, missing history, sentinel timestamps, invalid clocks/dumps, quantiles,
+process names containing parentheses, process restarts, mismatched scene/quality
+and mutual temperature matching. GLM's earlier 300-second worker timed out without
+producing code; the lead implemented and verified this tool. No trial-level
+optimization acceptance is inferred from that worker or these software tests.
