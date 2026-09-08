@@ -1112,6 +1112,22 @@ mod tests {
     }
 
     #[test]
+    fn flora_preset_loads_reviewed_source_density_without_coarse_substitution() {
+        let request = Request::parse("flora source").expect("reviewed flora preset");
+        let view = GalleryView::build(request).unwrap();
+        assert_eq!(view.request.preset.label(), "flora");
+        assert_eq!(view.stats.instances, 85); // 84 plants and the terrain tile.
+        assert_eq!(view.stats.unique_stored_cells, 28_908);
+        assert_eq!(view.stats.expanded_occupied_cells, 77_810);
+        assert_eq!(view.stats.mesh_builds, u64::try_from(view.stats.prototypes).unwrap());
+        assert!(!view.mesh.indices.is_empty());
+        assert!(view.eye.iter().all(|v| v.is_finite()));
+        for request in ["flora half", "flora quarter"] {
+            assert!(Request::parse(request).is_err(), "coarse flora quality not accepted");
+        }
+    }
+
+    #[test]
     fn invalid_requests_are_scoped_errors_not_defaults() {
         for text in [
             "",
