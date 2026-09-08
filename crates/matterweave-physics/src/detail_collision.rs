@@ -458,11 +458,20 @@ impl Physics {
     /// entry per collider of every dynamic voxel object.
     pub fn dynamic_body_aabbs(&self) -> Vec<Aabb> {
         let mut aabbs = Vec::with_capacity(1 + self.objects.len() * 2);
-        aabbs.push(self.colliders[self.character_collider].compute_aabb());
+        let current_aabb = |collider: &Collider| {
+            // Rapier updates cached collider poses during a physics step;
+            // input can teleport a body before this frame's publication gate.
+            let pose = collider.parent().map_or(*collider.position(), |parent| {
+                *self.bodies[parent].position()
+                    * *collider.position_wrt_parent().expect("parent pose")
+            });
+            collider.shape().compute_aabb(&pose)
+        };
+        aabbs.push(current_aabb(&self.colliders[self.character_collider]));
         for object in &self.objects {
             for collider in self.bodies[object.handle].colliders() {
                 if let Some(collider) = self.colliders.get(*collider) {
-                    aabbs.push(collider.compute_aabb());
+                    aabbs.push(current_aabb(collider));
                 }
             }
         }

@@ -19,9 +19,9 @@
 //! - **Visual semantics**: the owner's render mesh is the edited scene (it can
 //!   be updated immediately, as the explorer does). While a publication is
 //!   pending, a newly added wall is therefore visible but not yet solid, and a
-//!   removed wall is solid but not yet visible. That window is bounded by
-//!   preparation time, and the publication gate below guarantees added solid
-//!   material can never trap a body.
+//!   removed wall is solid but not yet visible. That window lasts through
+//!   preparation and any overlap deferral; it has no fixed time bound. The
+//!   publication gate below prevents adding solid material through a body.
 //! - **Publication gate**: every [`on_edit`](DetailCollisionCadence::on_edit)
 //!   call names the world-space regions where it added solid collision
 //!   material (`None` when the change is not expressible as added cells, e.g.
@@ -30,7 +30,7 @@
 //!   ([`Physics::detail_added_blocked`]). When a body has advanced into the
 //!   region of a pending new wall, the result is *retained* and retried on
 //!   later frames; it is never dropped and never placed through the body. The
-//!   wall appears only once the body has left the region. Removals never gate,
+//!   wall becomes solid only once the body has left the region. Removals never gate,
 //!   so the common "remove a wall while walking toward it" edit still
 //!   publishes as soon as preparation completes. Regions accumulate across
 //!   rapid edits and clear on every accepted publication, so the gate always
@@ -178,18 +178,20 @@ impl DetailCollisionCadence {
         let structural_baseline = self.structural;
         match added {
             Some(regions) => {
-                if self.added.len() + regions.len() > MAX_PENDING_ADDED {
+                if regions.len() > MAX_PENDING_ADDED - self.added.len() {
                     self.structural = true;
-                    self.added.clear();
                 } else {
-                    self.added.extend(regions.iter().map(|(lo, hi)| {
-                        Aabb::new((*lo).into(), (*hi).into())
-                    }));
+                    self.added.extend(
+                        regions
+                            .iter()
+                            .map(|(lo, hi)| Aabb::new((*lo).into(), (*hi).into())),
+                    );
                 }
             }
             None => {
+                // Keep the prior bounded regions until this request succeeds:
+                // a synchronous rejection must restore their exact gate.
                 self.structural = true;
-                self.added.clear();
             }
         }
         if self.controller.request(scene) {
@@ -245,22 +247,21 @@ impl DetailCollisionCadence {
         // Snapshot the gate inputs: the poll closure cannot borrow `self`
         // while `self.controller` is borrowed mutably for the call.
         let structural = self.structural;
-        let added = self.added.clone();
+        let added = &self.added;
         if !self.controller.available() {
             // Worker gone: a buffered result from before the exit still
             // publishes first (gated); otherwise the current source is built
             // synchronously, at most one build per new source version, and
             // gated the same way.
             if let Some(prepared) = self.controller.poll_retaining(scene, |outcome| {
-                outcome.is_err()
-                    || !gate_blocked(structural, &added, physics, outcome.as_ref().ok())
+                outcome.is_err() || !gate_blocked(structural, added, physics, outcome.as_ref().ok())
             }) {
                 return self.publish_prepared(scene, physics, prepared);
             }
             let version = scene.source_version();
             if let Some(staged) = &self.staged {
                 if staged.version == version {
-                    if gate_blocked(structural, &added, physics, Some(&staged.prepared)) {
+                    if gate_blocked(structural, added, physics, Some(&staged.prepared)) {
                         return Ok(None);
                     }
                     let staged = self.staged.take().expect("staged present");
@@ -284,7 +285,7 @@ impl DetailCollisionCadence {
                     return Err(error);
                 }
                 Ok(prepared) => {
-                    if gate_blocked(structural, &added, physics, Some(&prepared)) {
+                    if gate_blocked(structural, added, physics, Some(&prepared)) {
                         self.staged = Some(PreparedSync { prepared, version });
                         return Ok(None);
                     }
@@ -296,13 +297,16 @@ impl DetailCollisionCadence {
                 }
             }
         }
-        let Some(prepared) = self.controller.poll_retaining(scene, |outcome| match outcome {
-            // Gate: defer publication while a dynamic body overlaps an
-            // added-solid region (or any prepared collider after a structural
-            // change). Errors pass through.
-            Ok(prepared) => !gate_blocked(structural, &added, physics, Some(prepared)),
-            Err(_) => true,
-        }) else {
+        let Some(prepared) = self
+            .controller
+            .poll_retaining(scene, |outcome| match outcome {
+                // Gate: defer publication while a dynamic body overlaps an
+                // added-solid region (or any prepared collider after a structural
+                // change). Errors pass through.
+                Ok(prepared) => !gate_blocked(structural, added, physics, Some(prepared)),
+                Err(_) => true,
+            })
+        else {
             return Ok(None);
         };
         self.publish_prepared(scene, physics, prepared)
