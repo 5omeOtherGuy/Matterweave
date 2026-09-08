@@ -327,6 +327,46 @@ mod tests {
     use super::*;
     use matterweave_detail::{DetailVolume, Scale, Transform, Yaw};
     #[test]
+    fn frame_rate_journal_defaults_roundtrips_and_retains_invalid_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "wetland-frame-rate-{}-{}",
+            std::process::id(),
+            NEXT_SAVE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join(SAVE_FILE);
+        let legacy = serde_json::json!({
+            "version": 1, "generator": 1, "seed": 7, "edits": [],
+            "physics": {"version": 1, "eye": [1., 2., 3.], "bodies": []},
+            "yaw": 0., "pitch": 0., "shadows": true
+        });
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let save = SavedWetland::load(&path, 1, 7).unwrap().unwrap();
+        let mut json = serde_json::to_value(&save).unwrap();
+        assert_eq!(json["frame_rate"], 60, "old journals default to 60 Hz");
+        json["frame_rate"] = 30.into();
+        let save: SavedWetland = serde_json::from_value(json.clone()).unwrap();
+        save.save(&path).unwrap();
+        let read = SavedWetland::load(&path, 1, 7).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(read).unwrap()["frame_rate"], 30);
+        for value in [0, 15, 59, 61, 120, u32::MAX] {
+            json["frame_rate"] = value.into();
+            let invalid = serde_json::to_vec(&json).unwrap();
+            fs::write(&path, &invalid).unwrap();
+            assert!(SavedWetland::load(&path, 1, 7).is_err());
+            let invalid_save: SavedWetland = serde_json::from_value(json.clone()).unwrap();
+            assert!(invalid_save.save(&path).is_err());
+            let (recovery, recovered) = SavedWetland::load_recovering(&path, 1, 7).unwrap();
+            assert_ne!(recovery, path);
+            assert!(recovered.is_none());
+            save.save(&recovery).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), invalid);
+            fs::remove_file(recovery).unwrap();
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn save_roundtrip_is_separate_and_rejects_corrupt_or_oversized_data() {
         let dir = std::env::temp_dir().join(format!(
             "matterweave-wetland-state-{}-{}",
