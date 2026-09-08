@@ -102,12 +102,12 @@ fn detail_wall_blocks_the_character_and_a_cap_blocks_a_jump() {
             Transform::new([4.0, TILE, 0.0], Yaw::Deg0).expect("transform"),
         )
         .expect("placement");
-    // Cap slab: 8 m x 0.25 m x 8 m ceiling at 2 m above the floor.
+    // Cap slab: 8 m x 0.25 m x 8 m ceiling 2 m above the floor top.
     scene
         .place(
             "cap.0",
             "floor",
-            Transform::new([0.0, 2.0, 0.0], Yaw::Deg0).expect("transform"),
+            Transform::new([0.0, 2.25, 0.0], Yaw::Deg0).expect("transform"),
         )
         .expect("placement");
     let mut physics = physics_on(&scene);
@@ -127,7 +127,7 @@ fn detail_wall_blocks_the_character_and_a_cap_blocks_a_jump() {
         highest = highest.max(physics.character_eye()[1]);
     }
     assert!(
-        highest < 2.0 - FEET + EYE + 0.05,
+        highest < 2.25 - FEET + EYE + 0.05,
         "the cap blocks the jump, highest eye {highest}"
     );
 }
@@ -464,7 +464,10 @@ fn an_over_budget_update_is_rejected_and_preserves_existing_contacts() {
     let error = physics
         .replace_detail_scene(&oversized)
         .expect_err("an over-budget scene must be rejected, not partially applied");
-    assert!(error.contains("collider limit"), "explicit limit: {error}");
+    assert!(
+        error.contains("static colliders"),
+        "explicit limit: {error}"
+    );
 
     assert_eq!(
         physics.detail_collision_stats(),
@@ -588,4 +591,56 @@ fn dense_tile_collision_cost_stays_bounded() {
         stats.expanded_collision_cells, counts.expanded_collision_cells,
         "reported expanded collision cells match the authoritative scene"
     );
+}
+
+#[test]
+fn decorative_scene_is_admitted_by_collision_cost_not_visual_counts() {
+    let mut scene = DetailScene::new();
+    scene
+        .add_prototype(volume("leaf", [1, 1, 1], material::FLORA_FROND_BLADE))
+        .unwrap();
+    for i in 0..=MAX_DETAIL_COLLIDERS {
+        scene
+            .place(format!("leaf-{i}"), "leaf", Transform::identity())
+            .unwrap();
+    }
+    let stats = physics_on(&scene).detail_collision_stats();
+    assert_eq!(stats.instances, MAX_DETAIL_COLLIDERS + 1);
+    assert_eq!(stats.static_colliders, 0);
+    assert_eq!(stats.source_collision_cells, 0);
+    let mut scene = DetailScene::new();
+    // Above the previous one-million-occupied-cell precheck. Liquid has no wall.
+    scene
+        .add_prototype(volume("water", [129, 64, 128], material::WATER))
+        .unwrap();
+    scene
+        .place("water", "water", Transform::identity())
+        .unwrap();
+    let stats = physics_on(&scene).detail_collision_stats();
+    assert_eq!(stats.static_colliders, 0);
+    assert_eq!(stats.source_collision_cells, 0);
+}
+
+#[test]
+fn narrow_clearance_and_partition_seams_preserve_contacts() {
+    let mut scene = scene_with_floor();
+    scene
+        .place(
+            "cap",
+            "floor",
+            Transform::new([0., 2., 0.], Yaw::Deg0).unwrap(),
+        )
+        .unwrap();
+    let mut physics = physics_on(&scene);
+    // Capsule top is eye + 0.2 m. Test genuine positive clearance and penetration,
+    // not the numerically ambiguous exact-touching teleport case.
+    for x in [2., 3.99, 4., 4.01, 6.] {
+        assert!(physics.teleport([x, 1.78, 2.]), "clear gap x={x}");
+        assert!(
+            !physics.teleport([x, 1.82, 2.]),
+            "ceiling penetration x={x}"
+        );
+        settle(&mut physics, 60);
+        assert!(physics.grounded(), "partition cannot remove support x={x}");
+    }
 }

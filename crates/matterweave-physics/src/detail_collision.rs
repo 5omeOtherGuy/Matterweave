@@ -44,18 +44,40 @@
 use crate::Physics;
 use matterweave_detail::{material_policy, DetailScene, DetailVolume, MaterialPolicy, Yaw};
 use rapier3d::prelude::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-/// Largest number of static detail colliders (collidable instances) accepted.
+/// Largest number of static detail colliders accepted. This counts *collidable*
+/// instances only: instances of liquid/decorative prototypes produce no collider
+/// and are not charged against it, so an arbitrarily lush decorative scene (up to
+/// the detail crate's own 200,000-instance budget) is admissible.
 pub const MAX_DETAIL_COLLIDERS: usize = 16_384;
-/// Largest number of collision cells accepted in one prototype.
-pub const MAX_DETAIL_PROTOTYPE_COLLISION_CELLS: usize = 1 << 20;
-/// Largest number of collision cells accepted across all prototypes, counted
-/// once per prototype (shared shapes are never counted per instance).
-pub const MAX_DETAIL_SOURCE_COLLISION_CELLS: usize = 4 << 20;
+/// Largest number of *filtered collision* cells admitted across all prototypes,
+/// counted once per prototype (shared shapes are never counted per instance).
+///
+/// 16 Mi cells is an admission cap chosen so the ~8.8 M-cell full-map prototype
+/// source is representable with headroom, rather than the earlier 4 Mi cap which
+/// could not represent it at all. Cells are not stored: they are counted, then
+/// merged one prototype at a time, so the resident cost is the merged boxes
+/// below, not this number. The transient scratch cost is bounded separately by
+/// [`MAX_DETAIL_SCRATCH_CHUNKS`].
+pub const MAX_DETAIL_SOURCE_COLLISION_CELLS: usize = 16 << 20;
 /// Largest number of merged cuboids accepted across all built shapes, counted
-/// once per prototype. Merged boxes, not raw cells, are the collider cost.
+/// once per prototype. Merged boxes, not raw cells, are the resident collider
+/// cost: each entry is a pose (32 B) plus a shared cuboid allocation (~32 B)
+/// plus its compound BVH leaf (~32-64 B), i.e. roughly 100-130 B per box, so
+/// this cap is an estimated 26-34 MiB of resident shape memory. It is not raised
+/// to fit a whole map in one shape; see the aggregate note in
+/// docs/performance/p03/collision/opus-execution.md.
 pub const MAX_DETAIL_BOXES: usize = 262_144;
+/// Largest number of 16^3 scratch chunks held while merging *one* prototype.
+/// Each chunk is a 4,096-bit occupancy mask (512 B), freed as soon as that
+/// prototype's shape is built, so the scratch bit payload is bounded at
+/// 32 MiB (tree and allocator metadata are additional) even for a fully sparse prototype with one cell per chunk.
+pub const MAX_DETAIL_SCRATCH_CHUNKS: usize = 65_536;
+/// Edge of a scratch occupancy chunk, in cells.
+const SCRATCH_EDGE: i32 = 16;
+/// `u64` words per scratch chunk mask (16^3 bits).
+const SCRATCH_WORDS: usize = 64;
 /// Extra metres added to the changed region when waking bodies.
 const WAKE_MARGIN_M: f32 = 0.5;
 const DETAIL_FRICTION: f32 = 0.8;
@@ -104,41 +126,98 @@ fn yaw_rotation(yaw: Yaw) -> Rotation {
     }
 }
 
+/// Occupancy mask of one 16^3 scratch chunk: 4,096 bits in 64 words.
+struct ScratchChunk([u64; SCRATCH_WORDS]);
+
+impl ScratchChunk {
+    fn index(local: [i32; 3]) -> usize {
+        local[0] as usize + 16 * local[1] as usize + 256 * local[2] as usize
+    }
+    fn set(&mut self, local: [i32; 3]) {
+        let index = Self::index(local);
+        self.0[index / 64] |= 1 << (index % 64);
+    }
+    fn get(&self, local: [i32; 3]) -> bool {
+        let index = Self::index(local);
+        self.0[index / 64] >> (index % 64) & 1 == 1
+    }
+    fn clear(&mut self, local: [i32; 3]) {
+        let index = Self::index(local);
+        self.0[index / 64] &= !(1 << (index % 64));
+    }
+}
+
+fn split_cell(cell: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+    (
+        cell.map(|v| v.div_euclid(SCRATCH_EDGE)),
+        cell.map(|v| v.rem_euclid(SCRATCH_EDGE)),
+    )
+}
+
 /// Builds the shared collision shape of one prototype, or `Ok(None)` when the
 /// prototype has no collision cells at all.
 ///
-/// Conservative limits are checked *before* any allocation: the O(1) occupied
-/// cell count is an upper bound on collision cells and is rejected first, and
-/// the sparse chunk count is enforced while streaming cells, before the shape is
-/// constructed.
-fn prepare_prototype(volume: &DetailVolume) -> Result<Option<PreparedShape>, String> {
+/// Every conservative limit is checked before the allocation it protects:
+/// 1. collision cells are counted by streaming `iter_cells` and filtering by
+///    material policy first, allocating nothing, and are charged against the
+///    aggregate budget still remaining for this call, so a huge liquid or
+///    decorative prototype costs nothing and a solid one cannot overrun the
+///    aggregate cap before its scratch memory is taken;
+/// 2. the scratch occupancy masks are bounded by [`MAX_DETAIL_SCRATCH_CHUNKS`]
+///    while they are being allocated;
+/// 3. merged boxes are charged against the boxes still remaining for this call
+///    as they are produced, so an over-budget prototype stops merging instead of
+///    building an oversized shape and rejecting it afterwards.
+fn prepare_prototype(
+    volume: &DetailVolume,
+    remaining_cells: usize,
+    remaining_boxes: usize,
+) -> Result<Option<PreparedShape>, String> {
     let id = volume.id();
     let scale = volume.scale().metres();
     if !scale.is_finite() || scale <= 0.0 {
         return Err(format!("detail prototype {id} has an invalid cell scale"));
     }
-    if volume.occupied_cells() > MAX_DETAIL_PROTOTYPE_COLLISION_CELLS {
-        return Err(format!(
-            "detail prototype {id} has {} occupied cells, above the {} collision-cell limit",
-            volume.occupied_cells(),
-            MAX_DETAIL_PROTOTYPE_COLLISION_CELLS
-        ));
-    }
-    let mut remaining: BTreeSet<[i32; 3]> = volume
+    // 1. Count the filtered collision cells. No allocation happens here.
+    let cells = volume
         .iter_cells()
         .filter(|(_, material)| material_policy(*material) == MaterialPolicy::Collision)
-        .map(|(cell, _)| cell)
-        .collect();
-    let cells = remaining.len();
+        .count();
     if cells == 0 {
         return Ok(None);
     }
-    let boxes = greedy_boxes(&mut remaining, scale);
-    if boxes.len() > MAX_DETAIL_BOXES {
+    if cells > remaining_cells {
         return Err(format!(
-            "detail prototype {id} needs {} merged boxes, above the {MAX_DETAIL_BOXES} limit",
-            boxes.len()
+            "detail prototype {id} needs {cells} collision cells but only {remaining_cells} of the \
+             {MAX_DETAIL_SOURCE_COLLISION_CELLS} aggregate collision-cell budget remain"
         ));
+    }
+    // 2. Sparse scratch occupancy, bounded while it is allocated.
+    let mut chunks: BTreeMap<[i32; 3], ScratchChunk> = BTreeMap::new();
+    for (cell, material) in volume.iter_cells() {
+        if material_policy(material) != MaterialPolicy::Collision {
+            continue;
+        }
+        let (key, local) = split_cell(cell);
+        if !chunks.contains_key(&key) && chunks.len() >= MAX_DETAIL_SCRATCH_CHUNKS {
+            return Err(format!(
+                "detail prototype {id} needs more than {MAX_DETAIL_SCRATCH_CHUNKS} scratch chunks"
+            ));
+        }
+        chunks
+            .entry(key)
+            .or_insert_with(|| ScratchChunk([0; SCRATCH_WORDS]))
+            .set(local);
+    }
+    // 3. Merge, charging boxes against the remaining aggregate budget.
+    let mut boxes = Vec::new();
+    for (key, mut chunk) in chunks {
+        greedy_boxes(key, &mut chunk, scale, remaining_boxes, &mut boxes).map_err(|needed| {
+            format!(
+                "detail prototype {id} needs more than {needed} merged boxes but only \
+                 {remaining_boxes} of the {MAX_DETAIL_BOXES} aggregate box budget remain"
+            )
+        })?;
     }
     Ok(Some(PreparedShape {
         cells,
@@ -147,41 +226,69 @@ fn prepare_prototype(volume: &DetailVolume) -> Result<Option<PreparedShape>, Str
     }))
 }
 
-/// Merges an ordered set of occupied cells into axis-aligned cuboids, extending
-/// along x, then z, then y, exactly like the terrain `solid_boxes` merge. The
-/// set is consumed. Cost follows the number of occupied cells, never the extent
-/// of the bounding box, so far apart clusters stay cheap.
-fn greedy_boxes(remaining: &mut BTreeSet<[i32; 3]>, scale: f32) -> Vec<(Pose, SharedShape)> {
-    let mut boxes = Vec::new();
-    while let Some(&[x, y, z]) = remaining.iter().next() {
-        let mut end_x = x + 1;
-        while remaining.contains(&[end_x, y, z]) {
-            end_x += 1;
-        }
-        let mut end_z = z + 1;
-        while (x..end_x).all(|xx| remaining.contains(&[xx, y, end_z])) {
-            end_z += 1;
-        }
-        let mut end_y = y + 1;
-        while (z..end_z).all(|zz| (x..end_x).all(|xx| remaining.contains(&[xx, end_y, zz]))) {
-            end_y += 1;
-        }
-        for zz in z..end_z {
-            for yy in y..end_y {
-                for xx in x..end_x {
-                    remaining.remove(&[xx, yy, zz]);
+/// Merges one scratch chunk's occupied cells into axis-aligned cuboids,
+/// extending along x, then z, then y, exactly like the terrain `solid_boxes`
+/// merge. Boxes never cross a chunk boundary, which keeps the working set at one
+/// 512-byte mask instead of the prototype's whole bounding box; the resulting
+/// geometry is identical, only the box split differs.
+///
+/// Appends to `boxes` and fails with the count reached as soon as `budget` boxes
+/// would be exceeded, so an over-budget prototype stops early.
+fn greedy_boxes(
+    key: [i32; 3],
+    chunk: &mut ScratchChunk,
+    scale: f32,
+    budget: usize,
+    boxes: &mut Vec<(Pose, SharedShape)>,
+) -> Result<(), usize> {
+    let base = key.map(|v| v * SCRATCH_EDGE);
+    for z in 0..SCRATCH_EDGE {
+        for y in 0..SCRATCH_EDGE {
+            for x in 0..SCRATCH_EDGE {
+                if !chunk.get([x, y, z]) {
+                    continue;
                 }
+                let mut end_x = x + 1;
+                while end_x < SCRATCH_EDGE && chunk.get([end_x, y, z]) {
+                    end_x += 1;
+                }
+                let mut end_z = z + 1;
+                while end_z < SCRATCH_EDGE && (x..end_x).all(|xx| chunk.get([xx, y, end_z])) {
+                    end_z += 1;
+                }
+                let mut end_y = y + 1;
+                while end_y < SCRATCH_EDGE
+                    && (z..end_z).all(|zz| (x..end_x).all(|xx| chunk.get([xx, end_y, zz])))
+                {
+                    end_y += 1;
+                }
+                for zz in z..end_z {
+                    for yy in y..end_y {
+                        for xx in x..end_x {
+                            chunk.clear([xx, yy, zz]);
+                        }
+                    }
+                }
+                if boxes.len() >= budget {
+                    return Err(budget);
+                }
+                let half = Vector::new((end_x - x) as f32, (end_y - y) as f32, (end_z - z) as f32)
+                    * 0.5
+                    * scale;
+                let centre = Vector::new(
+                    (base[0] + x) as f32,
+                    (base[1] + y) as f32,
+                    (base[2] + z) as f32,
+                ) * scale
+                    + half;
+                boxes.push((
+                    Pose::from_translation(centre),
+                    SharedShape::cuboid(half.x, half.y, half.z),
+                ));
             }
         }
-        let half =
-            Vector::new((end_x - x) as f32, (end_y - y) as f32, (end_z - z) as f32) * 0.5 * scale;
-        let centre = Vector::new(x as f32, y as f32, z as f32) * scale + half;
-        boxes.push((
-            Pose::from_translation(centre),
-            SharedShape::cuboid(half.x, half.y, half.z),
-        ));
     }
-    boxes
+    Ok(())
 }
 
 impl Physics {
@@ -197,12 +304,9 @@ impl Physics {
         scene: &DetailScene,
     ) -> Result<DetailCollisionStats, String> {
         let counts = scene.counts();
-        if counts.instances > MAX_DETAIL_COLLIDERS {
-            return Err(format!(
-                "detail scene has {} instances, above the {MAX_DETAIL_COLLIDERS} collider limit",
-                counts.instances
-            ));
-        }
+        // Instance count alone is never a rejection: liquid and decorative
+        // instances produce no collider, so only collidable instances are
+        // charged against MAX_DETAIL_COLLIDERS below.
         // 1. Build one shared shape per collidable prototype. Nothing is mutated yet.
         let mut prepared: BTreeMap<String, PreparedShape> = BTreeMap::new();
         let mut source_collision_cells = 0usize;
@@ -211,21 +315,18 @@ impl Physics {
             let volume = scene
                 .prototype(&id)
                 .ok_or_else(|| format!("detail prototype {id} disappeared during preparation"))?;
-            let Some(shape) = prepare_prototype(volume)? else {
+            // Budgets are consumed one prototype at a time, so the remaining
+            // aggregate allowance bounds each prototype before it allocates.
+            let Some(shape) = prepare_prototype(
+                volume,
+                MAX_DETAIL_SOURCE_COLLISION_CELLS - source_collision_cells,
+                MAX_DETAIL_BOXES - merged_boxes,
+            )?
+            else {
                 continue;
             };
             source_collision_cells += shape.cells;
             merged_boxes += shape.boxes;
-            if source_collision_cells > MAX_DETAIL_SOURCE_COLLISION_CELLS {
-                return Err(format!(
-                    "detail scene needs more than {MAX_DETAIL_SOURCE_COLLISION_CELLS} source collision cells"
-                ));
-            }
-            if merged_boxes > MAX_DETAIL_BOXES {
-                return Err(format!(
-                    "detail scene needs more than {MAX_DETAIL_BOXES} merged boxes"
-                ));
-            }
             prepared.insert(id, shape);
         }
         // 2. Pose one static collider per collidable instance, reusing the shape.

@@ -2,8 +2,8 @@
 mod detail_collision;
 mod dynamic_cache;
 pub use detail_collision::{
-    DetailCollisionStats, MAX_DETAIL_BOXES, MAX_DETAIL_COLLIDERS,
-    MAX_DETAIL_PROTOTYPE_COLLISION_CELLS, MAX_DETAIL_SOURCE_COLLISION_CELLS,
+    DetailCollisionStats, MAX_DETAIL_BOXES, MAX_DETAIL_COLLIDERS, MAX_DETAIL_SCRATCH_CHUNKS,
+    MAX_DETAIL_SOURCE_COLLISION_CELLS,
 };
 pub use dynamic_cache::DynamicMeshCache;
 use matterweave_core::{Mesh, Vertex, World};
