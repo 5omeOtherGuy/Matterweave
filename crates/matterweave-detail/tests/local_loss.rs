@@ -247,7 +247,9 @@ fn unaligned_dense_cuboids_still_coarsen_including_negatives() {
     let build = || {
         let mut scene = DetailScene::new();
         scene.add_prototype(solid_block("odd", 15)).unwrap();
-        scene.add_prototype(solid_block_negative("neg", 15)).unwrap();
+        scene
+            .add_prototype(solid_block_negative("neg", 15))
+            .unwrap();
         scene.add_prototype(thin_sheet("sheet")).unwrap();
         scene.place("o", "odd", Transform::identity()).unwrap();
         scene
@@ -479,7 +481,10 @@ fn prototype_edit_carving_a_channel_reverts_the_wedge_to_source() {
     let mut scene = DetailScene::new();
     scene.add_prototype(stepped_wedge("wedge")).unwrap();
     scene.place("w", "wedge", Transform::identity()).unwrap();
-    assert_eq!(lod_of(&mut scene, &persp_at(1.0, 300.0), &config), Lod::Quarter);
+    assert_eq!(
+        lod_of(&mut scene, &persp_at(1.0, 300.0), &config),
+        Lod::Quarter
+    );
     for y in 0..16 {
         scene
             .edit_prototype("wedge", [12, y, 4], material::AIR)
@@ -573,11 +578,8 @@ fn wide_tunnel_at(id: &str, origin: [i32; 3], axis: usize, alignment: Alignment)
         for b in 0..16 {
             for c in 0..16 {
                 let local = [a, b, c];
-                v.set(
-                    [origin[0] + a, origin[1] + b, origin[2] + c],
-                    STONE,
-                )
-                .unwrap();
+                v.set([origin[0] + a, origin[1] + b, origin[2] + c], STONE)
+                    .unwrap();
                 let others: Vec<i32> = (0..3)
                     .filter(|i| *i != axis)
                     .map(|i| origin[i] + local[i])
@@ -591,11 +593,8 @@ fn wide_tunnel_at(id: &str, origin: [i32; 3], axis: usize, alignment: Alignment)
                     .zip(&starts)
                     .all(|(v, s)| *v == *s || *v == *s + 1)
                 {
-                    v.set(
-                        [origin[0] + a, origin[1] + b, origin[2] + c],
-                        material::AIR,
-                    )
-                    .unwrap();
+                    v.set([origin[0] + a, origin[1] + b, origin[2] + c], material::AIR)
+                        .unwrap();
                 }
             }
         }
@@ -671,7 +670,9 @@ fn stepped_wedge_still_coarsens_on_negative_coordinates() {
     }
     let mut scene = DetailScene::new();
     scene.add_prototype(v).unwrap();
-    scene.place("w", "wedge-neg", Transform::identity()).unwrap();
+    scene
+        .place("w", "wedge-neg", Transform::identity())
+        .unwrap();
     assert_eq!(
         lod_of(&mut scene, &persp_at(-1.0, 300.0), &config),
         Lod::Quarter,
@@ -688,13 +689,18 @@ fn adjacent_coarse_fills_cannot_jointly_close_a_two_by_two_tunnel() {
         for x in 0..16 {
             for y in 7..9 {
                 for z in 7..9 {
-                    volume.set([x,y,z], material::AIR).unwrap();
+                    volume.set([x, y, z], material::AIR).unwrap();
                 }
             }
         }
         let mut scene = DetailScene::new();
         scene.add_prototype(volume).unwrap();
-        scene.place("t", "wide-tunnel", Transform::identity()).unwrap();
-        assert_eq!(lod_of(&mut scene, &camera, &LodConfig::default()), Lod::Source);
+        scene
+            .place("t", "wide-tunnel", Transform::identity())
+            .unwrap();
+        assert_eq!(
+            lod_of(&mut scene, &camera, &LodConfig::default()),
+            Lod::Source
+        );
     }
 }

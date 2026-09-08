@@ -259,10 +259,8 @@ fn local_fill_destroys_feature(
                 // `div_euclid` keeps the coarse key correct on negative
                 // coordinates, matching the digest's own bucketing.
                 let key = cell.map(|v| v.div_euclid(factor));
-                let filled_earlier =
-                    key != coarse && key < coarse && counts.contains_key(&key);
-                solid[index(x, y, z)] =
-                    filled_earlier || volume.get(cell) != crate::material::AIR;
+                let filled_earlier = key != coarse && key < coarse && counts.contains_key(&key);
+                solid[index(x, y, z)] = filled_earlier || volume.get(cell) != crate::material::AIR;
             }
         }
     }
@@ -369,7 +367,12 @@ fn label_air(solid: &[bool; MAX_WINDOW_SITES], n: usize, labels: &mut [u16; MAX_
             let x = site % n;
             let y = (site / n) % n;
             let z = site / (n * n);
-            let push = |nx: usize, ny: usize, nz: usize, top: &mut usize, stack: &mut [u16; MAX_WINDOW_SITES], labels: &mut [u16; MAX_WINDOW_SITES]| {
+            let push = |nx: usize,
+                        ny: usize,
+                        nz: usize,
+                        top: &mut usize,
+                        stack: &mut [u16; MAX_WINDOW_SITES],
+                        labels: &mut [u16; MAX_WINDOW_SITES]| {
                 let i = index(nx, ny, nz);
                 if !solid[i] && labels[i] == u16::MAX {
                     labels[i] = label;
@@ -1032,7 +1035,9 @@ mod local_topology_cost {
                 min[axis] = min[axis].min(cell[axis]);
                 max[axis] = max[axis].max(cell[axis]);
             }
-            *counts.entry(cell.map(|v| v.div_euclid(factor))).or_default() += 1;
+            *counts
+                .entry(cell.map(|v| v.div_euclid(factor)))
+                .or_default() += 1;
         }
         worst_interior_loss(volume, &counts, min, max, factor)
     }
@@ -1048,7 +1053,10 @@ mod local_topology_cost {
                 "parasol_mushroom",
                 crate::fixtures::parasol_mushroom("m").unwrap(),
             ),
-            ("funnel_mushroom", crate::flora::funnel_mushroom("f").unwrap()),
+            (
+                "funnel_mushroom",
+                crate::flora::funnel_mushroom("f").unwrap(),
+            ),
             ("fan_frond", crate::flora::fan_frond("d").unwrap()),
             ("reed_cluster", crate::flora::reed_cluster("r").unwrap()),
         ];
@@ -1064,7 +1072,10 @@ mod local_topology_cost {
                     cost.budget_exhausted_cells, 0,
                     "{name} at factor {factor} must not need the conservative fallback"
                 );
-                assert_eq!(cost.window_site_samples, cost.analyzed_cells * window_sites(factor));
+                assert_eq!(
+                    cost.window_site_samples,
+                    cost.analyzed_cells * window_sites(factor)
+                );
                 assert!(
                     cost.window_site_samples <= LOCAL_TOPOLOGY_CELL_BUDGET * MAX_WINDOW_SITES,
                     "scratch/work cost stays bounded"

@@ -95,16 +95,14 @@ with APK, exact-source manifest and retained lighting/detail/collision evidence.
 See [delivery manifest](evidence/v0.5-release.json). This is an intermediate engine
 delivery; M2–M6 remain open.
 
-The next integration branch is `codex/engine-completion-03`. Bounded workers own
-ray-reference Vulkan integration (Hy4), production detail-collision publication
-(GLM) and local detail-loss protection (paid Muse 1.3 Contributor). Lead owns
-streaming stress, integration and the connected OnePlus 13. The ten-minute native streaming correctness gate passed: 39,761 cycles,
-219,832 verified meshes and 3,615 save/reloads within all queue/residency limits.
-See [streaming stress](performance/stream-stress.md). Raw evidence is under
-`/mnt/bench/matterweave-dev/performance/engine-03/phone-stream-ea436d3`.
-The phone is now available for ray-reference validation.
-Current worker results are unaccepted until checked. Opus 5 returned a live rate
-limit rejection in this session; paid Muse works after the owner's opt-in.
+The integration branch is `codex/engine-completion-03` (PR11 draft). Hy4's ray
+and comparison prototypes were recovered and corrected by lead; paid Muse repaired
+collision cadence; Opus refined the detail topology guard after counterexamples.
+Both paid Muse Contributor and Opus 5 are working now. Earlier quota notes are
+historical; a transient Muse429 was retried successfully. Lead owns integration
+and the connected OnePlus 13. The ten-minute native streaming gate passed
+39,761 cycles, 219,832 meshes and 3,615 save/reloads within its declared limits.
+See [streaming stress](performance/stream-stress.md).
 
 The frozen `b1f6c67` instrumented
 tests and four Vulkan examples passed. Per-object LCOV line union reports
@@ -130,18 +128,23 @@ temperature rose 28.3 to 37.5 C with Android thermal status reaching 3. These ar
 headless CPU-fixture observations, not a graphics-efficiency claim. See its
 [exact summary](evidence/2026-09-08-stream-stress.json).
 
-## Detail preservation integration — still under revision
+## Detail and collision integration — Android check pending
 
-A local occupancy-loss guard now protects tested tunnels and boundary pits, with
-113 detail tests passing. Lead reproduced and repaired two adapter assumptions
-that expected the old notched object to coarsen; the native fixture now keeps that
-object plus a through-opening and separately verifies a dense coarse control.
-All nine adapter tests pass. The [Opus review](performance/logs/engine-03-detail-review.md)
-found the strict default also prevents ordinary stepped/organic coarsening.
-That behavior is not accepted as the final automatic-detail policy: a bounded
-local topology refinement is in progress. Do not mark M4 or this guard complete
-from the cuboid/tunnel fixtures alone. Native/Android adapter checks follow the
-revised policy.
+The topology guard now evaluates coarse fills sequentially. Independent fills had
+jointly closed a 2×2 tunnel; the reproduced regression and all-axis/negative
+variants now pass. Opus records 122 detail tests passing, including safe stepped
+wedge coarsening, preserved passages, aligned channels that safely reach Half,
+and per-instance edit invalidation. Rough concavities remain conservative;
+material-filled channels and full temporal/quality M4 acceptance remain open.
+See [guard limitations and costs](performance/detail-local-loss-guard.md).
+
+Production wetland edits now queue collision preparation and poll publication
+before each simulation step. Added-solid regions defer publication while occupied;
+the workerless fallback applies the same gate. Rejection restores prior journal
+entries, and current rigid-body poses protect teleports before physics stepping.
+Eleven cadence tests and scoped strict Clippy pass. Publication has no fixed time
+bound while an addition is occupied; rendering may lead collision. Native/Android
+integration validation of this revision remains pending. See [collision log](performance/logs/engine-03-collision.md).
 
 ## Earlier continuation evidence (historical pre-release checkpoints)
 
@@ -352,4 +355,10 @@ retains the previously documented Vulkan 1.1 WSI idle fallback.
 Project licensing, production signing ownership and store publication remain owner
 decisions. This is a GitHub development prerelease, not a store build.
 
-Engine-03 full-image comparison: [12 host and Android fixture runs pass](performance/renderer-comparison.md), including six matched ray/raster images and real shared-depth hybrid composition. This is bounded 128×128 correctness evidence; primary-path selection, representative total costs and sustained comparison remain open. Detail topology review exposed joint closure of a 2×2 tunnel across coarse boundaries (RED `11f70da`); repair is underway before integrating the revised selector.
+Engine-03 full-image comparison: the initial 12-run Android gate passes at
+`bfb65ca`; the expanded 16-run host gate includes orthographic opening removal.
+It permits at most 0.05% CPU-proven face-edge ambiguity and zero unexplained
+mismatches. One/two edge pixels are recorded on the new fixture, not silently
+classified away. The one-cell descriptor regression is corrected; matched CPU
+oracle acceptance requires at least one non-excluded hit. Final Android repeat
+and combined workspace checks are running. [Protocol](performance/renderer-comparison.md).

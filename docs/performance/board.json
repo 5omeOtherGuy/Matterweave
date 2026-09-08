@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; streaming stress and ray probes passed; available for next engine check.",
+  "phone_owner": "Sole lead; final integrated Android validation next.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -490,17 +490,17 @@
     },
     "E03-collision": {
       "attempt": 1,
-      "owner": "Paid Muse 1.3 Contributor high",
-      "state": "running",
+      "owner": "Paid Muse Contributor and lead",
+      "state": "integrated-host-verified",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/collision-muse-03",
-      "acceptance": "GLM WIP preserved at 7698213; two timed-out attempts unaccepted. Repair equal-AABB and fallback publication safety, pending journal correctness."
+      "acceptance": "11 cadence tests; gated sync fallback, exact journal rollback, rejected-gate and pre-step teleport repairs. Final device integration pending."
     },
     "E03-detail": {
       "attempt": 2,
-      "owner": "Opus 5 medium",
-      "state": "running",
+      "owner": "Opus5 and lead",
+      "state": "integrated-host-verified",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/detail-topology-opus-01",
-      "acceptance": "Unaccepted default: protect passages while retaining useful noncuboid coarsening; review findings drive topology refinement."
+      "acceptance": "122 detail tests; sequential local topology, joint tunnel regression repaired. Final Android adapter pending."
     },
     "E03-stream-stress": {
       "attempt": 1,
@@ -510,18 +510,25 @@
       "acceptance": "600.013-second Android gate passes 39,761 cycles and 219,832 mesh checks within bounds. Thermal status reached 3; no efficiency claim."
     },
     "E03-comparison": {
+      "owner": "Hy4, paid Muse review and lead",
+      "state": "integrated-host-verified",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/comparison-hy4-01",
+      "acceptance": "Initial12 Android runs; expanded16 host runs, bounded CPU-proven face edges and minimal descriptor correction. Final Android repeat pending."
+    },
+    "E03-audio": {
       "owner": "Hy4",
       "state": "running",
-      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/comparison-hy4-01",
-      "acceptance": "Unaccepted full-image ray/raster/hybrid harness; lead owns Android and path selection."
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-audio-service",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/audio-hy4-01",
+      "acceptance": "Unaccepted bounded reusable Android AAudio service for M6; actual device validation lead-owned."
     }
   },
   "capacity": {
     "policy": "One lead; bounded independent Pi workers as useful. One phone owner; serialize heavy builds. Prior two-lead quota superseded by owner."
   },
   "provider_blockers": {
-    "muse": "Current-window FreeUsageLimitError HTTP429 in instance review; no accepted findings.",
-    "opus": "Five-hour allowance100% exhausted; next reset2026-09-08T16:20Z; no retry before reset."
+    "muse": "Paid Contributor works after owner opt-in; transient429 retried successfully. Historical free-model quota is not current.",
+    "opus": "Opus5 works after reset; detail/review tasks completed."
   },
-  "orchestration": "Extensive model delegation per owner. Current Opus route4.8/high explicitly authorized. Hy4 high240s and resumed low120s timed out without final findings; neither accepted as review. GLM COW timed out; lead corrected allocation tests and redundant-override copies. Muse429 and Gemini timeout remain recorded."
+  "orchestration": "Lead integration with paid Muse Contributor, Opus5, Hy4 and GLM5.3 Flash. Bounded Pi leaf workers; live availability overrides historical quota notes."
 }

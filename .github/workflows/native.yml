@@ -48,7 +48,7 @@ jobs:
           grep '30 checks, 0 failures' artifacts/ray-reference.log
           if grep -E 'Validation Error|VUID-' artifacts/ray-reference.log; then exit 1; fi
           MATTERWEAVE_COMPARISON_OUT=artifacts/renderer-comparison VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT timeout 90s cargo run --locked -p matterweave-render --example renderer_comparison 2>&1 | tee artifacts/renderer-comparison.log
-          grep '12 fixture runs, 0 failures' artifacts/renderer-comparison.log
+          grep '16 fixture runs, 0 failures' artifacts/renderer-comparison.log
           grep 'PASS Vulkan validation: no error messages' artifacts/renderer-comparison.log
           timeout 90s xvfb-run -a target/debug/matterweave-explorer --engine-check --save artifacts/unused.json 2>&1 | tee artifacts/engine-check.log
           grep 'PASS indirect' artifacts/engine-check-report.txt
