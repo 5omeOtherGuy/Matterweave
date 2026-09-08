@@ -32,12 +32,9 @@ fn main() {
     physics.sync_world(&world);
     let _ = &mut world;
 
-    let scene = scene_with_floor();
+    let mut scene = scene_with_floor();
     let mut collision = AsyncDetailCollision::new();
-    if !collision.available() {
-        eprintln!("worker unavailable; a host would fall back to replace_detail_scene");
-        return;
-    }
+    assert!(collision.available(), "validation requires a live worker");
 
     // A scene change enqueues one bounded off-thread preparation.
     let queued = collision.request(&scene);
@@ -89,11 +86,48 @@ fn main() {
         for _ in 0..120 {
             physics.step(FIXED_DT, [0.0, 0.0, 0.0], false);
         }
-        println!(
-            "character grounded on published detail floor: {}",
-            physics.grounded()
+        assert!(
+            physics.grounded(),
+            "published floor must support the character"
         );
+        println!("character grounded on published detail floor: true");
+        let old = physics.detail_collision_stats();
+        for x in 0..32 {
+            for z in 0..32 {
+                scene.edit_prototype("floor", [x, 0, z], 0).unwrap();
+            }
+        }
+        assert!(collision.request(&scene));
+        assert_eq!(
+            physics.detail_collision_stats(),
+            old,
+            "preparation must retain live walls"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut removed = false;
+        while Instant::now() < deadline {
+            if let Some(result) = collision.poll(&scene) {
+                let stats = physics
+                    .publish_detail_scene(&scene, result.unwrap())
+                    .unwrap();
+                assert_eq!(stats.static_colliders, 0);
+                removed = true;
+                break;
+            }
+            physics.step(FIXED_DT, [0.; 3], false);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(removed, "edited collision did not arrive");
+        for _ in 0..120 {
+            physics.step(FIXED_DT, [0.; 3], false);
+        }
+        assert!(!physics.grounded());
+        assert!(
+            physics.snapshot().eye[1] < 0.0,
+            "character must fall through removed floor"
+        );
+        println!("PASS async_detail_collision: native worker, floor contact, edit publication, removed support");
     } else {
-        println!("no current preparation was published before the deadline");
+        panic!("no current preparation was published before the deadline");
     }
 }
