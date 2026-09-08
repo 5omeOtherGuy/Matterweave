@@ -1,4 +1,5 @@
 //! Direct Vulkan exposed-surface baseline. See README.md for ownership and synchronization.
+pub mod async_indirect;
 mod frustum;
 mod hud;
 pub mod indirect;
@@ -1963,5 +1964,38 @@ mod tests {
             classify_present(Err(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY), false),
             PresentOutcome::Failed(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY)
         );
+    }
+}
+
+#[cfg(test)]
+mod async_indirect_api_gate {
+    #[test]
+    fn creates_background_lighting_controller() {
+        let config = crate::async_indirect::AsyncIndirectConfig::new(
+            [0; 3],
+            [1; 3],
+            1,
+            1.0,
+            [[0.5; 3]; 256],
+        )
+        .unwrap();
+        let mut controller = crate::async_indirect::AsyncIndirectLight::new(config);
+        let mut world = matterweave_core::World::new(0);
+        world.set([0; 3], 1);
+        let sun = crate::Sun {
+            direction_to_sun: [0.0, 1.0, 0.0],
+            intensity: 1.0,
+        };
+        assert!(controller.request(&world, 0, sun).unwrap());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(volume) = controller.poll(&world, 0, sun) {
+                assert!(volume.unwrap().valid_for(&world, 0, sun));
+                break;
+            }
+            assert!(controller.available());
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
     }
 }

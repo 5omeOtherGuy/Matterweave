@@ -25,6 +25,7 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
+          cargo run --locked -p matterweave-render --example async_indirect
           python3 -m unittest discover -s tools/performance -p 'test_*.py'
           python3 tools/check_docs.py
       - name: Native Vulkan smoke
@@ -45,6 +46,9 @@ jobs:
           timeout 90s xvfb-run -a target/debug/matterweave-explorer --engine-check --save artifacts/unused.json 2>&1 | tee artifacts/engine-check.log
           grep 'PASS indirect' artifacts/engine-check-report.txt
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/engine-check.log; then exit 1; fi
+          timeout 90s xvfb-run -a target/debug/matterweave-explorer --async-engine-check --save artifacts/unused.json 2>&1 | tee artifacts/async-engine-check.log
+          grep 'PASS async indirect' artifacts/async-engine-check-report.txt
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/async-engine-check.log; then exit 1; fi
           timeout 90s xvfb-run -a target/debug/matterweave-explorer --detail-check --save artifacts/unused.json 2>&1 | tee artifacts/detail-check.log
           grep 'PASS detail' artifacts/detail-check-report.txt
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/detail-check.log; then exit 1; fi

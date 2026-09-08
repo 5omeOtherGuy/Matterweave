@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; detail1080frames/HOME-resume PASS; app stopped, phone idle.",
+  "phone_owner": "Sole lead; preparing v0.5 Android asynchronous lighting check.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -468,8 +468,8 @@
       "acceptance": "Opus and lead reversal/reset corrections;48 core tests pass"
     },
     "engine-async-indirect": {
-      "owner": "Pi GLM5.3 Flash high",
-      "state": "running",
+      "owner": "GLM5.3 Flash high + Astra medium test repair + lead",
+      "state": "integrated-host-verified",
       "base": "a35b14e",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-async-indirect",
       "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/async-indirect-glm",
@@ -478,7 +478,8 @@
         "render minimal export and related tests",
         "docs/performance/async-indirect.md"
       ],
-      "acceptance": "Background CPU preparation, bounded latest-wins queue, source/light publication validation; lead owns GPU/Android integration"
+      "acceptance": "25 async tests and native Vulkan off/on/edit/sun/enclosure pass;15 frames presented while pending; Android/combined checks running",
+      "artifact": "da96b8e"
     }
   },
   "capacity": {

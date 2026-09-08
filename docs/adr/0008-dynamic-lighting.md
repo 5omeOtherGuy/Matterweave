@@ -67,3 +67,13 @@ to one diffuse bounce; no reflections, temporal reconstruction or full-scene GI
 acceptance follows. See [implementation/evidence](../performance/indirect-light-engine.md).
 This ADR remains Proposed; scheduling, representation coverage and quality/cost
 comparison gates stay open.
+
+## Background preparation reference — 2026-09-08
+
+A bounded CPU worker now prepares complete source/light-matched volumes in slices
+while the Vulkan owner continues presenting.25 scheduling/radiance tests and a
+native off/on/sun/enclosure check pass; the latter presented15 frames while work
+was pending. Publication retains the existing frame-fence contract. This addresses
+scheduling of the current unit-voxel diffuse reference; reflections, production
+quality, representation coverage and sustained mobile cost remain open. See
+[controller evidence](../performance/async-indirect.md). ADR remains Proposed.

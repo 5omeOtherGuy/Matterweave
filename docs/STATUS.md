@@ -10,7 +10,7 @@ and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) and
 [PERFORMANCE_TASKS](PERFORMANCE_TASKS.md). The [showcase](SHOWCASE.md) is a test
 workload; further showcase polish and old demo-save compatibility must not delay
 remaining M2–M6 engine requirements. The sole current integration checkout is
-`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-systems`.
+`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-light-scheduling`.
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
 
@@ -62,22 +62,40 @@ shader passes host plus OnePlus13 off/on/sun/enclosure/HOME-resume checks. Compl
 phase preparation/upload takes roughly39–45ms on that phone; scheduling and
 quality work remain. See [lighting evidence](performance/indirect-light-engine.md). These features are not part of the already published v0.4.0 APK.
 
-## Current integration and next slice
+## Current delivery and lighting follow-up
 
-PR9 is open: <https://github.com/5omeOtherGuy/Matterweave/pull/9>. All GitHub host,
-Android and docs checks pass at `b1f6c67`; the combined `1abe19b` code passes326 workspace tests (3 existing ignored),
-strict workspace Clippy and ARM64 APK/signature/alignment checks. Its phone detail
-check passes all9 phases and HOME/resume; final GitHub checks precede delivery. The
-APK test build starts from `1abe19b`; do not attribute those changes to v0.4.0.
+PR9 merged at `1cb468e` after all GitHub host, Android and documentation checks
+passed at `4535b69`. Its code at `1abe19b` passes326 workspace tests (3 existing
+ignored), strict Clippy, ARM64 APK inspection and a1080-frame physical Android
+automatic-detail check including HOME/resume. The currently published v0.4.0
+APK predates those systems; a v0.5 prerelease is being prepared.
 
-Opus4.8/high's current five-hour allowance is exhausted (next reset2026-09-08
-16:20UTC). GLM5.3 Flash/high owns a separate bounded background indirect-light
-controller experiment; it is not integrated. Hy4/high reached its240-second review deadline without a result; no
-queue findings or review completion are claimed. The frozen `b1f6c67` instrumented tests and four Vulkan examples passed.
-The combined LLVM aggregate has order-sensitive duplicate mappings; a per-object
-LCOV line union reports94.62–97.01% across the four engine crates with explicit
-scope and remaining diagnostics. See [coverage evidence](performance/engine-coverage.md);
-this is not Android/shader coverage or an engine-completion percentage.
+The follow-up branch `codex/engine-light-scheduling` adds bounded background
+indirect-light preparation. GLM's partial controller was recovered by the lead;
+Astra repaired its test assumptions. All25 focused async tests pass at `2267ad5`.
+The native Vulkan adapter at `da96b8e` presented15 frames while lighting was
+pending, then correctly published sun/edit/enclosure results. The combined351-test suite and corrected strict Clippy pass. Production-controller
+coverage is92.31% of lines with all27 functions exercised. The v0.5 ARM64 APK
+build/signature/alignment and physical OnePlus 13 Android 16 checks pass. The final
+capture records all six phases, nine presentations during preparation, HOME/resume
+and renderer recreation. The earlier secure-keyguard timeout remains a separate
+failed attempt. The APK source is `9854723`; the standalone ARM64 CPU check at
+`70a231a` additionally matches every cell/face against synchronous lighting for an
+open, closed and reopened enclosure. See [background lighting](performance/async-indirect.md).
+These functional checks do not establish full GI/reflections or sustained efficiency.
+
+PR10 is draft/open; its remote `ca26d58` passed host, Android and docs CI.
+The local `70a231a` example and these final evidence records await delivery and
+final-revision checks. v0.5 is not yet released. Model availability/quota notes
+from the interrupted session are historical; the owner authorizes paid Muse 1.3
+Contributor, GLM 5.3 Flash, Hy4 and Opus 5 for this continuation.
+
+The frozen `b1f6c67` instrumented
+tests and four Vulkan examples passed. Per-object LCOV line union reports
+94.62–97.01% across the four engine crates with explicit scope/diagnostics; see
+[coverage evidence](performance/engine-coverage.md). This is not Android/shader
+coverage or an engine-completion percentage. The stopped temporary coverage
+build target was removed; profile/report evidence was retained.
 
 ## Earlier continuation evidence (historical pre-release checkpoints)
 
