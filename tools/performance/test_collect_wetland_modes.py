@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import collect_wetland_modes as modes
 from test_collect_wetland_pair import fixture, row
@@ -169,6 +169,137 @@ class ModesTest(unittest.TestCase):
             with self.assertRaises(modes.core.TrialError):
                 modes.finish(device, Path(tmp), before, staged, False, 60)
             self.assertTrue((Path(tmp)/'frame-profile-v2-new.csv').exists())
+
+
+class OrchestrationTest(unittest.TestCase):
+    def args(self, out):
+        return modes.build_parser().parse_args(['--adb', '/no/adb', '--serial', 'fake',
+            '--build', str(out/'build-manifest.json'), '--fixture', str(out/'input.json'),
+            '--out', str(out/'run'), '--experiment', 'profiling'])
+
+    def inputs(self, root):
+        (root/'input.json').write_bytes(gen3())
+        (root/'app.apk').write_bytes(b'frozen')
+        build = {'apk': 'app.apk', 'apk_sha256': modes.core.sha256_file(root/'app.apk'),
+                 'source_commit': 'a'*40, 'scene': dict(modes.SOURCE)}
+        modes.write_json(root/'build-manifest.json', build)
+        return modes.read_build(root/'build-manifest.json')
+
+    def test_main_resets_first_member_for_each_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.inputs(root)
+            args = self.args(root)
+            references = []
+            def trial(device, spec, build, raw, out, first, owned, settings):
+                references.append(first['name'] if first else None)
+                return spec
+            with patch.object(modes, 'run_trial', side_effect=trial), \
+                    patch.object(modes, 'cleanup') as cleanup:
+                modes.main(['--adb', '/no/adb', '--serial', 'fake', '--build', str(args.build),
+                    '--fixture', str(args.fixture), '--out', str(args.out),
+                    '--experiment', 'profiling'])
+            plan = modes.mode_plan('profiling', 3)
+            self.assertEqual(references, [None, plan[0]['name'], None, plan[2]['name'], None, plan[4]['name']])
+            cleanup.assert_called_once()
+            self.assertTrue((args.out/'run-complete.json').exists())
+            with self.assertRaises(FileExistsError):
+                modes.main(['--adb', '/no/adb', '--serial', 'fake', '--build', str(args.build),
+                    '--fixture', str(args.fixture), '--out', str(args.out), '--experiment', 'profiling'])
+
+    def test_main_failure_is_retained_and_cleanup_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.inputs(root)
+            args = self.args(root)
+            with patch.object(modes, 'run_trial', side_effect=RuntimeError('fake failure')), \
+                    patch.object(modes, 'cleanup') as cleanup, self.assertRaises(RuntimeError):
+                modes.main(['--adb', '/no/adb', '--serial', 'fake', '--build', str(args.build),
+                    '--fixture', str(args.fixture), '--out', str(args.out), '--experiment', 'profiling'])
+            cleanup.assert_called_once()
+            self.assertTrue((args.out/'failure.json').exists())
+            self.assertFalse((args.out/'run-complete.json').exists())
+
+    def test_run_trial_on_and_off_and_saved_write_proof(self):
+        for profile, rewritten in [(True, True), (False, True), (True, False)]:
+            with self.subTest(profile=profile, rewritten=rewritten), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                build, args = self.inputs(root), self.args(root)
+                spec = modes.mode_plan('profiling', 1)[0 if profile else 1]
+                device = FakeDevice()
+                device.app_layer = Mock(return_value='fake-layer')
+                device.run_as = Mock(side_effect=['inode:before', 'inode:after' if rewritten else 'inode:before'])
+                logcat, log_file = Mock(), Mock()
+                def enter(*unused):
+                    device.files.pop(modes.core.PROFILE_REQUEST_NAME, None)
+                    if profile:
+                        device.files['frame-profile-v2-fake.csv'] = b'fake CSV; validator mocked'
+                    return '123', modes.SCENE, logcat, log_file
+                with patch.object(modes.core, 'install_and_verify'), \
+                        patch.object(modes, 'environment', return_value={'same': True}), \
+                        patch.object(modes.core, 'record_idle_window', return_value=({}, [])), \
+                        patch.object(modes.core, 'gate_before_launch', return_value={'raw': row(300, 32)}), \
+                        patch.object(modes.core, 'enter_wetland', side_effect=enter), \
+                        patch.object(modes.core, 'collect_window', return_value={'elapsed_s': 240}), \
+                        patch.object(modes, 'validate_profile', return_value={'row_count': 20}), \
+                        patch.object(modes, 'summarize'), patch.object(modes.core.time, 'sleep'):
+                    if rewritten:
+                        result = modes.run_trial(device, spec, build, gen3(), root/spec['name'],
+                                                 None, modes.core.Ownership(), args)
+                        self.assertEqual(result['profile'], profile)
+                    else:
+                        with self.assertRaisesRegex(modes.core.TrialError, 'did not rewrite'):
+                            modes.run_trial(device, spec, build, gen3(), root/spec['name'],
+                                            None, modes.core.Ownership(), args)
+                logcat.terminate.assert_called_once()
+                logcat.wait.assert_called_once()
+                log_file.close.assert_called_once()
+
+    def test_summary_off_and_missing_sf_remain_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = self.args(root)
+            modes.summarize(root, {'captures': []}, args)
+            summary = json.loads((root/'raw-summary.json').read_text())
+            self.assertIsNone(summary['app_whole_capture'])
+            self.assertIsNone(summary['presentation'])
+            self.assertIn('presentation_missing_reason', summary)
+            samples = [{'elapsed_s': 121., 'exit': 0, 'raw': '16666667\n0 1000000000 0\n0 1016000000 0'}]
+            modes.write_json(root/'process-stat.json', {})
+            with patch.object(modes, 'read_jsonl', return_value=samples), \
+                    patch.object(modes, 'process_cpu', return_value={'cpu_seconds': 1}), \
+                    patch.object(modes, 'app_profile', return_value={'whole': True}):
+                modes.summarize(root, {'captures': [{'name': 'fake.csv'}]}, args)
+            summary = json.loads((root/'raw-summary.json').read_text())
+            self.assertEqual(summary['presentation']['supported']['interval_count'], 1)
+            self.assertEqual(summary['app_whole_capture'], {'whole': True})
+
+    def test_cleanup_requires_successful_stop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            device = FakeDevice()
+            owned = modes.core.Ownership()
+            owned.claim(modes.core.FIXTURE_REMOTE_NAME)
+            device.shell = Mock(side_effect=RuntimeError('stop failed'))
+            with patch.object(modes.core, 'final_cleanup') as cleanup, self.assertRaises(RuntimeError):
+                modes.cleanup(device, root, owned)
+            cleanup.assert_not_called()
+            self.assertTrue((root/'cleanup-blocked.json').exists())
+            device.shell = Mock(return_value='')
+            with patch.object(modes.core, 'final_cleanup', return_value={'errors': []}) as cleanup:
+                modes.cleanup(device, root, owned)
+            cleanup.assert_called_once()
+            with patch.object(modes.core, 'final_cleanup', return_value={'errors': ['failed']}), \
+                    self.assertRaises(modes.core.TrialError):
+                modes.cleanup(device, root, owned)
+
+    def test_rejects_stale_owned_profile_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            owned = modes.core.Ownership()
+            owned.claim(modes.core.PROFILE_REQUEST_NAME)
+            device = FakeDevice({modes.core.PROFILE_REQUEST_NAME: b'240000'})
+            with self.assertRaises(modes.core.TrialError):
+                modes.preflight(device, Path(tmp), gen3(), owned)
 
 
 if __name__ == '__main__':
