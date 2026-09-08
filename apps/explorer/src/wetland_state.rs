@@ -33,6 +33,12 @@ pub struct SavedWetland {
     pub yaw: f32,
     pub pitch: f32,
     pub shadows: bool,
+    #[serde(default = "default_frame_rate")]
+    pub frame_rate: u32,
+}
+
+pub fn default_frame_rate() -> u32 {
+    60
 }
 
 impl SavedWetland {
@@ -41,6 +47,7 @@ impl SavedWetland {
             || self.generator != generator
             || self.seed != seed
             || self.edits.len() > MAX_EDITS
+            || !matches!(self.frame_rate, 30 | 60)
             || !self.yaw.is_finite()
             || !self.pitch.is_finite()
             || self.pitch.abs() > 1.5
@@ -394,6 +401,7 @@ mod tests {
             yaw: 0.5,
             pitch: 0.1,
             shadows: true,
+            frame_rate: default_frame_rate(),
         };
         save.save(&path).unwrap();
         let read = SavedWetland::load(&path, 1, 7).unwrap().unwrap();
@@ -442,6 +450,7 @@ mod tests {
             yaw: 0.2,
             pitch: 0.1,
             shadows: true,
+            frame_rate: default_frame_rate(),
         };
         saved.save(&second).unwrap();
         let (selected, save) = SavedWetland::load_recovering(&path, 1, 7).unwrap();
@@ -482,6 +491,7 @@ mod tests {
             yaw: 0.,
             pitch: 0.,
             shadows: true,
+            frame_rate: default_frame_rate(),
         };
         old.save(&path).unwrap();
         let bytes = fs::read(&path).unwrap();

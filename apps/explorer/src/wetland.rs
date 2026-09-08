@@ -46,6 +46,7 @@ struct Runtime {
     elevated_route: Vec<[f32; 3]>,
     camera: Camera,
     lighting: LightingSettings,
+    frame_rate: u32,
     dirty: bool,
     graphics_dirty: bool,
     dynamic_dirty: bool,
@@ -232,6 +233,9 @@ impl Runtime {
             pitch: -0.08,
         };
         let mut lighting = LightingSettings::default();
+        let frame_rate = saved
+            .as_ref()
+            .map_or_else(wetland_state::default_frame_rate, |save| save.frame_rate);
         let edits = if let Some(save) = saved {
             camera.position = Vec3::from_array(physics.character_eye());
             camera.yaw = save.yaw;
@@ -280,6 +284,7 @@ impl Runtime {
             clearing,
             camera,
             lighting,
+            frame_rate,
             dirty: false,
             graphics_dirty: true,
             dynamic_dirty: true,
@@ -300,6 +305,7 @@ impl Runtime {
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
             shadows: self.lighting.shadows,
+            frame_rate: self.frame_rate,
         };
         saved.save(&self.save_path)?;
         self.dirty = false;
@@ -548,6 +554,7 @@ impl WetlandApp {
                 "SHADOWS",
                 "DIAGNOSTICS",
                 "RESET ARCH",
+                "FRAME RATE",
                 "RETURN TO MENU",
             ]
             .iter()
@@ -568,6 +575,12 @@ impl WetlandApp {
                                 self.status = r
                                     .playground()
                                     .map_or_else(|e| e, |_| "Arch restored in the clearing".into());
+                            }
+                        }
+                        4 => {
+                            if let Some(r) = &mut self.runtime {
+                                r.frame_rate = if r.frame_rate == 60 { 30 } else { 60 };
+                                r.dirty = true;
                             }
                         }
                         _ => {
@@ -743,11 +756,18 @@ impl WetlandApp {
             gold,
         );
         if self.options {
+            let frame_rate = format!(
+                "FRAME RATE: {}",
+                self.runtime
+                    .as_ref()
+                    .map_or_else(wetland_state::default_frame_rate, |r| r.frame_rate)
+            );
             for (i, label) in [
                 "SAVE",
                 "SHADOWS",
                 "DIAGNOSTICS",
                 "RESET ARCH",
+                &frame_rate,
                 "RETURN TO MENU",
             ]
             .iter()
@@ -1029,8 +1049,19 @@ impl WetlandApp {
             event_loop.exit();
         }
         self.finish_replay();
-        self.next_frame =
-            capture_start + Duration::from_micros(if self.menu { 66_667 } else { 16_667 });
+        self.next_frame = capture_start + self.frame_interval();
+    }
+    fn frame_interval(&self) -> Duration {
+        let rate = if self.menu {
+            15
+        } else {
+            self.runtime
+                .as_ref()
+                .map_or_else(wetland_state::default_frame_rate, |r| r.frame_rate)
+        };
+        // Round up so this target is a ceiling; slow frames never catch up
+        // with a burst. Simulation still receives elapsed real time.
+        Duration::from_micros(1_000_000_u64.div_ceil(u64::from(rate)))
     }
     fn point(&self, x: f64, y: f64) -> Vec2 {
         let s = self.window.as_ref().unwrap().inner_size();
@@ -1386,6 +1417,7 @@ mod journal_tests {
             yaw: 0.,
             pitch: 0.,
             shadows: false,
+            frame_rate: wetland_state::default_frame_rate(),
         }
     }
 
