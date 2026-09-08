@@ -74,3 +74,24 @@ journal, at cell granularity:
   edits must pass `None` (currently Runtime only does cell edits).
 - Post-`reset` replacements must publish synchronously with pre-validated
   bodies or via `on_edit(.., None)`; documented on `reset`.
+
+## Lead integration review
+
+Two further actual RED regressions at `8c2631c`:
+
+- A workerless rejected structural request cleared the prior addition regions,
+  allowing its retained wall preparation to publish through the capsule.
+- A teleport before the next physics step left collider cached poses stale, so
+  the gate could publish through the character's new position.
+
+The gate now preserves prior region storage until acceptance/rejection is known,
+and derives body AABBs from current rigid-body and collider-local transforms.
+Eleven cadence tests pass, including both regressions. Scoped physics/explorer
+strict Clippy passes (existing vendored-winit warning only). Synchronous acceptance
+also clears the owner's pending rollback journal. Removed per-step cloning of the
+addition list; corrected two test deadlines that had compared a freshly created
+Instant to itself. Full native/Android integration validation remains pending.
+
+The visible edit can precede collision preparation and overlap deferral. There
+is **no fixed maximum publication latency** while a body occupies newly added
+material; earlier wording claiming a preparation-time bound was incorrect.

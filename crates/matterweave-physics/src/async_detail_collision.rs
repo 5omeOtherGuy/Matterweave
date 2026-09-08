@@ -240,7 +240,10 @@ impl AsyncDetailCollision {
             }),
             wake: Condvar::new(),
         });
-        Self { shared, worker: None }
+        Self {
+            shared,
+            worker: None,
+        }
     }
 
     /// Starts the single background worker. One worker keeps ordering obvious;

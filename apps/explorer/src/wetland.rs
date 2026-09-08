@@ -464,11 +464,10 @@ impl Runtime {
         // visible scene may lead the world (a new wall is seen before it is
         // solid); the cadence's publication gate guarantees added solid
         // material can never materialise through the character.
-        match self.collision.on_edit(
-            &self.scene,
-            &mut self.physics,
-            added_region.as_deref(),
-        ) {
+        match self
+            .collision
+            .on_edit(&self.scene, &mut self.physics, added_region.as_deref())
+        {
             Ok(true) => {
                 // Coalesce per (instance, cell): one entry per edited cell,
                 // carrying the scene material and the save-journal entry from
@@ -476,9 +475,10 @@ impl Runtime {
                 // bounded by distinct edited cells and a failed preparation
                 // reverts the whole burst exactly, including confirmed
                 // journal history.
-                let exists = self.pending_edits.iter().any(|pending| {
-                    pending.instance == hit.instance && pending.cell == cell
-                });
+                let exists = self
+                    .pending_edits
+                    .iter()
+                    .any(|pending| pending.instance == hit.instance && pending.cell == cell);
                 if !exists {
                     let journal = self
                         .edits
@@ -493,7 +493,10 @@ impl Runtime {
                     });
                 }
             }
-            Ok(false) => {} // published synchronously (worker unavailable)
+            Ok(false) => {
+                // A synchronous acceptance confirms the whole pending burst too.
+                self.pending_edits.clear();
+            }
             Err(error) => {
                 // Even the synchronous fallback rejected the source: restore
                 // the scene and leave live collision untouched.
@@ -569,9 +572,9 @@ impl Runtime {
                 // collision/scene match (it is usually already live). The
                 // reverted scene matches the last accepted publication, so no
                 // added-solid region is outstanding.
-                let _ =
-                    self.collision
-                        .on_edit(&self.scene, &mut self.physics, Some(&[]));
+                let _ = self
+                    .collision
+                    .on_edit(&self.scene, &mut self.physics, Some(&[]));
                 Some(format!("Edit rejected: {error}"))
             }
         }
