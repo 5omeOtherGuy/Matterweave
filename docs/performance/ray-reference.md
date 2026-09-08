@@ -167,19 +167,38 @@ python3 tools/check_docs.py
 ```
 
 Logs are under `/mnt/bench/matterweave-dev/performance/engine-02/` with prefix
-`ray-reference-`. Temporary build target is removed after checks; logs remain.
+`ray-reference-`. The stopped initial worker target is retained until follow-up verification finishes.
 
-## Lead-owned gates — NOT RUN
+## Native GPU probe verification — engine-03
 
-- Vulkan pipeline creation, validation layers, storage-buffer lifetime and upload
-  barriers; fullscreen coverage and unflipped perspective/orthographic images.
-- Readback of hit/depth versus the CPU fixtures, exact negative boundaries,
-  simultaneous entry/internal ties, parallel rays, inside-solid and grazing views;
-  preserve raster occlusion and render-pass miss clear color.
-- Same-fixture palette/lighting/camera/depth comparison, thin walls, crop coverage,
-  edits and replacement-epoch stale publication.
-- Physical Android operation and lifecycle recovery, APK build, phone driver
-  shader acceptance, GPU intervals, total preparation/upload/memory and sustained
-  thermal/power comparison. No phone was accessed by this leaf.
+The headless `ray_reference_vulkan` example now creates the actual Naga-compiled
+Vulkan pipeline and reads color/depth for 24 probes across perspective and
+orthographic projections. Fixtures cover negative bounds, thin axes, parallel
+rays, ties and starts inside solid/air. CPU World ray queries provide independent
+expected hit data; disclosed tie-normal conventions remain explicit.
 
-No M2 acceptance or primary-path selection is implied by this handoff.
+Hy4's bounded attempt added the harness but timed out before final acceptance.
+Lead reproduced 24 numeric matches on Radeon Vega 10 (RADV RAVEN), then enabled
+Khronos synchronization validation and found 48 read-after-write hazards. The
+RED checkpoint is `6f4ea61`. Explicit subpass-to-transfer and transfer-to-host
+dependencies now pass the same 24 probes with no validation errors. Command
+buffers/framebuffers are released before referenced attachments. Seven ray
+contract tests, all 73 renderer library tests, and strict scoped Clippy pass.
+
+```sh
+VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT \
+cargo run --locked -p matterweave-render --example ray_reference_vulkan
+```
+
+Require both `24 checks, 0 failures` and no validation errors in captured output;
+probe counts alone do not validate GPU synchronization. Logs: 
+`/mnt/bench/matterweave-dev/performance/engine-03/ray-lead-*`.
+Synchronization follows [Khronos examples](https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples).
+
+## Remaining gates
+
+Physical Android operation, fullscreen image equivalence, same-quality ray/raster/
+hybrid comparison, cropped-scene/edit coverage, device GPU/total cost and sustained
+thermal behavior remain open. One-pixel probes are shader correctness evidence,
+not an equivalent-quality renderer comparison or primary-path selection.
