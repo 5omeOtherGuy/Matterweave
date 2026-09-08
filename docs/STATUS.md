@@ -4,9 +4,12 @@ Updated: 2026-09-08
 
 ## Active engine completion campaign
 
-The full engine objective remains open. Execute [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md),
-[PERFORMANCE_TASKS](PERFORMANCE_TASKS.md), [SHOWCASE](SHOWCASE.md), then remaining
-M2–M6 requirements. The sole current integration checkout is
+The full engine objective remains open. Owner steering on 2026-09-08 reaffirms
+that the engine is the product. Advance rendering, physics, streaming, lighting
+and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) and
+[PERFORMANCE_TASKS](PERFORMANCE_TASKS.md). The [showcase](SHOWCASE.md) is a test
+workload; further showcase polish and old demo-save compatibility must not delay
+remaining M2–M6 engine requirements. The sole current integration checkout is
 `/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/performance-p00`.
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
@@ -80,16 +83,19 @@ Current verified progress (2026-09-08 continuation):
   A4 owns the phone for the last pair, allowing61 observations with unchanged
   1C battery/2C skin matching. Profiling overhead, motion/temporal quality and
   sustained final-build workload gates remain pending.
-- A bounded Pi Astra worker is adding a visible30/60Hz target as a separate
-  experiment, default60 and unchanged geometry/effects/simulation. It is not
-  integrated or measured; any reduced heating benefit remains a hypothesis.
+- The separate30/60Hz pacing experiment is preserved on its worker branch,
+  unintegrated and unmeasured. Its worker has stopped. Reassess the engine pacing
+  portion before adoption; further demo UI/save work is paused following owner
+  steering. The lead discarded its own uncommitted grab/throw/break feedback UI
+  patch. No measured thermal benefit from a cap is claimed.
 
-Next: verify the final APK and native route replay, correct any blockers, then
-exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve
-all density targets and measurement matching limits. Complete final checks, merge
-accepted work and publish a tested prerelease with durable evidence. Full automatic
-LOD, indirect illumination/reflections, second-sample reuse and remaining M2–M6 gates
-remain open. The full engine objective is active.
+Next: finish the active matched measurement and record its thermal tradeoff, then
+advance concrete engine capabilities and their native verification. Do not make
+more showcase save recovery, authored route refinement or gameplay UI polish a
+prerequisite for engine work. Automatic LOD, indirect illumination/reflections,
+renderer comparison, streaming completion, second-sample reuse and remaining
+M2–M6 gates remain open. PR8 delivery and final-build device checks remain pending;
+building the0.4 APK did not complete or release those capabilities.
 
 The [completion execution log](performance/logs/completion-execution.md) and
 [prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier
