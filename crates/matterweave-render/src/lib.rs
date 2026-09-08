@@ -9,6 +9,7 @@ mod indirect_edge_tests;
 mod indirect_tests;
 mod lighting;
 pub mod ray_reference;
+pub mod render_profile;
 mod shadow;
 mod static_scene;
 mod timing;
