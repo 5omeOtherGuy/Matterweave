@@ -192,7 +192,7 @@ cargo run --locked -p matterweave-render --example ray_reference_vulkan
 ```
 
 Require both `24 checks, 0 failures` and no validation errors in captured output;
-probe counts alone do not validate GPU synchronization. Logs: 
+probe counts alone do not validate GPU synchronization. Logs:
 `/mnt/bench/matterweave-dev/performance/engine-03/ray-lead-*`.
 Synchronization follows [Khronos examples](https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples).
 
@@ -202,3 +202,12 @@ Physical Android operation, fullscreen image equivalence, same-quality ray/raste
 hybrid comparison, cropped-scene/edit coverage, device GPU/total cost and sustained
 thermal behavior remain open. One-pixel probes are shader correctness evidence,
 not an equivalent-quality renderer comparison or primary-path selection.
+
+## Android precision regression
+
+The initial Android run at `3f4aa5b` failed 2/24 probes on Adreno 830: an exact
+orthographic upper-boundary parallel ray hit, and a perspective t=0 hit was
+rejected after depth re-projection. Host RADV passed the same probes. The failed
+report is retained under `engine-03/phone-ray-3f4aa5b`. Near-boundary offset probes
+were added before repair to constrain any numerical tolerance. Android is not
+yet accepted by this checkpoint.
