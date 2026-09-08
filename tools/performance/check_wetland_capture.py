@@ -16,12 +16,17 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("artifacts", type=Path, help="fresh output directory")
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--check-replay-cancel", action="store_true",
+                        help="verify actual route progress and terminal cancellation on smoke exit")
     args = parser.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=False)
     world = args.artifacts / "world.json"
     sentinel = b"legacy world sentinel\n"
     world.write_bytes(sentinel)
     (args.artifacts / "profile-frames.txt").write_text("20\n")
+    if args.check_replay_cancel:
+        (args.artifacts / "wetland-replay.json").write_text(
+            json.dumps({"version": 1, "route": "ground"}))
     with (args.artifacts / "run.log").open("wb") as log:
         process = subprocess.Popen(
             ["xvfb-run", "-a", str(args.binary.resolve()), "--showcase",
@@ -56,6 +61,14 @@ def main():
     assert all(row["voxel_bodies_total"] == "6" for row in rows), rows
     assert any(int(row["physics_fixed_steps"]) > 0 for row in rows), "simulation did not advance"
     assert all(row["save_failures"] == "0" for row in rows)
+    if args.check_replay_cancel:
+        reports = list(args.artifacts.glob("wetland-replay-result-*.json"))
+        assert len(reports) == 1, reports
+        report = json.loads(reports[0].read_text())
+        assert report["outcome"] == "CANCEL" and report["reason"] == "app exiting", report
+        assert report["max_index"] is not None and report["physics_step_count"] > 0, report
+        assert not (args.artifacts / "wetland-replay.json").exists()
+        print("PASS: actual app replay advanced and recorded terminal exit cancellation")
     print("PASS: full wetland rendered25 frames;20 valid rows;6 bodies;separate save;no Vulkan errors")
 
 
