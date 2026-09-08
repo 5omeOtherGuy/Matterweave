@@ -535,25 +535,11 @@ impl DetailScene {
                 let digest = self.digest(&prototype);
                 (digest.metrics, digest.bounds_local, digest.occupied)
             };
-            // RED: Euclidean nearest eye distance. This overstates depth for
-            // off-axis instances; replaced by camera.nearest_depth in the fix.
+            // Nearest AABB depth along the camera forward axis (clamped to near),
+            // the meaningful screen-space depth; not Euclidean eye distance, which
+            // overstates depth for off-axis instances and coarsens them too soon.
             let depth_m = match bounds_local {
-                Some(bounds) => {
-                    let wb = bounds.transformed(&transform);
-                    let mut sum = 0.0f32;
-                    for axis in 0..3 {
-                        let e = camera.eye_m[axis];
-                        let d = if e < wb.min[axis] {
-                            wb.min[axis] - e
-                        } else if e > wb.max[axis] {
-                            e - wb.max[axis]
-                        } else {
-                            0.0
-                        };
-                        sum += d * d;
-                    }
-                    sum.sqrt().max(camera.near_m)
-                }
+                Some(bounds) => camera.nearest_depth(&bounds.transformed(&transform)),
                 None => camera.near_m,
             };
             let (lod, error_estimate_m, projected_error_estimate_px) = if occupied == 0 {
