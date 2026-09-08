@@ -371,3 +371,54 @@ impl Drop for Shadow {
         }
     }
 }
+
+#[cfg(test)]
+mod reuse_tests {
+    use super::*;
+
+    fn camera(eye: [f32; 3], sun: crate::Sun) -> [[f32; 4]; 4] {
+        ShadowCamera::new(eye, sun, &[], 1024).unwrap().view_proj
+    }
+
+    #[test]
+    fn only_successful_submission_makes_depth_reusable() {
+        let mut cache = ShadowReuse::default();
+        let matrix = camera([0.; 3], Default::default());
+        assert!(cache.needs_pass(true, matrix));
+        // Recording/acquire failure cannot make an unsubmitted image valid.
+        assert!(cache.needs_pass(true, matrix));
+        cache.submitted(true, matrix);
+        assert!(!cache.needs_pass(true, matrix));
+        cache.invalidate();
+        assert!(cache.needs_pass(true, matrix));
+    }
+
+    #[test]
+    fn disabled_first_frame_initializes_but_does_not_cache_casters() {
+        let mut cache = ShadowReuse::default();
+        let matrix = camera([0.; 3], Default::default());
+        assert!(cache.needs_pass(false, matrix));
+        cache.submitted(false, matrix);
+        assert!(!cache.needs_pass(false, matrix));
+        assert!(cache.needs_pass(true, matrix));
+        cache.submitted(true, matrix);
+        assert!(!cache.needs_pass(false, matrix));
+        assert!(!cache.needs_pass(true, matrix));
+        cache.invalidate();
+        assert!(!cache.needs_pass(false, matrix));
+        assert!(cache.needs_pass(true, matrix));
+    }
+
+    #[test]
+    fn changed_projection_invalidates_but_intensity_and_subtexel_motion_do_not() {
+        let mut cache = ShadowReuse::default();
+        let sun = crate::Sun { direction_to_sun: [0., 1., 0.], intensity: 0.8 };
+        cache.submitted(true, camera([0.; 3], sun));
+        assert!(!cache.needs_pass(true, camera([0.001, 0., 0.001], sun)));
+        assert!(!cache.needs_pass(true, camera([0.; 3], crate::Sun { intensity: 1.6, ..sun })));
+        assert!(cache.needs_pass(true, camera([1., 0., 0.], sun)));
+        assert!(cache.needs_pass(true, camera([0.; 3], Default::default())));
+        let expanded = ShadowCamera::new([0.; 3], sun, &[[[-1., -1000., -1.], [1., 1000., 1.]]], 1024).unwrap();
+        assert!(cache.needs_pass(true, expanded.view_proj));
+    }
+}
