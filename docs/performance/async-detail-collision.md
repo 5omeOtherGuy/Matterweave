@@ -69,11 +69,10 @@ Differences are inherent to the workload, not new machinery:
 - **Source snapshots:** at most three `fork_source` copies are live at once
   (pending, running, and one transient clone while replacing a pending job).
   Each is bounded by the detail crate's `MAX_SCENE_SOURCE_BYTES` = 32 MiB
-  authoritative payload. `fork_source` eagerly clones the payload today; GLM is
-  separately moving `World` to copy-on-write, so these APIs are preserved and
-  that work is not duplicated here.
-- **Built result:** at most one buffered `PreparedDetailCollision`, whose shape
-  cost is bounded by the existing caps enforced by `build`:
+  authoritative payload. `fork_source` eagerly clones detail payloads today;
+  World's separate copy-on-write storage does not change this cost.
+- **Built result:** at most one buffered `PreparedDetailCollision` plus one
+  currently building/prepared result on the worker. Each shape cost is bounded by the existing caps enforced by `build`:
   `MAX_DETAIL_BOXES` (262,144 merged cuboids, an estimated 26-34 MiB of resident
   shape memory per the box-cost note in
   `docs/performance/p03/collision/opus-execution.md`) and
@@ -184,5 +183,25 @@ Behaviours covered:
   build).
 - Native Android device verification of the worker under real memory/thermal
   conditions; no device numbers are claimed here.
-- Interaction with GLM's copy-on-write `World` once landed: `fork_source` cost
-  should drop, but the controller APIs are unchanged.
+- DetailScene snapshot payload sharing remains separate future work; the World
+  copy-on-write change does not affect `DetailScene::fork_source`.
+
+## Lead correction after worker follow-up
+
+The follow-up Opus4.8/high run timed out after committing deterministic RED queue
+regressions (`b6882fc` on its branch), before implementing the correction. Lead
+integrated those tests, added buffered-A/running-B/request-A coverage and observed
+four failures. The corrected controller uses an opaque Arc allocation for reset
+validity and tracks the latest requested source independently. Generation remains
+a saturating diagnostic counter. Reset accepts a fresh same-source request;
+returning to a running/buffered source removes superseded pending work, and a
+superseded in-flight completion cannot replace the newly desired buffered result.
+Counters saturate; cancellation counts in-flight discard on completion once.
+
+Lead verification: six deterministic queue tests, nine asynchronous integration
+tests,19 detail collision tests, eight dynamic cache tests and three existing
+physics unit tests pass. The two pre-existing full-showcase gates remain ignored
+in this scoped run. Logs: `engine-02/async-collision-lead-{red,green}.log`.
+World and DetailScene have different storage types; the earlier claim that World
+COW would reduce `fork_source` cost was incorrect and is corrected above. Buffers
+returned to callers are caller-owned and require their own retention budget.

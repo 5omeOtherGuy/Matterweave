@@ -48,3 +48,13 @@ bytes in the current host budget check, below the64MiB derived-cache cap; this i
 mesh capacity, not process memory or measured mobile residency. The full wetland
 currently renders Source LOD. Automatic selection/transitions, temporal stability
 and equivalent-quality mobile comparisons remain required and uncompleted.
+
+## Automatic selection reference — 2026-09-08
+
+The detail crate now selects Source/Half/Quarter per instance using perspective
+view-forward depth or orthographic scale, hysteresis, a global dilation bias and
+budgeted mesh preparation. Error values are estimates: any-occupied coarsening
+can fill a deep narrow opening, and no guaranteed surface-error bound is claimed.
+Host approach/retreat/zoom, off-axis and source-authority tests pass. Native/device
+transition checks are under implementation. See [detail engine notes](../performance/automatic-detail-engine.md).
+This advances the prototype; the ADR's visual/residency acceptance remains open.

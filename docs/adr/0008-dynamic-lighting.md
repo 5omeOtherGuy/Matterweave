@@ -55,3 +55,15 @@ recording cannot publish a cache hit. Native Vulkan and Android checks exercise
 reuse and rebuilding. See [shadow reuse](../performance/shadow-reuse.md). This
 advances direct-light efficiency only. GI, reflections and this ADR's M4 acceptance
 remain open; the status remains Proposed.
+
+## First diffuse reference — 2026-09-08
+
+A bounded CPU single-bounce surface cache now feeds the actual Vulkan fragment
+shader. It demonstrates colored diffuse bounce, sun/edit invalidation and enclosure
+response through authoritative World DDA. Host validation and OnePlus13 functional
+and HOME/resume checks pass; complete CPU preparation/upload costs roughly39–45ms
+on the fixed phone fixture. The path remains opt-in, unit-voxel-only and limited
+to one diffuse bounce; no reflections, temporal reconstruction or full-scene GI
+acceptance follows. See [implementation/evidence](../performance/indirect-light-engine.md).
+This ADR remains Proposed; scheduling, representation coverage and quality/cost
+comparison gates stay open.

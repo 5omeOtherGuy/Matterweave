@@ -1,0 +1,46 @@
+{
+  "source": "7211b7d76f6d07ac8fd980ca1a24af99f2e809fb",
+  "profile": "Cargo dev opt2 debug0 Android debug",
+  "apk_sha256": "6bf8ab4df45dfef78d5a6489761e11235c98043382cbc2c460b1272063db72e1",
+  "serial": "192.168.178.93:42373",
+  "model": "CPH2653",
+  "android": "16",
+  "validation": "PASS",
+  "wall_seconds": 12.48771333694458,
+  "phases_captured": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+  ],
+  "package": "dev.matterweave.explorer",
+  "artifacts": {
+    "phase-0.png": "7d53df8dd3a290b28efe81186d43df67a78f122cc2a90d498275ce4ed094f79a",
+    "phase-1.png": "3883d17acd566423bd4b861df6cdf88838c37234946c7d70d1b5d3468ba212c2",
+    "phase-3.png": "fcbd27c4cfecbaea8fa2cbdf62375818891ebcdf63d30422500552efbd5e462f",
+    "logcat.txt": "8483967dd7718e8b30e3ce7e8aac611d3343c29a44d015e366f16705692030ea",
+    "phase-4.png": "3883d17acd566423bd4b861df6cdf88838c37234946c7d70d1b5d3468ba212c2",
+    "phase-5.png": "d35688e25475812a4c96020303c9b90eae1bcd890ee1974a96ce917593971346",
+    "phase-2.png": "037ab16f3d05abda3ae7dc0d116bbd46cd4f91c3225eed3f7ded752513fd90e0",
+    "report.txt": "9878bd8ac84dfe56d8b963d57f8a0ce5769326fd09cc5c774144b07bba009c94",
+    "matterweave-arm64-debug.apk": "6bf8ab4df45dfef78d5a6489761e11235c98043382cbc2c460b1272063db72e1",
+    "lifecycle/phase-0.png": "d35688e25475812a4c96020303c9b90eae1bcd890ee1974a96ce917593971346",
+    "lifecycle/phase-1.png": "3883d17acd566423bd4b861df6cdf88838c37234946c7d70d1b5d3468ba212c2",
+    "lifecycle/pixel-check.json": "88ad4ea7ec0b3aad4929c72052c9593b5ffea82800118043b92db4ea5edf0f5b",
+    "lifecycle/phase-3.png": "fcbd27c4cfecbaea8fa2cbdf62375818891ebcdf63d30422500552efbd5e462f",
+    "lifecycle/phase-4.png": "3883d17acd566423bd4b861df6cdf88838c37234946c7d70d1b5d3468ba212c2",
+    "lifecycle/phase-5.png": "a9877f840c69638b8d9a0772a1ad8a4b16b6ea737cefcd3788fb8e90560068f7",
+    "lifecycle/phase-2.png": "037ab16f3d05abda3ae7dc0d116bbd46cd4f91c3225eed3f7ded752513fd90e0",
+    "lifecycle/report.txt": "22f45a48d80c9aa93b52d14553486bb0e4c30b0c63b50b3762b9e1c5a19fd4a0"
+  },
+  "lifecycle": "PASS HOME/resume released/recreated renderer and republished cache",
+  "visual_observations": [
+    "Red diffuse bounce visible on gray wall",
+    "Closed enclosure indirect sample is zero",
+    "Lifecycle lit phase1 and reopened phase4 screenshots identical",
+    "Clean off comparison lifecycle/phase0 versus first-run/phase5 identical",
+    "First-run phase0 WAKEUP overlay and lifecycle phase5 stale-report capture excluded from visual equivalence"
+  ]
+}

@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; idle after engine shadow-cache route validation, owned controls removed.",
+  "phone_owner": "Sole lead; indirect/lifecycle checks passed and app stopped; native collision check next.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -370,17 +370,20 @@
     },
     "engine-indirect-light": {
       "owner": "astra-worker replacing rate-limited Opus",
-      "state": "running",
+      "state": "integrated-host-tested-android-check-building",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-indirect-light",
       "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/indirect-astra",
-      "base": "0c68565"
+      "base": "0c68565",
+      "artifact": "4d1032f",
+      "acceptance": "Opus4.8/high static review found precision candidate assigned separate repro; provenance documented caller contract. Lead native37frame check passes, Android pending."
     },
     "engine-auto-lod": {
       "owner": "Pi claude-subscription/claude-opus-4-8 high",
-      "state": "running",
+      "state": "integrated-host-100-tests-worker-verified",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-auto-lod",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/lod-opus48-reset",
-      "base": "70fc8bf"
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/lod-opus48-correct",
+      "base": "70fc8bf",
+      "artifact": "a4d7ba0"
     },
     "engine-streaming-cow": {
       "owner": "Lead repair of timed-out GLM partial",
@@ -393,20 +396,70 @@
     },
     "engine-async-collision": {
       "owner": "Pi claude-subscription/claude-opus-4-8 high",
-      "state": "running",
+      "state": "integrated-lead-corrected-host-verified",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-async-collision",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/async-collision-opus48",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/async-collision-opus48-fix",
       "base": "70fc8bf",
       "paths": [
         "crates/matterweave-physics/**",
         "docs/performance/async-detail-collision.md"
-      ]
+      ],
+      "artifact": "6143e87",
+      "remaining": "Android native executable gate building; app cadence not integrated"
     },
     "engine-prepared-collision": {
       "owner": "lead",
       "state": "integrated-host-tested",
       "artifact": "70fc8bf",
       "acceptance": "2 source version + 19 collision tests and scoped strict Clippy pass. Background controller delegated separately."
+    },
+    "engine-indirect-precision": {
+      "owner": "Pi claude-subscription/claude-opus-4-8 high",
+      "state": "timed-out-no-supported-defect",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-indirect-light",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/indirect-precision-opus48",
+      "paths": [
+        "crates/matterweave-render/src/indirect.rs",
+        "crates/matterweave-render/src/indirect_edge_tests.rs",
+        "docs/performance/indirect-light-engine.md"
+      ],
+      "acceptance": "Print-only translation probes no divergence; no source correction accepted"
+    },
+    "engine-detail-native": {
+      "owner": "Pi Opus4.8 high",
+      "state": "running",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-detail-native",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/detail-native-opus48",
+      "base": "a4d7ba0",
+      "paths": [
+        "apps/explorer/src/detail_check.rs",
+        "apps/explorer/src/lib.rs entry wiring",
+        "docs/performance/detail-native-check.md"
+      ]
+    },
+    "engine-detail-numeric": {
+      "owner": "Pi GLM5.3 Flash high",
+      "state": "running",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-detail-numeric",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/detail-numeric-glm",
+      "base": "a4d7ba0",
+      "paths": [
+        "crates/matterweave-detail/src/select.rs",
+        "crates/matterweave-detail/tests/lod_numeric.rs",
+        "docs/performance/detail-numeric.md"
+      ]
+    },
+    "engine-stream-cancel": {
+      "owner": "Pi Opus4.8 high",
+      "state": "running",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-stream-cancel",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/stream-cancel-opus48",
+      "base": "a4d7ba0",
+      "paths": [
+        "crates/matterweave-core/src/async_world.rs",
+        "core tests",
+        "docs/performance/stream-cancellation.md"
+      ]
     }
   },
   "capacity": {

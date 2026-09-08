@@ -38,8 +38,10 @@ The unintegrated frame-cap experiment requires reassessment as engine pacing wor
 
 Engine-systems follow-up: source-version-checked collision preparation and shared
 chunk snapshots are host-tested on the integration branch. Automatic detail,
-background collision publication and the first diffuse indirect reference remain
-under implementation/review; they do not close M3/M4 acceptance.
+background collision publication remain under implementation/review. The first
+diffuse indirect reference passes Android functional/lifecycle checks; its current
+39–45ms full preparation/upload phases still need scheduling. These increments
+do not close M3/M4 acceptance.
 
 ## M0 — Reproducible Android foundation
 

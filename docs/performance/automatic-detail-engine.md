@@ -77,7 +77,7 @@ dependencies; none selects among voxel coarse-volume LODs by projected error, an
 adopting one would not replace this glue. No dependency crossed the strict criteria,
 so no new dependency was added — avoiding unpinned dependency risk. The projection
 uses only `std` `f32` methods. This is recorded here rather than as a full ADR
-because it is a routine implementation detail under accepted ADR-0007/ADR-0014.
+because it is a routine implementation detail under proposed ADR-0007 and accepted ADR-0014.
 
 ## Not done / lead-owned
 

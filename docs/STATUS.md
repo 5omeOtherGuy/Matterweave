@@ -40,20 +40,25 @@ At `70fc8bf`, fine collision can be prepared on a worker thread and published on
 against the same authoritative detail scene. Opaque scene versions distinguish
 unrelated/replaced scenes, forks and edits without hashing geometry or copying
 voxel payloads. Stale publication preserves current physics. Two version tests,
-19 collision tests and strict detail/physics Clippy pass. The complete bounded
-asynchronous controller is a separate Opus4.8/high task, still under implementation.
+19 collision tests and strict detail/physics Clippy pass. At `6143e87`, the bounded asynchronous controller and corrected reset/reversal
+logic pass its queue/thread/contact tests. Direct native Android execution is
+being prepared; frame-loop publication cadence is not yet integrated.
 
 At `94e51eb`, world clones and streaming overrides share immutable chunk payloads.
 Changed chunks detach once; subsequent edits reuse their allocation until another
 snapshot shares it. Four allocation/behavior regressions and all core tests pass.
 See [chunk snapshot evidence](performance/chunk-snapshots.md). No mobile speed or
-memory measurement is inferred from allocation identity tests. Android integration
-checks for this branch remain pending.
+memory measurement is inferred from allocation identity tests. Android APK build/signature/alignment and indirect-light functional/lifecycle
+checks pass at `7211b7d`; later changes still require their own integration checks.
 
-Automatic detail selection and asynchronous collision are executing in separate
-Opus4.8/high Pi workers after the allowance reset. An Astra worker owns first
-bounded indirect lighting; its submitted code remains subject to lead review and
-Android checks. These features are not part of the already published v0.4.0 APK.
+Automatic detail selection is integrated at `a4d7ba0` after100 worker host tests.
+The renderer now updates instance selection without recopying geometry; its11-frame
+Vulkan check passes ([evidence](performance/instance-updates.md)). Opus4.8/high owns
+the native/Android detail adapter; GLM owns numeric edge-case validation. A separate
+Opus worker is correcting streaming cancellation. The first bounded diffuse indirect reference is integrated and its Vulkan
+shader passes host plus OnePlus13 off/on/sun/enclosure/HOME-resume checks. Complete
+phase preparation/upload takes roughly39–45ms on that phone; scheduling and
+quality work remain. See [lighting evidence](performance/indirect-light-engine.md). These features are not part of the already published v0.4.0 APK.
 
 ## Earlier continuation evidence (historical pre-release checkpoints)
 

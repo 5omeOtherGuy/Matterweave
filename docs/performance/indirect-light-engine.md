@@ -143,3 +143,45 @@ are **not accepted/measured on Android**. Coverage percentage tooling was not ru
 Lead owns Android integration/execution, independent review, durable artifact
 publication, broader source adapters and full R09 acceptance. Keep default off
 until those gates; this does not finish Lumen-like GI or reflections.
+
+## Lead integration and Android functional evidence
+
+Integrated into engine-systems; opt-in Android/host app check at `7211b7d`.
+APK SHA256 `6bf8ab4df45dfef78d5a6489761e11235c98043382cbc2c460b1272063db72e1`
+built in67 seconds with Cargo dev/opt2/debug0 and passed ARM64,16KiB alignment
+and signature checks. The published0.4.0 APK predates this implementation.
+
+OnePlus13 CPH2653, Android16, Adreno830 Vulkan1.3.284, driver2150760522:
+all six120-presented-frame phases and the final light-invalidation frame pass.
+A second run passes HOME/resume: renderer released/recreated, current CPU cache
+republished, later enclosure edits still correct. Device validation layers are
+disabled; host37-frame check passes with Vulkan validation enabled.
+
+Gray walls visibly receive red bounce. Closed enclosure sample is zero. The
+reopened and original lit screenshots are pixel-identical on this fixed fixture;
+clean off screenshots across the two runs are also identical. The first off
+capture has a WAKEUP overlay; a stale previous report caused an invalid phase5
+capture at the second launch. Those two captures are explicitly excluded from
+pixel-equivalence evidence; raw images are retained. This is fixed-fixture
+functional evidence, not general temporal-quality acceptance.
+
+First run complete-phase CPU preparation plus upload was38.908–44.686ms;
+second run fresh phases38.937–45.234ms, while renderer-recreation republish was
+0.125ms with zero traced rays. These observations show the synchronous reference
+can exceed a60Hz frame budget. They are not a steady-state GPU/energy/thermal
+benchmark or a performance advantage. Production scheduling and quality remain open.
+
+Manifest and hashes: [Android evidence](../evidence/2026-09-08-indirect-engine.json).
+Raw APK/reports/screenshots: `performance/engine-02/phone-indirect` under the shared
+`/mnt/bench/matterweave-dev` artifact root. Reproduce with the explicit one-shot
+check documented in [DEVELOPMENT](../DEVELOPMENT.md); before repeating, remove the
+previous **owned test report** or verify a new-run marker before collecting phases.
+
+Independent Opus4.8/high static review found no supported Vulkan lifetime defect.
+A precision concern near coordinate extremes was not reproduced by the bounded
+worker experiment before its480-second timeout; no corrective patch is accepted.
+Translation probes reported no divergence at tested in-bounds coordinates; this
+does not prove all extreme rays correct. The temporary print-only probes remain
+on the isolated worker branch.
+matching resident geometry remains an explicit caller contract. Review ran no
+builds/tests. Its detailed result is retained at `engine-02/indirect-review.md`.
