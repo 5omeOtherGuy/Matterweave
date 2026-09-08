@@ -1178,6 +1178,8 @@ mod tests {
             "world",
             "tile ultra",
             "tile source extra",
+            "tile source\nflora source",
+            "tile source\ninvalid",
             "TILE",
         ] {
             let error = Request::parse(text).unwrap_err();
