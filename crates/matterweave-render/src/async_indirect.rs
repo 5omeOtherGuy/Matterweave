@@ -500,3 +500,7 @@ fn run(shared: &Shared, config: &AsyncIndirectConfig) {
         shared.lock().finish_job(job, outcome);
     }
 }
+
+#[cfg(test)]
+#[path = "async_indirect_tests.rs"]
+mod tests;
