@@ -98,9 +98,16 @@ pub struct Camera {
 }
 
 impl Camera {
-    fn forward_norm(&self) -> f32 {
+    /// f64 squared norm so finite components near `f32::MAX` (e.g. `1e30`) do
+    /// not overflow the intermediate to infinity. Only the downstream f32
+    /// normalization/depth sees the result, and every normalized component is
+    /// `forward_m[i] / norm` in `[-1, 1]`, hence finite.
+    fn forward_norm_f64(&self) -> f64 {
         let f = self.forward_m;
-        (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt()
+        ((f[0] as f64) * (f[0] as f64)
+            + (f[1] as f64) * (f[1] as f64)
+            + (f[2] as f64) * (f[2] as f64))
+            .sqrt()
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -108,7 +115,10 @@ impl Camera {
             crate::scene::MAX_SCENE_TRANSLATION_M + (MAX_CELL_COORD + 1) as f32 * MAX_SCALE_M;
         let eye_ok = self.eye_m.iter().all(|v| v.is_finite() && v.abs() <= bound);
         let forward_finite = self.forward_m.iter().all(|v| v.is_finite());
-        let forward_ok = forward_finite && self.forward_norm() >= 1e-4;
+        // The f64 norm of finite f32 components is always finite; the cutoff
+        // still guarantees the normalized forward is nonzero and that f32
+        // depth arithmetic stays representable.
+        let forward_ok = forward_finite && self.forward_norm_f64() >= 1e-4;
         let viewport_ok = self.viewport_height_px.is_finite() && self.viewport_height_px > 0.0;
         let near_ok = self.near_m.is_finite() && self.near_m > 0.0;
         let projection_ok = match self.projection {
@@ -121,7 +131,14 @@ impl Camera {
                 view_height_m.is_finite() && view_height_m > 0.0
             }
         };
-        if eye_ok && forward_ok && viewport_ok && near_ok && projection_ok {
+        // Accepted cameras must give a finite positive projection scale at the
+        // near plane: every projected error multiplies by this scale, and an
+        // infinite scale would turn the `Source` level's zero error into
+        // `0 * inf = NaN`. Subnormal FOV/view-height or huge viewports can
+        // overflow even though every input field is finite.
+        let near_scale = self.pixels_per_metre(self.near_m);
+        let scale_ok = near_scale.is_finite() && near_scale > 0.0;
+        if eye_ok && forward_ok && viewport_ok && near_ok && projection_ok && scale_ok {
             Ok(())
         } else {
             Err(DetailError::InvalidPoint)
@@ -129,13 +146,18 @@ impl Camera {
     }
 
     /// Screen pixels spanned by one world metre at `depth_m` along the view axis.
+    /// Computed in f64 and rounded once, so a subnormal FOV/view height or a
+    /// huge viewport yields infinity only when the true scale leaves `f32`.
     pub fn pixels_per_metre(&self, depth_m: f32) -> f32 {
         match self.projection {
             Projection::Perspective { vertical_fov_rad } => {
-                let d = depth_m.max(self.near_m);
-                self.viewport_height_px / (2.0 * d * (0.5 * vertical_fov_rad).tan())
+                let d = f64::from(depth_m.max(self.near_m));
+                let fov_rad = f64::from(vertical_fov_rad);
+                (f64::from(self.viewport_height_px) / (2.0 * d * (0.5 * fov_rad).tan())) as f32
             }
-            Projection::Orthographic { view_height_m } => self.viewport_height_px / view_height_m,
+            Projection::Orthographic { view_height_m } => {
+                (f64::from(self.viewport_height_px) / f64::from(view_height_m)) as f32
+            }
         }
     }
 
@@ -149,23 +171,33 @@ impl Camera {
     /// clamped to the near plane. This is the conservative (smallest) depth over
     /// the box, so an instance partly in front resolves by its closest point.
     pub fn nearest_depth(&self, bounds: &Bounds) -> f32 {
-        let inv = 1.0 / self.forward_norm();
-        let mut min_depth = f32::INFINITY;
+        let norm = self.forward_norm_f64();
+        if !norm.is_finite() || norm == 0.0 {
+            // Unvalidated camera: fall back to the near-plane clamp instead of
+            // collapsing every depth onto it or producing NaN.
+            return self.near_m;
+        }
+        let inv = 1.0 / norm;
+        let eye: [f64; 3] = self.eye_m.map(f64::from);
+        let forward: [f64; 3] = self.forward_m.map(f64::from);
+        let mut min_depth = f64::INFINITY;
         for corner in 0..8u8 {
-            let p: [f32; 3] = std::array::from_fn(|axis| {
+            let p: [f64; 3] = std::array::from_fn(|axis| {
                 if corner >> axis & 1 == 1 {
-                    bounds.max[axis]
+                    f64::from(bounds.max[axis])
                 } else {
-                    bounds.min[axis]
+                    f64::from(bounds.min[axis])
                 }
             });
+            // f64 dot: raw forward components near f32::MAX against scene-bound
+            // offsets would overflow an f32 product before normalization.
             let depth = (0..3)
-                .map(|axis| (p[axis] - self.eye_m[axis]) * self.forward_m[axis])
-                .sum::<f32>()
+                .map(|axis| (p[axis] - eye[axis]) * forward[axis])
+                .sum::<f64>()
                 * inv;
             min_depth = min_depth.min(depth);
         }
-        min_depth.max(self.near_m)
+        (min_depth.max(f64::from(self.near_m))) as f32
     }
 }
 
@@ -210,7 +242,15 @@ impl LodConfig {
             && self.hysteresis >= 0.0
             && self.max_dilation_fraction.is_finite()
             && (0.0..=1.0).contains(&self.max_dilation_fraction);
-        if ok {
+        // The hysteresis thresholds are f32 (`budget / (1 + hysteresis)` and
+        // `budget * (1 + hysteresis)`); finite inputs can still multiply to
+        // infinity or underflow the low threshold to zero, leaving the
+        // dead-band vacuous. Reject thresholds that do not survive f32.
+        let one_plus = 1.0 + f64::from(self.hysteresis);
+        let low = (f64::from(self.error_budget_px) / one_plus) as f32;
+        let high = (f64::from(self.error_budget_px) * one_plus) as f32;
+        let thresholds_ok = low.is_finite() && low > 0.0 && high.is_finite() && high > 0.0;
+        if ok && thresholds_ok {
             Ok(())
         } else {
             Err(DetailError::InvalidScale)
