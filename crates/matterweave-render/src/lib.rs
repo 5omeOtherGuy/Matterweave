@@ -1,10 +1,12 @@
 //! Direct Vulkan exposed-surface baseline. See README.md for ownership and synchronization.
 mod frustum;
 mod hud;
-mod lighting;
 pub mod indirect;
 #[cfg(test)]
+mod indirect_edge_tests;
+#[cfg(test)]
 mod indirect_tests;
+mod lighting;
 mod shadow;
 mod static_scene;
 mod timing;
@@ -1455,6 +1457,39 @@ impl Renderer {
                 ..Default::default()
             },
         )
+    }
+
+    /// Publish a current CPU indirect cache after uploading its matching geometry.
+    /// The caller supplies the current authoritative World and replacement epoch,
+    /// never a job's old snapshot. Rejected stale data disables previous output.
+    /// All geometry uploads and sun changes disable GI until republished; shadow
+    /// resource replacement also disables it. Unit World voxels only, opt-in.
+    pub fn upload_indirect(
+        &mut self,
+        volume: &indirect::IndirectVolume,
+        world: &matterweave_core::World,
+        source_epoch: u64,
+    ) -> Result<()> {
+        self.shadow.disable_indirect();
+        if self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
+            || self.static_scene.as_ref().is_some_and(|s| s.has_geometry)
+        {
+            return Err("Indirect World cache does not cover mesh-only objects/instances".into());
+        }
+        if !volume.source_valid(world, source_epoch) {
+            return Err("Stale indirect source revision/epoch".into());
+        }
+        self.commands.wait()?;
+        self.shadow.upload_indirect(volume)
+    }
+
+    pub fn disable_indirect(&mut self) {
+        self.shadow.disable_indirect();
+    }
+
+    /// Current validity, not a GPU timing or proof of nonzero pixel contribution.
+    pub fn indirect_enabled(&self) -> bool {
+        self.shadow.indirect_enabled()
     }
 
     /// Sunlight and shadow settings apply to this frame. Invalid settings return Fatal.
