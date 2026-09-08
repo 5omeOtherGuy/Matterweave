@@ -322,7 +322,10 @@ class Device:
 
     def pull_private(self, name, timeout=60):
         """Return the exact bytes of an app-private file, or None if absent."""
-        result = self.run(["exec-out", "run-as", self.package, "cat", "files/" + name],
+        # shell v2 (-T) preserves the remote exit code and separate stderr.
+        # exec-out returned exit0 with a cat error in stdout for a missing file
+        # on the tested Android device, so it cannot establish file presence.
+        result = self.run(["shell", "-T", "run-as", self.package, "cat", "files/" + name],
                           timeout=timeout, check=False, binary=True)
         return result.stdout if result.returncode == 0 else None
 

@@ -21,8 +21,9 @@ constructs a journal or teleports to the route start. Initial XZ distance must b
 at most 1 m from the first generated point; grounding must succeed within three
 wall seconds. Ground and elevated use the actual generator vectors retained in
 Runtime, not reconstructed waypoints. The generator's nominal eye height is 1.7 m.
-The lead must preserve/restore the user's original journal when staging fixtures;
-normal autosave and final save still save the actual current game pose.
+The lead uses a separate, exclusively owned recovery fixture; other journals
+remain untouched. The owner revoked repeated save backup/restore rituals. Normal
+autosave and final save still save the actual current game pose to that fixture.
 
 Movement goes through the existing `Physics::step`, fixed-step accumulator and
 Vulkan draw path. Existing frame-dt clamping, collision, rendering quality and

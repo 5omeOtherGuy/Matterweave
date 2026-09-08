@@ -216,3 +216,12 @@ The final code records actual monotonic observation timestamps and validates all
 five accepted samples plus the new actual sample. No invented elapsed time is
 accepted as measurement evidence. Neither earlier script revision was run on a
 phone. Focused tests and an actual-time freshness regression follow.
+
+
+Initial device attempts were rejected before capture: A1 found Android's normal
+randomized APK directories include `~`; the conservative path allowlist now
+admits that character. A2 exposed `adb exec-out` returning local exit0 with a
+remote missing-file error in stdout. The alleged pre-existing recovery127 was
+absent in `ls` and `test -f` returned1. Private reads now use shell-v2 `-T`, which
+preserves the remote status and separate stderr. Both failed attempts removed no
+files; neither produced a measurement. A3 starts again with new real observations.
