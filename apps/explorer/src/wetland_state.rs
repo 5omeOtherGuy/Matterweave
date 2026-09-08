@@ -364,22 +364,47 @@ mod tests {
 
     #[test]
     fn old_showcase_sessions_are_not_replayed_on_changed_layout() {
-        let dir = std::env::temp_dir().join(format!("wetland-layout-version-{}-{}",
-            std::process::id(), NEXT_SAVE.fetch_add(1, Ordering::Relaxed)));
+        let dir = std::env::temp_dir().join(format!(
+            "wetland-layout-version-{}-{}",
+            std::process::id(),
+            NEXT_SAVE.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::create_dir(&dir).unwrap();
         let path = dir.join(SAVE_FILE);
         let old = SavedWetland {
-            version: 1, generator: 1, seed: matterweave_detail::SHOWCASE_SEED,
-            edits: vec![Edit { instance: "flora_989_11".into(), cell: [0, 1, 0], material: 0 }],
-            physics: PhysicsSnapshot { version: 1, eye: [46., 14., 71.], bodies: vec![] },
-            yaw: 0., pitch: 0., shadows: true,
+            version: 1,
+            generator: 1,
+            seed: matterweave_detail::SHOWCASE_SEED,
+            edits: vec![Edit {
+                instance: "flora_989_11".into(),
+                cell: [0, 1, 0],
+                material: 0,
+            }],
+            physics: PhysicsSnapshot {
+                version: 1,
+                eye: [46., 14., 71.],
+                bodies: vec![],
+            },
+            yaw: 0.,
+            pitch: 0.,
+            shadows: true,
         };
         old.save(&path).unwrap();
         let bytes = fs::read(&path).unwrap();
-        let (selected, save) = SavedWetland::load_recovering(&path,
-            matterweave_detail::SHOWCASE_GENERATOR_VERSION, matterweave_detail::SHOWCASE_SEED).unwrap();
-        assert_ne!(selected, path, "changed placement catalog reuses old generator identity");
-        assert!(save.is_none(), "old instance edits must not attach to new placements");
+        let (selected, save) = SavedWetland::load_recovering(
+            &path,
+            matterweave_detail::SHOWCASE_GENERATOR_VERSION,
+            matterweave_detail::SHOWCASE_SEED,
+        )
+        .unwrap();
+        assert_ne!(
+            selected, path,
+            "changed placement catalog reuses old generator identity"
+        );
+        assert!(
+            save.is_none(),
+            "old instance edits must not attach to new placements"
+        );
         assert_eq!(fs::read(&path).unwrap(), bytes);
         fs::remove_dir_all(dir).unwrap();
     }

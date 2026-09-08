@@ -1313,7 +1313,7 @@ fn place_flora(
             {
                 continue;
             }
-            if hash2(seed ^ 0x31, xi, zi) % 2 != 0 {
+            if !hash2(seed ^ 0x31, xi, zi).is_multiple_of(2) {
                 continue;
             }
             if routes
@@ -1359,7 +1359,7 @@ pub fn build_showcase(seed: u64) -> Result<Showcase> {
     let mut scene = DetailScene::new();
     let build = build_terrain_voxels(&mut scene, &terrain)?;
 
-    let route = densify(&terrain, &ROUTE_SPINE, true);
+    let route = densify(&terrain, ROUTE_SPINE, true);
     let elevated_route = densify(&terrain, &ELEVATED_SPINE, false);
     if route.len() < 2 {
         return Err(DetailError::BudgetExceeded("route left the map"));

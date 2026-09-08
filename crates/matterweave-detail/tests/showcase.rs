@@ -362,7 +362,7 @@ fn water_sits_on_terrain_with_a_visible_surface_and_a_declared_level() {
         }
     }
     assert!(flooded > 20, "only {flooded} flooded sample columns");
-    assert!(BASIN_WATER_LEVEL_M > 0.0);
+    const { assert!(BASIN_WATER_LEVEL_M > 0.0) };
 }
 
 #[test]

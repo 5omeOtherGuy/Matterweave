@@ -86,12 +86,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let document = json!({
-        "artifact": "fullmap-a1",
+        "artifact": "full-showcase",
         "generator": "matterweave_detail::showcase::build_showcase",
         "generator_version": SHOWCASE_GENERATOR_VERSION,
         "seed": SHOWCASE_SEED,
         "composition_hash": format!("{:016x}", composition_hash(&showcase)),
-        "measured_on": "host, release build; not a phone measurement",
+        "measured_on": "host; not a phone measurement",
+        "debug_assertions": cfg!(debug_assertions),
         "timing_ms": {
             "generate_full_map": build_ms,
             "mesh_every_prototype_source_lod": mesh_ms,

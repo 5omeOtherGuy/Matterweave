@@ -94,7 +94,9 @@ impl Runtime {
         let mut spawn = built.spawn_eye;
         let route = built.route;
         let (save_path, saved) = SavedWetland::load_recovering(
-            &directory.join(wetland_state::SAVE_FILE), GENERATOR, SEED
+            &directory.join(wetland_state::SAVE_FILE),
+            GENERATOR,
+            SEED,
         )?;
         let fresh = saved.is_none();
         if let Some(save) = &saved {
@@ -502,10 +504,8 @@ impl WetlandApp {
                 r.physics.break_body(&r.empty_world, eye, forward, range);
                 r.dirty = true;
             }
-            Action::Home => {
-                if r.physics.teleport(r.spawn) {
-                    r.camera.position = Vec3::from_array(r.spawn);
-                }
+            Action::Home if r.physics.teleport(r.spawn) => {
+                r.camera.position = Vec3::from_array(r.spawn);
             }
             _ => {}
         }
@@ -1025,7 +1025,8 @@ mod integration_tests {
     #[ignore = "full-map integration: run explicitly in the campaign gate"]
     fn full_wetland_load_edit_collision_and_reload() {
         let directory = std::env::temp_dir().join(format!(
-            "matterweave-wetland-runtime-{}", std::process::id()
+            "matterweave-wetland-runtime-{}",
+            std::process::id()
         ));
         std::fs::create_dir(&directory).unwrap();
         let legacy = directory.join("world.json");
@@ -1037,15 +1038,27 @@ mod integration_tests {
             runtime.physics.step(1. / 60., [0.; 3], false);
         }
         let settled = runtime.physics.character_eye();
-        assert!((settled[1] - start[1]).abs() < 1., "entrance floor lost: {start:?} -> {settled:?}");
+        assert!(
+            (settled[1] - start[1]).abs() < 1.,
+            "entrance floor lost: {start:?} -> {settled:?}"
+        );
         runtime.physics.step(1. / 60., [0.; 3], true);
-        for _ in 0..12 { runtime.physics.step(1. / 60., [0.; 3], false); }
-        assert!(runtime.physics.character_eye()[1] > settled[1] + 0.1, "entrance cannot jump");
-        for _ in 0..120 { runtime.physics.step(1. / 60., [0.; 3], false); }
+        for _ in 0..12 {
+            runtime.physics.step(1. / 60., [0.; 3], false);
+        }
+        assert!(
+            runtime.physics.character_eye()[1] > settled[1] + 0.1,
+            "entrance cannot jump"
+        );
+        for _ in 0..120 {
+            runtime.physics.step(1. / 60., [0.; 3], false);
+        }
         runtime.camera.position = Vec3::from_array(runtime.physics.character_eye());
         runtime.camera.pitch = -1.2;
         let before = runtime.scene.counts().expanded_occupied_cells;
-        runtime.edit(false).expect("remove actual aimed source cell");
+        runtime
+            .edit(false)
+            .expect("remove actual aimed source cell");
         assert_eq!(runtime.scene.counts().expanded_occupied_cells, before - 1);
         let edit = runtime.edits.last().unwrap().clone();
         runtime.save(&directory).unwrap();
@@ -1055,8 +1068,20 @@ mod integration_tests {
         assert_eq!(restored.physics.character_eye(), saved_eye);
         assert_eq!(restored.scene.counts().expanded_occupied_cells, before - 1);
         assert_eq!(restored.edits, vec![edit.clone()]);
-        let draw = restored.scene.draws().into_iter().find(|d| d.instance == edit.instance).unwrap();
-        assert_eq!(restored.scene.prototype(&draw.prototype).unwrap().get(edit.cell), 0);
+        let draw = restored
+            .scene
+            .draws()
+            .into_iter()
+            .find(|d| d.instance == edit.instance)
+            .unwrap();
+        assert_eq!(
+            restored
+                .scene
+                .prototype(&draw.prototype)
+                .unwrap()
+                .get(edit.cell),
+            0
+        );
         assert_eq!(std::fs::read(legacy).unwrap(), b"legacy world sentinel");
         drop(restored);
         std::fs::remove_dir_all(directory).unwrap();

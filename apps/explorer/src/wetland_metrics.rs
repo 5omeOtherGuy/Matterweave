@@ -50,7 +50,8 @@ impl Capture {
             self.presented += 1;
         }
         let diagnostics = renderer.draw_diagnostics();
-        let submission = diagnostics.and_then(|d| d.submitted_frame_id)
+        let submission = diagnostics
+            .and_then(|d| d.submitted_frame_id)
             .map(|id| (self.epoch, id));
         // The renderer has one in-flight frame. Only join a completion to a
         // submission actually recorded by this capture. Menus render while the
