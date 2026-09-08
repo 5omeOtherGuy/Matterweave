@@ -25,9 +25,9 @@
 //! a plateau datum: solid rock from `y = 0` up to the surface.
 
 use crate::{
-    flora_class, flora_prototype, material, material_policy, DetailError, DetailScene,
-    DetailVolume, MaterialPolicy, Result, Scale, Transform, Yaw, FLORA_SPECIES, MAX_MESH_BYTES,
-    SCALE_TILE_M,
+    bracket_fungus, flora_class, flora_prototype, material, material_policy, wetland_prototype,
+    DetailError, DetailScene, DetailVolume, MaterialPolicy, Result, Scale, Transform, Yaw,
+    FLORA_SPECIES, MAX_MESH_BYTES, SCALE_TILE_M,
 };
 use std::collections::BTreeMap;
 
@@ -53,7 +53,8 @@ pub const MAX_TERRAIN_CELL_Y: i32 = 255;
 
 /// Bytes one occupied cell can contribute to a derived mesh: 24 vertices plus
 /// 36 indices. Mirrors the private bound used by [`crate::MAX_MESH_BYTES`].
-const MESH_BYTES_PER_CELL: usize = 24 * std::mem::size_of::<matterweave_core::Vertex>() + 36 * 4;
+const MESH_BYTES_PER_CELL: usize =
+    24 * std::mem::size_of::<matterweave_core::Vertex>() + 36 * 4;
 /// Largest occupied-cell count whose `Lod::Source` mesh passes the existing
 /// preflight. Terrain is split into bands so no prototype exceeds it.
 pub const MAX_PROTOTYPE_CELLS: usize = MAX_MESH_BYTES / MESH_BYTES_PER_CELL;
@@ -73,6 +74,64 @@ pub const ROUTE_STEP_M: f32 = 2.0;
 pub const SHOWCASE_EXPANDED_CELLS_MIN: usize = 20_000_000;
 pub const SHOWCASE_FLORA_CELLS_MIN: usize = 2_000_000;
 pub const SHOWCASE_PLANTS_MIN: usize = 4_000;
+
+/// Every archetype the showcase places: the six accepted catalogue species plus
+/// the four later original species (attached bracket fungus and the three
+/// wetland prototypes). The source files of all ten are owned elsewhere and are
+/// not modified here; this module only places them.
+pub const SHOWCASE_SPECIES: [&str; 10] = [
+    "parasol_mushroom",
+    "funnel_mushroom",
+    "clustered_mushroom",
+    "fan_frond",
+    "reed_cluster",
+    "rosette_groundcover",
+    "bracket_fungus",
+    "twisted_shrub",
+    "horsetail",
+    "marsh_lily",
+];
+
+/// Half-width of the walked corridor kept free of plant *source* geometry, in
+/// metres. A plant is rejected when its own horizontal source radius reaches
+/// within this distance of any route point on either route, so an overhanging
+/// cap or a woody branch cannot grow into the walked line even though its
+/// placement origin is off the path.
+pub const ROUTE_PLAYER_CLEARANCE_M: f32 = 0.9;
+
+/// Builds any showcase archetype by id, across the three owning source modules.
+pub fn showcase_prototype(id: &str) -> Result<DetailVolume> {
+    match id {
+        "bracket_fungus" => bracket_fungus(id),
+        "twisted_shrub" | "horsetail" | "marsh_lily" => wetland_prototype(id),
+        _ => flora_prototype(id),
+    }
+}
+
+/// Largest horizontal distance in metres from a prototype's local origin to the
+/// far side of any of its occupied cells. Taken over both horizontal axes, so
+/// the value is invariant under the quarter-turn yaws used for placement.
+fn source_radius_m(volume: &DetailVolume) -> f32 {
+    let Some((min, max)) = volume.cell_bounds() else {
+        return 0.0;
+    };
+    let scale = volume.scale().metres();
+    [0usize, 2]
+        .into_iter()
+        .map(|axis| {
+            let low = (min[axis] as f32 * scale).abs();
+            let high = ((max[axis] + 1) as f32 * scale).abs();
+            low.max(high)
+        })
+        .fold(0.0f32, f32::max)
+}
+
+/// Horizontal source radius of one archetype in metres, measured from its
+/// actual generated cells. Public so tests and tools use the same number the
+/// scatter used.
+pub fn species_source_radius_m(id: &str) -> Result<f32> {
+    Ok(source_radius_m(&showcase_prototype(id)?))
+}
 
 // ---------------------------------------------------------------------------
 // Deterministic noise
@@ -119,12 +178,7 @@ fn fbm(seed: u64, x: f32, z: f32, base_freq: f32, octaves: u32) -> f32 {
     let mut amp = 1.0;
     let mut freq = base_freq;
     for octave in 0..octaves {
-        sum += amp
-            * value_noise(
-                seed ^ (u64::from(octave) + 1).wrapping_mul(0x9e37_79b9),
-                x * freq,
-                z * freq,
-            );
+        sum += amp * value_noise(seed ^ (u64::from(octave) + 1).wrapping_mul(0x9e37_79b9), x * freq, z * freq);
         norm += amp;
         amp *= 0.5;
         freq *= 2.0;
@@ -263,16 +317,21 @@ pub fn terrain_height_m(seed: u64, x: f32, z: f32) -> f32 {
         if along < 18.0 {
             continue;
         }
-        let across =
-            (rel_x * -sz + rel_z * sx).abs() + 1.6 * fbm(seed ^ (0xd5 + k as u64), x, z, 0.06, 2);
-        let depth = 2.4
-            * (-(across / 2.0) * (across / 2.0)).exp()
+        let across = (rel_x * -sz + rel_z * sx).abs()
+            + 1.6 * fbm(seed ^ (0xd5 + k as u64), x, z, 0.06, 2);
+        let depth = 2.4 * (-(across / 2.0) * (across / 2.0)).exp()
             * ((along - 18.0) / 12.0).clamp(0.0, 1.0);
         h -= depth;
     }
 
     // Authored landmark shelves.
-    h = flatten(h, dist2(x, z, 42.0, 62.0), 10.0, 15.4, 0.85); // sheltered fungal grove
+    h = flatten(
+        h,
+        dist2(x, z, 42.0, 62.0),
+        10.0,
+        15.4,
+        0.85,
+    ); // sheltered fungal grove
     h = flatten(h, dist2(x, z, 92.0, 58.0), 6.0, 18.2, 0.9); // destruction clearing
     h = flatten(h, dist2(x, z, 106.0, 30.0), 7.0, 33.5, 0.85); // high viewpoint
     h = flatten(h, dist2(x, z, 64.0, 112.0), 8.0, 14.0, 0.7); // south saddle approach
@@ -306,6 +365,12 @@ pub struct SurfacePoint {
     pub slope: f32,
     /// Standing water depth above the surface in metres; 0 when dry.
     pub water_depth_m: f32,
+    /// True when this column is a real overhang: carved-away air sits *below*
+    /// the reported surface, so the reported top is a roof over a void. The
+    /// reported surface itself is always the highest uncarved solid cell, so a
+    /// column whose original top was carved away reports the cavity floor (an
+    /// open mouth) and is not marked here.
+    pub overhung: bool,
 }
 
 impl SurfacePoint {
@@ -319,9 +384,26 @@ impl SurfacePoint {
 /// a query can never disagree with the generated voxels.
 pub struct Terrain {
     seed: u64,
+    /// Highest solid cell of the *uncarved* heightfield column. Depth-based
+    /// material layering is measured from this, so carving a shelter does not
+    /// silently turn deep rock into surface turf.
+    raw_top: Vec<i32>,
+    /// Highest cell that is still solid *after* cavity carving. This is what
+    /// every metre-space query reports, so a query can never name a cell the
+    /// generator carved away.
     top: Vec<i32>,
     water_top: Vec<i32>,
     top_material: Vec<u8>,
+    /// Column has solid material above a carved void: a true overhang.
+    overhung: Vec<bool>,
+}
+
+/// Cheap rejection: does this column's centre lie within any cavity's
+/// horizontal bounding box? Only such columns can be affected by carving.
+fn column_touches_cavity(x: f32, z: f32) -> bool {
+    CAVITIES.iter().any(|(centre, radii)| {
+        (x - centre[0]).abs() <= radii[0] && (z - centre[2]).abs() <= radii[2]
+    })
 }
 
 fn column_index(x: i32, z: i32) -> Option<usize> {
@@ -333,7 +415,9 @@ impl Terrain {
     /// Builds the grid once. Cost is bounded: `MAP_EDGE_CELLS^2` columns.
     pub fn generate(seed: u64) -> Result<Self> {
         let cells = (MAP_EDGE_CELLS * MAP_EDGE_CELLS) as usize;
+        let mut raw_top = vec![0i32; cells];
         let mut top = vec![0i32; cells];
+        let mut overhung = vec![false; cells];
         let mut water_top = vec![-1i32; cells];
         let top_material = vec![material::AIR; cells];
         for xi in 0..MAP_EDGE_CELLS {
@@ -343,12 +427,24 @@ impl Terrain {
                 let h = terrain_height_m(seed, x, z);
                 let t = (h / TERRAIN_CELL_M).floor() as i32 - 1;
                 if !(0..=MAX_TERRAIN_CELL_Y).contains(&t) {
-                    return Err(DetailError::BudgetExceeded(
-                        "terrain height out of cell range",
-                    ));
+                    return Err(DetailError::BudgetExceeded("terrain height out of cell range"));
                 }
                 let idx = (xi * MAP_EDGE_CELLS + zi) as usize;
-                top[idx] = t;
+                raw_top[idx] = t;
+                // Cavity carving is applied here, not only in the voxel pass, so
+                // the reported surface is the highest cell that survives it.
+                let touches = column_touches_cavity(x, z);
+                let mut carved_top = t;
+                while touches
+                    && carved_top >= 0
+                    && carved(x, (carved_top as f32 + 0.5) * TERRAIN_CELL_M, z)
+                {
+                    carved_top -= 1;
+                }
+                if carved_top < 0 {
+                    return Err(DetailError::BudgetExceeded("cavity carved a whole column"));
+                }
+                top[idx] = carved_top;
                 let surface_m = (t + 1) as f32 * TERRAIN_CELL_M;
                 if let Some(level) = water_level_m(x, z) {
                     if level > surface_m {
@@ -358,13 +454,24 @@ impl Terrain {
                         }
                     }
                 }
+                // A true overhang: a carved cell that stays air (it is above the
+                // standing water surface, so it does not flood) below the solid
+                // cell this column reports as its surface.
+                if touches {
+                    overhung[idx] = (0..carved_top).any(|y| {
+                        y > water_top[idx]
+                            && carved(x, (y as f32 + 0.5) * TERRAIN_CELL_M, z)
+                    });
+                }
             }
         }
         let mut terrain = Self {
             seed,
+            raw_top,
             top,
             water_top,
             top_material,
+            overhung,
         };
         // Surface materials need the finished height grid, because they depend
         // on the local slope of neighbouring columns.
@@ -421,8 +528,11 @@ impl Terrain {
     }
 
     /// Material of a cell inside the terrain column, before cavity carving.
+    /// Depth layering follows the uncarved column; the classified surface
+    /// material is placed on the highest cell that survives carving, which is
+    /// exactly the cell [`Terrain::surface_at_metres`] reports.
     fn column_material(&self, idx: usize, y: i32) -> u8 {
-        let top = self.top[idx];
+        let top = self.raw_top[idx];
         if y > top {
             return if y <= self.water_top[idx] {
                 material::WATER
@@ -430,7 +540,7 @@ impl Terrain {
                 material::AIR
             };
         }
-        if y == top {
+        if y == self.top[idx] {
             return self.top_material[idx];
         }
         if y > top - 6 {
@@ -461,6 +571,7 @@ impl Terrain {
             material: self.top_material[idx],
             slope: self.slope_cells(xi, zi),
             water_depth_m,
+            overhung: self.overhung[idx],
         })
     }
 
@@ -731,15 +842,11 @@ const ELEVATED_SPINE: [[f32; 2]; 10] = [
 /// Nearest walkable column to `(x, z)`: dry land, gentle enough to stand on.
 /// Bounded deterministic ring search; `None` when nothing nearby qualifies.
 fn snap_to_walkable(terrain: &Terrain, x: f32, z: f32) -> Option<(f32, f32, SurfacePoint)> {
-    let solid_footing = |x: f32, z: f32, p: &SurfacePoint| {
-        // A column whose surface cell was carved away by a cavity is not footing.
-        // Tested at the owning cell CENTRE, exactly as the voxels were carved.
-        !carved(
-            cell_centre_m(x),
-            p.height_m - TERRAIN_CELL_M * 0.5,
-            cell_centre_m(z),
-        )
-    };
+    // The reported surface is already the highest uncarved solid cell, so
+    // footing is guaranteed by the query. Columns that are the thin roof of a
+    // cavity are still refused: standing on a cavity lid is walkable but is not
+    // where a showcase route should be routed.
+    let solid_footing = |_x: f32, _z: f32, p: &SurfacePoint| !p.overhung;
     if let Some(p) = terrain.surface_at_metres(x, z) {
         if p.is_dry_land() && p.slope <= 0.85 && solid_footing(x, z, &p) {
             return Some((x, z, p));
@@ -790,9 +897,19 @@ fn densify(terrain: &Terrain, spine: &[[f32; 2]], close: bool) -> Vec<[f32; 3]> 
             }
         }
     }
-    if let Some(first) = out.first().copied() {
-        if close {
+    if close {
+        if let Some(first) = out.first().copied() {
             out.push(first);
+        }
+    } else if let Some(last) = points.last().copied() {
+        // An open route must actually reach its terminal waypoint: the per-
+        // segment loop stops one step short of `t == 1`, so without this the
+        // elevated route silently ended before the viewpoint spur.
+        if let Some((sx, sz, surface)) = snap_to_walkable(terrain, last[0], last[1]) {
+            let point = [sx, surface.height_m, sz];
+            if out.last() != Some(&point) {
+                out.push(point);
+            }
         }
     }
     out
@@ -867,8 +984,18 @@ fn build_terrain_voxels(scene: &mut DetailScene, terrain: &Terrain) -> Result<Te
         overhang_columns: 0,
     };
 
+    // Per-column overhang state for the tile currently being assembled. A
+    // column belongs to exactly one tile, and bands are emitted bottom-up, so
+    // this state carries across band boundaries and each (x, z) column is
+    // counted at most once. The previous per-band reset both double counted
+    // columns and missed roofs that started in the next band.
+    let mut seen_air = vec![false; (TILE_CELLS * TILE_CELLS) as usize];
+    let mut flagged = vec![false; (TILE_CELLS * TILE_CELLS) as usize];
+
     for tile_x in 0..TILES_PER_EDGE {
         for tile_z in 0..TILES_PER_EDGE {
+            seen_air.fill(false);
+            flagged.fill(false);
             let (mut min_top, mut max_top) = (i32::MAX, i32::MIN);
             for lx in 0..TILE_CELLS {
                 for lz in 0..TILE_CELLS {
@@ -924,28 +1051,37 @@ fn build_terrain_voxels(scene: &mut DetailScene, terrain: &Terrain) -> Result<Te
                         let gz = tile_z * TILE_CELLS + lz;
                         let wz = (gz as f32 + 0.5) * TERRAIN_CELL_M;
                         let idx = (gx * MAP_EDGE_CELLS + gz) as usize;
-                        let mut air_below_solid = false;
-                        let mut seen_air = false;
+                        let local = (lx * TILE_CELLS + lz) as usize;
                         for ly in 0..BAND_CELLS {
                             let y = y0 + ly;
                             let mut m = terrain.column_material(idx, y);
                             if m != material::AIR
                                 && carved(wx, (y as f32 + 0.5) * TERRAIN_CELL_M, wz)
                             {
-                                m = material::AIR;
+                                // A carved cell below the standing water surface
+                                // floods, so the voxels keep agreeing with the
+                                // water depth the surface query reports.
+                                m = if y <= terrain.water_top[idx] {
+                                    material::WATER
+                                } else {
+                                    material::AIR
+                                };
                             }
                             if m == material::AIR {
-                                seen_air = true;
+                                seen_air[local] = true;
                             } else {
-                                if seen_air {
-                                    air_below_solid = true;
+                                if seen_air[local]
+                                    && material_policy(m) == MaterialPolicy::Collision
+                                    && !flagged[local]
+                                {
+                                    // Genuine roof: collidable material above an
+                                    // air gap in the same (x, z) column.
+                                    flagged[local] = true;
+                                    build.overhang_columns += 1;
                                 }
                                 volume.set([lx, ly, lz], m)?;
                                 occupied += 1;
                             }
-                        }
-                        if air_below_solid {
-                            build.overhang_columns += 1;
                         }
                     }
                 }
@@ -979,22 +1115,49 @@ fn build_terrain_voxels(scene: &mut DetailScene, terrain: &Terrain) -> Result<Te
 // Habitat-clustered flora scatter
 // ---------------------------------------------------------------------------
 
-const HABITAT_WATERSIDE: &[&str] = &["reed_cluster", "rosette_groundcover", "fan_frond"];
+/// Wet margins: reeds, ground rosettes, fronds and the segmented horsetail
+/// spire, which is a marsh plant and is placed nowhere else.
+const HABITAT_WATERSIDE: &[&str] = &[
+    "reed_cluster",
+    "rosette_groundcover",
+    "fan_frond",
+    "horsetail",
+];
+/// Sheltered low grove: the three cap mushrooms, fronds, the stump-rooted
+/// bracket fungus and the twisted woody shrub.
 const HABITAT_GROVE: &[&str] = &[
     "parasol_mushroom",
     "funnel_mushroom",
     "clustered_mushroom",
     "fan_frond",
+    "bracket_fungus",
+    "twisted_shrub",
 ];
+/// Drier slopes and terraces: hardy clusters, groundcover, funnels, shrubs and
+/// bracket fungus on its own stump.
 const HABITAT_SLOPE: &[&str] = &[
     "clustered_mushroom",
     "rosette_groundcover",
     "funnel_mushroom",
+    "twisted_shrub",
+    "bracket_fungus",
 ];
+
+/// Shallow-water archetype. The lily's pads sit at local `y = 2` cells of
+/// 12.5 cm, i.e. 0.25 m above its rooted origin, so it is only truthful in a
+/// column whose standing water is exactly one 25 cm cell deep: the rhizome at
+/// `y = 0` is then submerged and the pads float at the water surface.
+pub const SPECIES_LILY: &str = "marsh_lily";
+pub const LILY_PAD_HEIGHT_M: f32 = 0.25;
+/// Accepted standing-water depth window for lily placement, in metres.
+const LILY_MIN_DEPTH_M: f32 = 0.2;
+const LILY_MAX_DEPTH_M: f32 = 0.3;
+/// Column stride of the shallow-water sweep, in 25 cm cells (50 cm).
+const LILY_STRIDE_CELLS: i32 = 2;
 
 /// Habitat clusters attempted. Bounded, deterministic, and independent of how
 /// many succeed; the acceptance thresholds are checked on the finished scene.
-const CLUSTER_ATTEMPTS: usize = 640;
+const CLUSTER_ATTEMPTS: usize = 1_100;
 const CLUSTER_MIN_PLANTS: usize = 14;
 const CLUSTER_PLANT_SPREAD: usize = 38;
 /// Foot occupancy grid pitch in metres; keeps feet from stacking.
@@ -1008,25 +1171,35 @@ struct Scatter {
     species: BTreeMap<String, usize>,
 }
 
-fn route_clearance(route: &[[f32; 3]], x: f32, z: f32, radius: f32) -> bool {
-    route.iter().any(|p| dist2(p[0], p[2], x, z) < radius)
+/// True when a plant of horizontal source radius `radius_m` placed at `(x, z)`
+/// would reach inside the protected corridor of any route point.
+fn route_clearance(route: &[[f32; 3]], x: f32, z: f32, radius_m: f32) -> bool {
+    let limit = ROUTE_PLAYER_CLEARANCE_M + radius_m;
+    route.iter().any(|p| dist2(p[0], p[2], x, z) < limit)
 }
 
 fn place_flora(
     scene: &mut DetailScene,
     terrain: &Terrain,
-    route: &[[f32; 3]],
+    routes: &[&[[f32; 3]]],
     seed: u64,
 ) -> Result<Scatter> {
     let mut prototype_cells: BTreeMap<&str, usize> = BTreeMap::new();
-    for id in FLORA_SPECIES {
-        let volume = flora_prototype(id)?;
+    let mut radii: BTreeMap<&str, f32> = BTreeMap::new();
+    for id in SHOWCASE_SPECIES {
+        debug_assert!(
+            FLORA_SPECIES.contains(&id)
+                || matches!(id, "bracket_fungus" | "twisted_shrub" | "horsetail" | "marsh_lily")
+        );
+        let volume = showcase_prototype(id)?;
         prototype_cells.insert(id, volume.occupied_cells());
+        radii.insert(id, source_radius_m(&volume));
         scene.add_prototype(volume)?;
     }
-    // Every route point is used for the clearance test: a coarser corridor left
-    // gaps that let a collidable plant grow into the walked line.
-    let corridor: Vec<[f32; 3]> = route.to_vec();
+    // Every point of BOTH routes is used for the clearance test: a coarser
+    // corridor, or protecting only the ground loop, left gaps that let a cap or
+    // a woody branch grow into a walked line.
+    let corridor: Vec<[f32; 3]> = routes.iter().flat_map(|r| r.iter().copied()).collect();
 
     let pitch_cells = (MAP_EDGE_M / FOOT_PITCH_M).ceil() as usize;
     let mut taken = vec![false; pitch_cells * pitch_cells];
@@ -1061,8 +1234,8 @@ fn place_flora(
             continue;
         };
         let radius = 3.0 + unit(seed ^ 0x13, k, 3) * 5.0;
-        let plants =
-            CLUSTER_MIN_PLANTS + (hash2(seed ^ 0x14, k, 4) as usize % CLUSTER_PLANT_SPREAD);
+        let plants = CLUSTER_MIN_PLANTS
+            + (hash2(seed ^ 0x14, k, 4) as usize % CLUSTER_PLANT_SPREAD);
         for plant in 0..plants {
             let p = plant as i32;
             let u = unit(seed ^ 0x21, k, p);
@@ -1073,21 +1246,15 @@ fn place_flora(
             let Some(surface) = terrain.surface_at_metres(x, z) else {
                 continue;
             };
-            if surface.water_depth_m > 0.0 || surface.slope > 0.85 {
-                continue;
-            }
-            if carved(
-                cell_centre_m(x),
-                surface.height_m - TERRAIN_CELL_M * 0.5,
-                cell_centre_m(z),
-            ) {
+            if surface.water_depth_m > 0.0 || surface.slope > 0.85 || surface.overhung {
                 continue;
             }
             if surface.material != material::MOSS_TURF && surface.material != material::DETAIL_SOIL
             {
                 continue;
             }
-            if route_clearance(&corridor, x, z, 1.3) {
+            let species = palette[(hash2(seed ^ 0x23, k, p) as usize) % palette.len()];
+            if route_clearance(&corridor, x, z, radii[species]) {
                 continue;
             }
             let gx = (x / FOOT_PITCH_M).floor() as usize;
@@ -1100,7 +1267,6 @@ fn place_flora(
                 continue;
             }
             taken[slot] = true;
-            let species = palette[(hash2(seed ^ 0x23, k, p) as usize) % palette.len()];
             let yaw = YAWS[(hash2(seed ^ 0x24, k, p) as usize) % YAWS.len()];
             let transform = Transform::new([x, surface.height_m, z], yaw)?;
             scene.place(format!("flora_{cluster}_{plant}"), species, transform)?;
@@ -1108,6 +1274,52 @@ fn place_flora(
             scatter.expanded_cells += prototype_cells[species];
             *scatter.species.entry(species.to_string()).or_insert(0) += 1;
         }
+    }
+
+    // Shallow-water sweep for the lily. A random scatter over the whole map
+    // almost never lands in the narrow one-cell-deep shoreline band, so the
+    // band is swept directly and thinned deterministically.
+    let lily_radius = radii[SPECIES_LILY];
+    let mut placed_lilies = 0usize;
+    for xi in (0..MAP_EDGE_CELLS).step_by(LILY_STRIDE_CELLS as usize) {
+        let x = (xi as f32 + 0.5) * TERRAIN_CELL_M;
+        for zi in (0..MAP_EDGE_CELLS).step_by(LILY_STRIDE_CELLS as usize) {
+            let z = (zi as f32 + 0.5) * TERRAIN_CELL_M;
+            let Some(surface) = terrain.surface_at_metres(x, z) else {
+                continue;
+            };
+            // Truthful shallow water only: pads land on the water surface and
+            // the rhizome stays submerged. Dry ground and deep water are both
+            // rejected, so no lily ever floats over dry land.
+            if surface.water_depth_m < LILY_MIN_DEPTH_M
+                || surface.water_depth_m > LILY_MAX_DEPTH_M
+                || surface.overhung
+            {
+                continue;
+            }
+            if hash2(seed ^ 0x31, xi, zi) % 2 != 0 {
+                continue;
+            }
+            if route_clearance(&corridor, x, z, lily_radius) {
+                continue;
+            }
+            let gx = (x / FOOT_PITCH_M).floor() as usize;
+            let gz = (z / FOOT_PITCH_M).floor() as usize;
+            if gx >= pitch_cells || gz >= pitch_cells || taken[gx * pitch_cells + gz] {
+                continue;
+            }
+            taken[gx * pitch_cells + gz] = true;
+            let yaw = YAWS[(hash2(seed ^ 0x32, xi, zi) as usize) % YAWS.len()];
+            let transform = Transform::new([x, surface.height_m, z], yaw)?;
+            scene.place(format!("lily_{xi}_{zi}"), SPECIES_LILY, transform)?;
+            placed_lilies += 1;
+            scatter.instances += 1;
+            scatter.expanded_cells += prototype_cells[SPECIES_LILY];
+            *scatter.species.entry(SPECIES_LILY.to_string()).or_insert(0) += 1;
+        }
+    }
+    if placed_lilies == 0 {
+        return Err(DetailError::BudgetExceeded("no shallow water for marsh lily"));
     }
     Ok(scatter)
 }
@@ -1131,7 +1343,15 @@ pub fn build_showcase(seed: u64) -> Result<Showcase> {
     if route.len() < 2 {
         return Err(DetailError::BudgetExceeded("route left the map"));
     }
-    let scatter = place_flora(&mut scene, &terrain, &route, seed)?;
+    if elevated_route.len() < 2 {
+        return Err(DetailError::BudgetExceeded("elevated route left the map"));
+    }
+    let scatter = place_flora(&mut scene, &terrain, &[&route, &elevated_route], seed)?;
+    if scatter.species.len() != SHOWCASE_SPECIES.len() {
+        return Err(DetailError::BudgetExceeded(
+            "an archetype was not placed anywhere",
+        ));
+    }
 
     let counts = scene.counts();
     if counts.expanded_occupied_cells < SHOWCASE_EXPANDED_CELLS_MIN {
@@ -1228,13 +1448,22 @@ pub fn build_showcase(seed: u64) -> Result<Showcase> {
 /// Content class of a showcase prototype id: terrain, or the flora class from
 /// the existing catalogue helper.
 pub fn showcase_class(prototype_id: &str) -> &'static str {
-    if prototype_id.starts_with("shell_")
-        || prototype_id == BASE_ROCK_ID
-        || prototype_id == BASE_SOIL_ID
-    {
-        "terrain"
-    } else {
-        flora_class(prototype_id)
+    match prototype_id {
+        _ if prototype_id.starts_with("shell_")
+            || prototype_id == BASE_ROCK_ID
+            || prototype_id == BASE_SOIL_ID =>
+        {
+            "terrain"
+        }
+        // The bracket fungus is a fungus with its own woody stump; the stump is
+        // collidable, so it is accounted with the collidable fungi.
+        "bracket_fungus" => "flora-fungus",
+        // The twisted shrub is the only woody archetype: a collidable trunk and
+        // branches with decorative crowns. It is reported separately so a
+        // manifest never implies a mushroom count that includes wood.
+        "twisted_shrub" => "flora-woody",
+        "horsetail" | "marsh_lily" => "flora-decorative",
+        _ => flora_class(prototype_id),
     }
 }
 

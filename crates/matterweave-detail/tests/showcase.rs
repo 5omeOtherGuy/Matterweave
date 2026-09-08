@@ -6,10 +6,12 @@
 
 use matterweave_detail::{
     build_showcase, carved, composition_hash, material, material_policy, showcase_class,
-    DetailScene, Lod, MaterialPolicy, Showcase, BASE_ROCK_ID, BASE_SOIL_ID, BASIN_WATER_LEVEL_M,
-    MAP_EDGE_CELLS, MAP_EDGE_M, MAX_PROTOTYPE_CELLS, MAX_SCENE_CACHE_BYTES, MAX_SCENE_SOURCE_BYTES,
-    SHOWCASE_EXPANDED_CELLS_MIN, SHOWCASE_FLORA_CELLS_MIN, SHOWCASE_PLANTS_MIN, SHOWCASE_SEED,
-    TERRAIN_CELL_M, TILE_CELLS, WALK_SPEED_M_S,
+    species_source_radius_m, DetailScene, Lod, MaterialPolicy, Showcase, BASE_ROCK_ID,
+    BASE_SOIL_ID, BASIN_WATER_LEVEL_M, LILY_PAD_HEIGHT_M, MAP_EDGE_CELLS, MAP_EDGE_M,
+    MAX_PROTOTYPE_CELLS, MAX_SCENE_CACHE_BYTES, MAX_SCENE_SOURCE_BYTES,
+    ROUTE_PLAYER_CLEARANCE_M, SHOWCASE_EXPANDED_CELLS_MIN, SHOWCASE_FLORA_CELLS_MIN,
+    SHOWCASE_PLANTS_MIN, SHOWCASE_SEED, SHOWCASE_SPECIES, SPECIES_LILY, TERRAIN_CELL_M,
+    TILE_CELLS, WALK_SPEED_M_S,
 };
 use std::sync::OnceLock;
 
@@ -75,17 +77,74 @@ fn canonical_counts_meet_showcase_targets() {
     // Buried terrain alone must not satisfy the density objective.
     assert!(manifest.flora_expanded_cells >= 2_000_000);
 
-    // Only the six existing catalogue species are placed here. The additional
-    // archetypes are a separate catalogue task; this test must fail loudly if
-    // anyone claims ten types from this generator.
+    // All ten archetypes are actually placed: the six accepted catalogue
+    // species plus the four later originals. This must fail loudly if any of
+    // them is missing or is only token-present.
     assert_eq!(
         manifest.species_instances.len(),
-        6,
-        "showcase places exactly the six existing flora prototypes"
+        SHOWCASE_SPECIES.len(),
+        "placed species {:?}",
+        manifest.species_instances.keys().collect::<Vec<_>>()
     );
-    for (species, placed) in &manifest.species_instances {
-        assert!(*placed >= 100, "{species} is token-present with {placed}");
+    for id in SHOWCASE_SPECIES {
+        let placed = manifest
+            .species_instances
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| panic!("{id} was never placed"));
+        assert!(placed >= 100, "{id} is token-present with {placed}");
     }
+    println!("species instances: {:?}", manifest.species_instances);
+    println!(
+        "classes: {:?}",
+        manifest
+            .classes
+            .iter()
+            .map(|(k, v)| (k.clone(), v.instances, v.expanded_cells))
+            .collect::<Vec<_>>()
+    );
+
+    // Woody and fungal populations are reported separately, so no manifest can
+    // present shrubs as mushrooms.
+    let woody = manifest.classes.get("flora-woody").expect("woody class");
+    assert!(woody.instances >= 100, "woody instances {}", woody.instances);
+    let fungus = manifest.classes.get("flora-fungus").expect("fungus class");
+    assert!(fungus.instances >= 500);
+    let fungus_species: usize = [
+        "parasol_mushroom",
+        "funnel_mushroom",
+        "clustered_mushroom",
+        "bracket_fungus",
+    ]
+    .iter()
+    .map(|id| manifest.species_instances[*id])
+    .sum();
+    assert_eq!(
+        fungus.instances, fungus_species,
+        "fungus class instances must be exactly the four fungal archetypes"
+    );
+    assert_eq!(woody.instances, manifest.species_instances["twisted_shrub"]);
+
+    // Unique prototype cells and instance-expanded cells are counted from
+    // different sources and must not be swapped: one prototype per archetype.
+    let flora_prototypes: usize = manifest
+        .classes
+        .iter()
+        .filter(|(name, _)| *name != "terrain")
+        .map(|(_, c)| c.prototypes)
+        .sum();
+    assert_eq!(flora_prototypes, SHOWCASE_SPECIES.len());
+    let flora_instances: usize = manifest
+        .classes
+        .iter()
+        .filter(|(name, _)| *name != "terrain")
+        .map(|(_, c)| c.instances)
+        .sum();
+    assert_eq!(flora_instances, manifest.flora_instances);
+    assert_eq!(
+        manifest.species_instances.values().sum::<usize>(),
+        manifest.flora_instances
+    );
 }
 
 #[test]
@@ -99,20 +158,13 @@ fn map_is_a_full_128_m_source_map_not_a_single_tile() {
             max[axis] = max[axis].max(draw.transform.translation_m[axis]);
         }
     }
-    assert!(
-        min[0] <= 1.0 && min[2] <= 1.0,
-        "map does not start at origin"
-    );
+    assert!(min[0] <= 1.0 && min[2] <= 1.0, "map does not start at origin");
     assert!(
         max[0] >= MAP_EDGE_M - 8.0 && max[2] >= MAP_EDGE_M - 8.0,
         "placed content spans only {max:?}, not a 128 m map"
     );
     // Vertical extent must be real relief, not a flat slab.
-    assert!(
-        max[1] - min[1] >= 24.0,
-        "vertical extent {}",
-        max[1] - min[1]
-    );
+    assert!(max[1] - min[1] >= 24.0, "vertical extent {}", max[1] - min[1]);
     assert_eq!(TERRAIN_CELL_M, 0.25, "terrain source stays at 25 cm");
 }
 
@@ -223,10 +275,11 @@ fn surface_query_agrees_with_authoritative_voxels_including_tile_seams() {
             .surface_at_metres(x, z)
             .expect("in-map column");
         let top_y = (surface.top_cell as f32 + 0.5) * TERRAIN_CELL_M;
-        // The queried top cell is solid in the actual scene ...
-        if carved(x, top_y, z) {
-            continue; // carved cavities are checked by the overhang test
-        }
+        // The reported surface cell is never a cell the generator carved away.
+        assert!(
+            !carved(x, top_y, z),
+            "surface query at {x},{z} reports carved-away cell {top_y}"
+        );
         // Terrain instances only: an overlapping plant is a different question.
         let terrain_hit = showcase
             .scene
@@ -336,13 +389,88 @@ fn out_of_map_and_negative_inputs_are_rejected_not_clamped() {
         .expect("valid point"));
 }
 
+/// The surface query must report the highest *uncarved* solid cell, never the
+/// phantom pre-carve heightfield top, in every column a cavity intersects.
+#[test]
+fn surface_query_reports_real_solid_in_cavity_intersected_columns() {
+    let showcase = map();
+    let mut lowered = 0usize;
+    let mut roofed = 0usize;
+    for xi in 0..MAP_EDGE_CELLS {
+        let x = (xi as f32 + 0.5) * TERRAIN_CELL_M;
+        for zi in 0..MAP_EDGE_CELLS {
+            let z = (zi as f32 + 0.5) * TERRAIN_CELL_M;
+            let surface = showcase.terrain.surface_at_metres(x, z).expect("in map");
+            let top_y = (surface.top_cell as f32 + 0.5) * TERRAIN_CELL_M;
+            // Never a carved cell, anywhere on the map. No column is skipped.
+            assert!(!carved(x, top_y, z), "carved surface reported at {x},{z}");
+
+            // The pre-carve heightfield top of this column, i.e. the phantom
+            // height an uncarved heightfield query would have returned.
+            let phantom = matterweave_detail::terrain_height_m(showcase.terrain.seed(), x, z);
+            let phantom_top = (phantom / TERRAIN_CELL_M).floor() as i32 - 1;
+            if phantom_top > surface.top_cell {
+                lowered += 1;
+                // Everything between the reported surface and the phantom top
+                // was really carved away, and the voxels agree: no solid there.
+                for y in (surface.top_cell + 1)..=phantom_top {
+                    let cy = (y as f32 + 0.5) * TERRAIN_CELL_M;
+                    assert!(carved(x, cy, z));
+                    if surface.water_depth_m == 0.0 {
+                        assert!(
+                            !showcase
+                                .scene
+                                .is_collidable_world_metres([x, cy, z])
+                                .expect("valid point"),
+                            "solid voxel above the reported surface at {x},{z},{cy}"
+                        );
+                    }
+                }
+            }
+            if surface.overhung {
+                roofed += 1;
+                // The reported top is solid, and there is real air below it.
+                assert!(showcase
+                    .scene
+                    .is_collidable_world_metres([x, top_y, z])
+                    .expect("valid point"));
+                assert!((0..surface.top_cell).any(|y| {
+                    !showcase
+                        .scene
+                        .is_collidable_world_metres([
+                            x,
+                            (y as f32 + 0.5) * TERRAIN_CELL_M,
+                            z,
+                        ])
+                        .expect("valid point")
+                }));
+            }
+        }
+    }
+    // Both cases must actually occur: cavity mouths that lower the surface, and
+    // true overhangs that a heightfield cannot express.
+    assert!(lowered > 0, "no column had its surface lowered by carving");
+    assert!(roofed > 0, "no true overhang columns");
+    assert_eq!(
+        roofed, showcase.manifest.overhang_columns,
+        "manifest overhang columns must be the unique (x, z) columns with solid above air"
+    );
+    println!("lowered columns {lowered}, overhang columns {roofed}");
+}
+
 #[test]
 fn carved_cavities_are_real_voxel_overhangs() {
     let showcase = map();
+    // Honest unique-column accounting: never more than one count per column,
+    // and never more than the map has columns.
     assert!(
-        showcase.manifest.overhang_columns >= 500,
+        showcase.manifest.overhang_columns >= 200,
         "only {} columns have solid material above air",
         showcase.manifest.overhang_columns
+    );
+    assert!(
+        showcase.manifest.overhang_columns < (MAP_EDGE_CELLS * MAP_EDGE_CELLS) as usize,
+        "overhang columns exceed the number of columns on the map"
     );
     let cavities: Vec<_> = showcase
         .landmarks
@@ -465,6 +593,91 @@ fn every_route_point_has_ground_under_it_and_clearance_above_it() {
     assert!(checked > 120, "only {checked} route points checked");
 }
 
+/// Both routes are protected, and the protection accounts for each archetype's
+/// own horizontal source radius, not only its placement origin: a wide cap or a
+/// woody branch must not reach into the walked corridor.
+#[test]
+fn plant_source_geometry_clears_both_routes_including_its_own_radius() {
+    let showcase = map();
+    let mut radii = std::collections::BTreeMap::new();
+    for id in SHOWCASE_SPECIES {
+        let r = species_source_radius_m(id).expect("prototype builds");
+        assert!(r > 0.0 && r < 4.0, "{id} source radius {r}");
+        radii.insert(id.to_string(), r);
+    }
+    println!("source radii: {radii:?}");
+
+    let mut checked = 0usize;
+    for draw in showcase.scene.draws() {
+        if showcase_class(&draw.prototype) == "terrain" {
+            continue;
+        }
+        let radius = radii[&draw.prototype];
+        let limit = ROUTE_PLAYER_CLEARANCE_M + radius;
+        let [x, _, z] = draw.transform.translation_m;
+        for (name, route) in [
+            ("ground", &showcase.route),
+            ("elevated", &showcase.elevated_route),
+        ] {
+            for point in route {
+                let d = ((point[0] - x).powi(2) + (point[2] - z).powi(2)).sqrt();
+                assert!(
+                    d >= limit,
+                    "{} ({}) is {d:.2} m from the {name} route, inside its {limit:.2} m protected corridor",
+                    draw.instance,
+                    draw.prototype
+                );
+            }
+        }
+        checked += 1;
+    }
+    assert!(checked > 4_000, "only {checked} plants checked");
+}
+
+/// The elevated route is an OPEN polyline: it must actually reach its terminal
+/// waypoint instead of stopping one densification step short of it.
+#[test]
+fn open_elevated_route_is_walkable_and_reaches_its_terminal_waypoint() {
+    let showcase = map();
+    let route = &showcase.elevated_route;
+    assert!(route.len() > 20);
+    let first = route.first().copied().expect("start");
+    let last = route.last().copied().expect("end");
+    // Terminal waypoint of the authored elevated spine (the western descent off
+    // the viewpoint), snapped to walkable ground.
+    let terminus = [92.0f32, 30.0f32];
+    let gap = ((last[0] - terminus[0]).powi(2) + (last[2] - terminus[1]).powi(2)).sqrt();
+    assert!(
+        gap < 2.0,
+        "open route ends {gap:.2} m from its terminal waypoint at {last:?}"
+    );
+    // An open route must not silently close on itself.
+    let closing = ((last[0] - first[0]).powi(2) + (last[2] - first[2]).powi(2)).sqrt();
+    assert!(closing > 4.0, "open route closed on itself");
+
+    // Same walkability contract as the ground loop: footing under every point,
+    // and a clear standing volume above it.
+    for point in route {
+        let [x, y, z] = *point;
+        let surface = showcase.terrain.surface_at_metres(x, z).expect("in map");
+        assert!((surface.height_m - y).abs() < 1e-3);
+        assert!(surface.is_dry_land() && surface.slope <= 0.85);
+        assert!(showcase
+            .scene
+            .is_collidable_world_metres([x, y - TERRAIN_CELL_M * 0.5, z])
+            .expect("valid point"));
+        for step in 1..=6 {
+            assert!(
+                !showcase
+                    .scene
+                    .is_collidable_world_metres([x, y + step as f32 * 0.3, z])
+                    .expect("valid point"),
+                "elevated route point {x},{z} is blocked above"
+            );
+        }
+    }
+}
+
 #[test]
 fn spawn_and_landmarks_are_usable_positions() {
     let showcase = map();
@@ -526,11 +739,24 @@ fn flora_is_rooted_clustered_and_off_the_route() {
             draw.instance,
             y - surface.height_m
         );
-        assert!(
-            surface.is_dry_land(),
-            "plant {} stands in water",
-            draw.instance
-        );
+        if draw.prototype == SPECIES_LILY {
+            // The lily is the one aquatic archetype: it is rooted on the bed of
+            // shallow standing water, its pads reach the water surface exactly,
+            // and it never stands on dry ground.
+            let water = showcase
+                .terrain
+                .water_surface_at_metres(x, z)
+                .expect("lily stands in water");
+            assert!(
+                (y + LILY_PAD_HEIGHT_M - water).abs() < 1e-3,
+                "lily pads at {} m do not float at the {water} m water surface",
+                y + LILY_PAD_HEIGHT_M
+            );
+            assert!(y < water, "lily rhizome is not below the water surface");
+            cluster_cells.insert(((x / 8.0) as i32, (z / 8.0) as i32));
+            continue;
+        }
+        assert!(surface.is_dry_land(), "plant {} stands in water", draw.instance);
         assert!(surface.slope <= 0.85);
         assert!(
             surface.material == material::MOSS_TURF || surface.material == material::DETAIL_SOIL,
