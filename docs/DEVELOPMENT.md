@@ -281,3 +281,17 @@ software-renderer timings are correctness evidence only. The capture verifier
 requires25 presented frames,20 schema-valid records with actual simulation, six
 arch bodies, an isolated wetland save and no Vulkan validation errors. It retains
 failure artifacts and terminates its owned process group on timeout.
+
+
+Native route replay cancellation can be checked through the actual app:
+
+```sh
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json MATTERWEAVE_VALIDATION=1 python3 tools/performance/check_wetland_capture.py target/debug/matterweave-explorer /mnt/bench/matterweave-replay-check --check-replay-cancel
+```
+
+The request advances the normal simulation, then the explicit25-frame smoke exit
+must record terminal CANCEL. This is not a full route pass. Phone requests and
+isolated fixture requirements are in [route replay](performance/showcase/route-replay.md).
+The [paired collector](performance/p02-phone-runner.md) records fresh readiness,
+serialized installs and actual compositor/app evidence; its `--help` is safe to
+run without a phone. Only one collector/device owner may run at a time.

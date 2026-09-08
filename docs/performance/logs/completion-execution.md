@@ -130,3 +130,43 @@ lead. No old user-save backup/restore ritual is used.
 Generator3 native Vulkan/Xvfb/lavapipe capture PASS:25frames/20valid typed rows,
 six bodies, separate save and no validation errors. Artifactcompletion-02/
 wetland-capture-generator3. No mobile performance inference.
+
+## Native replay and active fresh comparison
+
+Astra route replay c0c73e0 integrated4e899b3 after bounded600+180s handoff.
+55app tests and independent Muse review pass. Native actual-app regression73c9b87
+failed because headless Xvfb has no focus;2b08194 uses the same explicit bounded
+smoke allowance as rendering. Corrected run advances and records terminal CANCEL;
+25frames/20valid rows/six bodies/no Vulkan errors. APK4e899b3 built57s and passes
+signature/alignment; copied to completion-02/phone-replay, not installed while
+paired collection owns the phone.
+
+Generator3 phone destruction fixture used exclusively owned recovery127 (initial
+absence verified), normal Enter and touch BREAK. Six bodies became29; visible
+pieces settled and the saved snapshot contains29. Grab/throw gestures had no
+confirmed outcome, so not accepted.900profile rows validate but the capture ended
+before the fracture action; do not label these destruction timing. The app was
+force-stopped and only the owned recovery127 removed. Ordinary saves untouched.
+
+P02 collector corrections integratedaab1346: ownership-aware cleanup, missing-base
+and higher-slot rejection, exact scene counts, empty edit fixture, real frame
+validator. Lead also removed a fabricated+30s readiness timestamp from the unused
+worker revision; actual monotonic sixth observation is now checked and regression
+covered. All160 Python tests pass. A1 rejected randomized APK path `~`; f6c4177
+corrects its allowlist. A2 rejected a nonexistent127 because adb exec-out returned
+0 with a cat error on stdout; actual ls/test-f proved absence.0f8fbdc uses shell-v2
+-T remote status. Neither failed run collected frames or deleted unowned files.
+
+A3 trial1 fresh reference completed at09:32:02UTC:120s warmup/120s measurement,
+480compositor dumps and3354typed app rows. Exact34864520cells/8324instances loaded.
+Reference readiness battery32.2–32.6C, skin31.751–32.216C,120.19996s span.
+Later matching starts are actively collected with unchanged1C/2C limits. Run-level
+pair analysis remains open; no speedup or energy claim. GLM owns bounded offline
+analysis tooling, not phone data collection.
+
+Opus save validation stopped on explicit five-hour allowance429/reset1788866400.
+Partial code attempted cell undo after rejected journals; lead found COW prototype
+identity/allocation was not restored. Muse now owns true candidate isolation and
+actual Runtime regressions. No partial recovery code is integrated. Completed
+route-fix/CI/reference private targets cleaned (316/88/588MiB); shared lead target
+and caches retained. Replay worker cleaned its private target after verification.

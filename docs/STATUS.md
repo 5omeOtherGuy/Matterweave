@@ -31,7 +31,8 @@ Current verified progress (2026-09-08 continuation):
 - Workspace240 normal Rust tests pass before the additive waterside check;
   generator3 full Runtime load/jump/edit/collision/reload passes separately16.85s.
   Both route tests pass in integration. Python tooling had130 passing tests;
-  the new phone collector is under review, not yet integrated or executed.
+  the paired collector is now integrated and all160 Python tests pass.
+  Replay integration passes55 app tests, with the full Runtime test separate.
 - Entrance correction validates the actual capsule with a bounded vertical lift.
   Generator3 prevents prior layout journals replaying against changed source.
   Corrupt/old-generator sessions select separate recovery files. Invalid edit
@@ -48,9 +49,20 @@ Current verified progress (2026-09-08 continuation):
   passed. Captures1800/180rows validate but show only renderer epoch1.
   [Device evidence](evidence/2026-09-08-full-wetland-development.md) retains exact
   conditions and limits. Generator3 development APK `4e47b6d9…` (`0d8225b`)
-  now installs and launches normally; touch move/jump and separate recovery2 save
-  observed. Full phone routes, destruction, shadow/temporal quality and matched
-  performance evidence remain open.
+  installed and launched normally; touch move/jump and separate recovery2 save
+  observed. A separate owned clearing fixture passed touch fracture6→29 bodies,
+  settling and save. Full64-piece stress and verified grab/throw remain open.
+  The phone is now owned by the serialized paired collector, which switches
+  between frozen generator2 reference/candidate APKs. Per-trial manifests identify
+  the installed build. Full phone routes and shadow/temporal quality remain open.
+- Actual app route replay is implemented and independently reviewed. Native Vulkan
+  smoke advances it and records terminal cancellation correctly after a headless
+  focus correction. The generator3 replay APK is built but not installed yet.
+- Fresh P02 paired collection is active at `completion-02/p02-fullmap/pairs-a3`.
+  Trial1 reference completed120s warmup +120s measurement with valid capture;
+  later starts must match its fresh thermal window within1C battery/2C skin.
+  No paired speedup or energy claim has been accepted. Earlier A1/A2 attempts
+  stopped before capture on APK-path/ADB-exit-status issues, now corrected.
 
 Next: verify the final APK and native route replay, correct any blockers, then
 exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve

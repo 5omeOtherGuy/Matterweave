@@ -17,12 +17,16 @@ trustworthy measurements and redundant-work reduction. Its required
 [dense alien showcase](SHOWCASE.md) supplies demanding real workloads throughout.
 Use unplugged, matched thermal conditions and the [benchmark protocol](BENCHMARKS.md).
 The numeric showcase/performance budgets are working targets, not achieved results.
-Campaign progress: reviewed foundation/flora source merged through PR6/7; the
-SourceLOD84-plant fixture now renders natively on the phone with a successful
-HOME/resume check. P02 cache and advisory-WSI fixes have unit/host/native functional
-evidence; matched performance acceptance awaits a fresh cold reference. Full-map density,
-fine-source collision integration, water/lighting fidelity and remaining P01/P04–P07
-gates are not complete. See [current status](STATUS.md) for precise artifacts.
+Campaign progress: foundation/flora source merged through PR6/7. PR8 now contains
+full128m source terrain, fine-source collision/editing, water,6,192plants across
+10species and ordinary Android chooser/controls. Generator3 ground/elevated routes
+pass continuous host physics; the short waterside itinerary is recorded too.
+Normal phone entry/movement/edit persistence and6-to29-body destruction have been
+observed on development builds. Full phone route replay, integrated temporal
+quality, sustained workloads and delivery remain open. P02 now has one fresh
+reference capture; the remaining matched pair collection and analysis are active.
+No optimization win is accepted yet. See [current status](STATUS.md) for exact
+source/build/artifact distinctions.
 
 ## M0 — Reproducible Android foundation
 

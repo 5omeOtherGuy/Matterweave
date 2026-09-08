@@ -281,21 +281,23 @@
       "acceptance": "39coretests/Clippy/40singleCPUrepetitions PASS; allremote host/Android/docs checks PASS. Corrects testtiming notproduction scheduler."
     },
     "completion-p02-runner": {
-      "state": "correction-running",
-      "owner": "opus-medium",
+      "state": "integrated-collection-active",
+      "owner": "sole lead after Opus and lead corrections",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-p02-runner",
       "base": "0d8225b",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-runner-correction",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-fullmap/pairs-a3",
       "session": "/mnt/bench/matterweave-dev/performance/completion-02/p02-runner-opus/session.jsonl",
       "paths": [
         "tools/performance/collect_wetland_pair.py",
         "tools/performance/test_collect_wetland_pair.py",
         "docs/performance/p02-phone-runner.md"
       ],
-      "acceptance": "Initial749bd56 host142testsPASS but leadfoundunownedfilecleanup/missingbase/slot128/finitevalidation defects. NOT EXECUTED. Bounded correctionrequested; leadownsreview/phone."
+      "acceptance": "160 Python tests pass. A1/A2 rejected before collection; actual ADB path/status corrections applied. A3 trial1 completed; 6-trial supervisor owns phone exclusively, remaining pairs and analysis pending.",
+      "artifact": "0f8fbdc",
+      "process_handle": 92271
     },
     "completion-route-replay": {
-      "state": "running",
+      "state": "integrated-native-verified-phone-pending",
       "owner": "astra-worker via Pi; separate leaf",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-route-replay",
       "base": "0d8225b",
@@ -306,7 +308,35 @@
         "apps/explorer/src/lib.rs",
         "docs/performance/showcase/route-replay.md"
       ],
-      "acceptance": "Opt-in actualapp route diagnostic withnormalphysics/render/wading, nointermediate teleport; boundedstall/cancel/results. Leadownsphoneandacceptance."
+      "acceptance": "Astra c0c73e0 integrated4e899b3;55 app tests pass and Muse source review no findings. Native actual replay CANCEL smoke initially exposed focus gap, corrected2b08194 and nativePASS. Built/signature/alignment verified APK underphone-replay, notinstalled.",
+      "artifact": "2b08194"
+    },
+    "completion-save-validation": {
+      "state": "rerouted-running",
+      "owner": "muse-free",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-save-validation",
+      "base": "4e899b3",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/save-validation-muse",
+      "paths": [
+        "apps/explorer/src/wetland_state.rs",
+        "apps/explorer/src/wetland.rs:Runtime validation only",
+        "crates/matterweave-detail/src/scene.rs if necessary for source isolation",
+        "docs/performance/showcase/save-validation.md"
+      ],
+      "acceptance": "Opus hit quota429 after partial implementation. Lead rejected cell undo as incomplete COW isolation; Muse owns bounded finish and regression tests. Notintegrated."
+    },
+    "completion-paired-analysis": {
+      "state": "running",
+      "owner": "glm-high",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-paired-analysis",
+      "base": "2b08194",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/paired-analysis-glm",
+      "paths": [
+        "tools/performance/analyze_wetland_pairs.py",
+        "tools/performance/test_analyze_wetland_pairs.py",
+        "docs/performance/p02-analysis.md"
+      ],
+      "acceptance": "Offline only, completed trials and co-observed intervals; no invented app/SF joins or independent-frame inference. Lead owns interpretation."
     }
   },
   "capacity": {
@@ -314,6 +344,6 @@
   },
   "provider_blockers": {
     "muse": "Route review transient429 thencompleted110.36s. No perpetual blockade inferred.",
-    "opus": "Current route/phone-runner sessions callable; historical429 no longer treated as current."
+    "opus": "HTTP429 five-hour allowance exhausted during save-validation; reset1788866400, no retry before reset. Partial source preserved and rerouted to Muse."
   }
 }
