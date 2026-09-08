@@ -1726,15 +1726,14 @@ mod tests {
             classify_present(Ok(false), false),
             PresentOutcome::Presented { recreate: false }
         );
-        // A suboptimal swapchain still presented; it only schedules recreation.
-        assert_eq!(
-            classify_present(Ok(false), true),
-            PresentOutcome::Presented { recreate: true }
-        );
-        assert_eq!(
-            classify_present(Ok(true), false),
-            PresentOutcome::Presented { recreate: true }
-        );
+        // Advisory suboptimal results remain usable. Recreating on every
+        // advisory result can rebuild pipelines every frame on Android.
+        for (present_suboptimal, acquire_suboptimal) in [(false, true), (true, false), (true, true)] {
+            assert_eq!(
+                classify_present(Ok(present_suboptimal), acquire_suboptimal),
+                PresentOutcome::Presented { recreate: false }
+            );
+        }
         // Out of date is not a successful presentation: the submission happened,
         // the presentation request did not succeed.
         assert_eq!(
