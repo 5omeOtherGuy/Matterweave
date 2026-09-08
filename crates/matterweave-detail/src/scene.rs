@@ -122,12 +122,14 @@ fn coarse_metric(
 /// (`|cell| <= 2^16` and `factor <= 4`), and the clipped range always covers
 /// the cell's own source cell, so `expected >= 1` for occupied cells.
 fn worst_interior_loss(
+    volume: &DetailVolume,
     counts: &BTreeMap<[i32; 3], u32>,
     min: [i32; 3],
     max: [i32; 3],
     factor: i32,
-) -> f32 {
+) -> (f32, LocalTopologyCost) {
     let mut worst = 0.0f32;
+    let mut cost = LocalTopologyCost::default();
     for (coarse, count) in counts {
         let mut expected: u32 = 1;
         for axis in 0..3 {
@@ -143,9 +145,228 @@ fn worst_interior_loss(
         if expected == 0 || *count >= expected {
             continue;
         }
-        worst = worst.max((expected - *count) as f32 / expected as f32);
+        cost.partial_cells += 1;
+        // Bounded analysis: past the budget every remaining partial cell is
+        // treated as protected, i.e. the pre-topology conservative verdict.
+        let protected = if cost.analyzed_cells < LOCAL_TOPOLOGY_CELL_BUDGET {
+            cost.analyzed_cells += 1;
+            cost.site_visits += window_sites(factor);
+            local_fill_destroys_feature(volume, *coarse, factor)
+        } else {
+            cost.budget_exhausted_cells += 1;
+            true
+        };
+        if protected {
+            worst = worst.max((expected - *count) as f32 / expected as f32);
+        }
     }
-    worst
+    (worst, cost)
+}
+
+/// Sites in one analysis window: the coarse footprint plus a one-cell halo.
+const fn window_sites(factor: i32) -> usize {
+    let n = factor as usize + 2;
+    n * n * n
+}
+
+/// Upper bound on window sites for the supported factors (`factor <= 4`).
+const MAX_WINDOW_SITES: usize = window_sites(4);
+
+/// Maximum coarse cells given a topology analysis per (revision, factor).
+/// A prototype with more partial coarse cells than this keeps the older
+/// conservative verdict for the excess, which can only hold a level, never
+/// select an unsafe one.
+pub const LOCAL_TOPOLOGY_CELL_BUDGET: usize = 8_192;
+
+/// Measured cost of the local topology analysis for one prototype and factor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LocalTopologyCost {
+    /// Partially filled occupied coarse cells encountered.
+    pub partial_cells: usize,
+    /// Cells actually analyzed (`<= LOCAL_TOPOLOGY_CELL_BUDGET`).
+    pub analyzed_cells: usize,
+    /// Cells that fell back to the conservative verdict past the budget.
+    pub budget_exhausted_cells: usize,
+    /// Source-cell reads/labels performed: `analyzed_cells * (factor + 2)^3`.
+    pub site_visits: usize,
+}
+
+/// Does filling this coarse cell destroy a *local* air feature?
+///
+/// Bounded digital-topology test on a `(factor + 2)^3` window: the coarse
+/// footprint plus a one-cell halo. Scratch is a fixed stack array, there is no
+/// flood beyond the window and no per-frame work (callers cache by source
+/// revision). This is the block generalization of the classic simple-point
+/// criterion used by 3D thinning (Bertrand/Malandain): decide locally whether
+/// removing/adding a set changes air connectivity in its geodesic
+/// neighbourhood. No suitable Rust crate exposes that test standalone — the
+/// available implementations are inside whole meshing/skeletonization engines
+/// — and the criterion is ~60 lines here, so it is implemented directly.
+///
+/// Protected when either holds:
+/// 1. **Channel closure**: two halo air sites connected through the window
+///    before the fill are disconnected after it (tunnels, wide channels).
+/// 2. **Cavity or pit**: an air site inside the footprint is enclosed (not
+///    reachable from the halo) or has at least four solid face neighbours
+///    (pinholes, blind pits, slots) — features that through-connectivity
+///    alone cannot see.
+///
+/// An exterior staircase, wedge or curved surface satisfies neither: its air
+/// is one open region touching the halo on many sides and its air sites have
+/// at most three solid face neighbours, so it is free to coarsen.
+fn local_fill_destroys_feature(volume: &DetailVolume, coarse: [i32; 3], factor: i32) -> bool {
+    let n = factor as usize + 2;
+    let origin = [
+        coarse[0] * factor - 1,
+        coarse[1] * factor - 1,
+        coarse[2] * factor - 1,
+    ];
+    let index = |x: usize, y: usize, z: usize| (z * n + y) * n + x;
+    let mut solid = [false; MAX_WINDOW_SITES];
+    let sites = n * n * n;
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let cell = [
+                    origin[0] + x as i32,
+                    origin[1] + y as i32,
+                    origin[2] + z as i32,
+                ];
+                solid[index(x, y, z)] = volume.get(cell) != crate::material::AIR;
+            }
+        }
+    }
+    let interior = |x: usize, y: usize, z: usize| {
+        x > 0 && x + 1 < n && y > 0 && y + 1 < n && z > 0 && z + 1 < n
+    };
+
+    // (2) Cavity or pit: a local concavity that the fill would erase.
+    for z in 1..n - 1 {
+        for y in 1..n - 1 {
+            for x in 1..n - 1 {
+                if solid[index(x, y, z)] {
+                    continue;
+                }
+                let neighbours = [
+                    solid[index(x - 1, y, z)],
+                    solid[index(x + 1, y, z)],
+                    solid[index(x, y - 1, z)],
+                    solid[index(x, y + 1, z)],
+                    solid[index(x, y, z - 1)],
+                    solid[index(x, y, z + 1)],
+                ];
+                if neighbours.iter().filter(|s| **s).count() >= 4 {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // (1) Channel closure, plus enclosed-cavity detection from the same
+    // labelling: components before the fill vs after it.
+    let mut before = [u16::MAX; MAX_WINDOW_SITES];
+    label_air(&solid, n, &mut before);
+    let mut filled = solid;
+    for z in 1..n - 1 {
+        for y in 1..n - 1 {
+            for x in 1..n - 1 {
+                filled[index(x, y, z)] = true;
+            }
+        }
+    }
+    let mut after = [u16::MAX; MAX_WINDOW_SITES];
+    label_air(&filled, n, &mut after);
+
+    // An interior air site not reachable from the halo is an enclosed cavity.
+    let mut halo_labels = [false; MAX_WINDOW_SITES];
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let i = index(x, y, z);
+                if !interior(x, y, z) && before[i] != u16::MAX {
+                    halo_labels[before[i] as usize] = true;
+                }
+            }
+        }
+    }
+    for z in 1..n - 1 {
+        for y in 1..n - 1 {
+            for x in 1..n - 1 {
+                let i = index(x, y, z);
+                if before[i] != u16::MAX && !halo_labels[before[i] as usize] {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Halo air sites connected before the fill must stay connected after it.
+    let mut representative = [u16::MAX; MAX_WINDOW_SITES];
+    for i in 0..sites {
+        let (b, a) = (before[i], after[i]);
+        if b == u16::MAX || a == u16::MAX {
+            continue;
+        }
+        let slot = &mut representative[b as usize];
+        if *slot == u16::MAX {
+            *slot = a;
+        } else if *slot != a {
+            return true;
+        }
+    }
+    false
+}
+
+/// Labels 6-connected air components of a `n^3` window in place. Uses a fixed
+/// stack frontier of at most one entry per site; no heap allocation.
+fn label_air(solid: &[bool; MAX_WINDOW_SITES], n: usize, labels: &mut [u16; MAX_WINDOW_SITES]) {
+    let index = |x: usize, y: usize, z: usize| (z * n + y) * n + x;
+    let mut stack = [0u16; MAX_WINDOW_SITES];
+    let mut next_label: u16 = 0;
+    for start in 0..n * n * n {
+        if solid[start] || labels[start] != u16::MAX {
+            continue;
+        }
+        let label = next_label;
+        next_label += 1;
+        let mut top = 0usize;
+        stack[top] = start as u16;
+        top += 1;
+        labels[start] = label;
+        while top > 0 {
+            top -= 1;
+            let site = stack[top] as usize;
+            let x = site % n;
+            let y = (site / n) % n;
+            let z = site / (n * n);
+            let push = |nx: usize, ny: usize, nz: usize, top: &mut usize, stack: &mut [u16; MAX_WINDOW_SITES], labels: &mut [u16; MAX_WINDOW_SITES]| {
+                let i = index(nx, ny, nz);
+                if !solid[i] && labels[i] == u16::MAX {
+                    labels[i] = label;
+                    stack[*top] = i as u16;
+                    *top += 1;
+                }
+            };
+            if x > 0 {
+                push(x - 1, y, z, &mut top, &mut stack, labels);
+            }
+            if x + 1 < n {
+                push(x + 1, y, z, &mut top, &mut stack, labels);
+            }
+            if y > 0 {
+                push(x, y - 1, z, &mut top, &mut stack, labels);
+            }
+            if y + 1 < n {
+                push(x, y + 1, z, &mut top, &mut stack, labels);
+            }
+            if z > 0 {
+                push(x, y, z - 1, &mut top, &mut stack, labels);
+            }
+            if z + 1 < n {
+                push(x, y, z + 1, &mut top, &mut stack, labels);
+            }
+        }
+    }
 }
 
 fn compute_digest(volume: &DetailVolume) -> Digest {
@@ -180,14 +401,14 @@ fn compute_digest(volume: &DetailVolume) -> Digest {
             2,
             half.len(),
             occupied,
-            worst_interior_loss(&half, min, max, 2),
+            worst_interior_loss(volume, &half, min, max, 2).0,
         ),
         coarse_metric(
             scale,
             4,
             quarter.len(),
             occupied,
-            worst_interior_loss(&quarter, min, max, 4),
+            worst_interior_loss(volume, &quarter, min, max, 4).0,
         ),
     ];
     Digest {
@@ -762,6 +983,63 @@ impl DetailScene {
             source_bytes,
             cached_mesh_bytes: self.cache_bytes,
             mesh_builds: self.mesh_builds,
+        }
+    }
+}
+
+#[cfg(test)]
+mod local_topology_cost {
+    use super::*;
+
+    /// Recomputes the per-factor coarse counts the digest uses, then measures
+    /// the bounded topology analysis over them.
+    fn measure(volume: &DetailVolume, factor: i32) -> (f32, LocalTopologyCost) {
+        let mut min = [i32::MAX; 3];
+        let mut max = [i32::MIN; 3];
+        let mut counts: BTreeMap<[i32; 3], u32> = BTreeMap::new();
+        for (cell, _) in volume.iter_cells() {
+            for axis in 0..3 {
+                min[axis] = min[axis].min(cell[axis]);
+                max[axis] = max[axis].max(cell[axis]);
+            }
+            *counts.entry(cell.map(|v| v.div_euclid(factor))).or_default() += 1;
+        }
+        worst_interior_loss(volume, &counts, min, max, factor)
+    }
+
+    #[test]
+    fn analysis_cost_on_representative_prototypes_stays_inside_the_budget() {
+        let prototypes = [
+            (
+                "terrain_detail_tile",
+                crate::fixtures::terrain_detail_tile("t", 7).unwrap(),
+            ),
+            (
+                "parasol_mushroom",
+                crate::fixtures::parasol_mushroom("m").unwrap(),
+            ),
+            ("funnel_mushroom", crate::flora::funnel_mushroom("f").unwrap()),
+            ("fan_frond", crate::flora::fan_frond("d").unwrap()),
+            ("reed_cluster", crate::flora::reed_cluster("r").unwrap()),
+        ];
+        for (name, volume) in prototypes {
+            for factor in [2, 4] {
+                let (loss, cost) = measure(&volume, factor);
+                println!(
+                    "{name} factor {factor}: occupied={} loss={loss} {cost:?}",
+                    volume.occupied_cells()
+                );
+                assert!(cost.analyzed_cells <= LOCAL_TOPOLOGY_CELL_BUDGET);
+                assert_eq!(
+                    cost.budget_exhausted_cells, 0,
+                    "{name} at factor {factor} must not need the conservative fallback"
+                );
+                assert_eq!(cost.site_visits, cost.analyzed_cells * window_sites(factor));
+                assert!(
+                    cost.site_visits <= LOCAL_TOPOLOGY_CELL_BUDGET * MAX_WINDOW_SITES,
+                    "scratch/work cost stays bounded"
+                );
+            }
         }
     }
 }
