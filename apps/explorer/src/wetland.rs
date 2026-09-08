@@ -11,7 +11,8 @@ use glam::{Vec2, Vec3};
 use matterweave_core::{Mesh, World};
 use matterweave_detail::{DetailScene, Lod, Yaw};
 use matterweave_physics::{
-    BodySnapshot, DetailCollisionStats, DynamicMeshCache, Physics, PhysicsSnapshot,
+    BodySnapshot, DetailCollisionCadence, DetailCollisionStats, DynamicMeshCache, Physics,
+    PhysicsSnapshot,
 };
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance};
 use std::{
@@ -50,6 +51,22 @@ struct Runtime {
     graphics_dirty: bool,
     dynamic_dirty: bool,
     counts: String,
+    /// Edit-to-collision cadence: preparation is queued per edit and
+    /// published at most once per frame; see `sync_detail_collision`.
+    collision: DetailCollisionCadence,
+    /// Edits queued for collision preparation but not yet confirmed by a
+    /// publication. Reverted as a group if preparation of the current
+    /// source fails, so the authoritative scene returns to the state its
+    /// live collision was published from.
+    pending_edits: Vec<PendingEdit>,
+}
+
+/// One authoritative edit awaiting collision publication.
+struct PendingEdit {
+    instance: String,
+    cell: [i32; 3],
+    /// Material the cell held before the edit; 0 means the pristine cell.
+    old: u8,
 }
 
 fn graphics(scene: &mut DetailScene) -> Result<(Vec<Mesh>, Vec<StaticInstance>), String> {
@@ -284,6 +301,8 @@ impl Runtime {
             graphics_dirty: true,
             dynamic_dirty: true,
             counts,
+            collision: DetailCollisionCadence::new(),
+            pending_edits: Vec::new(),
         };
         if fresh {
             runtime.playground()?;
@@ -360,11 +379,39 @@ impl Runtime {
                 return Err(error);
             }
         };
-        if let Err(error) = self.physics.replace_detail_scene(&self.scene) {
-            self.scene
-                .edit_instance(&hit.instance, cell, old)
-                .map_err(|e| e.to_string())?;
-            return Err(error);
+        // The edit is authoritative now; collision preparation is queued and
+        // published on the frame cadence (`sync_detail_collision`). Live
+        // collision keeps serving movement until the newer shapes publish, so
+        // movement and queries stay correct while the work is pending. The
+        // visible scene may lead the world (a new wall is seen before it is
+        // solid); the cadence's publication gate guarantees it can never
+        // materialise through the character.
+        match self.collision.on_edit(&self.scene, &mut self.physics) {
+            Ok(true) => {
+                // Coalesce per (instance, cell): one entry per edited cell,
+                // carrying the material from before this unconfirmed burst,
+                // so `pending_edits` stays bounded by distinct edited cells
+                // and a failed preparation reverts the whole burst exactly.
+                let exists = self.pending_edits.iter().any(|pending| {
+                    pending.instance == hit.instance && pending.cell == cell
+                });
+                if !exists {
+                    self.pending_edits.push(PendingEdit {
+                        instance: hit.instance.clone(),
+                        cell,
+                        old,
+                    });
+                }
+            }
+            Ok(false) => {} // published synchronously (worker unavailable)
+            Err(error) => {
+                // Even the synchronous fallback rejected the source: restore
+                // the scene and leave live collision untouched.
+                self.scene
+                    .edit_instance(&hit.instance, cell, old)
+                    .map_err(|e| e.to_string())?;
+                return Err(error);
+            }
         }
         self.meshes = meshes;
         self.instances = instances;
@@ -389,6 +436,65 @@ impl Runtime {
             "Voxel removed"
         }
         .into())
+    }
+
+    /// Per-frame detail-collision publication, called on the simulation
+    /// thread before physics stepping.
+    ///
+    /// Publishes at most one completed preparation per frame. Results for a
+    /// scene that has since been edited, replaced or reset are rejected by
+    /// the cadence and simply do not publish; movement and queries keep using
+    /// the last accepted collision meanwhile. When preparation of the current
+    /// source fails, every unconfirmed edit is reverted as a group (scene,
+    /// journal and meshes) and the reverted source is re-queued, so the
+    /// authoritative scene returns to the state its live collision was
+    /// published from. Returns a status message only on failure.
+    fn sync_detail_collision(&mut self) -> Option<String> {
+        match self.collision.step(&self.scene, &mut self.physics) {
+            Ok(None) => None,
+            Ok(Some(_)) => {
+                // A publication always covers the current scene version, so
+                // it confirms the whole unconfirmed burst.
+                self.pending_edits.clear();
+                None
+            }
+            Err(error) => {
+                for pending in self.pending_edits.drain(..).rev() {
+                    let _ = self
+                        .scene
+                        .edit_instance(&pending.instance, pending.cell, pending.old);
+                    match pending.old {
+                        0 => self.edits.retain(|edit| {
+                            edit.instance != pending.instance || edit.cell != pending.cell
+                        }),
+                        _ => {
+                            if let Some(edit) = self
+                                .edits
+                                .iter_mut()
+                                .find(|edit| {
+                                    edit.instance == pending.instance && edit.cell == pending.cell
+                                })
+                            {
+                                edit.material = pending.old;
+                            }
+                        }
+                    }
+                }
+                // The reverted content is exactly what graphics accepted
+                // before, so this only fails if the scene is otherwise
+                // corrupt; the last meshes stay up rather than blanking.
+                if let Ok((meshes, instances)) = graphics(&mut self.scene) {
+                    self.meshes = meshes;
+                    self.instances = instances;
+                    self.graphics_dirty = true;
+                }
+                self.dirty = true;
+                // Re-queue the reverted source; its publication restores the
+                // collision/scene match (it is usually already live).
+                let _ = self.collision.on_edit(&self.scene, &mut self.physics);
+                Some(format!("Edit rejected: {error}"))
+            }
+        }
     }
     fn playground(&mut self) -> Result<(), String> {
         // A bounded six-body arch containing exactly64 half-metre voxels. The
@@ -887,6 +993,12 @@ impl WetlandApp {
                 }
                 r.physics
                     .update_grab(r.camera.position.to_array(), r.camera.forward().to_array());
+                // Publish at most one completed detail-collision preparation
+                // before stepping, so movement always runs against a
+                // consistent, accepted collision state.
+                if let Some(message) = r.sync_detail_collision() {
+                    self.status = message;
+                }
                 row.physics_fixed_steps = Some(r.physics.step(
                     dt,
                     velocity.to_array(),
