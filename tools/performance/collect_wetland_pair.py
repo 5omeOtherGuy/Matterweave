@@ -364,7 +364,7 @@ def install_and_verify(device, apk_path, expected_sha, out, args):
     if not path_line.startswith("package:") or "\n" in path_line:
         raise TrialError(f"unexpected pm path output: {path_line!r}")
     remote = path_line.removeprefix("package:").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_./=+-]+", remote):
+    if not re.fullmatch(r"[A-Za-z0-9_./=+~-]+", remote):
         raise TrialError(f"refusing unusual apk path {remote!r}")
     installed = device.shell("sha256sum", remote, timeout=120).split()
     if not installed:
