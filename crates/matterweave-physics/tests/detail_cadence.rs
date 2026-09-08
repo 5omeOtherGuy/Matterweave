@@ -19,6 +19,9 @@ const BLOCK_LIMIT_X: f32 = 1.78;
 /// Beyond the far face of the removed cell (2.25) plus radius and slack.
 const PAST_WALL_X: f32 = 2.7;
 const WALK_SPEED: f32 = 1.0;
+/// World-space box of the `wall.0` prototype cell: instance at
+/// `[2.0, TILE, 4.0]`, cell `[0, 0, 0]`, 0.25 m scale.
+const WALL_BOX: ([f32; 3], [f32; 3]) = ([2.0, 0.25, 4.0], [2.25, 0.5, 4.25]);
 
 fn volume(id: &str, extent: [i32; 3], material: u8) -> DetailVolume {
     let mut volume = DetailVolume::new(id, Scale::new(TILE).expect("valid scale"));
@@ -136,7 +139,7 @@ fn edit_during_active_movement_blocks_until_publication_then_frees_the_path() {
 
     // The player removes the blocking cell and keeps walking toward it.
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("edit");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
     assert!(
         cadence.stats().queued + cadence.stats().inflight >= 1,
         "the edit is pending: {:?}",
@@ -199,11 +202,15 @@ fn repeated_and_reversed_edits_publish_only_the_final_source() {
 
     // Remove the cell, then reverse the edit before anything publishes.
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("remove");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
     scene
         .edit_instance("wall.0", [0, 0, 0], material::BANK_STONE)
         .expect("restore");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
+            .expect("queued")
+    );
     assert!(
         cadence.stats().discarded >= 1,
         "the superseded removal was discarded: {:?}",
@@ -214,7 +221,9 @@ fn repeated_and_reversed_edits_publish_only_the_final_source() {
     // request is refused or the result is already buffered); nothing publishes
     // in between: live collision is still the load state.
     let stats_before_repeat = cadence.stats();
-    cadence.on_edit(&scene, &mut physics).expect("dedup");
+    cadence
+        .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
+        .expect("dedup");
     let stats_after_repeat = cadence.stats();
     assert!(
         stats_after_repeat.discarded == stats_before_repeat.discarded
@@ -248,7 +257,7 @@ fn reset_with_work_in_flight_never_publishes_retired_results() {
     let mut cadence = DetailCollisionCadence::new();
 
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("edit");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
     // Scene replacement / load cancels everything; the in-flight job is
     // invalidated and can never publish.
     cadence.reset();
@@ -273,7 +282,7 @@ fn reset_with_work_in_flight_never_publishes_retired_results() {
     // A fresh edit after reset is accepted and publishes normally.
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("edit");
     assert!(
-        cadence.on_edit(&scene, &mut physics).expect("queued after reset"),
+        cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued after reset"),
         "a fresh request after reset is accepted"
     );
     wait_published(&mut cadence, &scene, &mut physics);
@@ -293,7 +302,7 @@ fn stale_completion_for_an_edited_scene_is_never_published() {
 
     // Publish the removal (cell count drops by one).
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("edit");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
     wait_published(&mut cadence, &scene, &mut physics);
     assert_eq!(
         physics.detail_collision_stats().source_collision_cells,
@@ -305,14 +314,18 @@ fn stale_completion_for_an_edited_scene_is_never_published() {
     scene
         .edit_instance("wall.0", [0, 0, 0], material::BANK_STONE)
         .expect("restore");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
+            .expect("queued")
+    );
     let started = Instant::now();
     while cadence.stats().results == 0 {
         assert!(started.elapsed() < DEADLINE, "no buffered result");
         std::thread::sleep(Duration::from_millis(1));
     }
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("edit again");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
 
     // Until the final source's result arrives, every frame is either idle or
     // leaves the live state untouched; the stale (restored) result must never
@@ -368,7 +381,11 @@ fn current_scene_preparation_failure_preserves_live_collision() {
     scene
         .edit_instance("sponge.0", [128 * 16, 0, 0], material::BANK_STONE)
         .expect("edit");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[([512.0, 0.0, 0.0], [512.25, 0.25, 0.25])]))
+            .expect("queued")
+    );
     let error = loop {
         match cadence.step(&scene, &mut physics) {
             Err(error) => break error,
@@ -387,7 +404,7 @@ fn current_scene_preparation_failure_preserves_live_collision() {
     // The owner reverts the offending edit and re-requests; consistency is
     // restored against the still-live collision.
     scene.edit_instance("sponge.0", [128 * 16, 0, 0], 0).expect("revert");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
     wait_published(&mut cadence, &scene, &mut physics);
     assert_eq!(
         physics.detail_collision_stats(),
@@ -430,7 +447,11 @@ fn added_wall_publishes_only_after_the_character_clears_it() {
             Transform::new([2.0, TILE, 4.0], Yaw::Deg0).expect("transform"),
         )
         .expect("placement");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
+            .expect("queued")
+    );
 
     // Wait until the wall's preparation is buffered, with the character
     // standing inside the region the wall will occupy.
@@ -519,7 +540,11 @@ fn reversed_addition_never_publishes_through_the_character() {
             Transform::new([2.0, TILE, 4.0], Yaw::Deg0).expect("transform"),
         )
         .expect("placement");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
+            .expect("queued")
+    );
     let started = Instant::now();
     while cadence.stats().results == 0 {
         assert!(started.elapsed() < DEADLINE, "no buffered result");
@@ -528,7 +553,7 @@ fn reversed_addition_never_publishes_through_the_character() {
 
     // Rapid reversal before anything publishes: the wall is removed again.
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("remove");
-    assert!(cadence.on_edit(&scene, &mut physics).expect("queued"));
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[])).expect("queued"));
 
     // Walk through the region: the added wall must never appear.
     let started = Instant::now();
@@ -549,6 +574,158 @@ fn reversed_addition_never_publishes_through_the_character() {
         }
         physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
     }
-    assert_eq!(cadence.stats().discarded >= 1, true, "the superseded wall preparation was discarded: {:?}", cadence.stats());
+    assert!(cadence.stats().discarded >= 1, "the superseded wall preparation was discarded: {:?}", cadence.stats());
     assert_eq!(cadence.stats().results, 0, "nothing left buffered");
+}
+
+/// Filling an interior hole leaves the whole-collider AABB identical while new
+/// solid material appears inside it. A gate comparing whole-collider AABBs
+/// (the previous policy) sees "no added collider" and publishes through a body
+/// standing in the hole region. The journal-sourced added-cell region gates at
+/// cell granularity instead: publication defers while the capsule AABB
+/// overlaps the filled cell, then publishes once the body clears it.
+#[test]
+fn interior_fill_with_equal_outer_aabb_never_publishes_through_the_body() {
+    let mut bar = DetailVolume::new("bar", Scale::new(TILE).expect("valid scale"));
+    for x in [0, 1, 6, 7] {
+        bar.set([x, 0, 0], material::BANK_STONE).expect("cell");
+    }
+    let mut scene = DetailScene::new();
+    scene.add_prototype(bar).expect("prototype");
+    scene
+        .place("bar.0", "bar", Transform::identity())
+        .expect("placement");
+    let mut physics = empty_physics();
+    let load_stats = physics.replace_detail_scene(&scene).expect("load");
+    // The capsule stands in the empty 1 m gap (x in [0.5, 1.5]); its AABB
+    // reaches into the cell x = 2 (world [0.5, 0.75]) that is about to fill.
+    assert!(physics.teleport([1.0, 0.95, 0.125]), "gap fits the capsule");
+    // No floor here; one step only syncs the collider transform (gravity
+    // cannot shift x/z, so the cell overlap is preserved).
+    physics.step(FIXED_DT, [0.0; 3], false);
+    let mut cadence = DetailCollisionCadence::new();
+    scene
+        .edit_instance("bar.0", [2, 0, 0], material::BANK_STONE)
+        .expect("fill");
+    const FILL_BOX: ([f32; 3], [f32; 3]) = ([0.5, 0.0, 0.0], [0.75, 0.25, 0.25]);
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[FILL_BOX]))
+            .expect("queued")
+    );
+
+    // The outer collider AABB is identical before and after ([0, 2.0] in x),
+    // so a whole-AABB comparison would publish here. The cell gate retains.
+    let started = Instant::now();
+    let mut retained_frames = 0usize;
+    while cadence.stats().results == 0 {
+        assert!(started.elapsed() < DEADLINE, "no buffered result");
+        assert!(
+            cadence
+                .step(&scene, &mut physics)
+                .expect("valid scene")
+                .is_none(),
+            "the fill must not publish while the capsule overlaps its cell"
+        );
+        retained_frames += 1;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Buffered and still blocked: every further frame retains without
+    // touching live collision.
+    for _ in 0..5 {
+        assert!(
+            cadence
+                .step(&scene, &mut physics)
+                .expect("valid scene")
+                .is_none(),
+            "the retained fill must not publish through the capsule"
+        );
+        retained_frames += 1;
+    }
+    assert!(retained_frames > 0, "retention actually observed");
+    assert_eq!(
+        physics.detail_collision_stats(),
+        load_stats,
+        "live collision untouched while the fill is gated"
+    );
+
+    // Clearing the cell region publishes the fill exactly once.
+    assert!(physics.teleport([5.0, 0.95, 0.125]), "clear of the bar");
+    physics.step(FIXED_DT, [0.0; 3], false);
+    wait_published(&mut cadence, &scene, &mut physics);
+    assert_eq!(
+        physics.detail_collision_stats().source_collision_cells,
+        load_stats.source_collision_cells + 1,
+        "the fill published once the body cleared its cell"
+    );
+    assert_eq!(
+        physics.detail_collision_stats().static_colliders,
+        load_stats.static_colliders
+    );
+}
+
+/// The synchronous fallback (worker unavailable) applies the same gate: a
+/// blocked source is staged, not published through the body. The previous
+/// policy published the fallback unconditionally during pending runtime edits.
+#[test]
+fn unavailable_worker_stages_blocked_fallback_and_publishes_after_clearing() {
+    let mut scene = scene_with_floor();
+    let mut physics = empty_physics();
+    physics.replace_detail_scene(&scene).expect("load");
+    spawn_on_floor(&mut physics);
+    let floor_colliders = physics.detail_collision_stats().static_colliders;
+    let eye = physics.character_eye();
+
+    let mut cadence = DetailCollisionCadence::without_worker();
+    assert!(!cadence.available(), "fallback path under test");
+    // Lean against the future wall: the capsule AABB overlaps the wall cell
+    // box while the shapes stay clear (the wall does not exist yet).
+    assert!(
+        physics.teleport([1.75, eye[1], eye[2]]),
+        "leaning pose fits the empty region"
+    );
+    physics.step(FIXED_DT, [0.0; 3], false);
+    scene
+        .add_prototype(volume("wall", [1, 1, 1], material::BANK_STONE))
+        .expect("prototype");
+    scene
+        .place(
+            "wall.0",
+            "wall",
+            Transform::new([2.0, TILE, 4.0], Yaw::Deg0).expect("transform"),
+        )
+        .expect("placement");
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
+            .expect("staged"),
+        "a blocked fallback stays pending instead of publishing through the body"
+    );
+    assert!(
+        cadence
+            .step(&scene, &mut physics)
+            .expect("valid scene")
+            .is_none(),
+        "the staged wall must not publish through the capsule"
+    );
+    assert_eq!(
+        physics.detail_collision_stats().static_colliders,
+        floor_colliders,
+        "live collision untouched while the fallback is staged"
+    );
+
+    assert!(physics.teleport([5.0, eye[1], eye[2]]), "clear of the wall");
+    physics.step(FIXED_DT, [0.0; 3], false);
+    let mut published = None;
+    let started = Instant::now();
+    while published.is_none() {
+        assert!(started.elapsed() < DEADLINE, "staged result never published");
+        published = cadence.step(&scene, &mut physics).expect("valid scene");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        published.expect("published").static_colliders,
+        floor_colliders + 1,
+        "the staged wall publishes once the body clears its cell"
+    );
 }

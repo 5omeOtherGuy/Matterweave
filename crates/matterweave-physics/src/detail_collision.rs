@@ -313,6 +313,18 @@ impl PreparedDetailCollision {
         self.version == scene.source_version()
     }
 
+    /// World-space AABB of every collider this preparation would install.
+    /// Used only for the conservative structural gate (unknown scene change):
+    /// publication defers while any dynamic body overlaps any of these, which
+    /// is over-conservative but can never miss new material the way a
+    /// whole-collider "unchanged" comparison would.
+    pub fn collider_aabbs(&self) -> Vec<Aabb> {
+        self.pending
+            .iter()
+            .map(|(pose, shape)| shape.compute_local_aabb().transform_by(pose))
+            .collect()
+    }
+
     pub fn build(scene: &DetailScene) -> Result<Self, String> {
         let counts = scene.counts();
         // Instance count alone is never a rejection: liquid and decorative
@@ -442,41 +454,38 @@ impl Physics {
         Ok(stats)
     }
 
-    /// Whether publishing `prepared` now would place any *new* collider through
-    /// a dynamic body (the character capsule or a dynamic voxel object).
+    /// World-space AABBs of every dynamic body: the character capsule plus one
+    /// entry per collider of every dynamic voxel object.
+    pub fn dynamic_body_aabbs(&self) -> Vec<Aabb> {
+        let mut aabbs = Vec::with_capacity(1 + self.objects.len() * 2);
+        aabbs.push(self.colliders[self.character_collider].compute_aabb());
+        for object in &self.objects {
+            for collider in self.bodies[object.handle].colliders() {
+                if let Some(collider) = self.colliders.get(*collider) {
+                    aabbs.push(collider.compute_aabb());
+                }
+            }
+        }
+        aabbs
+    }
+
+    /// Whether any dynamic body AABB intersects any region in `added`.
     ///
-    /// A prepared collider is "new" when its world-space AABB does not exactly
-    /// match a live detail collider; removals and unchanged instances never
-    /// gate. This is the enforced safety gate behind the cadence: new collision
-    /// must never materialise inside a body that moved into its region while
-    /// preparation was pending, so such a publication is deferred, not
-    /// transformed or dropped. Callers keep the preparation buffered and retry.
-    pub fn detail_publication_blocked(&self, prepared: &PreparedDetailCollision) -> bool {
-        let live: Vec<Aabb> = self
-            .detail
-            .iter()
-            .map(|handle| self.colliders[*handle].compute_aabb())
-            .collect();
-        let added: Vec<Aabb> = prepared
-            .pending
-            .iter()
-            .map(|(pose, shape)| shape.compute_local_aabb().transform_by(pose))
-            .filter(|aabb| !live.contains(aabb))
-            .collect();
+    /// `added` must cover every world-space region where the pending source
+    /// added solid collision material relative to the last accepted
+    /// publication; removals are never included because removing collision
+    /// cannot trap a body. The [`DetailCollisionCadence`] accumulates this set
+    /// from the owner's edit journal, so no collider-geometry comparison is
+    /// needed here: coarse whole-collider AABBs can never establish unchanged
+    /// shape (filling an interior hole leaves the outer AABB identical), and
+    /// are therefore used only for the conservative structural fallback below.
+    pub fn detail_added_blocked(&self, added: &[Aabb]) -> bool {
         if added.is_empty() {
             return false;
         }
-        let blocked = |aabb: &Aabb| added.iter().any(|region| region.intersects(aabb));
-        if blocked(&self.colliders[self.character_collider].compute_aabb()) {
-            return true;
-        }
-        self.objects.iter().any(|object| {
-            self.bodies[object.handle].colliders().iter().any(|collider| {
-                self.colliders
-                    .get(*collider)
-                    .is_some_and(|collider| blocked(&collider.compute_aabb()))
-            })
-        })
+        self.dynamic_body_aabbs()
+            .iter()
+            .any(|body| added.iter().any(|region| region.intersects(body)))
     }
 
     /// Counters of the last accepted detail replacement. A rejected replacement

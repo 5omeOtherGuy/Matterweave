@@ -229,6 +229,20 @@ impl Default for AsyncDetailCollision {
 }
 
 impl AsyncDetailCollision {
+    /// Fallback-path constructor: no worker thread is spawned and every
+    /// request is refused, so the caller exercises the synchronous path.
+    /// Used by [`DetailCollisionCadence::without_worker`] for fallback tests.
+    pub fn without_worker() -> Self {
+        let shared = Arc::new(Shared {
+            queue: Mutex::new(Queue {
+                shutdown: true,
+                ..Queue::default()
+            }),
+            wake: Condvar::new(),
+        });
+        Self { shared, worker: None }
+    }
+
     /// Starts the single background worker. One worker keeps ordering obvious;
     /// widening it is a measurement-led change, not a correctness requirement.
     pub fn new() -> Self {
@@ -475,7 +489,7 @@ mod queue_tests {
         let second = q.begin_job();
         assert!(!q.enqueue_request(a.source_version(), || a.fork_source()));
         q.finish_job(second, Err("B".into()));
-        assert!(matches!(q.take_result(&a.source_version()), Some(Err(e)) if e == "A"));
+        assert!(matches!(q.take_result(&a.source_version(), |_| true), Some(Err(e)) if e == "A"));
     }
 
     #[test]
