@@ -180,7 +180,7 @@ class ArgumentBoundsTest(unittest.TestCase):
             self.chooser_delay = self.settle_delay = 5.0
             self.launch_timeout = self.load_timeout = self.install_timeout = 60.0
             self.sample_interval = 30.05
-            self.max_observations = 31
+            self.max_observations = 61
             self.__dict__.update(kw)
 
     def test_accepts_defaults(self):
@@ -189,7 +189,7 @@ class ArgumentBoundsTest(unittest.TestCase):
     def test_rejects_bad_timing_and_windows(self):
         for kw in ({"warmup": 0}, {"measure": float("nan")},
                    {"load_timeout": float("inf")}, {"measure": -1},
-                   {"max_observations": 32}, {"max_observations": 0},
+                   {"max_observations": 62}, {"max_observations": 0},
                    {"sample_interval": 5.0}, {"sample_interval": 40.0},
                    {"pairs": 0}):
             with self.assertRaises(SystemExit, msg=kw):
