@@ -244,6 +244,10 @@ fn saturated_requests_stay_bounded_and_still_deliver_the_latest_meshes() {
     let keys = world.chunk_keys();
     assert!(keys.len() > MAX_QUEUED_MESH_JOBS);
 
+    // Ensure the edited chunk has an old snapshot to reject, rather than
+    // assuming the flood happened to admit it before its queue filled.
+    assert!(jobs.request_mesh(&world, [0, 1, 0]));
+
     // Flood without polling: refusals keep every buffer inside its bound.
     for _ in 0..8 {
         for &key in &keys {
