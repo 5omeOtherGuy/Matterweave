@@ -1,5 +1,6 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
+mod detail_check;
 mod dynamic_upload;
 mod engine_check;
 mod experience;
@@ -1429,6 +1430,7 @@ pub fn run_desktop() {
     let mut showcase = false;
     let mut sandbox = false;
     let mut engine_check = false;
+    let mut detail_check = false;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -1440,6 +1442,7 @@ pub fn run_desktop() {
             "--showcase" => showcase = true,
             "--sandbox" => sandbox = true,
             "--engine-check" => engine_check = true,
+            "--detail-check" => detail_check = true,
             "--smoke-exercise" => smoke_exercise = true,
             "--gallery-exercise" => gallery_exercise = true,
             "--smoke-frames" => {
@@ -1467,6 +1470,15 @@ pub fn run_desktop() {
             .expect("event loop")
             .run_app(&mut check)
             .expect("engine check loop");
+        return;
+    }
+    if detail_check {
+        let mut check =
+            detail_check::DetailCheck::new(save_path.with_file_name("detail-check-report.txt"));
+        EventLoop::new()
+            .expect("event loop")
+            .run_app(&mut check)
+            .expect("detail check loop");
         return;
     }
     // Explicit developer opt-in is resolved before any world is loaded, so an
@@ -1570,13 +1582,25 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     };
     // Explicit one-shot developer validation, consumed before loading any sample.
     let request = directory.join("engine-check.txt");
-    if std::fs::read_to_string(&request).is_ok_and(|s| s.trim() == "indirect") {
+    let requested_check = std::fs::read_to_string(&request)
+        .ok()
+        .map(|s| s.trim().to_string());
+    if matches!(requested_check.as_deref(), Some("indirect") | Some("detail")) {
+        // Remove only the consumed request marker; never any world or save.
         if let Err(e) = std::fs::remove_file(&request) {
             log::error!("Engine check request: {e}");
             return;
         }
-        let mut check = engine_check::IndirectCheck::new(directory.join("engine-check-report.txt"));
-        if let Err(e) = event_loop.run_app(&mut check) {
+        let result = if requested_check.as_deref() == Some("detail") {
+            let mut check =
+                detail_check::DetailCheck::new(directory.join("detail-check-report.txt"));
+            event_loop.run_app(&mut check)
+        } else {
+            let mut check =
+                engine_check::IndirectCheck::new(directory.join("engine-check-report.txt"));
+            event_loop.run_app(&mut check)
+        };
+        if let Err(e) = result {
             log::error!("Engine check: {e}");
         }
         return;
