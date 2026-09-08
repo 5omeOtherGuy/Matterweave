@@ -51,7 +51,22 @@ The Android one-shot marker is `files/engine-check.txt` containing `indirect-asy
 The report is `files/async-engine-check-report.txt`. While waiting, the fixture
 continues presenting direct-only frames, then holds completed phases for120
 presentations. HOME/resume retains source/cache state and recreates GPU resources.
-Physical Android validation of this mode is pending.
+The v0.5 ARM64 APK builds and passes native page-size, alignment and signing
+checks. Its first physical attempt encountered the secure Android lock screen and
+suspended before phase0. The attempt timed out and is not a functional pass. User
+unlock was requested; physical validation remains pending.
+
+## Instrumented controller coverage
+
+The25 focused tests also passed with only the render test target instrumented:
+`cargo rustc --locked -p matterweave-render --lib --profile test -- -C instrument-coverage`.
+Run the emitted test binary filtered to `async_indirect`, with `LLVM_PROFILE_FILE`
+set to a dedicated path containing `%m-%p`, merge with matching `llvm-profdata`,
+then report `async_indirect.rs` with `llvm-cov`. The production controller maps
+260 lines,240 executed (**92.31%**), and27 functions,all executed. No counter
+mismatch warnings occurred. This excludes the test file and does not measure
+Android execution, shader coverage or branch coverage. Raw commands/profile/report
+are under `/mnt/bench/matterweave-dev/performance/engine-02/async-coverage`.
 
 ## Engineering log
 
@@ -61,7 +76,10 @@ it timed out during a failed RED-stub setup. Astra medium repaired test-only
 consumption/race assumptions in276s; it did not compile or run tests. Lead reviewed,
 executed tests, fixed shutdown refusal and integrated the native Vulkan adapter.
 
-**Issues:** GLM left unverified code and no checkpoint commits. Its original tests
+**Issues:** The combined351-test workspace suite passed. Strict Clippy initially
+caught the lead's test-only field reassignment; initializing the saturated counter
+directly fixed it, and the focused test plus strict workspace Clippy passed.
+GLM left unverified code and no checkpoint commits. Its original tests
 consumed buffered results before checking them and asserted race-sensitive queue
 counts. Those were repaired; worker completion alone was not treated as acceptance.
 Astra's tests also covered open-room radiance and deterministic queue transitions.

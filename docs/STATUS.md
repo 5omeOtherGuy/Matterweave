@@ -74,8 +74,10 @@ The follow-up branch `codex/engine-light-scheduling` adds bounded background
 indirect-light preparation. GLM's partial controller was recovered by the lead;
 Astra repaired its test assumptions. All25 focused async tests pass at `2267ad5`.
 The native Vulkan adapter at `da96b8e` presented15 frames while lighting was
-pending, then correctly published sun/edit/enclosure results. Combined checks and
-physical Android validation of this mode are running. See
+pending, then correctly published sun/edit/enclosure results. The combined351-test suite and corrected strict Clippy pass. Production-controller
+coverage is92.31% of lines with all27 functions exercised. The v0.5 ARM64 APK
+build/signature/alignment pass, but its physical attempt stopped at Android secure
+keyguard before phase0. Unlock was requested; that device gate is pending. See
 [background lighting](performance/async-indirect.md). Full GI/reflections and M4
 quality remain open.
 

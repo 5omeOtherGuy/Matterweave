@@ -1,0 +1,21 @@
+{
+  "source": "da96b8e",
+  "production_file_sha256": "0e2d87afdd86ae5d46f050237c6544e3324f6a4aa1aa2442a6f2a9ce4092ba66",
+  "tests": 25,
+  "scope": "crates/matterweave-render/src/async_indirect.rs only; test file excluded",
+  "lines": {
+    "covered": 240,
+    "total": 260
+  },
+  "functions": {
+    "covered": 27,
+    "total": 27
+  },
+  "regions": {
+    "covered": 324,
+    "total": 350
+  },
+  "counter_warnings": false,
+  "branch_coverage": "not measured",
+  "method": "cargo rustc --lib --profile test, only render test harness instrumented; matching LLVM tools"
+}
