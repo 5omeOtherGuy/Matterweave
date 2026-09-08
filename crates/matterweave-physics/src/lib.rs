@@ -1,5 +1,10 @@
 //! Fixed-step voxel physics. Backend handles never cross the public boundary.
+mod detail_collision;
 mod dynamic_cache;
+pub use detail_collision::{
+    DetailCollisionStats, MAX_DETAIL_BOXES, MAX_DETAIL_COLLIDERS,
+    MAX_DETAIL_PROTOTYPE_COLLISION_CELLS, MAX_DETAIL_SOURCE_COLLISION_CELLS,
+};
 pub use dynamic_cache::DynamicMeshCache;
 use matterweave_core::{Mesh, Vertex, World};
 use rapier3d::{control::KinematicCharacterController, prelude::*};
@@ -73,6 +78,9 @@ pub struct Physics {
     multibody: MultibodyJointSet,
     ccd: CCDSolver,
     terrain: BTreeMap<[i32; 3], (u64, ColliderHandle)>,
+    /// Static colliders derived from the detail scene, replaced as a whole unit.
+    detail: Vec<ColliderHandle>,
+    detail_stats: DetailCollisionStats,
     resident_columns: Option<BTreeSet<[i32; 2]>>,
     objects: Vec<VoxelBody>,
     character: RigidBodyHandle,
@@ -111,6 +119,8 @@ impl Physics {
             multibody: MultibodyJointSet::new(),
             ccd: CCDSolver::new(),
             terrain: BTreeMap::new(),
+            detail: Vec::new(),
+            detail_stats: DetailCollisionStats::default(),
             resident_columns: None,
             objects: Vec::new(),
             character,

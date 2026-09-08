@@ -967,6 +967,7 @@ name = "matterweave-physics"
 version = "0.3.0"
 dependencies = [
  "matterweave-core",
+ "matterweave-detail",
  "rapier3d",
  "serde",
  "serde_json",
