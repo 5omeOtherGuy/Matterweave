@@ -61,16 +61,24 @@ struct FragmentOutput {
     // Zero-length AABB contact is not geometry (including corner-only touches).
     if entry >= exit { discard; }
     let start = ray_origin + direction * entry;
-    var cell = vec3<i32>(floor(start - lower));
-    var step = vec3<i32>(sign(direction));
+    var local = start - lower;
+    let step = vec3<i32>(sign(direction));
     var normal = vec3(0.0);
     let starts_inside = all(ray_origin >= lower) && all(ray_origin < upper);
     var first = true;
     for (var axis = 0u; axis < 3u; axis += 1u) {
-        // Snap only known slab-entry planes to their exact integer cell, not
-        // all coordinates and not by an epsilon that can skip a thin wall.
+        // Snap only known slab-entry planes, never bias the entire ray.
         if !starts_inside && slab_near[axis] == entry {
-            cell[axis] = select(i32(dims[axis]) - 1, 0, step[axis] > 0);
+            local[axis] = select(f32(dims[axis]), 0.0, step[axis] > 0);
+        }
+    }
+    var cell = vec3<i32>(floor(local));
+    for (var axis = 0u; axis < 3u; axis += 1u) {
+        // An external entry can tie an INTERNAL grid plane on another axis.
+        // Cross all of those together before inspecting the first inside cell.
+        // An origin already inside instead checks floor(origin) first, like World.
+        if !starts_inside && step[axis] != 0 && local[axis] == floor(local[axis]) {
+            if step[axis] < 0 { cell[axis] -= 1; }
             if first { normal[axis] = -f32(step[axis]); first = false; }
         }
     }
