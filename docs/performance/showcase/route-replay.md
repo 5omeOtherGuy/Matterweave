@@ -115,3 +115,31 @@ state machine; wall timeout is evaluated when execution returns. Abrupt death
 retains only the latest progress snapshot. Lead owns updates to aggregate STATUS,
 roadmap, integration reviews and device evidence; this leaf changes only its
 assigned source files and this log.
+
+
+## Lead phone runner
+
+`tools/performance/check_phone_route.py` stages one exclusively owned recovery127
+fixture, requests normal capture/replay, enters through the ordinary chooser, and
+records actual reports, screenshots, health and saved state. It rejects existing
+fixture/control files, a valid primary journal, recovery128, or mismatched frozen
+APK/scene hashes. It preserves existing saves; only its own three input files are
+cleaned. The final report must identify the requested route, every waypoint,
+positive physics work and the actual endpoint. Cancellation before a deliberately
+sent interruption cannot pass an interruption check.
+
+The runner is pinned to generator3 seed20260908 and the OnePlus13's3168×1440
+landscape entry/control coordinates. It is a functional verifier, not a replacement
+for matched/sustained performance collection. The lead must own the idle phone;
+never run it concurrently with `collect_wetland_pair.py`.
+
+```sh
+python3 tools/performance/check_phone_route.py --adb /absolute/adb --serial DEVICE --build /absolute/build-manifest.json --fixture /absolute/six-body-gen3-session.json --scene docs/evidence/full-wetland-generator3.json --route ground --out /absolute/fresh-ground-check
+```
+
+Use `--route elevated` for the other itinerary. Use the ground route with
+`--interrupt touch` or `--interrupt home` for deliberate cancellation. No route
+teleports or jumps are sent. Three focused report-contract tests and `--help`
+pass; actual phone execution remains pending until the active paired collector
+releases ownership. The lead corrected a draft report-key mismatch against the
+real Rust schema (`next_waypoint`) before any device execution.
