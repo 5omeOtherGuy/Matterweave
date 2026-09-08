@@ -6,6 +6,7 @@ mod gallery;
 mod metrics;
 mod wetland;
 mod wetland_metrics;
+mod wetland_replay;
 mod wetland_state;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
