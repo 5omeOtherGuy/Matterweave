@@ -1027,6 +1027,7 @@ pub struct Renderer {
     shadow: Shadow,
     timestamps: Option<TimestampQueries>,
     diagnostics_enabled: bool,
+    wsi_probe: std::ops::Range<u8>,
     diagnostics: DrawDiagnostics,
     upload_waits: WaitTally,
     submissions: u64,
@@ -1226,6 +1227,7 @@ impl Renderer {
             shadow,
             timestamps,
             diagnostics_enabled: false,
+            wsi_probe: 0..16,
             diagnostics: DrawDiagnostics::default(),
             upload_waits: WaitTally::default(),
             submissions: 0,
@@ -1426,11 +1428,26 @@ impl Renderer {
         if self.requested.width == 0 || self.requested.height == 0 {
             return Ok(FrameResult::Retry);
         }
+        // Temporary bounded diagnostic only; not a performance-comparison build.
+        let probe =
+            (self.diagnostics_enabled && self.wsi_probe.next().is_some()).then(Instant::now);
+        if probe.is_some() {
+            eprintln!(
+                "WSI-PROBE begin submissions={} recreate={} requested={:?}",
+                self.submissions, self.recreate, self.requested
+            );
+        }
         let fence_begin = self.diagnostics_enabled.then(Instant::now);
         self.commands.wait()?;
         self.diagnostics.render_fence_wait_ms = fence_begin.map(elapsed_ms);
         if let Some(timestamps) = &mut self.timestamps {
             timestamps.read_completed()?;
+        }
+        if let Some(t) = probe {
+            eprintln!(
+                "WSI-PROBE fence+timestamps cumulative_ms={:.4}",
+                elapsed_ms(t)
+            );
         }
         if lighting.shadow_map_size != self.shadow.size {
             // Identical descriptor layout definitions remain pipeline-compatible.
@@ -1446,6 +1463,9 @@ impl Renderer {
             .map(|m| m.bounds)
             .collect();
         self.shadow.update(eye, lighting, &bounds)?;
+        if let Some(t) = probe {
+            eprintln!("WSI-PROBE shadow-update cumulative_ms={:.4}", elapsed_ms(t));
+        }
         if self.recreate {
             // SAFETY: exceptional resize/retirement only. This is the standard
             // unextended WSI idle fallback; its presentation-completion limitation
@@ -1466,6 +1486,9 @@ impl Renderer {
                     Err(e) => return Err(e),
                 };
             self.recreate = false;
+        }
+        if let Some(t) = probe {
+            eprintln!("WSI-PROBE swapchain cumulative_ms={:.4}", elapsed_ms(t));
         }
         let bytes = bytemuck::cast_slice(&hud.vertices);
         if self.hud.as_ref().is_none_or(|b| b.size < bytes.len()) {
@@ -1647,6 +1670,9 @@ impl Renderer {
                     .image_indices(&indices),
             );
             self.diagnostics.present_ms = present_begin.map(elapsed_ms);
+            if let Some(t) = probe {
+                eprintln!("WSI-PROBE end acquire_suboptimal={suboptimal} present={presented:?} size={:?} cumulative_ms={:.4}", s.size, elapsed_ms(t));
+            }
             match classify_present(presented, suboptimal) {
                 PresentOutcome::Presented { recreate } => self.recreate = recreate,
                 PresentOutcome::OutOfDate => {
