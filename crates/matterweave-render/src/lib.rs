@@ -1405,6 +1405,30 @@ impl Renderer {
         Ok(stats)
     }
 
+    /// Change placement/prototype selection using already uploaded static geometry.
+    /// Only packed instance data changes; vertex/index buffers are retained. An
+    /// empty list hides all instances and keeps geometry ready for later reuse.
+    /// Use `replace_static_scene` with an empty list to release it. Validation
+    /// failures retain previous placements; writes wait the existing frame fence.
+    pub fn update_static_instances(
+        &mut self,
+        instances: &[StaticInstance],
+    ) -> Result<StaticSceneStats> {
+        let scene = self
+            .static_scene
+            .as_ref()
+            .ok_or("No resident static geometry")?;
+        let plan = scene.plan_instances(instances)?;
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        let scene = self.static_scene.as_mut().expect("retained static scene");
+        scene.update_instances(plan)?;
+        let stats = scene.stats();
+        self.update_counters();
+        Ok(stats)
+    }
+
     /// Honest accounting of the currently resident static scene, if any.
     pub fn static_scene_stats(&self) -> Option<StaticSceneStats> {
         self.static_scene.as_ref().map(|scene| scene.stats())
