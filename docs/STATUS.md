@@ -10,7 +10,7 @@ and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) and
 [PERFORMANCE_TASKS](PERFORMANCE_TASKS.md). The [showcase](SHOWCASE.md) is a test
 workload; further showcase polish and old demo-save compatibility must not delay
 remaining M2–M6 engine requirements. The sole current integration checkout is
-`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/performance-p00`.
+`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-systems`.
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
 
@@ -28,11 +28,34 @@ See [implementation and evidence](performance/shadow-reuse.md).
 
 The P02 collector finished all3 matched pairs across A3/A4 and exited cleanly.
 The phone is idle after the engine functional check; no collector or worker owns it.
-PR8 delivery remains pending current checks. Next engine capabilities are automatic
+PR8 merged at `ba6c894` after all required checks passed;
+[v0.4.0 prerelease](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.4.0)
+is published with APK, manifests and both evidence archives. Next engine capabilities are automatic
 detail selection and indirect illumination/reflections, plus remaining streaming,
 renderer comparison and framework milestones. Do not resume demo-save/UI refinement.
 
-## Earlier continuation evidence
+## Current engine systems branch
+
+At `70fc8bf`, fine collision can be prepared on a worker thread and published only
+against the same authoritative detail scene. Opaque scene versions distinguish
+unrelated/replaced scenes, forks and edits without hashing geometry or copying
+voxel payloads. Stale publication preserves current physics. Two version tests,
+19 collision tests and strict detail/physics Clippy pass. The complete bounded
+asynchronous controller is a separate Opus4.8/high task, still under implementation.
+
+At `94e51eb`, world clones and streaming overrides share immutable chunk payloads.
+Changed chunks detach once; subsequent edits reuse their allocation until another
+snapshot shares it. Four allocation/behavior regressions and all core tests pass.
+See [chunk snapshot evidence](performance/chunk-snapshots.md). No mobile speed or
+memory measurement is inferred from allocation identity tests. Android integration
+checks for this branch remain pending.
+
+Automatic detail selection and asynchronous collision are executing in separate
+Opus4.8/high Pi workers after the allowance reset. An Astra worker owns first
+bounded indirect lighting; its submitted code remains subject to lead review and
+Android checks. These features are not part of the already published v0.4.0 APK.
+
+## Earlier continuation evidence (historical pre-release checkpoints)
 
 Current verified progress (2026-09-08 continuation):
 
@@ -113,13 +136,14 @@ completed matched comparison retains its measured thermal tradeoff. Do not make
 more showcase save recovery, authored route refinement or gameplay UI polish a
 prerequisite for engine work. Automatic LOD, indirect illumination/reflections,
 renderer comparison, streaming completion, second-sample reuse and remaining
-M2–M6 gates remain open. PR8 delivery and final-build device checks remain pending;
-building the0.4 APK did not complete or release those capabilities.
+M2–M6 gates remain open. PR8 was subsequently merged and the shadow-cache APK
+was device-checked and released, as recorded above; these open capabilities were
+not completed by that release.
 
 The [completion execution log](performance/logs/completion-execution.md) and
 [prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier
 accepted P00/P01/P02/P03 slices and unavailable measurement gates. Latest published
-prerelease remains v0.3.0; development builds are reported separately.
+prerelease is v0.4.0; newer engine-systems development is reported separately.
 
 ## v0.3 verified Android slice
 

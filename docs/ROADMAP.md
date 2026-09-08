@@ -23,7 +23,7 @@ full128m source terrain, fine-source collision/editing, water,6,192plants across
 pass continuous host physics; the short waterside itinerary is recorded too.
 Normal phone entry/movement/edit persistence and6-to29-body destruction have been
 observed on development builds. Complete journal/respawn recovery is host/native
-verified; the0.4.0 candidate APK is built but not yet installed. Two matched P02
+verified; the later shadow-cache0.4.0 APK was device-checked and released through PR8. Two matched P02
 pairs show faster presentation/lower CPU and memory with increased heating;
 the third pair confirms the tradeoff. The engine now reuses unchanged shadow depth,
 with host Vulkan and Android functional checks. The separate30/60Hz experiment is
@@ -35,6 +35,11 @@ Owner steering (2026-09-08): prioritize reusable engine implementation. The
 wetland supplies validation workloads; additional demo-save compatibility and
 showcase UI/content refinement are not gates ahead of M2–M5 engine progress.
 The unintegrated frame-cap experiment requires reassessment as engine pacing work.
+
+Engine-systems follow-up: source-version-checked collision preparation and shared
+chunk snapshots are host-tested on the integration branch. Automatic detail,
+background collision publication and the first diffuse indirect reference remain
+under implementation/review; they do not close M3/M4 acceptance.
 
 ## M0 — Reproducible Android foundation
 

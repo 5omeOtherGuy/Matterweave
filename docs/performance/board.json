@@ -362,7 +362,7 @@
     },
     "engine-shadow-reuse": {
       "owner": "sole lead",
-      "state": "implemented-host-and-android-verified",
+      "state": "merged-released-v0.4.0",
       "source": "78cba4a",
       "log": "docs/performance/shadow-reuse.md",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-01",
@@ -376,18 +376,37 @@
       "base": "0c68565"
     },
     "engine-auto-lod": {
-      "owner": "Opus rate-limited; Hy4 math review active",
-      "state": "review-active-implementation-next",
+      "owner": "Pi claude-subscription/claude-opus-4-8 high",
+      "state": "running",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-auto-lod",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/lod-math-hy4",
-      "base": "0c68565"
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/lod-opus48-reset",
+      "base": "70fc8bf"
     },
     "engine-streaming-cow": {
-      "owner": "glm-high",
-      "state": "running",
+      "owner": "Lead repair of timed-out GLM partial",
+      "state": "integrated-core-tests-pass",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-streaming-cow",
       "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/streaming-glm",
-      "base": "0c68565"
+      "base": "0c68565",
+      "artifact": "94e51eb",
+      "log": "docs/performance/chunk-snapshots.md"
+    },
+    "engine-async-collision": {
+      "owner": "Pi claude-subscription/claude-opus-4-8 high",
+      "state": "running",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-async-collision",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/async-collision-opus48",
+      "base": "70fc8bf",
+      "paths": [
+        "crates/matterweave-physics/**",
+        "docs/performance/async-detail-collision.md"
+      ]
+    },
+    "engine-prepared-collision": {
+      "owner": "lead",
+      "state": "integrated-host-tested",
+      "artifact": "70fc8bf",
+      "acceptance": "2 source version + 19 collision tests and scoped strict Clippy pass. Background controller delegated separately."
     }
   },
   "capacity": {
@@ -395,7 +414,7 @@
   },
   "provider_blockers": {
     "muse": "Save-validation FreeUsageLimitError HTTP429; no further retry this window. Earlier route/replay reviews completed.",
-    "opus": "HTTP429 five-hour allowance exhausted during save-validation; reset1788866400, no retry before reset. Partial source preserved and rerouted to Muse."
+    "opus": "Reset passed; both Opus4.8/high workers executing after2026-09-08T11:20Z. Earlier429 attempts preserved."
   },
-  "orchestration": "Owner explicitly requires extensive available-model delegation. Opus5 five-hour window rejected at100%, weekly23%; reset2026-09-08T11:20:00Z. Retry after reset while other routes work. Muse429 and Gemini timeout recorded. Hy4 single tool-free bounded consultation uses existing OpenRouter credit; no purchase/top-up."
+  "orchestration": "Extensive model delegation per owner. Current Opus route4.8/high explicitly authorized. Hy4 high240s and resumed low120s timed out without final findings; neither accepted as review. GLM COW timed out; lead corrected allocation tests and redundant-override copies. Muse429 and Gemini timeout remain recorded."
 }
