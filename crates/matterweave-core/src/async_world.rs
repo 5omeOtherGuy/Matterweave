@@ -84,6 +84,7 @@ struct Queue {
     active: BTreeSet<[i32; 3]>,
     stream_result: Option<StreamResult>,
     stream_active: Option<([i32; 2], u64, u64, u64)>,
+    stream_requested: Option<([i32; 2], u64, u64, u64)>,
     prefer_mesh: bool,
     mesh_results: VecDeque<MeshResult>,
     mesh_result_bytes: usize,
@@ -170,6 +171,7 @@ impl AsyncWorld {
             let mut queue = self.shared.lock();
             queue.stream = None;
             queue.stream_result = None;
+            queue.stream_requested = None;
             return false;
         }
         let mut queue = self.shared.lock();
@@ -178,6 +180,7 @@ impl AsyncWorld {
         }
         let generation = queue.generation;
         let identity = (center, world.revision(), world.seed(), generation);
+        queue.stream_requested = Some(identity);
         // This request is the latest publishable center. Any pending window for a
         // different identity is now superseded: drop it before deduping so it can
         // neither run last and overwrite the window the caller now wants nor be
@@ -320,6 +323,7 @@ impl AsyncWorld {
         queue.active.clear();
         queue.stream = None;
         queue.stream_result = None;
+        queue.stream_requested = None;
         // The generation is an opaque, strictly increasing cancellation token that is
         // never reused: each reset mints a fresh value that invalidates every job
         // stamped with an older one, including the job in flight. Saturating at
@@ -347,9 +351,11 @@ impl AsyncWorld {
 
     /// False after worker startup failure or an unexpected worker exit.
     pub fn available(&self) -> bool {
-        self.worker
-            .as_ref()
-            .is_some_and(|worker| !worker.is_finished())
+        !self.shared.lock().shutdown
+            && self
+                .worker
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
     }
 
     pub fn stats(&self) -> AsyncStats {
@@ -436,7 +442,11 @@ fn run_job(shared: &Shared, job: Job) {
             let mut queue = shared.lock();
             queue.inflight = 0;
             queue.stream_active = None;
-            if queue.shutdown || queue.generation != job.generation {
+            if queue.shutdown
+                || queue.generation != job.generation
+                || queue.stream_requested
+                    != Some((job.center, job.source_revision, job.seed, job.generation))
+            {
                 queue.discarded += 1;
                 return;
             }
@@ -627,7 +637,10 @@ mod tests {
         let second = take_job(&mut jobs.shared.lock());
         assert!(!jobs.request_stream(&world, a));
         run_job(&jobs.shared, second);
-        assert!(jobs.poll_stream(&mut world), "latest requested buffered window was lost");
+        assert!(
+            jobs.poll_stream(&mut world),
+            "latest requested buffered window was lost"
+        );
         assert_eq!(world.stream_center(), World::stream_center_of(a));
     }
 
@@ -642,6 +655,9 @@ mod tests {
         let available = jobs.available();
         release.send(()).unwrap();
         drop(jobs);
-        assert!(!available, "retired worker must expose synchronous fallback immediately");
+        assert!(
+            !available,
+            "retired worker must expose synchronous fallback immediately"
+        );
     }
 }
