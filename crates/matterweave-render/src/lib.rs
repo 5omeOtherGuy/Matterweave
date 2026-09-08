@@ -1009,12 +1009,14 @@ enum PresentOutcome {
 
 fn classify_present(
     result: std::result::Result<bool, vk::Result>,
-    suboptimal: bool,
+    _acquire_suboptimal: bool,
 ) -> PresentOutcome {
     match result {
-        Ok(changed) => PresentOutcome::Presented {
-            recreate: changed || suboptimal,
-        },
+        // SUBOPTIMAL is advisory: the swapchain still presents successfully.
+        // Android can report it persistently with compositor-managed rotation.
+        // Defer recreation to explicit resize or OUT_OF_DATE; rebuilding here
+        // recreates pipelines every frame without resolving that advisory.
+        Ok(_) => PresentOutcome::Presented { recreate: false },
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => PresentOutcome::OutOfDate,
         Err(e) => PresentOutcome::Failed(e),
     }
@@ -1728,7 +1730,8 @@ mod tests {
         );
         // Advisory suboptimal results remain usable. Recreating on every
         // advisory result can rebuild pipelines every frame on Android.
-        for (present_suboptimal, acquire_suboptimal) in [(false, true), (true, false), (true, true)] {
+        for (present_suboptimal, acquire_suboptimal) in [(false, true), (true, false), (true, true)]
+        {
             assert_eq!(
                 classify_present(Ok(present_suboptimal), acquire_suboptimal),
                 PresentOutcome::Presented { recreate: false }
