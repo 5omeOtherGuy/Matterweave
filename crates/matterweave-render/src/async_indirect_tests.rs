@@ -614,9 +614,11 @@ fn stale_result_is_not_erased_by_a_foreign_poll() {
 #[test]
 fn reset_work_never_validates_after_generation_saturates() {
     let a = key(0);
-    let mut q = Queue::default();
     // Push the display counter to the wrap boundary.
-    q.resets = u64::MAX;
+    let mut q = Queue {
+        resets: u64::MAX,
+        ..Queue::default()
+    };
     assert!(q.enqueue_request(a, sun(), || World::new(0)));
     let job = q.adopt_job().unwrap();
     // Reset while the job is in flight.
