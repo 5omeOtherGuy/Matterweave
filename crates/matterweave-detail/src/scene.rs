@@ -7,7 +7,7 @@ use crate::{
 };
 use matterweave_core::{Mesh, Vertex};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::Arc,
 };
 
@@ -93,6 +93,7 @@ fn coarse_metric(
     factor: i32,
     coarse_cells: usize,
     occupied: usize,
+    local_loss_fraction: f32,
 ) -> Option<ErrorMetrics> {
     // A derived scale outside the supported range is not a selectable level.
     if crate::Scale::new(scale_m * factor as f32).is_err() {
@@ -103,6 +104,7 @@ fn coarse_metric(
         return Some(ErrorMetrics {
             error_estimate_m,
             dilation_fraction: 0.0,
+            local_loss_fraction: 0.0,
         });
     }
     let filled = coarse_cells as f64 * (factor as f64).powi(3);
@@ -110,22 +112,62 @@ fn coarse_metric(
     Some(ErrorMetrics {
         error_estimate_m,
         dilation_fraction: dilation,
+        local_loss_fraction,
     })
+}
+
+/// Worst interior expansion for one coarsening factor: over occupied coarse
+/// cells whose source footprint lies fully inside the occupied cell bounds,
+/// the maximum `1 - count / factor^3`. Boundary cells (footprint extends past
+/// the bounds) are ordinary surface steps and are excluded, so dense solids
+/// read exactly `0` while tunnels, pinholes and enclosed voids read `> 0`.
+/// Integer arithmetic only; footprints cannot overflow (`|cell| <= 2^16` and
+/// `factor <= 4`).
+fn worst_interior_loss(
+    counts: &BTreeMap<[i32; 3], u32>,
+    min: [i32; 3],
+    max: [i32; 3],
+    factor: i32,
+) -> f32 {
+    let full = (factor as f32).powi(3);
+    let mut worst = 0.0f32;
+    for (coarse, count) in counts {
+        let count = *count as f32;
+        if count >= full {
+            continue;
+        }
+        let mut interior = true;
+        for axis in 0..3 {
+            let base = coarse[axis] * factor;
+            if base < min[axis] || base + factor - 1 > max[axis] {
+                interior = false;
+                break;
+            }
+        }
+        if interior {
+            worst = worst.max((full - count) / full);
+        }
+    }
+    worst
 }
 
 fn compute_digest(volume: &DetailVolume) -> Digest {
     let scale = volume.scale().metres();
     let mut min = [i32::MAX; 3];
     let mut max = [i32::MIN; 3];
-    let mut half: BTreeSet<[i32; 3]> = BTreeSet::new();
-    let mut quarter: BTreeSet<[i32; 3]> = BTreeSet::new();
+    // Per-coarse-cell occupied counts. Entries are bounded by the occupied-cell
+    // count (one entry per occupied source cell, worst case) plus 4 bytes per
+    // entry over the previous presence sets; still within the volume cell
+    // budget and computed once per source revision in the digest cache.
+    let mut half: BTreeMap<[i32; 3], u32> = BTreeMap::new();
+    let mut quarter: BTreeMap<[i32; 3], u32> = BTreeMap::new();
     for (cell, _) in volume.iter_cells() {
         for axis in 0..3 {
             min[axis] = min[axis].min(cell[axis]);
             max[axis] = max[axis].max(cell[axis]);
         }
-        half.insert(cell.map(|v| v.div_euclid(2)));
-        quarter.insert(cell.map(|v| v.div_euclid(4)));
+        *half.entry(cell.map(|v| v.div_euclid(2))).or_default() += 1;
+        *quarter.entry(cell.map(|v| v.div_euclid(4))).or_default() += 1;
     }
     let occupied = volume.occupied_cells();
     let bounds_local = (occupied > 0).then(|| Bounds {
@@ -134,8 +176,20 @@ fn compute_digest(volume: &DetailVolume) -> Digest {
     });
     let metrics = [
         Some(ErrorMetrics::SOURCE),
-        coarse_metric(scale, 2, half.len(), occupied),
-        coarse_metric(scale, 4, quarter.len(), occupied),
+        coarse_metric(
+            scale,
+            2,
+            half.len(),
+            occupied,
+            worst_interior_loss(&half, min, max, 2),
+        ),
+        coarse_metric(
+            scale,
+            4,
+            quarter.len(),
+            occupied,
+            worst_interior_loss(&quarter, min, max, 4),
+        ),
     ];
     Digest {
         revision: volume.revision(),

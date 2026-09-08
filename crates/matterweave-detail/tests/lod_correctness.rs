@@ -1,7 +1,7 @@
 //! Corrected-semantics tests demanded by lead review: perspective depth is the
 //! nearest AABB depth along the view forward axis (not Euclidean eye distance),
-//! zoom by field of view refines, and the thin-feature bias is explicitly a
-//! global heuristic that does NOT guarantee a small deep opening is preserved.
+//! zoom by field of view refines, and small deep openings are held at Source by
+//! the local interior-loss guard (the global dilation bias alone could not).
 
 use matterweave_detail::{
     material, Camera, DetailScene, DetailVolume, Lod, LodConfig, Projection, Scale, Transform, Yaw,
@@ -124,10 +124,11 @@ fn narrowing_field_of_view_zooms_in_and_refines() {
 }
 
 #[test]
-fn deep_pinhole_opening_is_not_guaranteed_preserved_by_the_global_bias() {
-    // Declared, honest semantics: a small deep opening inside a large solid is a
-    // negligible fraction of the coarse solid, so the global dilation bias does
-    // NOT keep it at Source. A caller that must preserve it caps the level.
+fn deep_pinhole_opening_is_held_at_source_by_the_local_loss_guard() {
+    // The *global* dilation fraction of this opening is ~0.003, far below the
+    // bias, but the local interior-loss guard sees the worst interior coarse
+    // cell at 0.25 (factor 2) and holds the prototype at Source. Relaxing only
+    // the local guard coarsens it again, proving which guard held it.
     let config = LodConfig::default();
     let mut scene = DetailScene::new();
     scene
@@ -144,11 +145,24 @@ fn deep_pinhole_opening_is_not_guaranteed_preserved_by_the_global_bias() {
         .select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &config)
         .unwrap()[0]
         .lod;
-    assert!(
-        far > Lod::Source,
-        "documented limitation: deep pinhole coarsens under the global bias"
+    assert_eq!(
+        far,
+        Lod::Source,
+        "local interior-loss guard preserves the deep pinhole"
     );
-    // The quality cap is the honest control for preserving such an opening.
+    let relaxed = LodConfig {
+        max_local_loss_fraction: 1.0,
+        ..config
+    };
+    let coarse = scene
+        .select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &relaxed)
+        .unwrap()[0]
+        .lod;
+    assert!(
+        coarse > Lod::Source,
+        "relaxed local guard coarsens: {coarse:?}"
+    );
+    // The quality cap remains an independent, unconditional hold.
     let capped = LodConfig {
         max_lod: Lod::Source,
         ..config
