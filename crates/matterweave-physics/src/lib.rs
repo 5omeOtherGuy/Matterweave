@@ -7,7 +7,10 @@ pub use detail_collision::{
 };
 pub use dynamic_cache::DynamicMeshCache;
 use matterweave_core::{Mesh, Vertex, World};
-use rapier3d::{control::KinematicCharacterController, prelude::*};
+use rapier3d::{
+    control::{CharacterAutostep, CharacterLength, KinematicCharacterController},
+    prelude::*,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -383,7 +386,16 @@ impl Physics {
             self.mesh_revision = self.mesh_revision.wrapping_add(1);
             return;
         }
-        let controller = KinematicCharacterController::default();
+        let controller = KinematicCharacterController {
+            // Quarter-metre source stairs are walking surfaces. Autostep still
+            // tests head clearance and landing width; walls and bodies stay solid.
+            autostep: Some(CharacterAutostep {
+                max_height: CharacterLength::Absolute(0.30),
+                min_width: CharacterLength::Absolute(0.20),
+                include_dynamic_bodies: false,
+            }),
+            ..KinematicCharacterController::default()
+        };
         let shape = SharedShape::capsule_y(HALF_SEGMENT, RADIUS);
         if jump && self.grounded {
             self.vertical_velocity = 8.0;
