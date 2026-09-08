@@ -656,7 +656,7 @@ impl WetlandApp {
         h
     }
     fn draw(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.focused {
+        if !self.focused && self.frame_limit.is_none() {
             return;
         }
         if let Some(rx) = &self.loading {
@@ -802,6 +802,7 @@ impl WetlandApp {
                 },
             )
         };
+        renderer.set_world_visible(!self.menu);
         let _ = renderer.set_wetland_material_time(Some(self.started.elapsed().as_secs_f32()));
         let render_start = Instant::now();
         let result = renderer.render_with_lighting(
@@ -841,7 +842,8 @@ impl WetlandApp {
             eprintln!("WETLAND SMOKE PASS: {} frames", self.frames);
             event_loop.exit();
         }
-        self.next_frame = Instant::now() + Duration::from_millis(if self.menu { 66 } else { 1 });
+        self.next_frame =
+            capture_start + Duration::from_micros(if self.menu { 66_667 } else { 16_667 });
     }
     fn point(&self, x: f64, y: f64) -> Vec2 {
         let s = self.window.as_ref().unwrap().inner_size();
@@ -994,7 +996,7 @@ impl ApplicationHandler for WetlandApp {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.focused {
+        if !self.focused && self.frame_limit.is_none() {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
         }

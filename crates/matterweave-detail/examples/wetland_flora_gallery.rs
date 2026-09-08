@@ -46,6 +46,7 @@ fn main() -> Result<()> {
     for id in WETLAND_FLORA_SPECIES {
         scene.add_prototype(wetland_prototype(id)?)?;
     }
+    scene.add_prototype(bracket_fungus("bracket_fungus")?)?;
     let build_ms = build_started.elapsed().as_secs_f64() * 1e3;
 
     let mut meshes = Vec::new();
@@ -67,7 +68,7 @@ fn main() -> Result<()> {
             mesh_bytes_total += vertices.len() + indices.len();
             meshes.push(serde_json::json!({
                 "prototype": id,
-                "class": if id == "twisted_shrub" { "flora-woody" } else { "flora-decorative" },
+                "class": if id == "twisted_shrub" { "flora-woody" } else if id == "bracket_fungus" { "flora-fungus" } else { "flora-decorative" },
                 "lod_factor": lod.factor(),
                 "cell_size_m": base_scale * lod.factor() as f32,
                 "source_revision": mesh.revision,
@@ -105,7 +106,7 @@ fn main() -> Result<()> {
         }
         prototypes.push(serde_json::json!({
             "id": id,
-            "class": if id == "twisted_shrub" { "flora-woody" } else { "flora-decorative" },
+            "class": if id == "twisted_shrub" { "flora-woody" } else if id == "bracket_fungus" { "flora-fungus" } else { "flora-decorative" },
             "cell_size_m": volume.scale().metres(),
             "occupied_cells": volume.occupied_cells(),
             "fits_prototype_mesh_cap_33288": volume.occupied_cells() < 33_288,
@@ -125,10 +126,10 @@ fn main() -> Result<()> {
         "generator": "wetland_flora",
         "snapshot_version": SNAPSHOT_VERSION,
         "content_only": "deterministic; host timings are in timing.json",
-        "scene_note": "three wetland support-flora prototypes (twisted woody shrub, tall horsetail spire, broad water lily); NOT full showcase acceptance and NOT a phone claim",
+        "scene_note": "three wetland support-flora prototypes plus attached pore bracket fungus; NOT full showcase acceptance and NOT a phone claim",
         "origin_convention": "local cell c spans [c*scale, (c+1)*scale] metres; transform is quarter-turn yaw then an arbitrary fractional translation in world metres",
         "species": WETLAND_FLORA_SPECIES,
-        "reserved_species": ["bracket_shelf"],
+        "additional_species": ["bracket_fungus"],
         "material_policy": "woody trunk/branches reuse collidable FLORA_FUNNEL_STIPE (ID 30); all foliage/needles/pads/petals reuse decorative leaf IDs 38-47; no palette changes; BANK_STONE not used for wood",
         "water_placement": "marsh_lily is fully decorative and intended for shallow-water placement (floating pads at local y = 2 over a rhizome bed foot); dry-moss instance_support does not apply to it",
         "counts": {

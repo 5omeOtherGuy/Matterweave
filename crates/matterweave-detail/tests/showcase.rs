@@ -99,13 +99,20 @@ fn map_is_a_full_128_m_source_map_not_a_single_tile() {
             max[axis] = max[axis].max(draw.transform.translation_m[axis]);
         }
     }
-    assert!(min[0] <= 1.0 && min[2] <= 1.0, "map does not start at origin");
+    assert!(
+        min[0] <= 1.0 && min[2] <= 1.0,
+        "map does not start at origin"
+    );
     assert!(
         max[0] >= MAP_EDGE_M - 8.0 && max[2] >= MAP_EDGE_M - 8.0,
         "placed content spans only {max:?}, not a 128 m map"
     );
     // Vertical extent must be real relief, not a flat slab.
-    assert!(max[1] - min[1] >= 24.0, "vertical extent {}", max[1] - min[1]);
+    assert!(
+        max[1] - min[1] >= 24.0,
+        "vertical extent {}",
+        max[1] - min[1]
+    );
     assert_eq!(TERRAIN_CELL_M, 0.25, "terrain source stays at 25 cm");
 }
 
@@ -519,7 +526,11 @@ fn flora_is_rooted_clustered_and_off_the_route() {
             draw.instance,
             y - surface.height_m
         );
-        assert!(surface.is_dry_land(), "plant {} stands in water", draw.instance);
+        assert!(
+            surface.is_dry_land(),
+            "plant {} stands in water",
+            draw.instance
+        );
         assert!(surface.slope <= 0.85);
         assert!(
             surface.material == material::MOSS_TURF || surface.material == material::DETAIL_SOIL,

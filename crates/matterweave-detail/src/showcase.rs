@@ -53,8 +53,7 @@ pub const MAX_TERRAIN_CELL_Y: i32 = 255;
 
 /// Bytes one occupied cell can contribute to a derived mesh: 24 vertices plus
 /// 36 indices. Mirrors the private bound used by [`crate::MAX_MESH_BYTES`].
-const MESH_BYTES_PER_CELL: usize =
-    24 * std::mem::size_of::<matterweave_core::Vertex>() + 36 * 4;
+const MESH_BYTES_PER_CELL: usize = 24 * std::mem::size_of::<matterweave_core::Vertex>() + 36 * 4;
 /// Largest occupied-cell count whose `Lod::Source` mesh passes the existing
 /// preflight. Terrain is split into bands so no prototype exceeds it.
 pub const MAX_PROTOTYPE_CELLS: usize = MAX_MESH_BYTES / MESH_BYTES_PER_CELL;
@@ -120,7 +119,12 @@ fn fbm(seed: u64, x: f32, z: f32, base_freq: f32, octaves: u32) -> f32 {
     let mut amp = 1.0;
     let mut freq = base_freq;
     for octave in 0..octaves {
-        sum += amp * value_noise(seed ^ (u64::from(octave) + 1).wrapping_mul(0x9e37_79b9), x * freq, z * freq);
+        sum += amp
+            * value_noise(
+                seed ^ (u64::from(octave) + 1).wrapping_mul(0x9e37_79b9),
+                x * freq,
+                z * freq,
+            );
         norm += amp;
         amp *= 0.5;
         freq *= 2.0;
@@ -259,21 +263,16 @@ pub fn terrain_height_m(seed: u64, x: f32, z: f32) -> f32 {
         if along < 18.0 {
             continue;
         }
-        let across = (rel_x * -sz + rel_z * sx).abs()
-            + 1.6 * fbm(seed ^ (0xd5 + k as u64), x, z, 0.06, 2);
-        let depth = 2.4 * (-(across / 2.0) * (across / 2.0)).exp()
+        let across =
+            (rel_x * -sz + rel_z * sx).abs() + 1.6 * fbm(seed ^ (0xd5 + k as u64), x, z, 0.06, 2);
+        let depth = 2.4
+            * (-(across / 2.0) * (across / 2.0)).exp()
             * ((along - 18.0) / 12.0).clamp(0.0, 1.0);
         h -= depth;
     }
 
     // Authored landmark shelves.
-    h = flatten(
-        h,
-        dist2(x, z, 42.0, 62.0),
-        10.0,
-        15.4,
-        0.85,
-    ); // sheltered fungal grove
+    h = flatten(h, dist2(x, z, 42.0, 62.0), 10.0, 15.4, 0.85); // sheltered fungal grove
     h = flatten(h, dist2(x, z, 92.0, 58.0), 6.0, 18.2, 0.9); // destruction clearing
     h = flatten(h, dist2(x, z, 106.0, 30.0), 7.0, 33.5, 0.85); // high viewpoint
     h = flatten(h, dist2(x, z, 64.0, 112.0), 8.0, 14.0, 0.7); // south saddle approach
@@ -344,7 +343,9 @@ impl Terrain {
                 let h = terrain_height_m(seed, x, z);
                 let t = (h / TERRAIN_CELL_M).floor() as i32 - 1;
                 if !(0..=MAX_TERRAIN_CELL_Y).contains(&t) {
-                    return Err(DetailError::BudgetExceeded("terrain height out of cell range"));
+                    return Err(DetailError::BudgetExceeded(
+                        "terrain height out of cell range",
+                    ));
                 }
                 let idx = (xi * MAP_EDGE_CELLS + zi) as usize;
                 top[idx] = t;
@@ -985,7 +986,11 @@ const HABITAT_GROVE: &[&str] = &[
     "clustered_mushroom",
     "fan_frond",
 ];
-const HABITAT_SLOPE: &[&str] = &["clustered_mushroom", "rosette_groundcover", "funnel_mushroom"];
+const HABITAT_SLOPE: &[&str] = &[
+    "clustered_mushroom",
+    "rosette_groundcover",
+    "funnel_mushroom",
+];
 
 /// Habitat clusters attempted. Bounded, deterministic, and independent of how
 /// many succeed; the acceptance thresholds are checked on the finished scene.
@@ -1004,9 +1009,7 @@ struct Scatter {
 }
 
 fn route_clearance(route: &[[f32; 3]], x: f32, z: f32, radius: f32) -> bool {
-    route
-        .iter()
-        .any(|p| dist2(p[0], p[2], x, z) < radius)
+    route.iter().any(|p| dist2(p[0], p[2], x, z) < radius)
 }
 
 fn place_flora(
@@ -1058,8 +1061,8 @@ fn place_flora(
             continue;
         };
         let radius = 3.0 + unit(seed ^ 0x13, k, 3) * 5.0;
-        let plants = CLUSTER_MIN_PLANTS
-            + (hash2(seed ^ 0x14, k, 4) as usize % CLUSTER_PLANT_SPREAD);
+        let plants =
+            CLUSTER_MIN_PLANTS + (hash2(seed ^ 0x14, k, 4) as usize % CLUSTER_PLANT_SPREAD);
         for plant in 0..plants {
             let p = plant as i32;
             let u = unit(seed ^ 0x21, k, p);

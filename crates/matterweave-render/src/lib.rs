@@ -1045,6 +1045,7 @@ fn classify_present(
 
 pub struct Renderer {
     material_time: Option<f32>,
+    world_visible: bool,
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
@@ -1256,6 +1257,7 @@ impl Renderer {
         )?;
         Ok(Self {
             material_time: None,
+            world_visible: true,
             device,
             commands,
             swapchain: None,
@@ -1416,6 +1418,12 @@ impl Renderer {
                 .map_or(0, |scene| scene.allocated_bytes);
     }
 
+    /// Suspend world draws behind an opaque menu while retaining GPU resources.
+    /// HUD/presentation continue; no world or shadow draw is submitted while hidden.
+    pub fn set_world_visible(&mut self, visible: bool) {
+        self.world_visible = visible;
+    }
+
     /// Opt-in wetland material response. The phase wraps continuously for both
     /// ripple frequencies; legacy rendering keeps its original material response.
     pub fn set_wetland_material_time(&mut self, seconds: Option<f32>) -> Result<()> {
@@ -1446,7 +1454,9 @@ impl Renderer {
         hud: &Hud,
         lighting: &LightingSettings,
     ) -> FrameResult {
-        match self.draw(view_proj, eye, hud, lighting) {
+        let mut effective = *lighting;
+        effective.shadows &= self.world_visible;
+        match self.draw(view_proj, eye, hud, &effective) {
             Ok(result) => result,
             Err(e) => {
                 if e.contains("ERROR_OUT_OF_HOST_MEMORY")
@@ -1535,13 +1545,13 @@ impl Renderer {
             .values()
             .chain(self.legacy.iter())
             .chain(self.dynamic.iter())
-            .filter(|m| m.index_count > 0)
+            .filter(|m| self.world_visible && m.index_count > 0)
             .map(|m| m.bounds)
             .collect();
         // Shadow depth fitting must include the instanced scene bounds so
         // offscreen static casters stay inside the map.
         if let Some(scene) = &self.static_scene {
-            if scene.has_geometry {
+            if self.world_visible && scene.has_geometry {
                 bounds.push(scene.bounds);
             }
         }
@@ -1695,14 +1705,15 @@ impl Renderer {
             self.visible_chunks = self
                 .chunks
                 .values()
-                .filter(|mesh| mesh.index_count > 0 && frustum.intersects(mesh.bounds))
+                .filter(|mesh| {
+                    self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
+                })
                 .count();
-            let visible = self
-                .chunks
-                .values()
-                .filter(|mesh| mesh.index_count > 0 && frustum.intersects(mesh.bounds));
+            let visible = self.chunks.values().filter(|mesh| {
+                self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
+            });
             for mesh in self.legacy.iter().chain(visible).chain(self.dynamic.iter()) {
-                if mesh.index_count == 0 {
+                if !self.world_visible || mesh.index_count == 0 {
                     continue;
                 }
                 if let (Some(v), Some(i)) = (&mesh.vertices, &mesh.indices) {
@@ -1714,8 +1725,10 @@ impl Renderer {
             // Instanced static scene: one batch per prototype carrying all of
             // its instances; whole-batch frustum culling only, never applied
             // to the shadow pass above.
-            if let Some(scene) = &self.static_scene {
-                scene.record_batches(d, cmd, Some(&frustum));
+            if self.world_visible {
+                if let Some(scene) = &self.static_scene {
+                    scene.record_batches(d, cmd, Some(&frustum));
+                }
             }
             if hud_count > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.hud);

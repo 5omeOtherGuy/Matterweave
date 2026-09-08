@@ -10,6 +10,7 @@ pub struct Capture {
     attempt: u64,
     presented: u64,
     completions: metrics::GpuCompletionTracker,
+    last_submission: Option<(u64, u64)>,
 }
 impl Capture {
     pub fn new(directory: &Path) -> Self {
@@ -23,6 +24,7 @@ impl Capture {
             attempt: 0,
             presented: 0,
             completions: Default::default(),
+            last_submission: None,
         }
     }
     pub fn enabled(&self) -> bool {
@@ -47,10 +49,20 @@ impl Capture {
         if matches!(result, FrameResult::Presented) {
             self.presented += 1;
         }
-        let gpu = renderer
-            .gpu_timings()
-            .filter(|g| self.completions.accept(self.epoch, g.frame_id));
         let diagnostics = renderer.draw_diagnostics();
+        let submission = diagnostics.and_then(|d| d.submitted_frame_id)
+            .map(|id| (self.epoch, id));
+        // The renderer has one in-flight frame. Only join a completion to a
+        // submission actually recorded by this capture. Menus render while the
+        // wetland recorder is paused, including immediately before its first row.
+        let gpu = renderer.gpu_timings().filter(|g| {
+            let identity = (self.epoch, g.frame_id);
+            (self.last_submission == Some(identity) || submission == Some(identity))
+                && self.completions.accept(self.epoch, g.frame_id)
+        });
+        if submission.is_some() {
+            self.last_submission = submission;
+        }
         row.draw_attempt_id = self.attempt;
         row.renderer_epoch = self.epoch;
         row.presented_count = self.presented;

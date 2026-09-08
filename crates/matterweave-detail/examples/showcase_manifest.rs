@@ -143,7 +143,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::create_dir_all(&out_dir)?;
     let path = std::path::Path::new(&out_dir).join("manifest.json");
-    std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&document)?))?;
+    std::fs::write(
+        &path,
+        format!("{}\n", serde_json::to_string_pretty(&document)?),
+    )?;
     println!("wrote {}", path.display());
     println!("{}", serde_json::to_string_pretty(&document["counts"])?);
     println!("{}", serde_json::to_string_pretty(&document["cache"])?);
