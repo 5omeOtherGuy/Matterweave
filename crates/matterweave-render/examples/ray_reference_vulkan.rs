@@ -514,11 +514,28 @@ impl Session {
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                 .color_attachments(&color_refs)
                 .depth_stencil_attachment(&depth_ref)];
+            // Make attachment writes and final layout transitions visible to
+            // the following image-to-buffer copies, for both color and depth.
+            let dependencies = [vk::SubpassDependency::default()
+                .src_subpass(0)
+                .dst_subpass(vk::SUBPASS_EXTERNAL)
+                .src_stage_mask(
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                )
+                .src_access_mask(
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                )
+                .dst_stage_mask(vk::PipelineStageFlags::TRANSFER)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)];
             let pass = device
                 .create_render_pass(
                     &vk::RenderPassCreateInfo::default()
                         .attachments(&attachments)
-                        .subpasses(&subpasses),
+                        .subpasses(&subpasses)
+                        .dependencies(&dependencies),
                     None,
                 )
                 .map_err(err)?;
@@ -831,6 +848,19 @@ impl Session {
             self.depth_read.handle,
             &depth_copy,
         );
+        // Readback becomes host-visible before the queue-idle completion wait.
+        let readback = [vk::MemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::HOST_READ)];
+        device.cmd_pipeline_barrier(
+            self.buffer,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::HOST,
+            vk::DependencyFlags::empty(),
+            &readback,
+            &[],
+            &[],
+        );
         device.end_command_buffer(self.buffer).map_err(err)?;
         let buffers = [self.buffer];
         let submits = [vk::SubmitInfo::default().command_buffers(&buffers)];
@@ -866,6 +896,8 @@ impl Session {
 
     unsafe fn destroy(&mut self, gpu: &Gpu) {
         let device = &gpu.device;
+        device.free_command_buffers(gpu.pool, &[self.buffer]);
+        device.destroy_framebuffer(self.framebuffer, None);
         for buffer in [
             &self.uniform,
             &self.materials,
@@ -881,7 +913,6 @@ impl Session {
             device.destroy_image(attachment.image, None);
             device.free_memory(attachment.memory, None);
         }
-        device.destroy_framebuffer(self.framebuffer, None);
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_render_pass(self.pass, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
