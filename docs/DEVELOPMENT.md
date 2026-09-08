@@ -319,3 +319,22 @@ intensity/view changes, moving geometry with unchanged revisions, chunk replacem
 and eviction, static transforms, failed update retention, sun/camera/resolution
 changes, hidden frames and renderer recreation. It verifies GPU timing availability
 for actual depth passes versus reuse. CI runs it alongside the existing Vulkan checks.
+
+## Engine indirect-light check
+
+The opt-in test runs the actual Vulkan diffuse-light cache through off/on, moving
+sun, closed/open enclosure, stale-edit rejection and light invalidation phases.
+It uses a small disposable unit-voxel fixture and does not load a sample world.
+
+```sh
+cargo run -p matterweave-explorer -- --engine-check --save /tmp/unused.json
+cat /tmp/engine-check-report.txt
+```
+
+On a debuggable Android APK, write `indirect` into the application files directory
+as `engine-check.txt` with `adb shell run-as`, then launch the activity. The request
+is consumed once before the world chooser. Read `engine-check-report.txt` from
+that directory for phase observations and the terminal `PASS indirect` marker.
+Android phases retain120 presented frames each for external screenshots; desktop
+uses6. HOME releases the renderer and resume recreates it before republishing the
+cache. A successful build alone does not count as running this check.
