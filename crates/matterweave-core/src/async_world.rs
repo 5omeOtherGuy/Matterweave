@@ -536,7 +536,10 @@ mod tests {
         assert!(jobs.request_stream(&world, eye_a));
         let job_a = take_job(&mut jobs.shared.lock());
         assert!(matches!(job_a, Job::Stream(_)));
-        assert_eq!(jobs.shared.lock().stream_active.map(|(c, ..)| c), Some(center_a));
+        assert_eq!(
+            jobs.shared.lock().stream_active.map(|(c, ..)| c),
+            Some(center_a)
+        );
 
         // A different destination B is requested and queued while A runs.
         assert!(jobs.request_stream(&world, eye_b));
@@ -609,5 +612,36 @@ mod tests {
         let queue = jobs.shared.lock();
         assert_eq!(queue.generation, 1);
         assert!(!queue.shutdown);
+    }
+
+    #[test]
+    fn returning_to_buffered_window_retains_it_after_other_work_finishes() {
+        let mut world = streamed(8712, [0., 4., 0.]);
+        let mut jobs = AsyncWorld::manual();
+        let a = [120., 4., 0.];
+        let b = [-120., 4., 0.];
+        assert!(jobs.request_stream(&world, a));
+        let first = take_job(&mut jobs.shared.lock());
+        run_job(&jobs.shared, first);
+        assert!(jobs.request_stream(&world, b));
+        let second = take_job(&mut jobs.shared.lock());
+        assert!(!jobs.request_stream(&world, a));
+        run_job(&jobs.shared, second);
+        assert!(jobs.poll_stream(&mut world), "latest requested buffered window was lost");
+        assert_eq!(world.stream_center(), World::stream_center_of(a));
+    }
+
+    #[test]
+    fn retirement_reports_unavailable_before_the_worker_exits() {
+        let mut jobs = AsyncWorld::manual();
+        let (release, waiting) = std::sync::mpsc::channel();
+        jobs.worker = Some(std::thread::spawn(move || waiting.recv().unwrap()));
+        assert!(jobs.available());
+        jobs.shared.lock().generation = u64::MAX;
+        jobs.reset();
+        let available = jobs.available();
+        release.send(()).unwrap();
+        drop(jobs);
+        assert!(!available, "retired worker must expose synchronous fallback immediately");
     }
 }
