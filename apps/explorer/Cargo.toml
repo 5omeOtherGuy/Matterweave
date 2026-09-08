@@ -24,6 +24,10 @@ glam = "=0.30.9"
 pollster = "=0.4.0"
 log = "=0.4.28"
 
+# Thread CPU clock for opt-in capture only; already in the locked graph.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "=0.2.189"
+
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "=0.6.0", features = ["native-activity"] }
 android_logger = "=0.15.1"

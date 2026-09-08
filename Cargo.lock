@@ -940,6 +940,7 @@ dependencies = [
  "android-activity",
  "android_logger",
  "glam 0.30.9",
+ "libc",
  "log",
  "matterweave-core",
  "matterweave-physics",

@@ -12,7 +12,7 @@ pub use lighting::{LightingSettings, Sun};
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use shadow::Shadow;
-use std::{collections::BTreeMap, ffi::CStr, sync::Arc};
+use std::{collections::BTreeMap, ffi::CStr, sync::Arc, time::Instant};
 pub use timing::GpuTimings;
 use timing::TimestampQueries;
 use winit::window::Window;
@@ -33,6 +33,9 @@ pub enum FrameResult {
 type Result<T> = std::result::Result<T, String>;
 fn err(e: vk::Result) -> String {
     format!("Vulkan: {e:?}")
+}
+fn elapsed_ms(begin: Instant) -> f64 {
+    begin.elapsed().as_secs_f64() * 1000.
 }
 
 struct Instance {
@@ -934,12 +937,99 @@ impl Drop for Commands {
     }
 }
 
+/// Opt-in per-frame CPU-side diagnostics. These are wall-clock waits at the real
+/// API call boundaries, not GPU execution time, and never a presentation
+/// (scanout) timestamp. Absent values mean the boundary was not reached or
+/// diagnostics are disabled.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DrawDiagnostics {
+    /// GPU submission identity produced by this draw attempt, if it submitted.
+    /// Matches `GpuTimings::frame_id` for the same submission. A draw can submit
+    /// and still report `Retry` when the presentation request is out of date.
+    pub submitted_frame_id: Option<u64>,
+    /// Summed blocking fence waits inside the upload/retain calls made since
+    /// `begin_frame_diagnostics`, at their own call sites. These run before the
+    /// draw and are normally where the frame actually blocks.
+    pub upload_fence_wait_ms: Option<f64>,
+    /// Number of upload/retain fence waits summed above (0 when none ran).
+    pub upload_fence_waits: Option<u32>,
+    /// Blocking wait on the submission fence inside the draw itself. It is
+    /// usually already signalled by the upload waits above, so this is not the
+    /// frame's total fence wait.
+    pub render_fence_wait_ms: Option<f64>,
+    /// `vkAcquireNextImageKHR` call duration.
+    pub acquire_ms: Option<f64>,
+    /// `vkQueuePresentKHR` call duration: queueing the request, not scanout.
+    pub present_ms: Option<f64>,
+}
+
+/// Accumulates fence waits at call sites outside the draw. Enabled state is
+/// explicit: while disabled it never reads the clock and reports nothing, which
+/// keeps "no waits" (`Some(0)`) distinct from "not measured" (`None`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct WaitTally {
+    enabled: bool,
+    waits: u32,
+    total_ms: f64,
+}
+
+impl WaitTally {
+    fn reset(&mut self, enabled: bool) {
+        *self = Self {
+            enabled,
+            waits: 0,
+            total_ms: 0.,
+        };
+    }
+    fn timed_begin(&self) -> Option<Instant> {
+        self.enabled.then(Instant::now)
+    }
+    fn record(&mut self, begin: Option<Instant>) {
+        if let Some(begin) = begin {
+            self.waits += 1;
+            self.total_ms += elapsed_ms(begin);
+        }
+    }
+    fn total(&self) -> Option<f64> {
+        self.enabled.then_some(self.total_ms)
+    }
+    fn count(&self) -> Option<u32> {
+        self.enabled.then_some(self.waits)
+    }
+}
+
+/// Result of the presentation request, independent of the submission that
+/// preceded it. An out-of-date swapchain is not a successful presentation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PresentOutcome {
+    Presented { recreate: bool },
+    OutOfDate,
+    Failed(vk::Result),
+}
+
+fn classify_present(
+    result: std::result::Result<bool, vk::Result>,
+    suboptimal: bool,
+) -> PresentOutcome {
+    match result {
+        Ok(changed) => PresentOutcome::Presented {
+            recreate: changed || suboptimal,
+        },
+        Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => PresentOutcome::OutOfDate,
+        Err(e) => PresentOutcome::Failed(e),
+    }
+}
+
 pub struct Renderer {
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
     shadow: Shadow,
     timestamps: Option<TimestampQueries>,
+    diagnostics_enabled: bool,
+    diagnostics: DrawDiagnostics,
+    upload_waits: WaitTally,
+    submissions: u64,
     legacy: Option<GpuMesh>,
     chunks: BTreeMap<[i32; 3], GpuMesh>,
     dynamic: Option<GpuMesh>,
@@ -1135,6 +1225,10 @@ impl Renderer {
             swapchain: None,
             shadow,
             timestamps,
+            diagnostics_enabled: false,
+            diagnostics: DrawDiagnostics::default(),
+            upload_waits: WaitTally::default(),
+            submissions: 0,
             legacy: None,
             chunks: BTreeMap::new(),
             dynamic: None,
@@ -1160,7 +1254,9 @@ impl Renderer {
         if self.mesh_revision.is_some_and(|r| r > mesh.revision) {
             return Ok(());
         }
+        let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
+        self.upload_waits.record(wait);
         let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
         self.legacy = Some(replacement);
         self.chunks.clear();
@@ -1179,7 +1275,9 @@ impl Renderer {
         {
             return Ok(());
         }
+        let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
+        self.upload_waits.record(wait);
         let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
         self.chunks.insert(key, replacement);
         self.legacy = None;
@@ -1197,7 +1295,9 @@ impl Renderer {
     pub fn retain_chunks(&mut self, keys: &[[i32; 3]]) -> Result<()> {
         let keep: std::collections::BTreeSet<_> = keys.iter().copied().collect();
         if self.chunks.keys().any(|key| !keep.contains(key)) {
+            let wait = self.upload_waits.timed_begin();
             self.commands.wait()?;
+            self.upload_waits.record(wait);
             self.chunks.retain(|key, _| keep.contains(key));
             self.update_counters();
         }
@@ -1208,7 +1308,9 @@ impl Renderer {
     /// the frame fence; grows transactionally when geometry exceeds capacity.
     /// Revision is informational here: changing transforms may retain a revision.
     pub fn upload_dynamic(&mut self, mesh: &Mesh) -> Result<()> {
+        let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
+        self.upload_waits.record(wait);
         if let Some(dynamic) = &mut self.dynamic {
             if dynamic.rewrite(mesh)? {
                 return Ok(());
@@ -1273,6 +1375,33 @@ impl Renderer {
         self.timestamps.is_some()
     }
 
+    /// Enables per-frame CPU wait diagnostics. Off by default: normal operation
+    /// adds no clock readings beyond the pre-existing ones.
+    pub fn set_diagnostics_enabled(&mut self, enabled: bool) {
+        self.diagnostics_enabled = enabled;
+        if !enabled {
+            self.diagnostics = DrawDiagnostics::default();
+            self.upload_waits.reset(false);
+        }
+    }
+
+    /// Starts one frame's diagnostics. Callers must invoke this before the
+    /// frame's upload/retain calls so waits from an earlier frame cannot leak
+    /// into this row.
+    pub fn begin_frame_diagnostics(&mut self) {
+        self.diagnostics = DrawDiagnostics::default();
+        self.upload_waits.reset(self.diagnostics_enabled);
+    }
+
+    /// Diagnostics for the current frame; `None` while disabled.
+    pub fn draw_diagnostics(&self) -> Option<DrawDiagnostics> {
+        self.diagnostics_enabled.then(|| DrawDiagnostics {
+            upload_fence_wait_ms: self.upload_waits.total(),
+            upload_fence_waits: self.upload_waits.count(),
+            ..self.diagnostics
+        })
+    }
+
     /// Nonempty mesh draws submitted to the latest shadow pass, independent of camera culling.
     pub fn shadow_caster_meshes(&self) -> usize {
         self.shadow.caster_meshes
@@ -1285,10 +1414,21 @@ impl Renderer {
         hud: &Hud,
         lighting: &LightingSettings,
     ) -> Result<FrameResult> {
+        // Clear this draw's own fields; upload waits recorded since
+        // begin_frame_diagnostics belong to the same frame and are preserved.
+        self.diagnostics = DrawDiagnostics {
+            submitted_frame_id: None,
+            render_fence_wait_ms: None,
+            acquire_ms: None,
+            present_ms: None,
+            ..self.diagnostics
+        };
         if self.requested.width == 0 || self.requested.height == 0 {
             return Ok(FrameResult::Retry);
         }
+        let fence_begin = self.diagnostics_enabled.then(Instant::now);
         self.commands.wait()?;
+        self.diagnostics.render_fence_wait_ms = fence_begin.map(elapsed_ms);
         if let Some(timestamps) = &mut self.timestamps {
             timestamps.read_completed()?;
         }
@@ -1346,12 +1486,15 @@ impl Renderer {
         // binary semaphore is consumed by exactly one submit. The acquired image uniquely selects
         // its presentation semaphore. All render-pass/pipeline/buffer handles remain alive.
         unsafe {
-            let (index, suboptimal) = match s.api.acquire_next_image(
+            let acquire_begin = self.diagnostics_enabled.then(Instant::now);
+            let acquired = s.api.acquire_next_image(
                 s.raw,
                 u64::MAX,
                 self.commands.available,
                 vk::Fence::null(),
-            ) {
+            );
+            self.diagnostics.acquire_ms = acquire_begin.map(elapsed_ms);
+            let (index, suboptimal) = match acquired {
                 Ok(v) => v,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.recreate = true;
@@ -1486,21 +1629,33 @@ impl Renderer {
             d.reset_fences(&[self.commands.fence]).map_err(err)?;
             d.queue_submit(self.device.queue, &submit, self.commands.fence)
                 .map_err(err)?;
+            // One identity per accepted submission, shared with the timestamp
+            // queries, so a capture can join CPU and GPU records exactly.
+            self.submissions += 1;
+            self.diagnostics.submitted_frame_id = Some(self.submissions);
             if let Some(timestamps) = &mut self.timestamps {
                 timestamps.submitted(lighting.shadows, lighting.shadow_map_size);
             }
             let chains = [s.raw];
             let indices = [index];
-            match s.api.queue_present(
+            let present_begin = self.diagnostics_enabled.then(Instant::now);
+            let presented = s.api.queue_present(
                 self.device.queue,
                 &vk::PresentInfoKHR::default()
                     .wait_semaphores(&signals)
                     .swapchains(&chains)
                     .image_indices(&indices),
-            ) {
-                Ok(changed) => self.recreate = changed || suboptimal,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => self.recreate = true,
-                Err(e) => return Err(err(e)),
+            );
+            self.diagnostics.present_ms = present_begin.map(elapsed_ms);
+            match classify_present(presented, suboptimal) {
+                PresentOutcome::Presented { recreate } => self.recreate = recreate,
+                PresentOutcome::OutOfDate => {
+                    // The submission stands and its identity is kept; only the
+                    // presentation request failed, so this is not a presented frame.
+                    self.recreate = true;
+                    return Ok(FrameResult::Retry);
+                }
+                PresentOutcome::Failed(e) => return Err(err(e)),
             }
         }
         Ok(FrameResult::Presented)
@@ -1512,5 +1667,91 @@ impl Drop for Renderer {
         unsafe {
             let _ = self.device.raw.device_wait_idle();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_present, PresentOutcome, WaitTally};
+    use ash::vk;
+    use std::time::Instant;
+
+    #[test]
+    fn disabled_wait_tally_takes_no_clock_and_reports_nothing() {
+        let mut tally = WaitTally::default();
+        tally.reset(false);
+        let begin = tally.timed_begin();
+        assert!(begin.is_none(), "a disabled tally must not read the clock");
+        tally.record(begin);
+        assert_eq!(tally.total(), None);
+        assert_eq!(tally.count(), None);
+    }
+
+    #[test]
+    fn enabled_wait_tally_distinguishes_zero_one_and_many_waits() {
+        let mut tally = WaitTally::default();
+        tally.reset(true);
+        // No wait happened: an explicit zero, not a missing measurement.
+        assert_eq!(tally.total(), Some(0.));
+        assert_eq!(tally.count(), Some(0));
+        tally.record(Some(Instant::now()));
+        assert_eq!(tally.count(), Some(1));
+        let after_one = tally.total().unwrap();
+        tally.record(Some(Instant::now()));
+        tally.record(Some(Instant::now()));
+        assert_eq!(tally.count(), Some(3), "every wait call site is counted");
+        assert!(
+            tally.total().unwrap() >= after_one,
+            "waits accumulate rather than replace"
+        );
+    }
+
+    #[test]
+    fn resetting_a_tally_drops_waits_from_the_previous_attempt() {
+        let mut tally = WaitTally::default();
+        tally.reset(true);
+        tally.record(Some(Instant::now()));
+        tally.reset(true);
+        assert_eq!(tally.count(), Some(0), "prior waits must not leak forward");
+        assert_eq!(tally.total(), Some(0.));
+        tally.record(Some(Instant::now()));
+        tally.reset(false);
+        assert_eq!(tally.count(), None);
+        assert_eq!(tally.total(), None);
+    }
+
+    #[test]
+    fn present_results_map_to_honest_frame_outcomes() {
+        assert_eq!(
+            classify_present(Ok(false), false),
+            PresentOutcome::Presented { recreate: false }
+        );
+        // A suboptimal swapchain still presented; it only schedules recreation.
+        assert_eq!(
+            classify_present(Ok(false), true),
+            PresentOutcome::Presented { recreate: true }
+        );
+        assert_eq!(
+            classify_present(Ok(true), false),
+            PresentOutcome::Presented { recreate: true }
+        );
+        // Out of date is not a successful presentation: the submission happened,
+        // the presentation request did not succeed.
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_OUT_OF_DATE_KHR), false),
+            PresentOutcome::OutOfDate
+        );
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_OUT_OF_DATE_KHR), true),
+            PresentOutcome::OutOfDate
+        );
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_DEVICE_LOST), false),
+            PresentOutcome::Failed(vk::Result::ERROR_DEVICE_LOST)
+        );
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY), false),
+            PresentOutcome::Failed(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY)
+        );
     }
 }

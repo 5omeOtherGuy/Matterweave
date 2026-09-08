@@ -38,6 +38,17 @@ pub struct PhysicsSnapshot {
     pub eye: [f32; 3],
     pub bodies: Vec<BodySnapshot>,
 }
+/// Voxel-body counts at one instant. `total == active + sleeping + not_simulated`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BodyActivity {
+    pub total: usize,
+    /// Enabled and awake in the last step.
+    pub active: usize,
+    /// Enabled but asleep: retained state without solver work.
+    pub sleeping: usize,
+    /// Disabled by residency/distance policy: not stepped at all.
+    pub not_simulated: usize,
+}
 struct VoxelBody {
     handle: RigidBodyHandle,
     dimensions: [u8; 3],
@@ -165,6 +176,27 @@ impl Physics {
     }
     pub fn body_count(&self) -> usize {
         self.objects.len()
+    }
+    /// Simulation work counters for the voxel bodies only; the kinematic
+    /// character is never counted. `not_simulated` covers every body the
+    /// previous fixed step disabled: outside resident columns, beyond the
+    /// distance limit, or clamped at the below-world floor.
+    pub fn body_activity(&self) -> BodyActivity {
+        let mut activity = BodyActivity {
+            total: self.objects.len(),
+            ..BodyActivity::default()
+        };
+        for object in &self.objects {
+            let body = &self.bodies[object.handle];
+            if !body.is_enabled() {
+                activity.not_simulated += 1;
+            } else if body.is_sleeping() {
+                activity.sleeping += 1;
+            } else {
+                activity.active += 1;
+            }
+        }
+        activity
     }
     /// Rejects nonfinite/out-of-range positions and existing solid colliders.
     /// Call sync_world before teleporting into newly loaded terrain.
@@ -885,5 +917,137 @@ fn append_box(mesh: &mut Mesh, pose: Pose, dimensions: [u8; 3], material: u8) {
         }
         mesh.indices
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+
+    fn floor() -> World {
+        let mut world = World::new(5);
+        for x in -32..32 {
+            for z in -32..32 {
+                world.set([x, 0, z], 3);
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn body_activity_counts_voxel_bodies_and_excludes_the_character() {
+        let world = floor();
+        let mut physics = Physics::new(&world);
+        assert_eq!(physics.body_activity(), BodyActivity::default());
+        assert!(physics
+            .restore(&PhysicsSnapshot {
+                version: 1,
+                eye: [0.5, 4.0, 0.5],
+                bodies: vec![
+                    BodySnapshot {
+                        position: [0.5, 3.0, 0.5],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                        velocity: [0.0; 3],
+                        angular_velocity: [0.0; 3],
+                        dimensions: [2; 3],
+                        material: 8,
+                    },
+                    BodySnapshot {
+                        position: [2.5, 3.0, 0.5],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                        velocity: [0.0; 3],
+                        angular_velocity: [0.0; 3],
+                        dimensions: [2; 3],
+                        material: 8,
+                    },
+                ],
+            })
+            .is_ok());
+        let activity = physics.body_activity();
+        assert_eq!(
+            activity,
+            BodyActivity {
+                total: 2,
+                active: 2,
+                sleeping: 0,
+                not_simulated: 0,
+            },
+            "restored bodies start awake and simulated; the character is not counted"
+        );
+        assert_eq!(
+            activity.active + activity.sleeping + activity.not_simulated,
+            activity.total,
+            "every body is counted exactly once"
+        );
+        assert_eq!(physics.body_count(), activity.total);
+    }
+
+    #[test]
+    fn settled_bodies_become_sleeping_and_stepping_reports_fixed_steps() {
+        let world = floor();
+        let mut physics = Physics::new(&world);
+        assert!(physics.teleport([0.5, 4.0, 0.5]));
+        assert!(physics
+            .restore(&PhysicsSnapshot {
+                version: 1,
+                eye: [0.5, 4.0, 0.5],
+                bodies: vec![BodySnapshot {
+                    position: [3.5, 1.5, 3.5],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    velocity: [0.0; 3],
+                    angular_velocity: [0.0; 3],
+                    dimensions: [2; 3],
+                    material: 8,
+                }],
+            })
+            .is_ok());
+        assert_eq!(
+            physics.body_activity().active,
+            1,
+            "a dropped body is active"
+        );
+        let mut steps = 0;
+        for _ in 0..600 {
+            steps += physics.step_objects(FIXED_DT);
+        }
+        assert!(steps >= 500, "fixed steps actually executed: {steps}");
+        let activity = physics.body_activity();
+        assert_eq!(activity.total, 1);
+        assert_eq!(
+            activity.sleeping, 1,
+            "a settled body must be reported as sleeping, not active work"
+        );
+        assert_eq!(activity.active, 0);
+    }
+
+    #[test]
+    fn bodies_outside_resident_columns_are_reported_as_not_simulated() {
+        let mut world = floor();
+        world.enable_streaming();
+        world.stream_around([0.0, 4.0, 0.0]);
+        let mut physics = Physics::new(&world);
+        physics.sync_world(&world);
+        assert!(physics
+            .restore(&PhysicsSnapshot {
+                version: 1,
+                eye: [0.5, 4.0, 0.5],
+                bodies: vec![BodySnapshot {
+                    position: [250.5, 2.0, 250.5],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    velocity: [0.0; 3],
+                    angular_velocity: [0.0; 3],
+                    dimensions: [2; 3],
+                    material: 8,
+                }],
+            })
+            .is_ok());
+        physics.step_objects(FIXED_DT);
+        let activity = physics.body_activity();
+        assert_eq!(activity.total, 1);
+        assert_eq!(
+            activity.not_simulated, 1,
+            "a distant unsupported body is not simulated work"
+        );
+        assert_eq!(activity.active + activity.sleeping, 0);
     }
 }
