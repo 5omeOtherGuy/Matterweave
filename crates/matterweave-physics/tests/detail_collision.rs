@@ -644,3 +644,41 @@ fn narrow_clearance_and_partition_seams_preserve_contacts() {
         assert!(physics.grounded(), "partition cannot remove support x={x}");
     }
 }
+
+#[test]
+fn character_walks_quarter_metre_stairs_but_stops_at_a_tall_riser() {
+    let mut scene = scene_with_floor();
+    for step in 0..4 {
+        let id = format!("stair-{step}");
+        scene
+            .add_prototype(volume(&id, [4, step + 1, 16], material::BANK_STONE))
+            .unwrap();
+        scene
+            .place(
+                &id,
+                &id,
+                Transform::new([2. + step as f32, TILE, 0.], Yaw::Deg0).unwrap(),
+            )
+            .unwrap();
+    }
+    scene
+        .add_prototype(volume("riser", [4, 8, 16], material::BANK_STONE))
+        .unwrap();
+    scene
+        .place(
+            "riser",
+            "riser",
+            Transform::new([6., TILE, 0.], Yaw::Deg0).unwrap(),
+        )
+        .unwrap();
+    let mut physics = physics_on(&scene);
+    assert!(physics.teleport([1., 2., 2.]));
+    settle(&mut physics, 120);
+    let eye = walk(&mut physics, [2., 0., 0.], 240);
+    assert!(eye[0] > 5.5, "quarter-metre steps block walking: {eye:?}");
+    assert!(eye[0] < 6., "character climbed a one-metre wall: {eye:?}");
+    assert!(
+        (eye[1] - 2.75).abs() < 0.1,
+        "character lost stair support: {eye:?}"
+    );
+}
