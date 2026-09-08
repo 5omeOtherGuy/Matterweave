@@ -56,10 +56,18 @@ fn perspective_depth_is_view_forward_not_euclidean_distance() {
     // Two instances at the SAME forward depth (z = 80) but different lateral
     // offsets, so their Euclidean eye distances differ substantially.
     scene
-        .place("ahead", "block", Transform::new([0.0, 0.0, 80.0], Yaw::Deg0).unwrap())
+        .place(
+            "ahead",
+            "block",
+            Transform::new([0.0, 0.0, 80.0], Yaw::Deg0).unwrap(),
+        )
         .unwrap();
     scene
-        .place("beside", "block", Transform::new([40.0, 0.0, 80.0], Yaw::Deg0).unwrap())
+        .place(
+            "beside",
+            "block",
+            Transform::new([40.0, 0.0, 80.0], Yaw::Deg0).unwrap(),
+        )
         .unwrap();
     let camera = eye_forward([0.0, 0.0, 0.0], FOV60);
     let selected = scene.select_lods(&camera, &config).unwrap();
@@ -68,7 +76,11 @@ fn perspective_depth_is_view_forward_not_euclidean_distance() {
 
     // Same forward depth => same reported depth and same selected level. Euclidean
     // distance would report ~89 m for `beside` and coarsen it more aggressively.
-    assert!((ahead.depth_m - 80.0).abs() < 1.0, "ahead depth {}", ahead.depth_m);
+    assert!(
+        (ahead.depth_m - 80.0).abs() < 1.0,
+        "ahead depth {}",
+        ahead.depth_m
+    );
     assert!(
         (beside.depth_m - 80.0).abs() < 1.0,
         "off-axis depth must be forward depth, got {}",
@@ -85,17 +97,30 @@ fn narrowing_field_of_view_zooms_in_and_refines() {
         .add_prototype(solid_block("block", 8, material::BANK_STONE))
         .unwrap();
     scene
-        .place("b", "block", Transform::new([0.0, 0.0, 200.0], Yaw::Deg0).unwrap())
+        .place(
+            "b",
+            "block",
+            Transform::new([0.0, 0.0, 200.0], Yaw::Deg0).unwrap(),
+        )
         .unwrap();
     // Wide FOV: the distant block is tiny -> coarse.
-    let wide = scene.select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &config).unwrap()[0].lod;
+    let wide = scene
+        .select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &config)
+        .unwrap()[0]
+        .lod;
     // Narrow FOV (telephoto zoom) magnifies the same block -> finer.
     let narrow = scene
-        .select_lods(&eye_forward([0.0, 0.0, 0.0], std::f32::consts::PI / 9.0), &config)
+        .select_lods(
+            &eye_forward([0.0, 0.0, 0.0], std::f32::consts::PI / 9.0),
+            &config,
+        )
         .unwrap()[0]
         .lod;
     assert_eq!(wide, Lod::Quarter);
-    assert!(narrow < wide, "narrower fov must refine: {narrow:?} vs {wide:?}");
+    assert!(
+        narrow < wide,
+        "narrower fov must refine: {narrow:?} vs {wide:?}"
+    );
 }
 
 #[test]
@@ -109,9 +134,16 @@ fn deep_pinhole_opening_is_not_guaranteed_preserved_by_the_global_bias() {
         .add_prototype(solid_with_deep_pinhole("pin", material::BANK_STONE))
         .unwrap();
     scene
-        .place("p", "pin", Transform::new([0.0, 0.0, 400.0], Yaw::Deg0).unwrap())
+        .place(
+            "p",
+            "pin",
+            Transform::new([0.0, 0.0, 400.0], Yaw::Deg0).unwrap(),
+        )
         .unwrap();
-    let far = scene.select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &config).unwrap()[0].lod;
+    let far = scene
+        .select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &config)
+        .unwrap()[0]
+        .lod;
     assert!(
         far > Lod::Source,
         "documented limitation: deep pinhole coarsens under the global bias"
@@ -121,6 +153,9 @@ fn deep_pinhole_opening_is_not_guaranteed_preserved_by_the_global_bias() {
         max_lod: Lod::Source,
         ..config
     };
-    let held = scene.select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &capped).unwrap()[0].lod;
+    let held = scene
+        .select_lods(&eye_forward([0.0, 0.0, 0.0], FOV60), &capped)
+        .unwrap()[0]
+        .lod;
     assert_eq!(held, Lod::Source);
 }

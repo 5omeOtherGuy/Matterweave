@@ -54,9 +54,21 @@ fn main() -> Result<()> {
     scene.add_prototype(solid_block("block", 8, material::BANK_STONE)?)?;
     scene.add_prototype(thin_sheet("sheet", material::MOSS_TURF)?)?;
     scene.place("block_a", "block", Transform::identity())?;
-    scene.place("block_b", "block", Transform::new([4.0, 0.0, 0.0], Yaw::Deg90)?)?;
-    scene.place("sheet_a", "sheet", Transform::new([8.0, 0.0, 0.0], Yaw::Deg0)?)?;
-    scene.place("sheet_b", "sheet", Transform::new([12.0, 0.0, 0.0], Yaw::Deg180)?)?;
+    scene.place(
+        "block_b",
+        "block",
+        Transform::new([4.0, 0.0, 0.0], Yaw::Deg90)?,
+    )?;
+    scene.place(
+        "sheet_a",
+        "sheet",
+        Transform::new([8.0, 0.0, 0.0], Yaw::Deg0)?,
+    )?;
+    scene.place(
+        "sheet_b",
+        "sheet",
+        Transform::new([12.0, 0.0, 0.0], Yaw::Deg180)?,
+    )?;
 
     let config = LodConfig::default();
     let counts = scene.counts();
@@ -115,10 +127,16 @@ fn main() -> Result<()> {
         let now = scene.counts();
         assert_eq!(now.source_bytes, counts.source_bytes);
         assert_eq!(now.unique_stored_cells, counts.unique_stored_cells);
-        assert_eq!(now.expanded_collision_cells, counts.expanded_collision_cells);
+        assert_eq!(
+            now.expanded_collision_cells,
+            counts.expanded_collision_cells
+        );
     }
 
-    out.push_str(&format!("manifest_fnv1a=0x{:016x}\n", fnv1a(out.as_bytes())));
+    out.push_str(&format!(
+        "manifest_fnv1a=0x{:016x}\n",
+        fnv1a(out.as_bytes())
+    ));
     print!("{out}");
     Ok(())
 }

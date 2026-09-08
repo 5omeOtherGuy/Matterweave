@@ -104,7 +104,8 @@ impl Camera {
     }
 
     pub fn validate(&self) -> Result<()> {
-        let bound = crate::scene::MAX_SCENE_TRANSLATION_M + (MAX_CELL_COORD + 1) as f32 * MAX_SCALE_M;
+        let bound =
+            crate::scene::MAX_SCENE_TRANSLATION_M + (MAX_CELL_COORD + 1) as f32 * MAX_SCALE_M;
         let eye_ok = self.eye_m.iter().all(|v| v.is_finite() && v.abs() <= bound);
         let forward_finite = self.forward_m.iter().all(|v| v.is_finite());
         let forward_ok = forward_finite && self.forward_norm() >= 1e-4;
