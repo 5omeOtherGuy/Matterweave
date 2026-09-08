@@ -121,3 +121,37 @@ cargo test -p matterweave-detail --test showcase
 - Generation cost grew: corridor profiles add ~3,150 base-height evaluations per
   seed plus an O(n²) relaxation over ~3,200 samples, both once per seed.
 - The 19 detail tests were last exercised before the final source revision.
+
+## Lead correction after worker handoff (2026-09-08)
+
+Worker commit `039ad6f` was retained as a failed experiment, not integrated alone.
+The lead completed the source correction against the accepted 0.30m Rapier step:
+
+- Admit the source classifier's0.85 quantized slope; gentle diagonal25cm ramps can
+  report0.707. Require shoulder clearance rather than assigning an ineffective cost.
+- Flood-fill actual walking edges from the entrance before snapping anchors so an
+  isolated terrace cannot be selected. Missing as well as disconnected anchors
+  now contribute to a hard generation error.
+- Admit solid cave roofs as walking support. The previous overhang exclusion
+  isolated six western anchors despite their real authoritative top cells.
+- Keep the first two authored circuits covering the landmarks; the four-circuit
+  trial took408.58 simulation seconds. A subsequent257.58-second trial silently
+  missed anchors and was rejected. With all retained anchors resolved, both final
+  routes pass: ground632waypoints/197.46667simulated seconds, elevated37/11.35.
+- Fix the authored corridor elevation profile to the canonical seed. Terrain and
+  flora still vary with seed, while path grades behave like other authored
+  landmarks. This also replaces a per-column locked seed cache with one immutable
+  profile. Both canonical and adjacent-seed source gates pass.
+- Route tests now permit the declared <=0.5m wading while retaining physical
+  footing/clearance checks. Water coherence samples are denser (17/19cell strides
+  instead of29/31), retaining the same minimum sampled water count. No content or
+  mesh budget threshold was lowered. Removed dead experimental penalty branches.
+
+Executed: all19 showcase source tests PASS (`lead-authored-profile-gates.log`),
+actual two-route traversal PASS (`lead-final-walk.log`,29.15host seconds), and
+strict detail/all-target Clippy PASS (`lead-final-clippy.log`). An initial command
+used the nonexistent test target `showcase_walk`; it was corrected to the actual
+`showcase_traversal` target. Host timings are not phone performance evidence.
+
+Independent review, integration rerun, source manifest, Android build and device
+route/visual acceptance are owned by the lead and remain pending at this commit.

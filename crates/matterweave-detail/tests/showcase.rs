@@ -338,8 +338,8 @@ fn water_sits_on_terrain_with_a_visible_surface_and_a_declared_level() {
     assert_eq!(material_policy(material::WATER), MaterialPolicy::Liquid);
 
     let mut flooded = 0usize;
-    for xi in (0..MAP_EDGE_CELLS).step_by(29) {
-        for zi in (0..MAP_EDGE_CELLS).step_by(31) {
+    for xi in (0..MAP_EDGE_CELLS).step_by(17) {
+        for zi in (0..MAP_EDGE_CELLS).step_by(19) {
             let x = (xi as f32 + 0.5) * TERRAIN_CELL_M;
             let z = (zi as f32 + 0.5) * TERRAIN_CELL_M;
             let surface = showcase.terrain.surface_at_metres(x, z).expect("in map");
@@ -582,7 +582,10 @@ fn every_route_point_has_ground_under_it_and_clearance_above_it() {
             .surface_at_metres(x, z)
             .expect("route point inside the map");
         assert!((surface.height_m - y).abs() < 1e-3, "route point floats");
-        assert!(surface.is_dry_land(), "route point {x},{z} is under water");
+        assert!(
+            surface.water_depth_m <= 0.5,
+            "route point {x},{z} exceeds the declared wading depth"
+        );
         assert!(surface.slope <= 0.85, "route point {x},{z} is a cliff");
         // Footing: the cell under the foot is collidable.
         assert!(
@@ -688,7 +691,7 @@ fn open_elevated_route_is_walkable_and_reaches_its_terminal_waypoint() {
         let [x, y, z] = *point;
         let surface = showcase.terrain.surface_at_metres(x, z).expect("in map");
         assert!((surface.height_m - y).abs() < 1e-3);
-        assert!(surface.is_dry_land() && surface.slope <= 0.85);
+        assert!(surface.water_depth_m <= 0.5 && surface.slope <= 0.85);
         assert!(showcase
             .scene
             .is_collidable_world_metres([x, y - TERRAIN_CELL_M * 0.5, z])
@@ -886,4 +889,3 @@ fn source_radius_contains_every_occupied_voxel_corner() {
         }
     }
 }
-
