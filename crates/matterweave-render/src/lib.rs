@@ -2,6 +2,8 @@
 mod frustum;
 mod hud;
 mod lighting;
+#[cfg(test)]
+mod indirect_tests;
 mod shadow;
 mod static_scene;
 mod timing;
