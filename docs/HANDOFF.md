@@ -8,7 +8,10 @@ Do not spend the session repeating the initial requirements interview or produci
 
 ## Latest owner direction — 2026-09-08
 
-Finish the engine and focus only on advancing actual engine systems. The wetland
+Finish the engine and focus only on advancing actual engine systems. Make extensive
+use of available models for parallel implementation and review; the owner has
+explicitly overridden any conservative-delegation guidance. Retain independent
+ownership, integration and verification. The wetland
 is an existing validation workload. Further demo-save compatibility, content
 refinement or gameplay UI polish must not precede renderer, physics, streaming,
 lighting and efficiency progress. This direction supersedes the older showcase

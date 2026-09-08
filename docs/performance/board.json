@@ -367,6 +367,27 @@
       "log": "docs/performance/shadow-reuse.md",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-01",
       "remaining": "matched heat/energy comparison; engine M2-M6 remain open"
+    },
+    "engine-indirect-light": {
+      "owner": "astra-worker replacing rate-limited Opus",
+      "state": "running",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-indirect-light",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/indirect-astra",
+      "base": "0c68565"
+    },
+    "engine-auto-lod": {
+      "owner": "Opus rate-limited; Hy4 math review active",
+      "state": "review-active-implementation-next",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-auto-lod",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/lod-math-hy4",
+      "base": "0c68565"
+    },
+    "engine-streaming-cow": {
+      "owner": "glm-high",
+      "state": "running",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-streaming-cow",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/streaming-glm",
+      "base": "0c68565"
     }
   },
   "capacity": {
@@ -375,5 +396,6 @@
   "provider_blockers": {
     "muse": "Save-validation FreeUsageLimitError HTTP429; no further retry this window. Earlier route/replay reviews completed.",
     "opus": "HTTP429 five-hour allowance exhausted during save-validation; reset1788866400, no retry before reset. Partial source preserved and rerouted to Muse."
-  }
+  },
+  "orchestration": "Owner explicitly requires extensive available-model delegation. Opus5 five-hour window rejected at100%, weekly23%; reset2026-09-08T11:20:00Z. Retry after reset while other routes work. Muse429 and Gemini timeout recorded. Hy4 single tool-free bounded consultation uses existing OpenRouter credit; no purchase/top-up."
 }
