@@ -1950,3 +1950,16 @@ fn combined_world(fixture: &Fixture, edited: bool) -> World {
     }
     world
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonfinite_depth_cannot_pass_image_comparison() {
+        let a = Images { color: vec![[0; 4]; PIXELS], depth: vec![1.0; PIXELS] };
+        let mut b = Images { color: vec![[0; 4]; PIXELS], depth: vec![1.0; PIXELS] };
+        b.depth[17] = f32::NAN;
+        assert_eq!(compare(&a, &b, &vec![false; PIXELS]).mismatched, 1);
+    }
+}
