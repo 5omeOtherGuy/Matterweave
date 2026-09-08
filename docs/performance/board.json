@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; indirect/lifecycle checks passed and app stopped; native collision check next.",
+  "phone_owner": "Sole lead; preparing Android detail-check at1abe19b. No other phone owner.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -426,20 +426,22 @@
       "acceptance": "Print-only translation probes no divergence; no source correction accepted"
     },
     "engine-detail-native": {
-      "owner": "Pi Opus4.8 high",
-      "state": "running",
+      "owner": "Opus4.8 high + Astra medium + lead",
+      "state": "integrated-host-verified",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-detail-native",
-      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/detail-native-opus48",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/detail-native-astra",
       "base": "a4d7ba0",
       "paths": [
         "apps/explorer/src/detail_check.rs",
         "apps/explorer/src/lib.rs entry wiring",
         "docs/performance/detail-native-check.md"
-      ]
+      ],
+      "artifact": "1abe19b",
+      "acceptance": "9-phase native Vulkan PASS; Android pending"
     },
     "engine-detail-numeric": {
       "owner": "Pi GLM5.3 Flash high",
-      "state": "running",
+      "state": "integrated-host-verified",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-detail-numeric",
       "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/detail-numeric-glm",
       "base": "a4d7ba0",
@@ -447,11 +449,13 @@
         "crates/matterweave-detail/src/select.rs",
         "crates/matterweave-detail/tests/lod_numeric.rs",
         "docs/performance/detail-numeric.md"
-      ]
+      ],
+      "artifact": "11795dd",
+      "acceptance": "GLM partial corrected by lead;103 detail tests pass"
     },
     "engine-stream-cancel": {
       "owner": "Pi Opus4.8 high",
-      "state": "running",
+      "state": "integrated-host-verified",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-stream-cancel",
       "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/stream-cancel-opus48",
       "base": "a4d7ba0",
@@ -459,15 +463,30 @@
         "crates/matterweave-core/src/async_world.rs",
         "core tests",
         "docs/performance/stream-cancellation.md"
-      ]
+      ],
+      "artifact": "02fc5d3",
+      "acceptance": "Opus and lead reversal/reset corrections;48 core tests pass"
+    },
+    "engine-async-indirect": {
+      "owner": "Pi GLM5.3 Flash high",
+      "state": "running",
+      "base": "a35b14e",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-async-indirect",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/async-indirect-glm",
+      "paths": [
+        "crates/matterweave-render/src/async_indirect.rs",
+        "render minimal export and related tests",
+        "docs/performance/async-indirect.md"
+      ],
+      "acceptance": "Background CPU preparation, bounded latest-wins queue, source/light publication validation; lead owns GPU/Android integration"
     }
   },
   "capacity": {
     "policy": "One lead; bounded independent Pi workers as useful. One phone owner; serialize heavy builds. Prior two-lead quota superseded by owner."
   },
   "provider_blockers": {
-    "muse": "Save-validation FreeUsageLimitError HTTP429; no further retry this window. Earlier route/replay reviews completed.",
-    "opus": "Reset passed; both Opus4.8/high workers executing after2026-09-08T11:20Z. Earlier429 attempts preserved."
+    "muse": "Current-window FreeUsageLimitError HTTP429 in instance review; no accepted findings.",
+    "opus": "Five-hour allowance100% exhausted; next reset2026-09-08T16:20Z; no retry before reset."
   },
   "orchestration": "Extensive model delegation per owner. Current Opus route4.8/high explicitly authorized. Hy4 high240s and resumed low120s timed out without final findings; neither accepted as review. GLM COW timed out; lead corrected allocation tests and redundant-override copies. Muse429 and Gemini timeout remain recorded."
 }

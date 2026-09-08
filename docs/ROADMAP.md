@@ -37,8 +37,9 @@ showcase UI/content refinement are not gates ahead of M2–M5 engine progress.
 The unintegrated frame-cap experiment requires reassessment as engine pacing work.
 
 Engine-systems follow-up: source-version-checked collision preparation and shared
-chunk snapshots are host-tested on the integration branch. Automatic detail,
-background collision publication remain under implementation/review. The first
+chunk snapshots are host-tested on the integration branch. Automatic detail selection and instance-only updates now pass a9-phase native
+Vulkan gate; background collision preparation/publication passes a direct native
+Android floor creation/removal gate. Production frame-loop scheduling remains open. The first
 diffuse indirect reference passes Android functional/lifecycle checks; its current
 39–45ms full preparation/upload phases still need scheduling. These increments
 do not close M3/M4 acceptance.
