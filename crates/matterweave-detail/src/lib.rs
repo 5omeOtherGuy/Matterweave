@@ -26,6 +26,8 @@
 //!   to hold the current fixtures on a desktop host. They are not a claim about
 //!   phone feasibility.
 
+mod bracket;
+pub use bracket::bracket_fungus;
 mod fixtures;
 mod flora;
 mod scene;
