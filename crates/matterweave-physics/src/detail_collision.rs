@@ -42,7 +42,9 @@
 //! `[c * scale, (c + 1) * scale]` in prototype-local metres.
 
 use crate::Physics;
-use matterweave_detail::{material_policy, DetailScene, DetailVolume, MaterialPolicy, Yaw};
+use matterweave_detail::{
+    material_policy, DetailScene, DetailVolume, MaterialPolicy, SceneVersion, Yaw,
+};
 use rapier3d::prelude::*;
 use std::collections::BTreeMap;
 
@@ -291,18 +293,27 @@ fn greedy_boxes(
     Ok(())
 }
 
-impl Physics {
-    /// Replaces *all* static detail collision with the colliders derived from
-    /// `scene`. Call at load time or after an authoring edit; never per frame.
-    ///
-    /// An empty scene clears detail collision. On `Err` nothing changed: the
-    /// previously published colliders and every live body are preserved, so an
-    /// invalid or over-budget update fails loudly instead of quietly dropping
-    /// walls. Bodies overlapping the changed region are woken.
-    pub fn replace_detail_scene(
-        &mut self,
-        scene: &DetailScene,
-    ) -> Result<DetailCollisionStats, String> {
+/// Fully prepared collision derived from one immutable authoritative scene state.
+/// Backend shapes stay private. This value can be built on a worker thread and
+/// moved to the simulation owner; preparation never mutates a live Physics world.
+/// Existing collider/cell/box/scratch limits apply unchanged.
+pub struct PreparedDetailCollision {
+    version: SceneVersion,
+    pending: Vec<(Pose, SharedShape)>,
+    stats: DetailCollisionStats,
+}
+impl PreparedDetailCollision {
+    pub fn stats(&self) -> DetailCollisionStats {
+        self.stats
+    }
+
+    /// Whether the authoritative state is still the one used for preparation.
+    /// Publication checks again, so edits between polling and committing are safe.
+    pub fn is_current(&self, scene: &DetailScene) -> bool {
+        self.version == scene.source_version()
+    }
+
+    pub fn build(scene: &DetailScene) -> Result<Self, String> {
         let counts = scene.counts();
         // Instance count alone is never a rejection: liquid and decorative
         // instances produce no collider, so only collidable instances are
@@ -356,6 +367,51 @@ impl Physics {
                 shape.shape.clone(),
             ));
         }
+        let stats = DetailCollisionStats {
+            prototypes: counts.prototypes,
+            collidable_prototypes: prepared.len(),
+            instances: counts.instances,
+            static_colliders: pending.len(),
+            shared_shapes: prepared.len(),
+            source_collision_cells,
+            expanded_collision_cells,
+            merged_boxes,
+            woken_bodies: 0,
+        };
+        Ok(Self {
+            version: scene.source_version(),
+            pending,
+            stats,
+        })
+    }
+}
+
+impl Physics {
+    /// Synchronous convenience path. Preparation is isolated and publication is
+    /// version checked, exactly as for a worker-built PreparedDetailCollision.
+    pub fn replace_detail_scene(
+        &mut self,
+        scene: &DetailScene,
+    ) -> Result<DetailCollisionStats, String> {
+        let prepared = PreparedDetailCollision::build(scene)?;
+        self.publish_detail_scene(scene, prepared)
+    }
+
+    /// Publish prepared shapes only if their source is still current. Rejection
+    /// preserves live colliders and bodies. The simulation owner must serialize
+    /// this call with physics stepping. Shape construction is already complete;
+    /// insertion/removal and waking overlapping bodies still run on this thread.
+    pub fn publish_detail_scene(
+        &mut self,
+        scene: &DetailScene,
+        prepared: PreparedDetailCollision,
+    ) -> Result<DetailCollisionStats, String> {
+        if !prepared.is_current(scene) {
+            return Err("prepared detail collision source changed before publication".into());
+        }
+        let PreparedDetailCollision {
+            pending, mut stats, ..
+        } = prepared;
         // 3. Commit. From here nothing can fail.
         let mut changed: Option<Aabb> = None;
         let merge = |aabb: Aabb, changed: &mut Option<Aabb>| {
@@ -381,17 +437,7 @@ impl Physics {
             self.detail.push(handle);
         }
         let woken_bodies = self.wake_bodies_in(changed);
-        let stats = DetailCollisionStats {
-            prototypes: counts.prototypes,
-            collidable_prototypes: prepared.len(),
-            instances: counts.instances,
-            static_colliders: self.detail.len(),
-            shared_shapes: prepared.len(),
-            source_collision_cells,
-            expanded_collision_cells,
-            merged_boxes,
-            woken_bodies,
-        };
+        stats.woken_bodies = woken_bodies;
         self.detail_stats = stats;
         Ok(stats)
     }

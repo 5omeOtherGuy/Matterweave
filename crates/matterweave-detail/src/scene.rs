@@ -2,7 +2,7 @@
 
 use crate::{material_policy, DetailError, DetailVolume, Lod, MaterialPolicy, Result, Transform};
 use matterweave_core::{Mesh, Vertex};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 pub const MAX_PROTOTYPES: usize = 4_096;
 pub const MAX_INSTANCES: usize = 200_000;
@@ -13,6 +13,19 @@ pub const MAX_SCENE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 /// Aggregate derived mesh cache: 64 MiB. Exceeding it is an error, never a
 /// silent eviction or truncation.
 pub const MAX_SCENE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Opaque identity of an authoritative scene state, suitable for asynchronous
+/// publication checks. Unrelated scenes never compare equal, even if their local
+/// revision counters match. Cloning a source snapshot retains the identity until
+/// either copy changes. Derived cache work does not change this identity.
+#[derive(Clone, Debug, Default)]
+pub struct SceneVersion(Arc<()>);
+impl PartialEq for SceneVersion {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for SceneVersion {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstanceDraw {
@@ -85,6 +98,7 @@ fn sample_instance(volume: &DetailVolume, transform: &Transform, point: [f32; 3]
 /// per instance, so repeated placements cost a transform, not new geometry.
 #[derive(Default)]
 pub struct DetailScene {
+    source_version: SceneVersion,
     prototypes: BTreeMap<String, DetailVolume>,
     instances: BTreeMap<String, Instance>,
     cache: BTreeMap<MeshKey, CachedMesh>,
@@ -95,6 +109,11 @@ pub struct DetailScene {
 impl DetailScene {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Constant-time token for validating work prepared from a source snapshot.
+    pub fn source_version(&self) -> SceneVersion {
+        self.source_version.clone()
     }
 
     pub fn add_prototype(&mut self, volume: DetailVolume) -> Result<()> {
@@ -108,6 +127,7 @@ impl DetailScene {
             return Err(DetailError::BudgetExceeded("scene source payload budget"));
         }
         self.prototypes.insert(volume.id().to_string(), volume);
+        self.source_version = SceneVersion::default();
         Ok(())
     }
 
@@ -125,6 +145,7 @@ impl DetailScene {
     /// most the bounded source payload (`MAX_SCENE_SOURCE_BYTES`).
     pub fn fork_source(&self) -> Self {
         Self {
+            source_version: self.source_version.clone(),
             prototypes: self.prototypes.clone(),
             instances: self.instances.clone(),
             cache: BTreeMap::new(),
@@ -213,6 +234,7 @@ impl DetailScene {
             .expect("validated prototype")
             .set(cell, material)?;
         if changed {
+            self.source_version = SceneVersion::default();
             self.invalidate(id);
         }
         Ok(changed)
@@ -269,6 +291,7 @@ impl DetailScene {
                 transform,
             },
         );
+        self.source_version = SceneVersion::default();
         Ok(())
     }
 

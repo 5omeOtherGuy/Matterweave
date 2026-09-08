@@ -47,8 +47,8 @@ pub use flora::{
     FLORA_SPECIES,
 };
 pub use scene::{
-    DetailScene, InstanceDraw, SceneCounts, MAX_INSTANCES, MAX_PROTOTYPES, MAX_SCENE_CACHE_BYTES,
-    MAX_SCENE_SOURCE_BYTES, MAX_SCENE_TRANSLATION_M,
+    DetailScene, InstanceDraw, SceneCounts, SceneVersion, MAX_INSTANCES, MAX_PROTOTYPES,
+    MAX_SCENE_CACHE_BYTES, MAX_SCENE_SOURCE_BYTES, MAX_SCENE_TRANSLATION_M,
 };
 pub use serial::{VolumeSnapshot, MAX_SNAPSHOT_JSON_BYTES, MAX_SNAPSHOT_RUNS, SNAPSHOT_VERSION};
 pub use showcase::{
