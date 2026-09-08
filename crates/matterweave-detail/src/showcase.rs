@@ -111,18 +111,17 @@ pub fn showcase_prototype(id: &str) -> Result<DetailVolume> {
 /// far side of any of its occupied cells. Taken over both horizontal axes, so
 /// the value is invariant under the quarter-turn yaws used for placement.
 fn source_radius_m(volume: &DetailVolume) -> f32 {
-    let Some((min, max)) = volume.cell_bounds() else {
-        return 0.0;
-    };
     let scale = volume.scale().metres();
-    [0usize, 2]
-        .into_iter()
-        .map(|axis| {
-            let low = (min[axis] as f32 * scale).abs();
-            let high = ((max[axis] + 1) as f32 * scale).abs();
-            low.max(high)
+    volume
+        .iter_cells()
+        .map(|(cell, _)| {
+            // Farthest horizontal corner of each occupied voxel, not the box's
+            // half-width: diagonal corners also need clearance from a walked path.
+            let x = (cell[0] as f32).abs().max((cell[0] as f32 + 1.).abs()) * scale;
+            let z = (cell[2] as f32).abs().max((cell[2] as f32 + 1.).abs()) * scale;
+            x.hypot(z)
         })
-        .fold(0.0f32, f32::max)
+        .fold(0., f32::max)
 }
 
 /// Horizontal source radius of one archetype in metres, measured from its
@@ -1172,10 +1171,24 @@ struct Scatter {
 }
 
 /// True when a plant of horizontal source radius `radius_m` placed at `(x, z)`
-/// would reach inside the protected corridor of any route point.
+/// would reach inside the protected corridor along any route segment.
 fn route_clearance(route: &[[f32; 3]], x: f32, z: f32, radius_m: f32) -> bool {
     let limit = ROUTE_PLAYER_CLEARANCE_M + radius_m;
-    route.iter().any(|p| dist2(p[0], p[2], x, z) < limit)
+    if route.len() == 1 {
+        return dist2(route[0][0], route[0][2], x, z) < limit;
+    }
+    route.windows(2).any(|pair| {
+        let [a, b] = [pair[0], pair[1]];
+        let dx = b[0] - a[0];
+        let dz = b[2] - a[2];
+        let length_squared = dx * dx + dz * dz;
+        let t = if length_squared > 0. {
+            (((x - a[0]) * dx + (z - a[2]) * dz) / length_squared).clamp(0., 1.)
+        } else {
+            0.
+        };
+        dist2(a[0] + t * dx, a[2] + t * dz, x, z) < limit
+    })
 }
 
 fn place_flora(
@@ -1199,11 +1212,8 @@ fn place_flora(
         radii.insert(id, source_radius_m(&volume));
         scene.add_prototype(volume)?;
     }
-    // Every point of BOTH routes is used for the clearance test: a coarser
-    // corridor, or protecting only the ground loop, left gaps that let a cap or
-    // a woody branch grow into a walked line.
-    let corridor: Vec<[f32; 3]> = routes.iter().flat_map(|r| r.iter().copied()).collect();
-
+    // Keep routes separate: joining their arrays would invent a corridor
+    // segment between the end of one route and the start of the other.
     let pitch_cells = (MAP_EDGE_M / FOOT_PITCH_M).ceil() as usize;
     let mut taken = vec![false; pitch_cells * pitch_cells];
     let mut scatter = Scatter {
@@ -1257,7 +1267,10 @@ fn place_flora(
                 continue;
             }
             let species = palette[(hash2(seed ^ 0x23, k, p) as usize) % palette.len()];
-            if route_clearance(&corridor, x, z, radii[species]) {
+            if routes
+                .iter()
+                .any(|route| route_clearance(route, x, z, radii[species]))
+            {
                 continue;
             }
             let gx = (x / FOOT_PITCH_M).floor() as usize;
@@ -1303,7 +1316,10 @@ fn place_flora(
             if hash2(seed ^ 0x31, xi, zi) % 2 != 0 {
                 continue;
             }
-            if route_clearance(&corridor, x, z, lily_radius) {
+            if routes
+                .iter()
+                .any(|route| route_clearance(route, x, z, lily_radius))
+            {
                 continue;
             }
             let gx = (x / FOOT_PITCH_M).floor() as usize;
