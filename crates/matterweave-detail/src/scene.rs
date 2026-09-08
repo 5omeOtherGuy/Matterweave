@@ -115,6 +115,61 @@ impl DetailScene {
         self.prototypes.get(id)
     }
 
+    /// Edit one placed object without changing other instances of a shared
+    /// prototype. The first real edit privately copies its bounded source.
+    /// Deterministic instance IDs give deterministic private IDs across replay.
+    pub fn edit_instance(
+        &mut self,
+        instance_id: &str,
+        cell: [i32; 3],
+        material: u8,
+    ) -> Result<bool> {
+        DetailVolume::check_cell(cell)?;
+        let instance = self
+            .instances
+            .get(instance_id)
+            .ok_or_else(|| DetailError::UnknownPrototype(instance_id.to_string()))?;
+        let source_id = instance.prototype.clone();
+        let source = self
+            .prototypes
+            .get(&source_id)
+            .expect("placed prototype exists");
+        if source.get(cell) == material {
+            return Ok(false);
+        }
+        let shared = self
+            .instances
+            .values()
+            .filter(|i| i.prototype == source_id)
+            .take(2)
+            .count()
+            > 1;
+        if !shared {
+            return self.edit_prototype(&source_id, cell, material);
+        }
+        if self.prototypes.len() >= MAX_PROTOTYPES {
+            return Err(DetailError::SceneFull);
+        }
+        let private_id = format!("__instance_edit:{instance_id}");
+        if self.prototypes.contains_key(&private_id) {
+            return Err(DetailError::DuplicatePrototype(private_id));
+        }
+        // Copy the bounded sparse payload directly, without a temporary snapshot
+        // run list. The distinct prototype ID separates cache identities.
+        if self.source_bytes() + source.source_bytes() > MAX_SCENE_SOURCE_BYTES {
+            return Err(DetailError::BudgetExceeded("instance edit source copy"));
+        }
+        let mut copy = source.clone();
+        copy.id = private_id.clone();
+        copy.set(cell, material)?;
+        self.add_prototype(copy)?;
+        self.instances
+            .get_mut(instance_id)
+            .expect("validated instance")
+            .prototype = private_id;
+        Ok(true)
+    }
+
     /// The only way to mutate a prototype through a scene: one cell at a time,
     /// preserving the prototype identity and dropping every
     /// cached derived mesh only when content changes. There is deliberately no `&mut DetailVolume`
