@@ -73,3 +73,15 @@ Results on this workstation (x86-64 Linux dev host; not a target-device claim):
 RED at commit `3e7b1e1` (both defect tests fail), GREEN at `d1fc54e`.
 </content>
 </invoke>
+
+## Lead integration corrections
+
+Two additional deterministic regressions exposed buffered-A/running-B/request-A
+loss and delayed fallback visibility during retirement. The worker's first fix
+removed superseded pending work; lead also tracks the requested stream identity
+inside the shared queue, so a superseded completion cannot overwrite the desired
+buffered result. `available()` checks retirement immediately, even while the
+bounded job finishes. Lead RED `8a913e6`, GREEN `02fc5d3`; all48 core tests pass.
+Logs: `engine-02/stream-cancel-lead-{red,green}.log`. Source sharing and the existing
+queue/result caps are preserved. These are correctness changes, not throughput
+measurements.

@@ -69,8 +69,8 @@ Differences are inherent to the workload, not new machinery:
 - **Source snapshots:** at most three `fork_source` copies are live at once
   (pending, running, and one transient clone while replacing a pending job).
   Each is bounded by the detail crate's `MAX_SCENE_SOURCE_BYTES` = 32 MiB
-  authoritative payload. `fork_source` eagerly clones detail payloads today;
-  World's separate copy-on-write storage does not change this cost.
+  authoritative payload. `DetailVolume` wraps `World`, so the core copy-on-write change shares chunk
+  payloads through `fork_source`; map metadata and reference counts are still copied.
 - **Built result:** at most one buffered `PreparedDetailCollision` plus one
   currently building/prepared result on the worker. Each shape cost is bounded by the existing caps enforced by `build`:
   `MAX_DETAIL_BOXES` (262,144 merged cuboids, an estimated 26-34 MiB of resident
@@ -183,8 +183,8 @@ Behaviours covered:
   build).
 - Native Android device verification of the worker under real memory/thermal
   conditions; no device numbers are claimed here.
-- DetailScene snapshot payload sharing remains separate future work; the World
-  copy-on-write change does not affect `DetailScene::fork_source`.
+- Measure actual frame-loop snapshot metadata and publication cost; chunk payloads
+  are already shared through DetailVolume's internal World.
 
 ## Lead correction after worker follow-up
 
@@ -202,6 +202,20 @@ Lead verification: six deterministic queue tests, nine asynchronous integration
 tests,19 detail collision tests, eight dynamic cache tests and three existing
 physics unit tests pass. The two pre-existing full-showcase gates remain ignored
 in this scoped run. Logs: `engine-02/async-collision-lead-{red,green}.log`.
-World and DetailScene have different storage types; the earlier claim that World
-COW would reduce `fork_source` cost was incorrect and is corrected above. Buffers
-returned to callers are caller-owned and require their own retention budget.
+Correction to the first lead note: `DetailVolume` wraps `World`; its clone therefore
+inherits core chunk sharing, and `DetailScene::fork_source` clones those volumes.
+The first worker's anticipated benefit was correct. Lead is verifying the full
+copy path rather than introducing another storage implementation. Buffers returned
+to callers are caller-owned and require their own retention budget.
+
+### Native Android collision gate
+
+At `9cf26a1`, the example is a failing-on-error gate for asynchronous floor creation,
+character contact, authoritative floor removal and falling through removed support.
+Both host execution and direct OnePlus13 Android16 execution pass. The ARM64 native
+executable is built with NDK28.2.13676358/API28, Cargo dev opt2/debug0 and16KiB ELF
+alignment; SHA256 `4a8d2ab507957aca1628f445991c1fa41adfc6938ef67bd31f060378b650a73f`.
+It was pushed to an owned `/data/local/tmp` path, run, and removed. This is a native
+Android engine test; it is not APK frame-loop integration or a performance claim.
+Raw binary, report and build manifest: `engine-02/phone-collision` under the artifact
+root. The installed indirect-check APK does not yet contain this newer controller.
