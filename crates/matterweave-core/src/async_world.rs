@@ -178,6 +178,19 @@ impl AsyncWorld {
         }
         let generation = queue.generation;
         let identity = (center, world.revision(), world.seed(), generation);
+        // This request is the latest publishable center. Any pending window for a
+        // different identity is now superseded: drop it before deduping so it can
+        // neither run last and overwrite the window the caller now wants nor be
+        // published for a center `poll_stream` will reject. Only one pending window
+        // is retained, and it always matches the latest request.
+        if queue
+            .stream
+            .as_ref()
+            .is_some_and(|j| (j.center, j.source_revision, j.seed, j.generation) != identity)
+        {
+            queue.stream = None;
+            queue.discarded += 1;
+        }
         if queue.stream_active == Some(identity)
             || queue
                 .stream
@@ -190,18 +203,16 @@ impl AsyncWorld {
         {
             return false;
         }
-        let superseded = queue
-            .stream
-            .replace(StreamJob {
-                world: world.clone(),
-                position: eye,
-                center,
-                source_revision: world.revision(),
-                seed: world.seed(),
-                generation,
-            })
-            .is_some();
-        queue.discarded += u64::from(superseded);
+        // The superseded pending window, if any, was already dropped above, so this
+        // replace only ever installs the latest request into an empty pending slot.
+        queue.stream = Some(StreamJob {
+            world: world.clone(),
+            position: eye,
+            center,
+            source_revision: world.revision(),
+            seed: world.seed(),
+            generation,
+        });
         drop(queue);
         self.requested_center = Some(center);
         self.shared.wake.notify_all();
@@ -309,11 +320,29 @@ impl AsyncWorld {
         queue.active.clear();
         queue.stream = None;
         queue.stream_result = None;
-        // Saturation would stop invalidating in-flight results; queues still clear,
-        // and revision validation continues to reject anything the world outgrew.
-        queue.generation = queue.generation.saturating_add(1);
+        // The generation is an opaque, strictly increasing cancellation token that is
+        // never reused: each reset mints a fresh value that invalidates every job
+        // stamped with an older one, including the job in flight. Saturating at
+        // u64::MAX would reuse the current token, letting a same-revision in-flight
+        // job escape cancellation. Rather than reuse a token, retire the worker at
+        // exhaustion; the caller keeps the synchronous path (`available()` is false
+        // and requests are refused), so no stale background result can be published.
+        let retired = match queue.generation.checked_add(1) {
+            Some(next) => {
+                queue.generation = next;
+                false
+            }
+            None => {
+                queue.shutdown = true;
+                true
+            }
+        };
         drop(queue);
         self.requested_center = None;
+        if retired {
+            // Wake an idle worker so it observes shutdown and exits promptly.
+            self.shared.wake.notify_all();
+        }
     }
 
     /// False after worker startup failure or an unexpected worker exit.
