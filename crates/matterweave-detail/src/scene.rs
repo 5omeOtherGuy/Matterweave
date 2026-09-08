@@ -6,10 +6,7 @@ use crate::{
     MeshBatch, PreparedFrame, Result, Transform,
 };
 use matterweave_core::{Mesh, Vertex};
-use std::{
-    collections::BTreeMap,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 pub const MAX_PROTOTYPES: usize = 4_096;
 pub const MAX_INSTANCES: usize = 200_000;

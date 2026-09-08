@@ -490,17 +490,17 @@
     },
     "E03-collision": {
       "attempt": 1,
-      "owner": "GLM 5.3 Flash high",
+      "owner": "Paid Muse 1.3 Contributor high",
       "state": "running",
-      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/collision-glm-02",
-      "acceptance": "Unaccepted; lead review and native/Android verification required."
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/collision-muse-03",
+      "acceptance": "GLM WIP preserved at 7698213; two timed-out attempts unaccepted. Repair equal-AABB and fallback publication safety, pending journal correctness."
     },
     "E03-detail": {
       "attempt": 2,
-      "owner": "Paid Muse 1.3 Contributor high",
+      "owner": "Opus 5 medium",
       "state": "running",
-      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/detail-muse-03",
-      "acceptance": "Unaccepted; lead review and native/Android verification required."
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/detail-topology-opus-01",
+      "acceptance": "Unaccepted default: protect passages while retaining useful noncuboid coarsening; review findings drive topology refinement."
     },
     "E03-stream-stress": {
       "attempt": 1,

@@ -115,10 +115,15 @@ fn lod_of(scene: &mut DetailScene, camera: &Camera, config: &LodConfig) -> Lod {
 fn through_tunnel_is_held_at_source_far_away_perspective() {
     let config = LodConfig::default();
     let mut scene = DetailScene::new();
-    scene.add_prototype(block_with_through_tunnel("tunnel")).unwrap();
+    scene
+        .add_prototype(block_with_through_tunnel("tunnel"))
+        .unwrap();
     scene.place("t", "tunnel", Transform::identity()).unwrap();
     // Far enough that error budget alone would select Quarter for this size.
-    assert_eq!(lod_of(&mut scene, &persp_at(1.0, 300.0), &config), Lod::Source);
+    assert_eq!(
+        lod_of(&mut scene, &persp_at(1.0, 300.0), &config),
+        Lod::Source
+    );
 
     // Control: relaxing only the local guard lets the same geometry coarsen,
     // proving the guard (not distance or dilation) held it at Source.
@@ -136,7 +141,9 @@ fn through_tunnel_is_held_at_source_far_away_perspective() {
 fn through_tunnel_is_held_at_source_orthographic_zoomed_out() {
     let config = LodConfig::default();
     let mut scene = DetailScene::new();
-    scene.add_prototype(block_with_through_tunnel("tunnel")).unwrap();
+    scene
+        .add_prototype(block_with_through_tunnel("tunnel"))
+        .unwrap();
     scene.place("t", "tunnel", Transform::identity()).unwrap();
     assert_eq!(
         lod_of(&mut scene, &ortho_at(1.0, 10.0, 200.0), &config),
@@ -190,7 +197,9 @@ fn unaligned_dense_cuboids_still_coarsen_including_negatives() {
     let config = LodConfig::default();
     let mut scene = DetailScene::new();
     scene.add_prototype(solid_block("odd", 15)).unwrap();
-    scene.add_prototype(solid_block_negative("neg", 15)).unwrap();
+    scene
+        .add_prototype(solid_block_negative("neg", 15))
+        .unwrap();
     scene.add_prototype(thin_sheet("sheet")).unwrap();
     scene.place("o", "odd", Transform::identity()).unwrap();
     scene
@@ -304,7 +313,9 @@ fn dense_block_coarsens_far_and_resolves_source_near_with_zoom() {
 fn selection_and_preparation_leave_authoritative_source_unchanged() {
     let config = LodConfig::default();
     let mut scene = DetailScene::new();
-    scene.add_prototype(block_with_through_tunnel("tunnel")).unwrap();
+    scene
+        .add_prototype(block_with_through_tunnel("tunnel"))
+        .unwrap();
     scene.add_prototype(solid_block("block", 8)).unwrap();
     scene.place("t", "tunnel", Transform::identity()).unwrap();
     scene
@@ -314,12 +325,7 @@ fn selection_and_preparation_leave_authoritative_source_unchanged() {
             Transform::new([5.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
         )
         .unwrap();
-    let before = scene
-        .prototype("tunnel")
-        .unwrap()
-        .snapshot()
-        .runs
-        .len();
+    let before = scene.prototype("tunnel").unwrap().snapshot().runs.len();
     let before_revision = scene.prototype("tunnel").unwrap().revision();
     let before_cells = scene.prototype("tunnel").unwrap().occupied_cells();
     for distance in [1.0, 90.0, 300.0] {
@@ -341,7 +347,10 @@ fn selection_and_preparation_leave_authoritative_source_unchanged() {
     assert_eq!(scene.sample_world_metres(void_centre).unwrap(), None);
     assert!(!scene.is_collidable_world_metres(void_centre).unwrap());
     assert_eq!(
-        scene.sample_world_metres(solid_centre).unwrap().map(|hit| hit.1),
+        scene
+            .sample_world_metres(solid_centre)
+            .unwrap()
+            .map(|hit| hit.1),
         Some(STONE)
     );
     assert!(scene.is_collidable_world_metres(solid_centre).unwrap());

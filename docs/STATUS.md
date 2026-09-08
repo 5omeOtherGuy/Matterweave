@@ -130,6 +130,19 @@ temperature rose 28.3 to 37.5 C with Android thermal status reaching 3. These ar
 headless CPU-fixture observations, not a graphics-efficiency claim. See its
 [exact summary](evidence/2026-09-08-stream-stress.json).
 
+## Detail preservation integration — still under revision
+
+A local occupancy-loss guard now protects tested tunnels and boundary pits, with
+113 detail tests passing. Lead reproduced and repaired two adapter assumptions
+that expected the old notched object to coarsen; the native fixture now keeps that
+object plus a through-opening and separately verifies a dense coarse control.
+All nine adapter tests pass. The [Opus review](performance/logs/engine-03-detail-review.md)
+found the strict default also prevents ordinary stepped/organic coarsening.
+That behavior is not accepted as the final automatic-detail policy: a bounded
+local topology refinement is in progress. Do not mark M4 or this guard complete
+from the cuboid/tunnel fixtures alone. Native/Android adapter checks follow the
+revised policy.
+
 ## Earlier continuation evidence (historical pre-release checkpoints)
 
 Current verified progress (2026-09-08 continuation):
