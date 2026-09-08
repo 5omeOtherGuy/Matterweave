@@ -1050,6 +1050,7 @@ pub struct Renderer {
     commands: Commands,
     swapchain: Option<Swapchain>,
     shadow: Shadow,
+    shadow_map_updated: bool,
     timestamps: Option<TimestampQueries>,
     diagnostics_enabled: bool,
     diagnostics: DrawDiagnostics,
@@ -1262,6 +1263,7 @@ impl Renderer {
             commands,
             swapchain: None,
             shadow,
+            shadow_map_updated: false,
             timestamps,
             diagnostics_enabled: false,
             diagnostics: DrawDiagnostics::default(),
@@ -1351,6 +1353,9 @@ impl Renderer {
         let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
         self.upload_waits.record(wait);
+        // In-place writes can change positions while retaining the revision.
+        // Invalidate before any write, also covering a partial write failure.
+        self.shadow.invalidate();
         if let Some(dynamic) = &mut self.dynamic {
             if dynamic.rewrite(mesh)? {
                 return Ok(());
@@ -1401,6 +1406,9 @@ impl Renderer {
     }
 
     fn update_counters(&mut self) {
+        // Every committed geometry replacement/removal comes through here.
+        // Rejected transactional uploads leave both geometry and validity intact.
+        self.shadow.invalidate();
         self.resident_chunks = self.chunks.len();
         self.visible_chunks = self.visible_chunks.min(self.resident_chunks);
         self.mesh_bytes = self
@@ -1505,7 +1513,14 @@ impl Renderer {
         })
     }
 
-    /// Nonempty mesh draws submitted to the latest shadow pass, independent of camera culling.
+    /// Whether this draw attempt submitted a depth-map update (including first-use
+    /// clear with shadows disabled). False on reuse or before submission.
+    pub fn shadow_map_updated(&self) -> bool {
+        self.shadow_map_updated
+    }
+
+    /// Nonempty mesh draws recorded for this attempt, independent of camera culling.
+    /// Zero when the shadow map is reused or shadows are disabled.
     pub fn shadow_caster_meshes(&self) -> usize {
         self.shadow.caster_meshes
     }
@@ -1517,6 +1532,7 @@ impl Renderer {
         hud: &Hud,
         lighting: &LightingSettings,
     ) -> Result<FrameResult> {
+        self.shadow_map_updated = false;
         // Clear this draw's own fields; upload waits recorded since
         // begin_frame_diagnostics belong to the same frame and are preserved.
         self.diagnostics = DrawDiagnostics {
@@ -1623,7 +1639,7 @@ impl Renderer {
             if let Some(timestamps) = &mut self.timestamps {
                 timestamps.begin(cmd);
             }
-            self.shadow.record(
+            let shadow_updated = self.shadow.record(
                 cmd,
                 lighting.shadows,
                 self.chunks
@@ -1757,12 +1773,16 @@ impl Renderer {
             d.reset_fences(&[self.commands.fence]).map_err(err)?;
             d.queue_submit(self.device.queue, &submit, self.commands.fence)
                 .map_err(err)?;
+            if shadow_updated {
+                self.shadow.submitted(lighting.shadows);
+            }
+            self.shadow_map_updated = shadow_updated;
             // One identity per accepted submission, shared with the timestamp
             // queries, so a capture can join CPU and GPU records exactly.
             self.submissions += 1;
             self.diagnostics.submitted_frame_id = Some(self.submissions);
             if let Some(timestamps) = &mut self.timestamps {
-                timestamps.submitted(lighting.shadows, lighting.shadow_map_size);
+                timestamps.submitted(lighting.shadows, shadow_updated, lighting.shadow_map_size);
             }
             let chains = [s.raw];
             let indices = [index];
