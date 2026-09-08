@@ -28,6 +28,10 @@ def render(root):
         for i,((v,c,f),record) in enumerate(zip(levels,records)):
             canvas.paste(view(v,c,f,(0.5,0.2,1),reference=reference),(480*i,30));draw.text((480*i+12,10),'LOD '+str(record['lod_factor'])+' / identical framing',fill='white')
         canvas.save(out/(ident+'-lod.png'))
+    if not manifest.get('instances'):
+        (out/'view-conditions.json').write_text(json.dumps({'method':'orthographic host geometry only; no scene instances in source gallery','prototype_angles':angles},indent=2)+'\n')
+        print(out)
+        return
     vertices=[];colors=[];faces=[];offset=0
     for instance in manifest['instances']:
         v,c,f=by_id[instance['prototype']];yaw=instance['yaw'];degrees=int(yaw[3:]) if isinstance(yaw,str) else int(yaw)

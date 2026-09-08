@@ -115,6 +115,79 @@ impl DetailScene {
         self.prototypes.get(id)
     }
 
+    /// Authoritative-data-only clone for save-candidate validation: every
+    /// prototype payload and instance record is copied, while derived meshes
+    /// stay behind (an empty cache rebuilds lazily from source revisions).
+    /// A rejected candidate's fork — including private prototypes minted by
+    /// [`Self::edit_instance`] — is simply dropped, so cell-by-cell undo of
+    /// the live scene is never needed and later candidates see pristine
+    /// source accounting. One transient fork is live at a time; it holds at
+    /// most the bounded source payload (`MAX_SCENE_SOURCE_BYTES`).
+    pub fn fork_source(&self) -> Self {
+        Self {
+            prototypes: self.prototypes.clone(),
+            instances: self.instances.clone(),
+            cache: BTreeMap::new(),
+            cache_bytes: 0,
+            mesh_builds: self.mesh_builds,
+        }
+    }
+
+    /// Edit one placed object without changing other instances of a shared
+    /// prototype. The first real edit privately copies its bounded source.
+    /// Deterministic instance IDs give deterministic private IDs across replay.
+    pub fn edit_instance(
+        &mut self,
+        instance_id: &str,
+        cell: [i32; 3],
+        material: u8,
+    ) -> Result<bool> {
+        DetailVolume::check_cell(cell)?;
+        let instance = self
+            .instances
+            .get(instance_id)
+            .ok_or_else(|| DetailError::UnknownPrototype(instance_id.to_string()))?;
+        let source_id = instance.prototype.clone();
+        let source = self
+            .prototypes
+            .get(&source_id)
+            .expect("placed prototype exists");
+        if source.get(cell) == material {
+            return Ok(false);
+        }
+        let shared = self
+            .instances
+            .values()
+            .filter(|i| i.prototype == source_id)
+            .take(2)
+            .count()
+            > 1;
+        if !shared {
+            return self.edit_prototype(&source_id, cell, material);
+        }
+        if self.prototypes.len() >= MAX_PROTOTYPES {
+            return Err(DetailError::SceneFull);
+        }
+        let private_id = format!("__instance_edit:{instance_id}");
+        if self.prototypes.contains_key(&private_id) {
+            return Err(DetailError::DuplicatePrototype(private_id));
+        }
+        // Copy the bounded sparse payload directly, without a temporary snapshot
+        // run list. The distinct prototype ID separates cache identities.
+        if self.source_bytes() + source.source_bytes() > MAX_SCENE_SOURCE_BYTES {
+            return Err(DetailError::BudgetExceeded("instance edit source copy"));
+        }
+        let mut copy = source.clone();
+        copy.id = private_id.clone();
+        copy.set(cell, material)?;
+        self.add_prototype(copy)?;
+        self.instances
+            .get_mut(instance_id)
+            .expect("validated instance")
+            .prototype = private_id;
+        Ok(true)
+    }
+
     /// The only way to mutate a prototype through a scene: one cell at a time,
     /// preserving the prototype identity and dropping every
     /// cached derived mesh only when content changes. There is deliberately no `&mut DetailVolume`
@@ -307,6 +380,12 @@ impl DetailScene {
             }
         }
         Ok(false)
+    }
+
+    /// Allocated vertex/index capacity currently held by the derived mesh cache.
+    /// Unlike `counts`, this does not scan authoritative materials or instances.
+    pub fn cached_mesh_bytes(&self) -> usize {
+        self.cache_bytes
     }
 
     pub fn counts(&self) -> SceneCounts {

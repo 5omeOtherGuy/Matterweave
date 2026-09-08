@@ -1,0 +1,36 @@
+{
+  "code_commit": "6fac9a5",
+  "apk_sha256": "8f892af67d4d14bab37395b3420ab6bf048020188a0ba24dbd40cd0e878edc91",
+  "purpose": "functional native lifecycle/gallery and cache counters; not matched performance",
+  "validation": false,
+  "quality": "normal frozen save; gallery SourceLOD/default lighting",
+  "source_targets": "Android workspace crates cleaned after cross-worktree stale-metadata failure",
+  "device": "OnePlus13 CPH2653 Android16 BP4A.251205.006",
+  "scope": "functional normal and SourceLOD flora; one HOME/resume each, not matched performance/quality completion",
+  "save_sha256": "ca8a13a88f814374c57943543d6410b034047b97bb466206da2e6e7095f187af",
+  "captures": {
+    "normal": {
+      "row_count": 2190,
+      "renderer_epochs": [
+        1,
+        2
+      ],
+      "missing_attempts": 0,
+      "unmatched_completions": 0,
+      "uncompleted_submissions": 2,
+      "raw_sha256": "a75aa50ed7aea866fc033ea3f6cde098cfba8449a4273195d3720dbb6d8049f2"
+    },
+    "flora": {
+      "row_count": 2194,
+      "renderer_epochs": [
+        1,
+        2
+      ],
+      "missing_attempts": 0,
+      "unmatched_completions": 0,
+      "uncompleted_submissions": 2,
+      "raw_sha256": "b1c04c92cb579a33db7f597c0e2148038213103b9ab453b51f5f2700ea1d2542"
+    }
+  },
+  "image_sha256": "373a30a652375fb7a7ec44d67123d379d60f9a0b1b7af7e2300d0686c04a7e2e"
+}

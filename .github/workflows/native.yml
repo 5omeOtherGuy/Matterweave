@@ -25,16 +25,24 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
+          python3 -m unittest discover -s tools/performance -p 'test_*.py'
           python3 tools/check_docs.py
       - name: Native Vulkan smoke
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb mesa-vulkan-drivers vulkan-validationlayers
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 mesa-vulkan-drivers vulkan-validationlayers
           mkdir -p artifacts
           timeout 90s xvfb-run -a cargo run --locked -p matterweave-explorer -- --smoke-exercise --smoke-frames 30 --save artifacts/smoke-world.json 2>&1 | tee artifacts/host-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/host-smoke.log; then exit 1; fi
           timeout 60s xvfb-run -a cargo run --locked -p matterweave-render --example cache_smoke 2>&1 | tee artifacts/cache-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/cache-smoke.log; then exit 1; fi
+          timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example instancing_smoke 2>&1 | tee artifacts/instancing-smoke.log
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/instancing-smoke.log; then exit 1; fi
+          timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example shadow_cache_smoke 2>&1 | tee artifacts/shadow-cache-smoke.log
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/shadow-cache-smoke.log; then exit 1; fi
+          python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer artifacts/gallery-tile
+          python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer artifacts/gallery-flora --preset flora
+          if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/gallery-{tile,flora}/run.log; then exit 1; fi
 
   android:
     runs-on: ubuntu-24.04

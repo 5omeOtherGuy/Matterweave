@@ -1,0 +1,15 @@
+# Independent Muse app review
+
+Scoped leaf review complete. HEAD frozen at `/mnt/bench/matterweave-dev/worktrees/completion-app-review`. Read once each: `apps/explorer/src/{wetland.rs, wetland_state.rs, wetland_metrics.rs, experience.rs}`, `controls.rs` (start_wetland region), `lib.rs` (data_directory + desktop/android entry regions), plus call-semantics only: `Physics::replace_detail_scene` (`crates/matterweave-physics/src/detail_collision.rs`), `Physics::{snapshot,restore,step}` (`crates/matterweave-physics/src/lib.rs`), `FrameLog::requested/record` (`apps/explorer/src/metrics.rs`). Tests NOT RUN. No shell/writes. Map catalog / cavity / elevated route not examined per scope.
+
+ENGINEERING LOG (1 observation, 0 blockers; candidate code, not accepted):
+
+Finding 1/1 (low, by-design asymmetry worth lead awareness):
+- File/trigger: `apps/explorer/src/wetland.rs`, `Runtime::load` — fresh path calls `physics.teleport(spawn)` and rejects overlap (`"Wetland entrance overlaps solid geometry"`); loaded-save path calls `physics.restore(&save.physics)` then copies `save.physics.eye` into the camera verbatim.
+- Consequence: a restorable save whose eye sits inside solid geometry loads without the teleport overlap check; eye validity at load rests on `SavedWetland::validate` (finite, |n|<=16384) plus replayed edits matching save-time geometry.
+- Evidence: `crates/matterweave-physics/src/lib.rs`, `Physics::restore` — sets `self.center` from `snapshot.eye` directly, documented comment "retain its saved pose instead of applying teleport's interactive rejection"; `Physics::replace_detail_scene` is atomic-on-error ("On Err nothing changed"), and `Runtime::edit` rolls back `scene.edit_instance` on either graphics or physics failure before assigning `meshes/instances` — so the only non-rejected eye path is save-restore.
+- Uncertainty: did not trace `Physics::step` depenetration to confirm whether an embedded eye self-ejects or sticks on the frames after load; physics internals beyond the called API were out of scope.
+- Transactionality/input/lifecycle/capture notes (no finding): save uses validate-before-write + `create_new` temp + `sync_all` + atomic rename + parent fsync with temp cleanup (`wetland_state.rs`, `SavedWetland::save`); autosave failure accounting derives failure from post-save `dirty` (`wetland.rs`, `draw`); edit journal capped at 4096 with same-cell re-edit allowed, mirrored in `validate`; `Controls::start_wetland` rects match wetland HUD MOVE/JUMP rects and button touches are consumed by `click()` before finger assignment; `Experience::switch_if_requested` drops the wetland renderer/window via `suspended` before `Explorer::resumed`, and event routing is `wetland XOR sandbox`, so no overlapping renderers; wetland and sandbox share the `profile-frames.txt` request file in the same data directory and the request file is consumed on first open, so a single capture owner exists across a wetland→sandbox switch.
+
+Coverage stop: scoped files and hooks covered; no further retrieval performed.
+

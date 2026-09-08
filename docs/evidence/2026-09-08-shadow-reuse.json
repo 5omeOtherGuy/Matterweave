@@ -1,0 +1,118 @@
+{
+  "source_commit": "78cba4aca7a2093956122a21c5aacc593d90f305",
+  "apk_sha256": "e4f83255cf769f2d02e30978a8c9fb1b9602bd28ee4da7abf539f521fd779647",
+  "artifact_root": "/mnt/bench/matterweave-dev/performance/engine-01",
+  "build": {
+    "version": "0.4.0",
+    "version_code": 4,
+    "source_commit": "78cba4aca7a2093956122a21c5aacc593d90f305",
+    "apk": "matterweave-arm64-debug.apk",
+    "apk_sha256": "e4f83255cf769f2d02e30978a8c9fb1b9602bd28ee4da7abf539f521fd779647",
+    "build_command": "android/gradlew -p android :app:assembleDebug --no-daemon",
+    "gradle_variant": "debug",
+    "cargo_profile": "dev",
+    "rust_opt_level": 2,
+    "rust_debuginfo": 0,
+    "rust_toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "ndk": "28.2.13676358",
+    "build_tools": "35.0.0",
+    "compile_sdk": 35,
+    "target_sdk": 35,
+    "min_sdk": 28,
+    "abi": "arm64-v8a",
+    "scene": {
+      "generator": 3,
+      "seed": 20260908,
+      "composition_hash": "dfb9f40519a3c151",
+      "manifest": "full-wetland-generator3.json"
+    },
+    "build_result": "success in 57seconds",
+    "alignment": "ARM64 ELF and uncompressed ZIP16KiB check passed",
+    "signature": "debug APK signature verification passed",
+    "device_test": "PASS OnePlus13 Android16: 37-point continuous physics route, 730 valid profile rows; 284 completed enabled-shadow submissions reused depth, 445 updated it; owned fixture cleanup passed",
+    "publication": "not merged or released",
+    "limits": [
+      "Development prerelease candidate; debug signing and debuggability.",
+      "No production release-profile performance claim."
+    ],
+    "purpose": "engine directional shadow depth reuse"
+  },
+  "phone": {
+    "result": "PASS",
+    "environment": {
+      "settings": {
+        "screen_brightness": "160",
+        "screen_brightness_mode": "0",
+        "screen_off_timeout": "7200000",
+        "peak_refresh_rate": "60.0",
+        "min_refresh_rate": "60.0"
+      },
+      "props": {
+        "ro.product.model": "CPH2653",
+        "ro.product.device": "OP5D55L1",
+        "ro.build.fingerprint": "OnePlus/CPH2653EEA/OP5D55L1:16/BP2A.250605.015/V.R4T3.52da06f-2e397f6-2e81775:user/release-keys",
+        "ro.build.version.release": "16",
+        "ro.build.version.sdk": "36"
+      },
+      "note": "settings recorded, never modified"
+    },
+    "terminal": {
+      "request": {
+        "version": 1,
+        "route": "elevated"
+      },
+      "route_point_count": 37,
+      "next_waypoint": 37,
+      "max_index": 36,
+      "actual_eye": [
+        92.21375,
+        23.629038,
+        30.0116
+      ],
+      "start_eye": [
+        86.125,
+        17.825,
+        62.125
+      ],
+      "start_unix_seconds": 1788865052.0457907,
+      "end_unix_seconds": 1788865063.2901466,
+      "duration_wall_seconds": 11.244354892,
+      "accumulated_frame_dt_seconds": 11.298742413520813,
+      "physics_step_count": 676,
+      "outcome": "PASS",
+      "reason": "route complete"
+    },
+    "profile_sha256": "c9908a4dca1eb0ad338722e53b53365e3d1f9861108cf8452bbc870712ee27a1",
+    "profile_rows": 730,
+    "completed_shadow_sampling_enabled": 729,
+    "depth_reused": 284,
+    "depth_updated": 445,
+    "cleanup_errors": []
+  },
+  "host": {
+    "workspace_tests_passed": 257,
+    "workspace_tests_ignored": 3,
+    "renderer_tests_passed": 30,
+    "vulkan_cache_smoke_frames": 30,
+    "vulkan_app_smoke_frames": 30,
+    "validation_errors": 0,
+    "clippy": "PASS"
+  },
+  "log_sha256": {
+    "shadow-red.log": "f8750a6085abf4fade7b71a6ff171143d2d66e9e619dd6f9ac900380b42d1b49",
+    "shadow-native-red.log": "bcf5cfd89bcfeb594abb805c300b6d245f607f26d8b9b15d57e17e2666b28128",
+    "shadow-green.log": "55f589a30fda62facd87387d4c9ee6dac7fc9a5a88e4177bd3d4abded8b5bd8c",
+    "shadow-native-green.log": "a9a88228b2820ba5b22be08408b0c2bc5fd8943149a0799d6cd80ea2f021c996",
+    "shadow-clippy.log": "11c2a20b71ed3688273df61463fd32c1c9dbb0b8c343f409eadebb91d85c2c04",
+    "shadow-workspace.log": "4cb319b9af7aeda21282163da405d00633d7e9b62e77525d7ee762b97059a39b",
+    "shadow-android.log": "93661b5e3cb8393dd7561bcbc77075eeb5d1bb80cb17b4a5c71b48dc2b982e97",
+    "shadow-app-native.log": "ad951c662fedcd74510baa80f3662fead9eb724781e3c7fe4b9c1a3a7d250119",
+    "shadow-phone.log": "8085c7fcaf09e40115393896e94c323b32b6b28e0e3754004f1cf6c5032e0e6e"
+  },
+  "limitations": [
+    "No matched shadow-cache performance, energy or thermal comparison.",
+    "Host Vulkan uses lavapipe; device Vulkan validation layers unavailable.",
+    "No pixel-equivalence or comprehensive temporal-quality claim.",
+    "LOD, GI, reflections and full engine completion remain open."
+  ]
+}

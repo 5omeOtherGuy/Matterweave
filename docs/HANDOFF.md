@@ -6,6 +6,14 @@ Take over Matterweave from the current repository branch. Use this repository as
 
 Do not spend the session repeating the initial requirements interview or producing another plan in place of code. Read the live repository first: this handoff may predate implementation commits.
 
+## Latest owner direction — 2026-09-08
+
+Finish the engine and focus only on advancing actual engine systems. The wetland
+is an existing validation workload. Further demo-save compatibility, content
+refinement or gameplay UI polish must not precede renderer, physics, streaming,
+lighting and efficiency progress. This direction supersedes the older showcase
+campaign ordering below. Read STATUS for the current verified engine slice.
+
 ## Next authorized implementation campaign
 
 Start from [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md), then its linked task list and
@@ -14,7 +22,10 @@ campaign using all six model families, with Muse/Gemini code reviews before Astr
 review, testable worker definitions of done and engineering-log handoffs. A small,
 dense, lush, highly detailed alien map with water, complex terrain and recognizable
 mushrooms is a mandatory deliverable. The plan is written; do not delegate another
-plan-writing round. No optimization or showcase implementation is claimed yet.
+plan-writing round. Current source now implements the full dense map, fine-source
+collision, normal Android presentation and measurement tooling. Consult STATUS for
+verified development-device results and the still-open traversal/quality/comparison
+gates; this does not mark the campaign or full engine complete.
 
 ## Current implementation entry — 2026-09-08
 

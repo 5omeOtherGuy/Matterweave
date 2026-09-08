@@ -3,6 +3,7 @@ mod frustum;
 mod hud;
 mod lighting;
 mod shadow;
+mod static_scene;
 mod timing;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
@@ -12,7 +13,9 @@ pub use lighting::{LightingSettings, Sun};
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use shadow::Shadow;
-use std::{collections::BTreeMap, ffi::CStr, sync::Arc};
+use static_scene::StaticScene;
+pub use static_scene::{StaticInstance, StaticSceneStats};
+use std::{collections::BTreeMap, ffi::CStr, sync::Arc, time::Instant};
 pub use timing::GpuTimings;
 use timing::TimestampQueries;
 use winit::window::Window;
@@ -33,6 +36,9 @@ pub enum FrameResult {
 type Result<T> = std::result::Result<T, String>;
 fn err(e: vk::Result) -> String {
     format!("Vulkan: {e:?}")
+}
+fn elapsed_ms(begin: Instant) -> f64 {
+    begin.elapsed().as_secs_f64() * 1000.
 }
 
 struct Instance {
@@ -198,7 +204,7 @@ struct GpuMesh {
     bounds: [[f32; 3]; 2],
 }
 
-fn validate_mesh(mesh: &Mesh) -> Result<(u32, [[f32; 3]; 2])> {
+pub(crate) fn validate_mesh(mesh: &Mesh) -> Result<(u32, [[f32; 3]; 2])> {
     let count = u32::try_from(mesh.indices.len()).map_err(|_| "Mesh has more than u32 indices")?;
     if mesh
         .indices
@@ -760,12 +766,22 @@ fn pipeline(
                             .name(c"fs_main"),
                     );
                 }
-                let bindings = [vk::VertexInputBindingDescription {
+                let mut bindings = vec![vk::VertexInputBindingDescription {
                     binding: 0,
                     stride: if hud { 24 } else { 36 },
                     input_rate: vk::VertexInputRate::VERTEX,
                 }];
-                let attributes = if hud {
+                // World and shadow pipelines read one packed instance record
+                // (translation xyz, quarter yaw) per instance at location 3.
+                // Legacy/chunk/dynamic draws bind a single identity record.
+                if !hud {
+                    bindings.push(vk::VertexInputBindingDescription {
+                        binding: 1,
+                        stride: 16,
+                        input_rate: vk::VertexInputRate::INSTANCE,
+                    });
+                }
+                let mut attributes: Vec<_> = if hud {
                     vec![
                         vk::VertexInputAttributeDescription {
                             location: 0,
@@ -790,6 +806,14 @@ fn pipeline(
                         })
                         .collect()
                 };
+                if !hud {
+                    attributes.push(vk::VertexInputAttributeDescription {
+                        location: 3,
+                        binding: 1,
+                        format: vk::Format::R32G32B32A32_SFLOAT,
+                        offset: 0,
+                    });
+                }
                 let vertex = vk::PipelineVertexInputStateCreateInfo::default()
                     .vertex_binding_descriptions(&bindings)
                     .vertex_attribute_descriptions(&attributes);
@@ -934,15 +958,110 @@ impl Drop for Commands {
     }
 }
 
+/// Opt-in per-frame CPU-side diagnostics. These are wall-clock waits at the real
+/// API call boundaries, not GPU execution time, and never a presentation
+/// (scanout) timestamp. Absent values mean the boundary was not reached or
+/// diagnostics are disabled.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DrawDiagnostics {
+    /// GPU submission identity produced by this draw attempt, if it submitted.
+    /// Matches `GpuTimings::frame_id` for the same submission. A draw can submit
+    /// and still report `Retry` when the presentation request is out of date.
+    pub submitted_frame_id: Option<u64>,
+    /// Summed blocking fence waits inside the upload/retain calls made since
+    /// `begin_frame_diagnostics`, at their own call sites. These run before the
+    /// draw and are normally where the frame actually blocks.
+    pub upload_fence_wait_ms: Option<f64>,
+    /// Number of upload/retain fence waits summed above (0 when none ran).
+    pub upload_fence_waits: Option<u32>,
+    /// Blocking wait on the submission fence inside the draw itself. It is
+    /// usually already signalled by the upload waits above, so this is not the
+    /// frame's total fence wait.
+    pub render_fence_wait_ms: Option<f64>,
+    /// `vkAcquireNextImageKHR` call duration.
+    pub acquire_ms: Option<f64>,
+    /// `vkQueuePresentKHR` call duration: queueing the request, not scanout.
+    pub present_ms: Option<f64>,
+}
+
+/// Accumulates fence waits at call sites outside the draw. Enabled state is
+/// explicit: while disabled it never reads the clock and reports nothing, which
+/// keeps "no waits" (`Some(0)`) distinct from "not measured" (`None`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct WaitTally {
+    enabled: bool,
+    waits: u32,
+    total_ms: f64,
+}
+
+impl WaitTally {
+    fn reset(&mut self, enabled: bool) {
+        *self = Self {
+            enabled,
+            waits: 0,
+            total_ms: 0.,
+        };
+    }
+    fn timed_begin(&self) -> Option<Instant> {
+        self.enabled.then(Instant::now)
+    }
+    fn record(&mut self, begin: Option<Instant>) {
+        if let Some(begin) = begin {
+            self.waits += 1;
+            self.total_ms += elapsed_ms(begin);
+        }
+    }
+    fn total(&self) -> Option<f64> {
+        self.enabled.then_some(self.total_ms)
+    }
+    fn count(&self) -> Option<u32> {
+        self.enabled.then_some(self.waits)
+    }
+}
+
+/// Result of the presentation request, independent of the submission that
+/// preceded it. An out-of-date swapchain is not a successful presentation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PresentOutcome {
+    Presented { recreate: bool },
+    OutOfDate,
+    Failed(vk::Result),
+}
+
+fn classify_present(
+    result: std::result::Result<bool, vk::Result>,
+    _acquire_suboptimal: bool,
+) -> PresentOutcome {
+    match result {
+        // SUBOPTIMAL is advisory: the swapchain still presents successfully.
+        // Android can report it persistently with compositor-managed rotation.
+        // Defer recreation to explicit resize or OUT_OF_DATE; rebuilding here
+        // recreates pipelines every frame without resolving that advisory.
+        Ok(_) => PresentOutcome::Presented { recreate: false },
+        Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => PresentOutcome::OutOfDate,
+        Err(e) => PresentOutcome::Failed(e),
+    }
+}
+
 pub struct Renderer {
+    material_time: Option<f32>,
+    world_visible: bool,
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
     shadow: Shadow,
+    shadow_map_updated: bool,
     timestamps: Option<TimestampQueries>,
+    diagnostics_enabled: bool,
+    diagnostics: DrawDiagnostics,
+    upload_waits: WaitTally,
+    submissions: u64,
     legacy: Option<GpuMesh>,
     chunks: BTreeMap<[i32; 3], GpuMesh>,
     dynamic: Option<GpuMesh>,
+    static_scene: Option<StaticScene>,
+    // One zeroed instance record: identity transform for non-instanced draws.
+    identity: Buffer,
     hud: Option<Buffer>,
     requested: vk::Extent2D,
     recreate: bool,
@@ -1129,15 +1248,32 @@ impl Renderer {
         let commands = Commands::new(device.clone())?;
         let shadow = Shadow::new(device.clone(), LightingSettings::default().shadow_map_size)?;
         let timestamps = TimestampQueries::new(device.clone())?;
+        // One zeroed packed instance record: identity transform fallback so the
+        // legacy/chunk/dynamic paths keep rendering unchanged through the
+        // instanced vertex pipeline.
+        let identity = Buffer::new(
+            device.clone(),
+            &[0u8; 16],
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
         Ok(Self {
+            material_time: None,
+            world_visible: true,
             device,
             commands,
             swapchain: None,
             shadow,
+            shadow_map_updated: false,
             timestamps,
+            diagnostics_enabled: false,
+            diagnostics: DrawDiagnostics::default(),
+            upload_waits: WaitTally::default(),
+            submissions: 0,
             legacy: None,
             chunks: BTreeMap::new(),
             dynamic: None,
+            static_scene: None,
+            identity,
             hud: None,
             requested: vk::Extent2D {
                 width: size.width,
@@ -1160,7 +1296,9 @@ impl Renderer {
         if self.mesh_revision.is_some_and(|r| r > mesh.revision) {
             return Ok(());
         }
+        let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
+        self.upload_waits.record(wait);
         let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
         self.legacy = Some(replacement);
         self.chunks.clear();
@@ -1179,7 +1317,9 @@ impl Renderer {
         {
             return Ok(());
         }
+        let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
+        self.upload_waits.record(wait);
         let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
         self.chunks.insert(key, replacement);
         self.legacy = None;
@@ -1197,7 +1337,9 @@ impl Renderer {
     pub fn retain_chunks(&mut self, keys: &[[i32; 3]]) -> Result<()> {
         let keep: std::collections::BTreeSet<_> = keys.iter().copied().collect();
         if self.chunks.keys().any(|key| !keep.contains(key)) {
+            let wait = self.upload_waits.timed_begin();
             self.commands.wait()?;
+            self.upload_waits.record(wait);
             self.chunks.retain(|key, _| keep.contains(key));
             self.update_counters();
         }
@@ -1208,7 +1350,12 @@ impl Renderer {
     /// the frame fence; grows transactionally when geometry exceeds capacity.
     /// Revision is informational here: changing transforms may retain a revision.
     pub fn upload_dynamic(&mut self, mesh: &Mesh) -> Result<()> {
+        let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
+        self.upload_waits.record(wait);
+        // In-place writes can change positions while retaining the revision.
+        // Invalidate before any write, also covering a partial write failure.
+        self.shadow.invalidate();
         if let Some(dynamic) = &mut self.dynamic {
             if dynamic.rewrite(mesh)? {
                 return Ok(());
@@ -1219,7 +1366,49 @@ impl Renderer {
         Ok(())
     }
 
+    /// Atomically replaces the instanced static scene: unique prototype
+    /// geometry is pooled into shared vertex/index buffers plus one packed
+    /// instance buffer, and each prototype is drawn as one batch carrying all
+    /// of its instances. An empty instance list clears the scene. Validation
+    /// and budget checks (128 MiB geometry, 16 MiB instances) run before any
+    /// allocation; on any error, including allocation failure mid-build, the
+    /// previous scene is retained unchanged. Callers should treat this as a
+    /// load/edit-time operation, not a per-frame path.
+    pub fn replace_static_scene(
+        &mut self,
+        meshes: &[Mesh],
+        instances: &[StaticInstance],
+    ) -> Result<StaticSceneStats> {
+        // Host-side planning validates everything before touching the device or
+        // the live scene; an error here retains the previous scene untouched.
+        let plan = static_scene::plan_static_scene(meshes, instances)?;
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        if plan.instance_count == 0 {
+            self.static_scene = None;
+            self.update_counters();
+            return Ok(StaticSceneStats::default());
+        }
+        // Construction is transactional: all buffers exist before the swap, so
+        // a failed allocation drops only the partial build. The fence wait above
+        // guarantees no submitted frame references the retired scene.
+        let scene = StaticScene::new(self.device.clone(), plan)?;
+        let stats = scene.stats();
+        self.static_scene = Some(scene);
+        self.update_counters();
+        Ok(stats)
+    }
+
+    /// Honest accounting of the currently resident static scene, if any.
+    pub fn static_scene_stats(&self) -> Option<StaticSceneStats> {
+        self.static_scene.as_ref().map(|scene| scene.stats())
+    }
+
     fn update_counters(&mut self) {
+        // Every committed geometry replacement/removal comes through here.
+        // Rejected transactional uploads leave both geometry and validity intact.
+        self.shadow.invalidate();
         self.resident_chunks = self.chunks.len();
         self.visible_chunks = self.visible_chunks.min(self.resident_chunks);
         self.mesh_bytes = self
@@ -1228,7 +1417,29 @@ impl Renderer {
             .chain(self.legacy.iter())
             .chain(self.dynamic.iter())
             .map(GpuMesh::allocated_bytes)
-            .sum();
+            .sum::<usize>()
+            // Pooled static geometry capacity; per-buffer and instance-buffer
+            // capacities are broken out in StaticSceneStats.
+            + self
+                .static_scene
+                .as_ref()
+                .map_or(0, |scene| scene.allocated_bytes);
+    }
+
+    /// Suspend world draws behind an opaque menu while retaining GPU resources.
+    /// HUD/presentation continue; no world or shadow draw is submitted while hidden.
+    pub fn set_world_visible(&mut self, visible: bool) {
+        self.world_visible = visible;
+    }
+
+    /// Opt-in wetland material response. The phase wraps continuously for both
+    /// ripple frequencies; legacy rendering keeps its original material response.
+    pub fn set_wetland_material_time(&mut self, seconds: Option<f32>) -> Result<()> {
+        if seconds.is_some_and(|s| !s.is_finite()) {
+            return Err("Material time must be finite".into());
+        }
+        self.material_time = seconds.map(|s| s.rem_euclid(std::f32::consts::TAU * 10.));
+        Ok(())
     }
 
     pub fn render(&mut self, view_proj: [[f32; 4]; 4], eye: [f32; 3], hud: &Hud) -> FrameResult {
@@ -1251,7 +1462,9 @@ impl Renderer {
         hud: &Hud,
         lighting: &LightingSettings,
     ) -> FrameResult {
-        match self.draw(view_proj, eye, hud, lighting) {
+        let mut effective = *lighting;
+        effective.shadows &= self.world_visible;
+        match self.draw(view_proj, eye, hud, &effective) {
             Ok(result) => result,
             Err(e) => {
                 if e.contains("ERROR_OUT_OF_HOST_MEMORY")
@@ -1273,7 +1486,41 @@ impl Renderer {
         self.timestamps.is_some()
     }
 
-    /// Nonempty mesh draws submitted to the latest shadow pass, independent of camera culling.
+    /// Enables per-frame CPU wait diagnostics. Off by default: normal operation
+    /// adds no clock readings beyond the pre-existing ones.
+    pub fn set_diagnostics_enabled(&mut self, enabled: bool) {
+        self.diagnostics_enabled = enabled;
+        if !enabled {
+            self.diagnostics = DrawDiagnostics::default();
+            self.upload_waits.reset(false);
+        }
+    }
+
+    /// Starts one frame's diagnostics. Callers must invoke this before the
+    /// frame's upload/retain calls so waits from an earlier frame cannot leak
+    /// into this row.
+    pub fn begin_frame_diagnostics(&mut self) {
+        self.diagnostics = DrawDiagnostics::default();
+        self.upload_waits.reset(self.diagnostics_enabled);
+    }
+
+    /// Diagnostics for the current frame; `None` while disabled.
+    pub fn draw_diagnostics(&self) -> Option<DrawDiagnostics> {
+        self.diagnostics_enabled.then(|| DrawDiagnostics {
+            upload_fence_wait_ms: self.upload_waits.total(),
+            upload_fence_waits: self.upload_waits.count(),
+            ..self.diagnostics
+        })
+    }
+
+    /// Whether this draw attempt submitted a depth-map update (including first-use
+    /// clear with shadows disabled). False on reuse or before submission.
+    pub fn shadow_map_updated(&self) -> bool {
+        self.shadow_map_updated
+    }
+
+    /// Nonempty mesh draws recorded for this attempt, independent of camera culling.
+    /// Zero when the shadow map is reused or shadows are disabled.
     pub fn shadow_caster_meshes(&self) -> usize {
         self.shadow.caster_meshes
     }
@@ -1285,10 +1532,22 @@ impl Renderer {
         hud: &Hud,
         lighting: &LightingSettings,
     ) -> Result<FrameResult> {
+        self.shadow_map_updated = false;
+        // Clear this draw's own fields; upload waits recorded since
+        // begin_frame_diagnostics belong to the same frame and are preserved.
+        self.diagnostics = DrawDiagnostics {
+            submitted_frame_id: None,
+            render_fence_wait_ms: None,
+            acquire_ms: None,
+            present_ms: None,
+            ..self.diagnostics
+        };
         if self.requested.width == 0 || self.requested.height == 0 {
             return Ok(FrameResult::Retry);
         }
+        let fence_begin = self.diagnostics_enabled.then(Instant::now);
         self.commands.wait()?;
+        self.diagnostics.render_fence_wait_ms = fence_begin.map(elapsed_ms);
         if let Some(timestamps) = &mut self.timestamps {
             timestamps.read_completed()?;
         }
@@ -1297,14 +1556,21 @@ impl Renderer {
             // Construct replacement transactionally, then retire the idle old map.
             self.shadow = Shadow::new(self.device.clone(), lighting.shadow_map_size)?;
         }
-        let bounds: Vec<_> = self
+        let mut bounds: Vec<_> = self
             .chunks
             .values()
             .chain(self.legacy.iter())
             .chain(self.dynamic.iter())
-            .filter(|m| m.index_count > 0)
+            .filter(|m| self.world_visible && m.index_count > 0)
             .map(|m| m.bounds)
             .collect();
+        // Shadow depth fitting must include the instanced scene bounds so
+        // offscreen static casters stay inside the map.
+        if let Some(scene) = &self.static_scene {
+            if self.world_visible && scene.has_geometry {
+                bounds.push(scene.bounds);
+            }
+        }
         self.shadow.update(eye, lighting, &bounds)?;
         if self.recreate {
             // SAFETY: exceptional resize/retirement only. This is the standard
@@ -1346,12 +1612,15 @@ impl Renderer {
         // binary semaphore is consumed by exactly one submit. The acquired image uniquely selects
         // its presentation semaphore. All render-pass/pipeline/buffer handles remain alive.
         unsafe {
-            let (index, suboptimal) = match s.api.acquire_next_image(
+            let acquire_begin = self.diagnostics_enabled.then(Instant::now);
+            let acquired = s.api.acquire_next_image(
                 s.raw,
                 u64::MAX,
                 self.commands.available,
                 vk::Fence::null(),
-            ) {
+            );
+            self.diagnostics.acquire_ms = acquire_begin.map(elapsed_ms);
+            let (index, suboptimal) = match acquired {
                 Ok(v) => v,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.recreate = true;
@@ -1370,13 +1639,15 @@ impl Renderer {
             if let Some(timestamps) = &mut self.timestamps {
                 timestamps.begin(cmd);
             }
-            self.shadow.record(
+            let shadow_updated = self.shadow.record(
                 cmd,
                 lighting.shadows,
                 self.chunks
                     .values()
                     .chain(self.legacy.iter())
                     .chain(self.dynamic.iter()),
+                self.static_scene.as_ref(),
+                self.identity.raw,
             );
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 1);
@@ -1429,6 +1700,8 @@ impl Renderer {
                 &[self.shadow.set],
                 &[],
             );
+            // Identity instance record for the non-instanced draws below.
+            d.cmd_bind_vertex_buffers(cmd, 1, &[self.identity.raw], &[0]);
             d.cmd_push_constants(
                 cmd,
                 s.layout,
@@ -1436,27 +1709,41 @@ impl Renderer {
                 0,
                 bytemuck::bytes_of(&Camera {
                     view_proj,
-                    eye: [eye[0], eye[1], eye[2], 1.0],
+                    eye: [
+                        eye[0],
+                        eye[1],
+                        eye[2],
+                        self.material_time.map_or(1.0, |t| -1.0 - t),
+                    ],
                 }),
             );
             let frustum = Frustum::new(view_proj);
             self.visible_chunks = self
                 .chunks
                 .values()
-                .filter(|mesh| mesh.index_count > 0 && frustum.intersects(mesh.bounds))
+                .filter(|mesh| {
+                    self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
+                })
                 .count();
-            let visible = self
-                .chunks
-                .values()
-                .filter(|mesh| mesh.index_count > 0 && frustum.intersects(mesh.bounds));
+            let visible = self.chunks.values().filter(|mesh| {
+                self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
+            });
             for mesh in self.legacy.iter().chain(visible).chain(self.dynamic.iter()) {
-                if mesh.index_count == 0 {
+                if !self.world_visible || mesh.index_count == 0 {
                     continue;
                 }
                 if let (Some(v), Some(i)) = (&mesh.vertices, &mesh.indices) {
                     d.cmd_bind_vertex_buffers(cmd, 0, &[v.raw], &[0]);
                     d.cmd_bind_index_buffer(cmd, i.raw, 0, vk::IndexType::UINT32);
                     d.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+                }
+            }
+            // Instanced static scene: one batch per prototype carrying all of
+            // its instances; whole-batch frustum culling only, never applied
+            // to the shadow pass above.
+            if self.world_visible {
+                if let Some(scene) = &self.static_scene {
+                    scene.record_batches(d, cmd, Some(&frustum));
                 }
             }
             if hud_count > 0 {
@@ -1486,21 +1773,37 @@ impl Renderer {
             d.reset_fences(&[self.commands.fence]).map_err(err)?;
             d.queue_submit(self.device.queue, &submit, self.commands.fence)
                 .map_err(err)?;
+            if shadow_updated {
+                self.shadow.submitted(lighting.shadows);
+            }
+            self.shadow_map_updated = shadow_updated;
+            // One identity per accepted submission, shared with the timestamp
+            // queries, so a capture can join CPU and GPU records exactly.
+            self.submissions += 1;
+            self.diagnostics.submitted_frame_id = Some(self.submissions);
             if let Some(timestamps) = &mut self.timestamps {
-                timestamps.submitted(lighting.shadows, lighting.shadow_map_size);
+                timestamps.submitted(lighting.shadows, shadow_updated, lighting.shadow_map_size);
             }
             let chains = [s.raw];
             let indices = [index];
-            match s.api.queue_present(
+            let present_begin = self.diagnostics_enabled.then(Instant::now);
+            let presented = s.api.queue_present(
                 self.device.queue,
                 &vk::PresentInfoKHR::default()
                     .wait_semaphores(&signals)
                     .swapchains(&chains)
                     .image_indices(&indices),
-            ) {
-                Ok(changed) => self.recreate = changed || suboptimal,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => self.recreate = true,
-                Err(e) => return Err(err(e)),
+            );
+            self.diagnostics.present_ms = present_begin.map(elapsed_ms);
+            match classify_present(presented, suboptimal) {
+                PresentOutcome::Presented { recreate } => self.recreate = recreate,
+                PresentOutcome::OutOfDate => {
+                    // The submission stands and its identity is kept; only the
+                    // presentation request failed, so this is not a presented frame.
+                    self.recreate = true;
+                    return Ok(FrameResult::Retry);
+                }
+                PresentOutcome::Failed(e) => return Err(err(e)),
             }
         }
         Ok(FrameResult::Presented)
@@ -1512,5 +1815,91 @@ impl Drop for Renderer {
         unsafe {
             let _ = self.device.raw.device_wait_idle();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_present, PresentOutcome, WaitTally};
+    use ash::vk;
+    use std::time::Instant;
+
+    #[test]
+    fn disabled_wait_tally_takes_no_clock_and_reports_nothing() {
+        let mut tally = WaitTally::default();
+        tally.reset(false);
+        let begin = tally.timed_begin();
+        assert!(begin.is_none(), "a disabled tally must not read the clock");
+        tally.record(begin);
+        assert_eq!(tally.total(), None);
+        assert_eq!(tally.count(), None);
+    }
+
+    #[test]
+    fn enabled_wait_tally_distinguishes_zero_one_and_many_waits() {
+        let mut tally = WaitTally::default();
+        tally.reset(true);
+        // No wait happened: an explicit zero, not a missing measurement.
+        assert_eq!(tally.total(), Some(0.));
+        assert_eq!(tally.count(), Some(0));
+        tally.record(Some(Instant::now()));
+        assert_eq!(tally.count(), Some(1));
+        let after_one = tally.total().unwrap();
+        tally.record(Some(Instant::now()));
+        tally.record(Some(Instant::now()));
+        assert_eq!(tally.count(), Some(3), "every wait call site is counted");
+        assert!(
+            tally.total().unwrap() >= after_one,
+            "waits accumulate rather than replace"
+        );
+    }
+
+    #[test]
+    fn resetting_a_tally_drops_waits_from_the_previous_attempt() {
+        let mut tally = WaitTally::default();
+        tally.reset(true);
+        tally.record(Some(Instant::now()));
+        tally.reset(true);
+        assert_eq!(tally.count(), Some(0), "prior waits must not leak forward");
+        assert_eq!(tally.total(), Some(0.));
+        tally.record(Some(Instant::now()));
+        tally.reset(false);
+        assert_eq!(tally.count(), None);
+        assert_eq!(tally.total(), None);
+    }
+
+    #[test]
+    fn present_results_map_to_honest_frame_outcomes() {
+        assert_eq!(
+            classify_present(Ok(false), false),
+            PresentOutcome::Presented { recreate: false }
+        );
+        // Advisory suboptimal results remain usable. Recreating on every
+        // advisory result can rebuild pipelines every frame on Android.
+        for (present_suboptimal, acquire_suboptimal) in [(false, true), (true, false), (true, true)]
+        {
+            assert_eq!(
+                classify_present(Ok(present_suboptimal), acquire_suboptimal),
+                PresentOutcome::Presented { recreate: false }
+            );
+        }
+        // Out of date is not a successful presentation: the submission happened,
+        // the presentation request did not succeed.
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_OUT_OF_DATE_KHR), false),
+            PresentOutcome::OutOfDate
+        );
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_OUT_OF_DATE_KHR), true),
+            PresentOutcome::OutOfDate
+        );
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_DEVICE_LOST), false),
+            PresentOutcome::Failed(vk::Result::ERROR_DEVICE_LOST)
+        );
+        assert_eq!(
+            classify_present(Err(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY), false),
+            PresentOutcome::Failed(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY)
+        );
     }
 }

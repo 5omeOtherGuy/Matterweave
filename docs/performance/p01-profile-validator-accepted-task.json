@@ -1,0 +1,22 @@
+{
+  "attempt": 3,
+  "owner": "muse-profile-a3",
+  "profile": "muse-free",
+  "state": "accepted",
+  "base": "755620472e8457d8e55760165e759b6d8013c6db",
+  "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+  "paths": [
+    "tools/performance/validate_frame_profile.py",
+    "tools/performance/test_validate_frame_profile.py",
+    "docs/performance/logs/muse-profile-a3.md"
+  ],
+  "interfaces": {
+    "measurement": 2
+  },
+  "dependencies": [],
+  "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/muse-profile-a3",
+  "session": "/mnt/bench/matterweave-dev/performance/run-01/muse-profile-a2/session.jsonl",
+  "artifact": "/mnt/bench/matterweave-dev/performance/run-01/profile-candidate-02/sha256.json",
+  "log": "docs/performance/logs/muse-profile-a3.md",
+  "acceptance": "130 unittest tests; serial final Muse/Gemini reviews then lead delta inspection/real host+Android checks pass. Unknown gaps are not fabricated joins."
+}

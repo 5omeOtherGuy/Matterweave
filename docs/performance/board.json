@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "run": "performance-01",
+  "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
+  "base": "755620472e8457d8e55760165e759b6d8013c6db",
+  "phone_owner": "Sole lead; idle after engine shadow-cache route validation, owned controls removed.",
+  "tasks": {
+    "P00-handoff": {
+      "attempt": 2,
+      "owner": "muse-p00-a2",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p00-candidate-02/sha256.json",
+      "log": "docs/performance/logs/muse-p00-a2.md",
+      "history": "docs/performance/p00-accepted-task.json"
+    },
+    "P01-instrumentation": {
+      "attempt": 2,
+      "owner": "opus-p01-a2",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p01-candidate-02/sha256.json",
+      "log": "docs/performance/logs/opus-p01-a2.md",
+      "acceptance": "Code slice accepted: independent reviews then lead checks;106 Rust tests,host90 rows,Android1000/581rows valid (epochs1/2/3). Full P01 overhead/counters still pending.",
+      "history": "docs/performance/p01-instrumentation-accepted-task.json"
+    },
+    "P01-conditions": {
+      "attempt": 1,
+      "owner": "glm-p01-a1",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/conditions-candidate-02/sha256.json",
+      "log": "docs/performance/logs/glm-p01-a1.md",
+      "history": "docs/performance/p01-conditions-accepted-task.json"
+    },
+    "P01-fixtures": {
+      "attempt": 1,
+      "owner": "muse-p01-fixtures-a1",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p01-candidate-02/sha256.json",
+      "log": "docs/performance/logs/muse-p01-fixtures-a1.md",
+      "history": "docs/performance/p01-fixtures-accepted-task.json"
+    },
+    "P01-profile-validator": {
+      "attempt": 3,
+      "owner": "muse-profile-a3",
+      "state": "accepted",
+      "artifact": "/mnt/bench/matterweave-dev/performance/run-01/profile-candidate-02/sha256.json",
+      "log": "docs/performance/logs/muse-profile-a3.md",
+      "history": "docs/performance/p01-profile-validator-accepted-task.json"
+    },
+    "P03-source-tile": {
+      "attempt": 1,
+      "owner": "codex-desktop-lead",
+      "state": "accepted",
+      "base": "755620472e8457d8e55760165e759b6d8013c6db",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-detail",
+      "branch": "codex/performance-detail",
+      "source_base": "94dc2ca9b480dfa808f306e4fd4e8804a1056459",
+      "worker_profile": "opus-medium",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/desktop-01/opus-detail-a1",
+      "brief": "/mnt/bench/matterweave-dev/performance/desktop-01/opus-detail-a1-brief.md",
+      "worker_timeout_s": 900,
+      "paths": [
+        "crates/matterweave-detail/**",
+        "Cargo.toml (workspace member only)",
+        "Cargo.lock (necessary dependency delta only)",
+        "docs/performance/p03/**"
+      ],
+      "interfaces": {
+        "detail_volume": "new experimental v1; metre units, explicit voxel scale/transform/revision; no legacy schema changes"
+      },
+      "dependencies": [],
+      "log": "docs/performance/p03/desktop-log.md",
+      "acceptance": "Source-only PR6 merged524f29eb; docs/host/Android CI pass. Integrated into P01 branch. Native gallery/density/cost pending.",
+      "artifact": "f9251d7480c748cdcbe9506c203f55188729fba9"
+    },
+    "P03-flora-tile": {
+      "attempt": 2,
+      "owner": "codex-desktop-lead",
+      "state": "accepted",
+      "base": "f9251d7480c748cdcbe9506c203f55188729fba9",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-flora",
+      "paths": [
+        "crates/matterweave-detail/src/flora*",
+        "crates/matterweave-detail/tests/flora*.rs",
+        "crates/matterweave-detail/examples/new flora gallery",
+        "crates/matterweave-detail/src/lib.rs: module export/additive palette30..63 only",
+        "docs/performance/p03/flora/**"
+      ],
+      "interfaces": {
+        "detail_volume": 1
+      },
+      "dependencies": [
+        "P03-source-tile"
+      ],
+      "acceptance": "Source accepted; PR7 merged c71306d after host/Android/docs CI. SourceLOD first; native/full-showcase gates remain.",
+      "branch": "codex/performance-flora",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/desktop-02/opus-flora-repair",
+      "profile": "opus-medium",
+      "artifact": "267c2c88ae2f988ef2a3360ab35537a72a523c07"
+    },
+    "P03-native-gallery": {
+      "attempt": 1,
+      "owner": "opus-native-gallery-a1",
+      "profile": "opus-medium",
+      "state": "accepted",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+      "paths": [
+        "apps/explorer/src/gallery.rs",
+        "apps/explorer/src/lib.rs",
+        "apps/explorer/Cargo.toml",
+        "Cargo.lock: app detail dependency",
+        "docs/performance/p03/native-gallery.md",
+        "docs/performance/p03/logs/opus-native-gallery-a1.md"
+      ],
+      "dependencies": [
+        "P03-source-tile"
+      ],
+      "interfaces": {
+        "detail_volume": 1,
+        "measurement": 2
+      },
+      "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/opus-native-gallery-a1",
+      "acceptance": "Source accepted; phone85 instances/120582triangles,2194rows/epochs1-2 HOME/resume pass. User save unchanged. Full quality/collision/cost gates open.",
+      "artifact": "6fac9a5"
+    },
+    "P02-cache": {
+      "attempt": 1,
+      "owner": "pi-lead",
+      "state": "accepted",
+      "paths": [
+        "crates/matterweave-physics/src/dynamic_cache.rs",
+        "crates/matterweave-physics/tests/dynamic_cache.rs",
+        "apps/explorer/src/dynamic_upload.rs",
+        "apps/explorer/src/lib.rs: dynamic cache integration"
+      ],
+      "log": "docs/performance/p02.md",
+      "acceptance": "11 focused tests + independent reviews; native2190rows/epochs1-2, resume build0/upload1; settled work0. Matched comparison still pending.",
+      "artifact": "6fac9a5"
+    },
+    "P03-detail-collision": {
+      "attempt": 1,
+      "owner": "codex-desktop-lead",
+      "state": "superseded",
+      "workspace": "isolated; desktop to report",
+      "paths": [
+        "crates/matterweave-physics/src/detail_collision.rs",
+        "crates/matterweave-physics/tests/detail_collision.rs",
+        "crates/matterweave-physics/src/lib.rs: additive collision hooks",
+        "crates/matterweave-physics/Cargo.toml",
+        "Cargo.lock: detail dependency",
+        "docs/performance/p03/collision/**"
+      ],
+      "acceptance": "Previously unstarted assignment replaced by completion-collision."
+    },
+    "P02-wsi": {
+      "attempt": 1,
+      "owner": "pi-lead",
+      "state": "comparison-pending",
+      "artifact": "21c060c",
+      "log": "docs/performance/p02.md",
+      "acceptance": "Source/final reviews + host/native functional checks pass. Paired558274 stopped safely before capture: current26.3/26.078C versus old31.3/31.483C reference. Save restored. Establish fresh cold reference; no win qualified."
+    },
+    "completion-collision": {
+      "state": "integrated-host-tested",
+      "owner": "opus-medium",
+      "attempt": 3,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-collision",
+      "branch": "codex/completion-collision",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-physics/**",
+        "docs/performance/p03/collision/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-01/collision-a1",
+      "brief": "/mnt/bench/matterweave-dev/performance/completion-01/collision-brief.md",
+      "acceptance": "44 physics tests passed; scoped Clippy passed. Independent Muse/Gemini original review, corrections then fresh Pi Astra no substantiated findings. Actual full-map/device acceptance pending.",
+      "commits": [
+        "4459b3d",
+        "5f67759"
+      ],
+      "friction": "Opus correction interrupted; Muse follow-up429; lead completed regression checks."
+    },
+    "completion-map": {
+      "state": "integrated-host-verified",
+      "owner": "sole Codex lead",
+      "attempt": 4,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-map",
+      "branch": "codex/completion-map",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-detail/src/showcase.rs",
+        "crates/matterweave-detail/tests/showcase.rs",
+        "crates/matterweave-detail/examples/showcase_manifest.rs",
+        "docs/performance/showcase/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/map-opus",
+      "brief": "/mnt/bench/matterweave-dev/performance/completion-02/map.md",
+      "acceptance": "All19 map tests pass; workspace238 tests pass plus separate full-map runtime. Final manifest34864520 expanded cells,6221flora/10species,composition f458591e7b345546. Independent Muse/Gemini correction reviews complete; phone traversal remains pending.",
+      "friction": "First attempt timed out with useful partial code; resumed exact idle session with bounded finish.",
+      "artifact": "7e1143e"
+    },
+    "completion-flora": {
+      "state": "integrated-host-tested",
+      "owner": "muse-free",
+      "attempt": 1,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-flora",
+      "branch": "codex/completion-flora",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-detail/src/wetland_flora.rs",
+        "crates/matterweave-detail/tests/wetland_flora.rs",
+        "crates/matterweave-detail/examples/wetland_flora_gallery.rs",
+        "docs/performance/showcase-flora/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-01/flora-a1",
+      "brief": "/mnt/bench/matterweave-dev/performance/completion-01/flora-brief.md",
+      "acceptance": "Three sources reviewed independently by Muse/Gemini, branch/notch/export fixes verified; source-angle visual checks passed. Integrated phone placement/LOD checks pending.",
+      "commits": [
+        "63f09fb",
+        "02a0437"
+      ]
+    },
+    "completion-instancing": {
+      "state": "integrated-native-verified",
+      "owner": "glm-high",
+      "attempt": 2,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-instancing",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-render/**",
+        "docs/performance/instancing/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-01/instancing-a2",
+      "acceptance": "Corrected index usage reviewed independently by Muse/Gemini. Native full-map25frames/20valid capture rows without Vulkan errors. Source geometry remains fixed Source LOD; matched mobile performance pending.",
+      "friction": "First attempt timed out with useful partial code; resumed exact idle session with bounded finish.",
+      "artifact": "41e8af2"
+    },
+    "completion-app": {
+      "state": "integrated-generator3-phone-functional",
+      "owner": "sole desktop lead",
+      "paths": [
+        "apps/explorer/src/wetland.rs",
+        "apps/explorer/src/wetland_state.rs",
+        "apps/explorer/src/wetland_metrics.rs",
+        "apps/explorer/src/experience.rs",
+        "apps/explorer/src/lib.rs",
+        "apps/explorer/src/controls.rs"
+      ],
+      "acceptance": "Runtimefullmap/edit/reloadPASS16.85s; AndroidAPK4e47b6d9 signature/alignment/install/menu/move/jump/separaterecovery2 PASS. Fullphone routes,destruction,matchedperformancepending.",
+      "artifact": "0d8225b"
+    },
+    "completion-traversal": {
+      "state": "integrated-host-verified",
+      "owner": "muse-free",
+      "base": "7e1143e",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-traversal",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/traversal-muse",
+      "paths": [
+        "crates/matterweave-physics/tests/showcase_traversal.rs",
+        "docs/performance/showcase/traversal-worker.md"
+      ],
+      "acceptance": "Lead regression3af4115 first reproduced bothblockers; generator3 now passes bothactualroutes pluswatersideprefix. Rawlogscompletion-02/generator3-all-itineraries-walk.log. Phonepending."
+    },
+    "completion-route-fix": {
+      "state": "integrated-host-verified",
+      "owner": "sole Codex lead after bounded Opus handoff",
+      "base": "3af4115 with provisional0.55m autostep dependency",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-route-fix",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/route-fix-opus",
+      "paths": [
+        "crates/matterweave-detail/src/showcase.rs",
+        "crates/matterweave-detail/tests/showcase.rs",
+        "docs/performance/showcase/route-fix-opus.md"
+      ],
+      "acceptance": "Worker039ad6f failed generation; leadd58c85e corrected connectivity/clearance/missinganchors. Both actualRapier routes PASS197.46667/11.35simseconds,19contenttestsPASS; Muse nofindings,Astra watersidecoverage addressedf887d67. Phonepending.",
+      "artifact": "0d8225b"
+    },
+    "completion-ci-async": {
+      "state": "integrated-ci-verified",
+      "owner": "lead after Pi Astra partial handoff",
+      "artifact": "3040a53",
+      "acceptance": "39coretests/Clippy/40singleCPUrepetitions PASS; allremote host/Android/docs checks PASS. Corrects testtiming notproduction scheduler."
+    },
+    "completion-p02-runner": {
+      "state": "completed-three-pairs-cleanup-verified",
+      "owner": "sole lead after Opus and lead corrections",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-p02-runner",
+      "base": "0d8225b",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-fullmap/pairs-a4",
+      "session": "/mnt/bench/matterweave-dev/performance/completion-02/p02-runner-opus/session.jsonl",
+      "paths": [
+        "tools/performance/collect_wetland_pair.py",
+        "tools/performance/test_collect_wetland_pair.py",
+        "docs/performance/p02-phone-runner.md"
+      ],
+      "acceptance": "A3 first pair completed and metadata/entrance images matched; third trial rejected before launch after31 cooling observations. A4 owns phone for remaining2 pairs with61-observation bound, unchanged1C/2C limits. All170 Python tests pass after updating old cap test.",
+      "artifact": "f7c9048",
+      "process_handle": 66060
+    },
+    "completion-route-replay": {
+      "state": "integrated-native-verified-phone-pending",
+      "owner": "astra-worker via Pi; separate leaf",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-route-replay",
+      "base": "0d8225b",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/route-replay-astra",
+      "paths": [
+        "apps/explorer/src/wetland_replay.rs",
+        "apps/explorer/src/wetland.rs",
+        "apps/explorer/src/lib.rs",
+        "docs/performance/showcase/route-replay.md"
+      ],
+      "acceptance": "Astra c0c73e0 integrated4e899b3;55 app tests pass and Muse source review no findings. Native actual replay CANCEL smoke initially exposed focus gap, corrected2b08194 and nativePASS. Built/signature/alignment verified APK underphone-replay, notinstalled.",
+      "artifact": "2b08194"
+    },
+    "completion-save-validation": {
+      "state": "integrated-reviewed-host-and-native-verified",
+      "owner": "lead after Opus/Muse quota and Astra partial handoffs",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-save-validation",
+      "base": "4e899b3",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/save-review-gemini",
+      "paths": [
+        "apps/explorer/src/wetland_state.rs",
+        "apps/explorer/src/wetland.rs:Runtime validation only",
+        "crates/matterweave-detail/src/scene.rs if necessary for source isolation",
+        "docs/performance/showcase/save-validation.md"
+      ],
+      "acceptance": "Gemini candidate review completed after bounded continuation. Lead verified and fixed stored respawn gap; saved orientation retained intentionally.64 app tests including full Runtime gate and strict app Clippy pass. Native0.4 capture/replay cancellation passes. Android0.4 APK builds/alignment/signature pass; not installed.",
+      "artifact": "d23a9f8"
+    },
+    "completion-paired-analysis": {
+      "state": "three-pairs-analyzed-thermal-tradeoff",
+      "owner": "lead after GLM timeout without code",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-paired-analysis",
+      "base": "2b08194",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/p02-fullmap/analysis-first-pair",
+      "paths": [
+        "tools/performance/analyze_wetland_pairs.py",
+        "tools/performance/test_analyze_wetland_pairs.py",
+        "docs/performance/p02-analysis.md"
+      ],
+      "acceptance": "Two pairs matchmetadata/entranceimages. A4 candidate9missinggaps cover1.7547% ofselectedspan; meanupperbound24.653ms vsreference75.820. Repeatedcandidateheating/status2 vsreference0 prevents blanketefficiencyclaim. Thirdpair and profilingoverhead pending.",
+      "artifact": "4bf700e"
+    },
+    "completion-frame-cap": {
+      "state": "stopped-unintegrated-engine-reassessment",
+      "owner": "astra-worker via Pi",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-frame-cap",
+      "base": "ce89834",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/frame-cap-astra",
+      "process_handle": 90982,
+      "paths": [
+        "apps/explorer/src/wetland.rs",
+        "apps/explorer/src/wetland_state.rs",
+        "docs/performance/showcase/frame-cap.md"
+      ],
+      "acceptance": "Separate cap experiment motivated by repeated thermal tradeoff. Explicit30/60 target, default60, same source/quality/fixed-step simulation. Worker host tests/review pending; no thermal win claimed."
+    },
+    "completion-phone-route-check": {
+      "state": "elevated-device-pass-ground-interrupt-pending",
+      "owner": "lead",
+      "artifact": "ce89834",
+      "acceptance": "3 report-contract tests and all173 Python checks pass. Runner guards exclusively ownedfixture and actualroute endpoint/cancel identity. A4 collector ownsphone; no route script execution untilitstops."
+    },
+    "engine-shadow-reuse": {
+      "owner": "sole lead",
+      "state": "implemented-host-and-android-verified",
+      "source": "78cba4a",
+      "log": "docs/performance/shadow-reuse.md",
+      "artifact": "/mnt/bench/matterweave-dev/performance/engine-01",
+      "remaining": "matched heat/energy comparison; engine M2-M6 remain open"
+    }
+  },
+  "capacity": {
+    "policy": "One lead; bounded independent Pi workers as useful. One phone owner; serialize heavy builds. Prior two-lead quota superseded by owner."
+  },
+  "provider_blockers": {
+    "muse": "Save-validation FreeUsageLimitError HTTP429; no further retry this window. Earlier route/replay reviews completed.",
+    "opus": "HTTP429 five-hour allowance exhausted during save-validation; reset1788866400, no retry before reset. Partial source preserved and rerouted to Muse."
+  }
+}

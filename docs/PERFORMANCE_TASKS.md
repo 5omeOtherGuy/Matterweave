@@ -15,7 +15,8 @@ adapter/test task; no agent should write another orchestration plan.
 
 - Inspect Git, current skill/profile settings, toolchain, storage, existing processes,
   provider access/quotas and the device. Set Hy4 paid ceilings before inference.
-- Preserve user saves; establish an unplugged collection route and repeatable cooling,
+- Use exclusively owned fixtures and separate native saves; the owner revoked
+  repeated save backup/restore rituals. Establish unplugged collection and cooling,
   brightness/refresh/quality setup. Keep phone ownership explicit.
 - Start a new run. Reconcile the current SQLite board's committed-submission contract
   with Pi's patch handoff using a minimal tested adapter, or use a sole lead-written

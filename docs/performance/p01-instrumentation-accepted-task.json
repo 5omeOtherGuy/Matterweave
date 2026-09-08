@@ -1,0 +1,28 @@
+{
+  "attempt": 2,
+  "owner": "opus-p01-a2",
+  "profile": "opus-medium",
+  "state": "accepted",
+  "base": "755620472e8457d8e55760165e759b6d8013c6db",
+  "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+  "paths": [
+    "apps/explorer/src/metrics.rs",
+    "apps/explorer/src/lib.rs",
+    "apps/explorer/Cargo.toml",
+    "Cargo.lock",
+    "crates/matterweave-render/src/lib.rs",
+    "crates/matterweave-render/src/timing.rs",
+    "crates/matterweave-physics/src/lib.rs",
+    "docs/performance/logs/opus-p01-a2.md",
+    "docs/performance/measurement-v2.md"
+  ],
+  "interfaces": {
+    "measurement": 2
+  },
+  "dependencies": [],
+  "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/opus-p01-a2",
+  "session": "/mnt/bench/matterweave-dev/performance/run-01/opus-p01-a1/session.jsonl",
+  "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p01-candidate-02/sha256.json",
+  "log": "docs/performance/logs/opus-p01-a2.md",
+  "acceptance": "Code slice accepted: independent reviews then lead checks;106 Rust tests,host90 rows,Android1000/581rows valid (epochs1/2/3). Full P01 overhead/counters still pending."
+}

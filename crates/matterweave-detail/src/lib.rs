@@ -26,10 +26,14 @@
 //!   to hold the current fixtures on a desktop host. They are not a claim about
 //!   phone feasibility.
 
+mod bracket;
+pub use bracket::bracket_fungus;
 mod fixtures;
 mod flora;
 mod scene;
 mod serial;
+mod showcase;
+mod wetland_flora;
 
 pub use fixtures::{
     column_top, gallery_scene, parasol_mushroom, terrain_detail_tile, FIXTURE_GENERATOR_VERSION,
@@ -47,6 +51,20 @@ pub use scene::{
     MAX_SCENE_SOURCE_BYTES, MAX_SCENE_TRANSLATION_M,
 };
 pub use serial::{VolumeSnapshot, MAX_SNAPSHOT_JSON_BYTES, MAX_SNAPSHOT_RUNS, SNAPSHOT_VERSION};
+pub use showcase::{
+    build_showcase, carved, cell_centre_m, composition_hash, showcase_class, showcase_prototype,
+    species_source_radius_m, terrain_height_m, ClassCounts, ContentManifest, Landmark, Showcase,
+    SurfacePoint, Terrain, BAND_CELLS, BASE_ROCK_ID, BASE_SOIL_ID, BASIN_CENTRE_M,
+    BASIN_WATER_LEVEL_M, EYE_HEIGHT_M, LILY_PAD_HEIGHT_M, MAP_EDGE_CELLS, MAP_EDGE_M,
+    MAX_PROTOTYPE_CELLS, MAX_TERRAIN_CELL_Y, ROUTE_PLAYER_CLEARANCE_M, ROUTE_STEP_M,
+    SHOWCASE_EXPANDED_CELLS_MIN, SHOWCASE_FLORA_CELLS_MIN, SHOWCASE_GENERATOR_VERSION,
+    SHOWCASE_PLANTS_MIN, SHOWCASE_SEED, SHOWCASE_SPECIES, SPECIES_LILY, TERRAIN_CELL_M,
+    TILES_PER_EDGE, TILE_CELLS, WALK_SPEED_M_S,
+};
+pub use wetland_flora::{
+    horsetail, marsh_lily, twisted_shrub, wetland_prototype, WETLAND_FLORA_SPECIES,
+    WETLAND_LEAF_SCALE_M, WETLAND_SPIRE_SCALE_M,
+};
 
 use matterweave_core::{Mesh, Vertex, World, CHUNK_EDGE, CHUNK_VOLUME};
 

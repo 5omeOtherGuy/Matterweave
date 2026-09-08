@@ -1,0 +1,22 @@
+{
+  "attempt": 1,
+  "owner": "muse-p01-fixtures-a1",
+  "profile": "muse-free",
+  "state": "accepted",
+  "base": "755620472e8457d8e55760165e759b6d8013c6db",
+  "workspace": "/mnt/bench/matterweave-dev/worktrees/performance-p00",
+  "paths": [
+    "crates/matterweave-core/tests/performance_replay.rs",
+    "crates/matterweave-core/tests/fixtures/performance_replay_v1.json",
+    "docs/performance/logs/muse-p01-fixtures-a1.md"
+  ],
+  "interfaces": {
+    "world_replay": 1
+  },
+  "dependencies": [],
+  "run_dir": "/mnt/bench/matterweave-dev/performance/run-01/muse-p01-fixtures-a1",
+  "session": "/mnt/bench/matterweave-dev/performance/run-01/muse-p01-fixtures-a1/session.jsonl",
+  "artifact": "/mnt/bench/matterweave-dev/performance/run-01/p01-candidate-02/sha256.json",
+  "log": "docs/performance/logs/muse-p01-fixtures-a1.md",
+  "acceptance": "Host-only deterministic fixture:10 tests, independent reviews then lead. App/phone replay remains pending."
+}

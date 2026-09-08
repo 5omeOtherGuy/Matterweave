@@ -45,3 +45,13 @@ remain limitations. Dynamic objects and edited terrain feed derived geometry;
 no bounced illumination, color bleeding, reflections or temporal reconstruction is
 implemented. This is the direct-light prerequisite, not fulfillment of Lumen-like
 outcomes; this ADR remains Proposed. See [renderer notes](../../crates/matterweave-render/README.md).
+
+
+## Engine shadow reuse — 2026-09-08
+
+The existing directional depth map is now reused when submitted caster geometry
+and fitted light projection are unchanged. Changes invalidate explicitly; failed
+recording cannot publish a cache hit. Native Vulkan and Android checks exercise
+reuse and rebuilding. See [shadow reuse](../performance/shadow-reuse.md). This
+advances direct-light efficiency only. GI, reflections and this ADR's M4 acceptance
+remain open; the status remains Proposed.

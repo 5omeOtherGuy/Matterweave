@@ -1,0 +1,289 @@
+{
+  "evidence": "three alternating same-build instrumentation pairs; short stationary scene only",
+  "runs": [
+    {
+      "name": "overhead-on-01",
+      "profiling": "on",
+      "interval_count": 5487,
+      "mean_ms": 21.869421057043922,
+      "p50_ms": 16.584322,
+      "p95_ms": 33.1695677,
+      "p99_ms": 33.171934279999995,
+      "long_intervals": {
+        "33.3": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "50": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "100": {
+          "count": 0,
+          "percent": 0.0
+        }
+      },
+      "process_cpu_s": 88.54,
+      "process_window_s": 119.98831352600246,
+      "process_cpu_core_percent": 73.7905195915706,
+      "thermal": {
+        "0.0": 8
+      },
+      "profiles": [
+        {
+          "rows": 11096,
+          "sha256": "404342c787d9521549ad1437861c31c266ddd2029a894c7c58e6215ec7cf9d6d"
+        }
+      ],
+      "content_manifest": {
+        "files": 20,
+        "bytes": 4619351,
+        "sha256": "46ae58840db1a6453c237de8137b26e9a852f6caaaa54bf4c7a1124f50ae4740",
+        "encoding": "JSON relative-posix-path -> {sha256,bytes}, sort_keys=True,separators=(comma,colon), UTF-8; all regular files recursively"
+      }
+    },
+    {
+      "name": "overhead-off-02",
+      "profiling": "off",
+      "interval_count": 5489,
+      "mean_ms": 21.86239946857351,
+      "p50_ms": 16.585052,
+      "p95_ms": 33.170937,
+      "p99_ms": 33.173021,
+      "long_intervals": {
+        "33.3": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "50": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "100": {
+          "count": 0,
+          "percent": 0.0
+        }
+      },
+      "process_cpu_s": 88.68,
+      "process_window_s": 120.01787647849414,
+      "process_cpu_core_percent": 73.88899270842411,
+      "thermal": {
+        "0.0": 8
+      },
+      "profiles": [],
+      "content_manifest": {
+        "files": 18,
+        "bytes": 2576095,
+        "sha256": "3ca331a4d034efce8e25ca04d9a7d25e400ca879341fa8b2196b94ca01af5c16",
+        "encoding": "JSON relative-posix-path -> {sha256,bytes}, sort_keys=True,separators=(comma,colon), UTF-8; all regular files recursively"
+      }
+    },
+    {
+      "name": "overhead-on-02",
+      "profiling": "on",
+      "interval_count": 5465,
+      "mean_ms": 21.95749492150046,
+      "p50_ms": 16.584375,
+      "p95_ms": 33.169584,
+      "p99_ms": 33.171615,
+      "long_intervals": {
+        "33.3": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "50": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "100": {
+          "count": 0,
+          "percent": 0.0
+        }
+      },
+      "process_cpu_s": 88.75,
+      "process_window_s": 120.00256927399823,
+      "process_cpu_core_percent": 73.95674987371297,
+      "thermal": {
+        "0.0": 8
+      },
+      "profiles": [
+        {
+          "rows": 11087,
+          "sha256": "086b482043f737638bd153804be7e58b0eaae95d53276099bb21e9ea61aaacce"
+        }
+      ],
+      "content_manifest": {
+        "files": 20,
+        "bytes": 4617913,
+        "sha256": "a9378057e48f8d30f270e9790025d27e784e9afa864a02791a0abaf4e13a578f",
+        "encoding": "JSON relative-posix-path -> {sha256,bytes}, sort_keys=True,separators=(comma,colon), UTF-8; all regular files recursively"
+      }
+    },
+    {
+      "name": "overhead-off-03",
+      "profiling": "off",
+      "interval_count": 5503,
+      "mean_ms": 21.80478827948392,
+      "p50_ms": 16.58349,
+      "p95_ms": 33.167812,
+      "p99_ms": 33.16968698,
+      "long_intervals": {
+        "33.3": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "50": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "100": {
+          "count": 0,
+          "percent": 0.0
+        }
+      },
+      "process_cpu_s": 88.69,
+      "process_window_s": 120.00409918949663,
+      "process_cpu_core_percent": 73.90580871737639,
+      "thermal": {
+        "0.0": 8
+      },
+      "profiles": [],
+      "content_manifest": {
+        "files": 18,
+        "bytes": 2576096,
+        "sha256": "15fc5f293fe18a81529cd58f68273653d6dd82177f6bb6cd7b2194539dee4431",
+        "encoding": "JSON relative-posix-path -> {sha256,bytes}, sort_keys=True,separators=(comma,colon), UTF-8; all regular files recursively"
+      }
+    },
+    {
+      "name": "overhead-on-03",
+      "profiling": "on",
+      "interval_count": 5467,
+      "mean_ms": 21.945019693250412,
+      "p50_ms": 16.583229,
+      "p95_ms": 33.1673447,
+      "p99_ms": 33.16974,
+      "long_intervals": {
+        "33.3": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "50": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "100": {
+          "count": 0,
+          "percent": 0.0
+        }
+      },
+      "process_cpu_s": 88.69,
+      "process_window_s": 120.00323811750059,
+      "process_cpu_core_percent": 73.90633902158508,
+      "thermal": {
+        "0.0": 8
+      },
+      "profiles": [
+        {
+          "rows": 11097,
+          "sha256": "4a8bb3a70571faa919ab50a77755e45c802e85451575e0f1492bf9f0f15077df"
+        }
+      ],
+      "content_manifest": {
+        "files": 20,
+        "bytes": 4620008,
+        "sha256": "164be81563436a15eed0fe7a0b5e42b7c420bbfd643753d15a5a3e6a8217d4b3",
+        "encoding": "JSON relative-posix-path -> {sha256,bytes}, sort_keys=True,separators=(comma,colon), UTF-8; all regular files recursively"
+      }
+    },
+    {
+      "name": "overhead-off-04",
+      "profiling": "off",
+      "interval_count": 5505,
+      "mean_ms": 21.79826366285195,
+      "p50_ms": 16.584584,
+      "p95_ms": 33.170625799999996,
+      "p99_ms": 33.173229,
+      "long_intervals": {
+        "33.3": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "50": {
+          "count": 0,
+          "percent": 0.0
+        },
+        "100": {
+          "count": 0,
+          "percent": 0.0
+        }
+      },
+      "process_cpu_s": 88.65,
+      "process_window_s": 120.00089436350027,
+      "process_cpu_core_percent": 73.8744494115737,
+      "thermal": {
+        "0.0": 8
+      },
+      "profiles": [],
+      "content_manifest": {
+        "files": 18,
+        "bytes": 2576052,
+        "sha256": "8f9fdb069448c355c3a68427ec26c608696a7e62388dc6ecb5bf4bc262e2936c",
+        "encoding": "JSON relative-posix-path -> {sha256,bytes}, sort_keys=True,separators=(comma,colon), UTF-8; all regular files recursively"
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "on": "overhead-on-01",
+      "off": "overhead-off-02",
+      "on_vs_off_percent": {
+        "mean_ms": 0.03211719043239025,
+        "p95_ms": -0.0041280112165642535,
+        "p99_ms": -0.003275915087752601,
+        "process_cpu_core_percent": -0.13327170021399937
+      }
+    },
+    {
+      "on": "overhead-on-02",
+      "off": "overhead-off-03",
+      "on_vs_off_percent": {
+        "mean_ms": 0.7003353578086458,
+        "p95_ms": 0.005342529076091118,
+        "p99_ms": 0.005812596305676543,
+        "process_cpu_core_percent": 0.06892713471464695
+      }
+    },
+    {
+      "on": "overhead-on-03",
+      "off": "overhead-off-04",
+      "on_vs_off_percent": {
+        "mean_ms": 0.6732464230559732,
+        "p95_ms": -0.009891583052357156,
+        "p99_ms": -0.010517517001440435,
+        "process_cpu_core_percent": 0.04316730651177103
+      }
+    }
+  ],
+  "range_over_median_percent": {
+    "on": {
+      "mean_ms": 0.40133873511002094,
+      "p95_ms": 0.0067510677867513745,
+      "p99_ms": 0.00661493267662024,
+      "process_cpu_core_percent": 0.22492019540274605
+    },
+    "off": {
+      "mean_ms": 0.29413633785155496,
+      "p95_ms": 0.009420985961634355,
+      "p99_ms": 0.010677411623130713,
+      "process_cpu_core_percent": 0.042441106114992154
+    }
+  },
+  "limitations": [
+    "CPU is whole-process core-equivalent percent from Linux ticks, not engine-thread or energy.",
+    "CPU/SF windows independently host-timed; no exact identity/clock join.",
+    "Pre-existing GPU timestamp bookkeeping remains enabled in both modes.",
+    "Ambient/case unobserved; no sustained20min, input-latency, full-P01 or optimization claim.",
+    "OFF01 pilot CPU probe targeted Android UI task and is excluded."
+  ]
+}

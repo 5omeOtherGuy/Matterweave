@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "matterweave-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "block-mesh",
  "bytemuck",
@@ -935,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "matterweave-detail"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "matterweave-core",
@@ -945,13 +945,15 @@ dependencies = [
 
 [[package]]
 name = "matterweave-explorer"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "android-activity",
  "android_logger",
  "glam 0.30.9",
+ "libc",
  "log",
  "matterweave-core",
+ "matterweave-detail",
  "matterweave-physics",
  "matterweave-render",
  "pollster",
@@ -962,9 +964,10 @@ dependencies = [
 
 [[package]]
 name = "matterweave-physics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "matterweave-core",
+ "matterweave-detail",
  "rapier3d",
  "serde",
  "serde_json",
@@ -972,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "matterweave-render"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ash",
  "ash-window",

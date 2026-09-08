@@ -9,9 +9,11 @@ use std::{sync::Arc, time::Instant};
 pub struct GpuTimings {
     pub frame_id: u64,
     pub render_ms: f64,
-    /// None when this submission did not render shadow casters (shadows disabled).
+    /// None when disabled or when this submission reused the stored depth map.
     pub shadow_ms: Option<f64>,
     pub shadows: bool,
+    /// This submission executed a depth pass, including a first-use clear.
+    pub shadow_map_updated: bool,
     pub shadow_map_size: u32,
 }
 
@@ -24,6 +26,7 @@ pub(crate) struct TimestampQueries {
     recorded_at: Option<Instant>,
     frame_id: u64,
     shadows: bool,
+    shadow_map_updated: bool,
     size: u32,
     pub completed: Option<GpuTimings>,
 }
@@ -76,6 +79,7 @@ impl TimestampQueries {
                 recorded_at: None,
                 frame_id: 0,
                 shadows: false,
+                shadow_map_updated: false,
                 size: 0,
                 completed: None,
             }))
@@ -119,12 +123,13 @@ impl TimestampQueries {
                     self.completed = Some(GpuTimings {
                         frame_id: self.frame_id,
                         render_ms,
-                        shadow_ms: if self.shadows {
+                        shadow_ms: if self.shadows && self.shadow_map_updated {
                             elapsed_ms(values[0][0], values[1][0], self.bits, self.period_ns)
                         } else {
                             None
                         },
                         shadows: self.shadows,
+                        shadow_map_updated: self.shadow_map_updated,
                         shadow_map_size: self.size,
                     });
                 }
@@ -158,10 +163,11 @@ impl TimestampQueries {
             );
         }
     }
-    pub fn submitted(&mut self, shadows: bool, size: u32) {
+    pub fn submitted(&mut self, shadows: bool, shadow_map_updated: bool, size: u32) {
         self.pending = true;
         self.frame_id += 1;
         self.shadows = shadows;
+        self.shadow_map_updated = shadow_map_updated;
         self.size = size;
     }
 }

@@ -1,13 +1,24 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
+mod dynamic_upload;
+mod experience;
+mod gallery;
 mod metrics;
+mod wetland;
+mod wetland_metrics;
+mod wetland_replay;
+mod wetland_state;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
 use matterweave_core::{AsyncWorld, World};
-use matterweave_physics::{Physics, PhysicsSnapshot};
+use matterweave_physics::{DynamicMeshCache, Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, TouchPhase, WindowEvent},
@@ -18,6 +29,14 @@ use winit::{
 
 const SEED: u64 = 20260907;
 const EDIT_RANGE: f32 = 12.;
+
+/// Directory holding the world save, its gallery marker and capture requests.
+fn data_directory(save_path: &Path) -> &Path {
+    match save_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LightPreferences {
@@ -63,6 +82,24 @@ struct Session {
     #[serde(default)]
     lighting: LightPreferences,
 }
+/// Save work since the last recorded row. Failed attempts consume time too, so
+/// attempts and failures are counted separately and the wall time covers both.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct SaveAccounting {
+    wall_ms: f64,
+    attempts: u32,
+    failures: u32,
+}
+/// Per-draw work counters and stage wall times filled by `sync_render_meshes`.
+/// Timings stay absent unless a capture is active.
+#[derive(Clone, Copy, Debug, Default)]
+struct StageCapture {
+    chunk_mesh_uploads: u32,
+    dynamic_mesh_builds: u32,
+    dynamic_mesh_uploads: u32,
+    dynamic_mesh_build_ms: Option<f64>,
+    dynamic_upload_ms: Option<f64>,
+}
 struct Explorer {
     // Renderer must be dropped before the Android suspend callback returns.
     renderer: Option<Renderer>,
@@ -71,9 +108,16 @@ struct Explorer {
     preparation: AsyncWorld,
     lighting: LightingSettings,
     sun_index: usize,
-    last_gpu_frame: Option<u64>,
+    gpu_completions: metrics::GpuCompletionTracker,
+    /// Increments on every renderer creation/recreation so per-renderer counters
+    /// (GPU submission ids) cannot be joined across a recreation.
+    renderer_epoch: u64,
+    draw_attempts: u64,
+    stage: StageCapture,
     camera: Camera,
     physics: Physics,
+    dynamic_mesh: DynamicMeshCache,
+    dynamic_upload: dynamic_upload::DynamicUploadState,
     flying: bool,
     jump_held: bool,
     autosave_elapsed: f32,
@@ -89,7 +133,7 @@ struct Explorer {
     frame_ms: f64,
     cpu_ms: f64,
     mesh_ms: f64,
-    save_ms: f64,
+    saves: SaveAccounting,
     profile: Option<metrics::FrameLog>,
     frames: u64,
     smoke_frames: Option<u64>,
@@ -254,9 +298,14 @@ impl Explorer {
             preparation: AsyncWorld::new(),
             lighting: light_preferences.settings(),
             sun_index: light_preferences.sun_index,
-            last_gpu_frame: None,
+            gpu_completions: metrics::GpuCompletionTracker::default(),
+            renderer_epoch: 0,
+            draw_attempts: 0,
+            stage: StageCapture::default(),
             camera,
             physics,
+            dynamic_mesh: DynamicMeshCache::default(),
+            dynamic_upload: dynamic_upload::DynamicUploadState::default(),
             flying,
             jump_held: false,
             autosave_elapsed: 0.,
@@ -272,7 +321,7 @@ impl Explorer {
             frame_ms: 0.,
             cpu_ms: 0.,
             mesh_ms: 0.,
-            save_ms: 0.,
+            saves: SaveAccounting::default(),
             profile,
             frames: 0,
             smoke_frames,
@@ -280,8 +329,13 @@ impl Explorer {
             focused: true,
         }
     }
+    /// Reads and clears the save accounting; one recorded row consumes it.
+    fn take_save_accounting(&mut self) -> SaveAccounting {
+        std::mem::take(&mut self.saves)
+    }
     fn save(&mut self) {
         let begin = Instant::now();
+        self.saves.attempts = self.saves.attempts.saturating_add(1);
         let session = Session {
             version: 1,
             physics: self.physics.snapshot(),
@@ -319,12 +373,20 @@ impl Explorer {
                 .into();
             }
             Err(e) => {
+                self.saves.failures = self.saves.failures.saturating_add(1);
                 self.status = format!("SAVE FAILED: {e}");
                 log::error!("{}", self.status);
                 eprintln!("{}", self.status);
             }
         }
-        self.save_ms += begin.elapsed().as_secs_f64() * 1000.;
+        self.saves.wall_ms += begin.elapsed().as_secs_f64() * 1000.;
+    }
+    /// Renderer wait diagnostics exist only while a capture is active.
+    fn apply_capture_diagnostics(&mut self) {
+        let enabled = self.profile.is_some();
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_diagnostics_enabled(enabled);
+        }
     }
     fn action(&mut self, action: Action) {
         log::info!("Action {action:?}");
@@ -814,11 +876,13 @@ impl Explorer {
         );
         hud
     }
-    fn sync_render_meshes(&mut self) -> Result<(), String> {
+    fn sync_render_meshes(&mut self, capturing: bool) -> Result<(), String> {
+        self.stage = StageCapture::default();
         let Some(renderer) = self.renderer.as_mut() else {
             return Ok(());
         };
         let begin = Instant::now();
+        let mut chunk_uploads = 0_u32;
         let keys = self.world.chunk_keys();
         renderer.retain_chunks(&keys)?;
         let mut changed = false;
@@ -831,6 +895,7 @@ impl Explorer {
                 };
                 if renderer.chunk_revision(key) != Some(mesh.revision) {
                     renderer.upload_chunk(key, &mesh)?;
+                    chunk_uploads += 1;
                     changed = true;
                 }
                 if begin.elapsed().as_secs_f64() >= 0.002 {
@@ -859,6 +924,7 @@ impl Explorer {
             for key in keys {
                 if renderer.chunk_revision(key) != self.world.chunk_revision(key) {
                     renderer.upload_chunk(key, &self.world.mesh_chunk(key))?;
+                    chunk_uploads += 1;
                     changed = true;
                 }
             }
@@ -866,7 +932,34 @@ impl Explorer {
         if changed {
             self.mesh_ms = begin.elapsed().as_secs_f64() * 1000.;
         }
-        renderer.upload_dynamic(&self.physics.dynamic_mesh())?;
+        let build_begin = capturing.then(Instant::now);
+        let rebuilt = self.dynamic_mesh.update(&self.physics);
+        let build_ms = build_begin.map(|begin| {
+            if rebuilt {
+                begin.elapsed().as_secs_f64() * 1000.
+            } else {
+                0.
+            }
+        });
+        let upload = self
+            .dynamic_upload
+            .needs_upload(rebuilt, self.renderer_epoch);
+        let mut upload_ms = capturing.then_some(0.);
+        if upload {
+            let upload_begin = capturing.then(Instant::now);
+            renderer.upload_dynamic(self.dynamic_mesh.mesh())?;
+            upload_ms = upload_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.);
+            // A failed upload must leave the new geometry pending, including
+            // an empty mesh that clears formerly visible bodies.
+            self.dynamic_upload.uploaded(self.renderer_epoch);
+        }
+        self.stage = StageCapture {
+            chunk_mesh_uploads: chunk_uploads,
+            dynamic_mesh_builds: u32::from(rebuilt),
+            dynamic_mesh_uploads: u32::from(upload),
+            dynamic_mesh_build_ms: build_ms,
+            dynamic_upload_ms: upload_ms,
+        };
         Ok(())
     }
     // Xvfb without a window manager need not grant focus. Explicit host smoke
@@ -891,7 +984,20 @@ impl Explorer {
         if size.width == 0 || size.height == 0 || self.renderer.is_none() {
             return;
         }
+        // Every attempt that reaches the renderer gets one identity, including
+        // retries. Attempts skipped above (no window, zero size, unfocused) are
+        // not draw attempts and are not recorded.
+        self.draw_attempts += 1;
+        let capturing = self.profile.is_some();
+        // Wall clock starts first, then the CPU clock: the busy interval stays
+        // inside the wall interval. The two readings are adjacent, not
+        // simultaneous. `dt` still measures frame start to frame start.
         let now = Instant::now();
+        let cpu_busy = metrics::CpuBusySpan::begin(capturing);
+        // Upload fence waits belong to this frame only; reset before mesh sync.
+        if let Some(renderer) = &mut self.renderer {
+            renderer.begin_frame_diagnostics();
+        }
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
         self.frame_ms = if self.frames == 0 {
@@ -925,27 +1031,33 @@ impl Explorer {
             .clamp_length_max(1.)
             * 6.;
         let jumping = motion.y > 0.;
+        let physics_begin = capturing.then(Instant::now);
+        let fixed_steps;
         self.physics.update_grab(
             self.camera.position.to_array(),
             self.camera.forward().to_array(),
         );
         if self.flying {
             self.physics.set_flying_eye(self.camera.position.to_array());
-            self.physics.step_objects(dt);
+            fixed_steps = self.physics.step_objects(dt);
         } else {
             // Collision publication above completes before stepping. The inflated
             // current/proposed footprint covers the bounded fixed-step movement.
             if self.column_ready(self.camera.position)
                 && self.column_ready(self.camera.position + horizontal * 0.1)
             {
-                self.physics
-                    .step(dt, horizontal.to_array(), jumping && !self.jump_held);
+                fixed_steps =
+                    self.physics
+                        .step(dt, horizontal.to_array(), jumping && !self.jump_held);
             } else {
-                self.physics.step_objects(dt);
+                fixed_steps = self.physics.step_objects(dt);
                 self.status = "Preparing terrain...".into();
             }
             self.camera.position = Vec3::from_array(self.physics.character_eye());
         }
+        let physics_ms = physics_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.);
+        // Counting body states is capture-only work.
+        let body_activity = capturing.then(|| self.physics.body_activity());
         if !self.flying && self.camera.position.y < -14. {
             self.action(Action::Home);
         }
@@ -957,7 +1069,7 @@ impl Explorer {
             self.autosave_elapsed = 0.;
         }
         let mesh_begin = Instant::now();
-        if let Err(error) = self.sync_render_meshes() {
+        if let Err(error) = self.sync_render_meshes(capturing) {
             log::error!("Mesh upload failed: {error}");
             eprintln!("Mesh upload failed: {error}");
             self.failed = true;
@@ -970,12 +1082,21 @@ impl Explorer {
             .camera
             .view_projection(size.width as f32 / size.height as f32);
         let position = self.camera.position.to_array();
-        match self.renderer.as_mut().unwrap().render_with_lighting(
+        let render_begin = capturing.then(Instant::now);
+        let outcome = self.renderer.as_mut().unwrap().render_with_lighting(
             matrix,
             position,
             &hud,
             &self.lighting,
-        ) {
+        );
+        let render_ms = render_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.);
+        let result = match &outcome {
+            FrameResult::Presented => metrics::DrawOutcome::Presented,
+            FrameResult::OutOfMemory => metrics::DrawOutcome::OutOfMemory,
+            // A fatal draw returns before recording; retries stay visible rows.
+            FrameResult::Retry | FrameResult::Fatal(_) => metrics::DrawOutcome::Retry,
+        };
+        match outcome {
             FrameResult::Fatal(error) => {
                 log::error!("Render failed: {error}");
                 eprintln!("Render failed: {error}");
@@ -1000,46 +1121,90 @@ impl Explorer {
                 event_loop.exit();
             }
         }
+        // CPU busy ends immediately before the wall end, with no diagnostics
+        // queries in between, so busy time cannot exceed the reported wall time.
+        let cpu_busy_ms = cpu_busy.finish();
         self.cpu_ms = now.elapsed().as_secs_f64() * 1000.;
+        let epoch = self.renderer_epoch;
+        // Completions repeat until the next submission finishes; the epoch keeps
+        // a recreated renderer's restarted ids from joining an old submission.
         let gpu = self
             .renderer
             .as_ref()
             .and_then(|r| r.gpu_timings())
-            .filter(|t| {
-                let fresh = self.last_gpu_frame != Some(t.frame_id);
-                if fresh {
-                    self.last_gpu_frame = Some(t.frame_id);
-                }
-                fresh
-            });
+            .filter(|t| self.gpu_completions.accept(epoch, t.frame_id));
+        let diagnostics = self.renderer.as_ref().and_then(|r| r.draw_diagnostics());
+        let shadow_casters = self
+            .renderer
+            .as_ref()
+            .map(|r| r.shadow_caster_meshes())
+            .and_then(|n| u32::try_from(n).ok());
+        let stage = self.stage;
+        let saves = self.take_save_accounting();
+        let mut finished = false;
         if let Some(profile) = &mut self.profile {
-            match profile.record(
-                self.frames,
-                [
-                    Some(f64::from(dt) * 1000.),
-                    Some(self.cpu_ms),
-                    Some(stream_ms),
-                    Some(mesh_work_ms),
-                    Some(self.save_ms),
-                    gpu.map(|t| t.render_ms),
-                    gpu.and_then(|t| t.shadow_ms),
-                    gpu.map(|t| t.frame_id as f64),
-                    gpu.map(|t| f64::from(t.shadows)),
-                    gpu.map(|t| f64::from(t.shadow_map_size)),
-                ],
-            ) {
+            let row = metrics::FrameRow {
+                draw_attempt_id: self.draw_attempts,
+                renderer_epoch: epoch,
+                presented_count: self.frames,
+                result,
+                submitted_gpu_frame_id: diagnostics.and_then(|d| d.submitted_frame_id),
+                completed_gpu_frame_id: gpu.map(|t| t.frame_id),
+                completed_gpu_renderer_epoch: gpu.map(|_| epoch),
+                draw_interval_wall_ms: Some(f64::from(dt) * 1000.),
+                main_wall_ms: Some(self.cpu_ms),
+                main_cpu_busy_ms: cpu_busy_ms,
+                stream_request_elapsed_ms: Some(stream_ms),
+                physics_wall_ms: physics_ms,
+                mesh_sync_wall_ms: Some(mesh_work_ms),
+                mesh_sync_fence_wait_wall_ms: diagnostics.and_then(|d| d.upload_fence_wait_ms),
+                dynamic_mesh_build_wall_ms: stage.dynamic_mesh_build_ms,
+                dynamic_upload_wall_ms: stage.dynamic_upload_ms,
+                render_wall_ms: render_ms,
+                save_wall_ms: Some(saves.wall_ms),
+                render_fence_wait_wall_ms: diagnostics.and_then(|d| d.render_fence_wait_ms),
+                acquire_wall_ms: diagnostics.and_then(|d| d.acquire_ms),
+                present_wall_ms: diagnostics.and_then(|d| d.present_ms),
+                gpu_prev_render_ms: gpu.map(|t| t.render_ms),
+                gpu_prev_shadow_ms: gpu.and_then(|t| t.shadow_ms),
+                gpu_prev_shadows: gpu.map(|t| t.shadows),
+                gpu_prev_shadow_map_size: gpu.map(|t| t.shadow_map_size),
+                mesh_sync_fence_waits: diagnostics.and_then(|d| d.upload_fence_waits),
+                physics_fixed_steps: u32::try_from(fixed_steps).ok(),
+                voxel_bodies_total: body_activity.and_then(|a| u32::try_from(a.total).ok()),
+                voxel_bodies_active: body_activity.and_then(|a| u32::try_from(a.active).ok()),
+                voxel_bodies_sleeping: body_activity.and_then(|a| u32::try_from(a.sleeping).ok()),
+                voxel_bodies_not_simulated: body_activity
+                    .and_then(|a| u32::try_from(a.not_simulated).ok()),
+                chunk_mesh_uploads: Some(stage.chunk_mesh_uploads),
+                dynamic_mesh_builds: Some(stage.dynamic_mesh_builds),
+                dynamic_mesh_uploads: Some(stage.dynamic_mesh_uploads),
+                save_attempts: Some(saves.attempts),
+                save_failures: Some(saves.failures),
+                // Shadow work counts only for an attempt that submitted; a retry
+                // must not inherit the previous pass's caster count.
+                shadow_caster_meshes: metrics::shadow_casters_for_attempt(
+                    diagnostics.and_then(|d| d.submitted_frame_id),
+                    shadow_casters,
+                ),
+            };
+            match profile.record(&row) {
                 Ok(true) => {}
                 Ok(false) => {
                     log::info!("Frame capture complete: {}", profile.path.display());
                     self.profile = None;
+                    finished = true;
                 }
                 Err(error) => {
                     log::warn!("Frame capture failed: {error}");
                     self.profile = None;
+                    finished = true;
                 }
             }
         }
-        self.save_ms = 0.;
+        if finished {
+            self.apply_capture_diagnostics();
+        }
         if !self.failed
             && self.smoke_frames.is_some_and(|limit| self.frames >= limit)
             && (!self.smoke_exercise || self.smoke_stage >= 3)
@@ -1082,9 +1247,12 @@ impl ApplicationHandler for Explorer {
             Ok(renderer) => {
                 log::info!("Graphics: {}", renderer.capabilities);
                 eprintln!("Graphics: {}", renderer.capabilities);
-                self.last_gpu_frame = None;
+                // A new renderer restarts its GPU submission counter.
+                self.renderer_epoch += 1;
+                self.gpu_completions = metrics::GpuCompletionTracker::default();
                 self.renderer = Some(renderer);
                 self.window = Some(window);
+                self.apply_capture_diagnostics();
             }
             Err(e) => {
                 log::error!("Renderer initialization failed: {e}");
@@ -1256,6 +1424,9 @@ pub fn run_desktop() {
     let mut save_path = PathBuf::from("matterweave-world.json");
     let mut smoke_frames = None;
     let mut smoke_exercise = false;
+    let mut gallery_exercise = false;
+    let mut showcase = false;
+    let mut sandbox = false;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -1264,7 +1435,10 @@ pub fn run_desktop() {
                 save_path = PathBuf::from(args.next().expect("--save requires a path"));
                 explicit_save = true;
             }
+            "--showcase" => showcase = true,
+            "--sandbox" => sandbox = true,
             "--smoke-exercise" => smoke_exercise = true,
+            "--gallery-exercise" => gallery_exercise = true,
             "--smoke-frames" => {
                 smoke_frames = Some(
                     args.next()
@@ -1274,7 +1448,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1282,6 +1456,59 @@ pub fn run_desktop() {
                 std::process::exit(2);
             }
         }
+    }
+    // Explicit developer opt-in is resolved before any world is loaded, so an
+    // invalid request fails without touching user data.
+    let directory = data_directory(&save_path).to_path_buf();
+    let requested = match gallery::Request::resolve(
+        &directory.join(gallery::MARKER_FILE),
+        std::env::var(gallery::ENV_VAR).ok().as_deref(),
+    ) {
+        Ok(requested) => requested,
+        Err(error) => {
+            eprintln!("Detail gallery request rejected: {error}");
+            eprintln!("No world was loaded, changed or saved. Fix or remove the request.");
+            std::process::exit(2);
+        }
+    };
+    if let Some(request) = requested {
+        if smoke_exercise {
+            eprintln!("--smoke-exercise drives gameplay edits and saves; it is not available in the detail gallery");
+            std::process::exit(2);
+        }
+        let view = match gallery::GalleryView::build(request) {
+            Ok(view) => view,
+            Err(error) => {
+                eprintln!("Detail gallery scene failed: {error}");
+                std::process::exit(1);
+            }
+        };
+        eprintln!(
+            "DETAIL GALLERY: preset {} | {} prototypes {} instances | {} triangles | viewer only, no world/save/physics",
+            request.label(),
+            view.stats.prototypes,
+            view.stats.instances,
+            view.stats.combined_triangles
+        );
+        if gallery_exercise && smoke_frames.is_none() {
+            smoke_frames = Some(30);
+        }
+        let event_loop = EventLoop::new().expect("event loop");
+        let mut app = gallery::GalleryApp::new(view, &directory, smoke_frames);
+        app.exercise = gallery_exercise;
+        event_loop.run_app(&mut app).expect("event loop run");
+        if app.failed() {
+            std::process::exit(1);
+        }
+        return;
+    }
+    if gallery_exercise {
+        eprintln!(
+            "--gallery-exercise requires an active detail gallery request ({} or {})",
+            gallery::MARKER_FILE,
+            gallery::ENV_VAR
+        );
+        std::process::exit(2);
     }
     if smoke_exercise && (!explicit_save || save_path.exists()) {
         eprintln!("--smoke-exercise requires --save with a new, disposable file path");
@@ -1291,6 +1518,14 @@ pub fn run_desktop() {
         smoke_frames = Some(30);
     }
     let event_loop = EventLoop::new().expect("event loop");
+    if showcase || (!sandbox && !smoke_exercise && smoke_frames.is_none()) {
+        let mut experience = experience::Experience::new(save_path, showcase, smoke_frames);
+        event_loop.run_app(&mut experience).expect("event loop run");
+        if experience.failed() {
+            std::process::exit(1);
+        }
+        return;
+    }
     let mut explorer = Explorer::new(save_path, smoke_frames);
     explorer.smoke_exercise = smoke_exercise;
     event_loop.run_app(&mut explorer).expect("event loop run");
@@ -1312,7 +1547,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         log::error!("Android internal storage unavailable");
         return;
     };
-    let mut explorer = Explorer::new(directory.join("world.json"), None);
+    // The normal Android entry always presents the world chooser. Historical
+    // development-gallery marker files cannot trap upgrades in the old viewer.
     let event_loop = match EventLoop::builder().with_android_app(app).build() {
         Ok(e) => e,
         Err(e) => {
@@ -1320,7 +1556,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             return;
         }
     };
-    if let Err(e) = event_loop.run_app(&mut explorer) {
+    let mut experience = experience::Experience::new(directory.join("world.json"), false, None);
+    if let Err(e) = event_loop.run_app(&mut experience) {
         log::error!("Event loop failed: {e}");
     }
 }
@@ -1380,6 +1617,32 @@ mod tests {
         let loaded = World::load(&app.save_path).unwrap();
         assert_eq!(loaded.get([0, 0, 1]), 0);
         std::fs::remove_file(&app.save_path).unwrap();
+    }
+    #[test]
+    fn save_accounting_separates_attempts_from_failures_and_resets_per_row() {
+        let mut app = fixture();
+        assert_eq!(app.take_save_accounting(), SaveAccounting::default());
+        app.action(Action::Save);
+        let good = app.take_save_accounting();
+        assert_eq!(good.attempts, 1);
+        assert_eq!(good.failures, 0);
+        assert!(good.wall_ms > 0., "a completed save costs measured work");
+        assert_eq!(
+            app.take_save_accounting(),
+            SaveAccounting::default(),
+            "a recorded row consumes the accounting"
+        );
+        // A failed save still consumed work and must stay distinguishable.
+        let good_path = app.save_path.clone();
+        app.save_path = app.save_path.join("missing-parent.json");
+        app.action(Action::Save);
+        app.save_path = good_path.clone();
+        app.action(Action::Save);
+        let mixed = app.take_save_accounting();
+        assert_eq!(mixed.attempts, 2, "attempts count failures too");
+        assert_eq!(mixed.failures, 1);
+        assert!(mixed.wall_ms > 0.);
+        std::fs::remove_file(&good_path).unwrap();
     }
     #[test]
     fn failed_autosave_retains_dirty_state_for_retry() {
@@ -1493,6 +1756,56 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), original);
         std::fs::remove_file(path).unwrap();
         std::fs::remove_file(app.save_path).unwrap();
+    }
+    #[test]
+    fn without_a_request_the_normal_application_path_is_unchanged() {
+        let mut app = fixture();
+        let directory = data_directory(&app.save_path).to_path_buf();
+        assert!(directory.is_dir());
+        // No marker beside the save and no host environment request.
+        let marker = directory.join(gallery::MARKER_FILE);
+        assert!(!marker.exists(), "test directory must have no marker");
+        assert_eq!(gallery::Request::resolve(&marker, None).unwrap(), None);
+        assert_eq!(gallery::Request::resolve(&marker, Some("")).unwrap(), None);
+        // Normal gameplay still edits, autosaves and reloads authoritative cells.
+        app.action(Action::Place);
+        assert_eq!(app.world.get([0, 0, 1]), 4);
+        assert_eq!(World::load(&app.save_path).unwrap().get([0, 0, 1]), 4);
+        std::fs::remove_file(&app.save_path).unwrap();
+    }
+    #[test]
+    fn an_invalid_gallery_request_is_rejected_before_any_world_is_touched() {
+        let directory = std::env::temp_dir().join(format!(
+            "matterweave-explorer-gallery-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let save = directory.join("world.json");
+        std::fs::write(&save, b"sentinel user data").unwrap();
+        let marker = directory.join(gallery::MARKER_FILE);
+        std::fs::write(&marker, "not-a-preset").unwrap();
+        let error = gallery::Request::resolve(&marker, None).unwrap_err();
+        assert!(error.to_string().contains("invalid detail gallery request"));
+        assert_eq!(std::fs::read(&save).unwrap(), b"sentinel user data");
+        let mut entries: Vec<String> = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
+        assert_eq!(entries, vec![gallery::MARKER_FILE, "world.json"]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn data_directory_falls_back_to_the_working_directory() {
+        assert_eq!(
+            data_directory(Path::new("matterweave-world.json")),
+            Path::new(".")
+        );
+        assert_eq!(
+            data_directory(Path::new("/tmp/saves/world.json")),
+            Path::new("/tmp/saves")
+        );
     }
     #[test]
     fn home_finds_clear_spawn_and_blocked_flight_switch_stays_in_flight() {

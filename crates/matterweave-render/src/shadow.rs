@@ -1,5 +1,7 @@
 //! A single directional depth map. Resource replacement is serialized by Renderer.
-use super::{err, pipeline, Buffer, Depth, Device, Frustum, GpuMesh, PipelineKind, Result};
+use super::{
+    err, pipeline, Buffer, Depth, Device, Frustum, GpuMesh, PipelineKind, Result, StaticScene,
+};
 use crate::lighting::{LightingSettings, ShadowCamera};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
@@ -11,6 +13,26 @@ struct Uniform {
     view_proj: [[f32; 4]; 4],
     sun: [f32; 4],
     params: [f32; 4],
+}
+
+/// Validity follows submitted depth contents, never a recording attempt. Geometry
+/// invalidation is explicit because moving vertices can retain their source revision.
+#[derive(Default)]
+struct ShadowReuse {
+    initialized: bool,
+    rendered_camera: Option<[[f32; 4]; 4]>,
+}
+impl ShadowReuse {
+    fn needs_pass(&self, enabled: bool, camera: [[f32; 4]; 4]) -> bool {
+        !self.initialized || (enabled && self.rendered_camera != Some(camera))
+    }
+    fn invalidate(&mut self) {
+        self.rendered_camera = None;
+    }
+    fn submitted(&mut self, enabled: bool, camera: [[f32; 4]; 4]) {
+        self.initialized = true;
+        self.rendered_camera = enabled.then_some(camera);
+    }
 }
 
 pub(crate) struct Shadow {
@@ -26,7 +48,7 @@ pub(crate) struct Shadow {
     pub set: vk::DescriptorSet,
     sampler: vk::Sampler,
     pub size: u32,
-    initialized: bool,
+    reuse: ShadowReuse,
     pub caster_meshes: usize,
     camera: ShadowCamera,
 }
@@ -47,7 +69,7 @@ impl Shadow {
             set: vk::DescriptorSet::null(),
             sampler: vk::Sampler::null(),
             size,
-            initialized: false,
+            reuse: ShadowReuse::default(),
             caster_meshes: 0,
             camera,
         };
@@ -266,17 +288,34 @@ impl Shadow {
             }))
     }
 
+    pub fn invalidate(&mut self) {
+        self.reuse.invalidate();
+    }
+
+    /// Called only after queue_submit succeeds for a recorded shadow pass.
+    pub fn submitted(&mut self, enabled: bool) {
+        self.reuse.submitted(enabled, self.camera.view_proj);
+    }
+
     /// Record a clear even on the first shadows-off frame: descriptor layout and
     /// depth contents must be valid before the world pipeline can reference them.
+    /// Static instanced batches are recorded without frustum culling so
+    /// offscreen casters are retained; non-instanced meshes draw one identity
+    /// instance through the shared record at `identity`.
     pub fn record<'a>(
         &mut self,
         cmd: vk::CommandBuffer,
         enabled: bool,
         meshes: impl Iterator<Item = &'a GpuMesh>,
-    ) {
+        static_scene: Option<&StaticScene>,
+        identity: vk::Buffer,
+    ) -> bool {
         self.caster_meshes = 0;
-        if !enabled && self.initialized {
-            return;
+        if !self.reuse.needs_pass(enabled, self.camera.view_proj) {
+            // The stored depth stays in READ_ONLY_OPTIMAL. Its last pass made
+            // depth writes visible to fragment sampling through the external
+            // dependency; reuse introduces no writes or layout transitions.
+            return false;
         }
         // SAFETY: caller records into an idle command buffer; all referenced meshes,
         // descriptors and framebuffer resources survive until its submit fence.
@@ -325,6 +364,7 @@ impl Shadow {
                 0,
                 bytemuck::cast_slice(&self.camera.view_proj),
             );
+            d.cmd_bind_vertex_buffers(cmd, 1, &[identity], &[0]);
             if enabled {
                 let frustum = Frustum::new(self.camera.view_proj);
                 for mesh in meshes.filter(|m| m.index_count > 0 && frustum.intersects(m.bounds)) {
@@ -335,10 +375,15 @@ impl Shadow {
                         self.caster_meshes += 1;
                     }
                 }
+                // Instanced batches apply the same transforms and are never
+                // discarded here: the shadow camera frustum does not gate casters.
+                if let Some(scene) = static_scene {
+                    self.caster_meshes += scene.record_batches(d, cmd, None);
+                }
             }
             d.cmd_end_render_pass(cmd);
         }
-        self.initialized = true;
+        true
     }
 }
 
@@ -356,5 +401,70 @@ impl Drop for Shadow {
             d.destroy_sampler(self.sampler, None);
             d.destroy_descriptor_set_layout(self.set_layout, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod reuse_tests {
+    use super::*;
+
+    fn camera(eye: [f32; 3], sun: crate::Sun) -> [[f32; 4]; 4] {
+        ShadowCamera::new(eye, sun, &[], 1024).unwrap().view_proj
+    }
+
+    #[test]
+    fn only_successful_submission_makes_depth_reusable() {
+        let mut cache = ShadowReuse::default();
+        let matrix = camera([0.; 3], Default::default());
+        assert!(cache.needs_pass(true, matrix));
+        // Recording/acquire failure cannot make an unsubmitted image valid.
+        assert!(cache.needs_pass(true, matrix));
+        cache.submitted(true, matrix);
+        assert!(!cache.needs_pass(true, matrix));
+        cache.invalidate();
+        assert!(cache.needs_pass(true, matrix));
+    }
+
+    #[test]
+    fn disabled_first_frame_initializes_but_does_not_cache_casters() {
+        let mut cache = ShadowReuse::default();
+        let matrix = camera([0.; 3], Default::default());
+        assert!(cache.needs_pass(false, matrix));
+        cache.submitted(false, matrix);
+        assert!(!cache.needs_pass(false, matrix));
+        assert!(cache.needs_pass(true, matrix));
+        cache.submitted(true, matrix);
+        assert!(!cache.needs_pass(false, matrix));
+        assert!(!cache.needs_pass(true, matrix));
+        cache.invalidate();
+        assert!(!cache.needs_pass(false, matrix));
+        assert!(cache.needs_pass(true, matrix));
+    }
+
+    #[test]
+    fn changed_projection_invalidates_but_intensity_and_subtexel_motion_do_not() {
+        let mut cache = ShadowReuse::default();
+        let sun = crate::Sun {
+            direction_to_sun: [0., 1., 0.],
+            intensity: 0.8,
+        };
+        cache.submitted(true, camera([0.; 3], sun));
+        assert!(!cache.needs_pass(true, camera([0.001, 0., 0.001], sun)));
+        assert!(!cache.needs_pass(
+            true,
+            camera(
+                [0.; 3],
+                crate::Sun {
+                    intensity: 1.6,
+                    ..sun
+                }
+            )
+        ));
+        assert!(cache.needs_pass(true, camera([1., 0., 0.], sun)));
+        assert!(cache.needs_pass(true, camera([0.; 3], Default::default())));
+        let expanded =
+            ShadowCamera::new([0.; 3], sun, &[[[-1., -1000., -1.], [1., 1000., 1.]]], 1024)
+                .unwrap();
+        assert!(cache.needs_pass(true, expanded.view_proj));
     }
 }
