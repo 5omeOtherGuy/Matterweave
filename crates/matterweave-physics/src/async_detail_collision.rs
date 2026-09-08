@@ -49,24 +49,26 @@ pub struct AsyncDetailStats {
 struct Job {
     scene: DetailScene,
     version: SceneVersion,
-    generation: u64,
+    epoch: Arc<()>,
 }
 
 /// Identity of the job currently running on the worker.
 struct Running {
     version: SceneVersion,
-    generation: u64,
+    epoch: Arc<()>,
 }
 
 /// One completed preparation, tagged with the identity it was built from.
 struct Prepared {
     outcome: Result<PreparedDetailCollision, String>,
     version: SceneVersion,
-    generation: u64,
+    epoch: Arc<()>,
 }
 
 #[derive(Default)]
 struct Queue {
+    epoch: Arc<()>,
+    requested: Option<SceneVersion>,
     /// Latest requested source not yet started. Replacing it supersedes.
     pending: Option<Job>,
     /// The job currently running, for deduplication.
@@ -87,13 +89,26 @@ impl Queue {
         version: SceneVersion,
         fork: impl FnOnce() -> DetailScene,
     ) -> bool {
-        let already = self.running.as_ref().is_some_and(|r| r.version == version)
-            || self.result.as_ref().is_some_and(|r| r.version == version)
+        self.requested = Some(version.clone());
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|job| job.version == version)
+        {
+            return false;
+        }
+        let already = self
+            .running
+            .as_ref()
+            .is_some_and(|r| Arc::ptr_eq(&r.epoch, &self.epoch) && r.version == version)
             || self
-                .pending
+                .result
                 .as_ref()
-                .is_some_and(|job| job.version == version);
+                .is_some_and(|r| Arc::ptr_eq(&r.epoch, &self.epoch) && r.version == version);
         if already {
+            self.discarded = self
+                .discarded
+                .saturating_add(u64::from(self.pending.take().is_some()));
             return false;
         }
         let superseded = self
@@ -101,10 +116,10 @@ impl Queue {
             .replace(Job {
                 scene: fork(),
                 version,
-                generation: self.generation,
+                epoch: self.epoch.clone(),
             })
             .is_some();
-        self.discarded += u64::from(superseded);
+        self.discarded = self.discarded.saturating_add(u64::from(superseded));
         true
     }
 
@@ -113,7 +128,7 @@ impl Queue {
         let job = self.pending.take().expect("nonempty pending queue");
         self.running = Some(Running {
             version: job.version.clone(),
-            generation: job.generation,
+            epoch: job.epoch.clone(),
         });
         self.inflight = 1;
         job
@@ -123,8 +138,11 @@ impl Queue {
     fn finish_job(&mut self, job: Job, outcome: Result<PreparedDetailCollision, String>) {
         self.inflight = 0;
         self.running = None;
-        if self.shutdown || self.generation != job.generation {
-            self.discarded += 1;
+        if self.shutdown
+            || !Arc::ptr_eq(&self.epoch, &job.epoch)
+            || self.requested.as_ref() != Some(&job.version)
+        {
+            self.discarded = self.discarded.saturating_add(1);
             return;
         }
         let superseded = self
@@ -132,10 +150,10 @@ impl Queue {
             .replace(Prepared {
                 outcome,
                 version: job.version,
-                generation: job.generation,
+                epoch: job.epoch.clone(),
             })
             .is_some();
-        self.discarded += u64::from(superseded);
+        self.discarded = self.discarded.saturating_add(u64::from(superseded));
     }
 
     /// Poll: consume and return the buffered result only if it is current for
@@ -146,12 +164,16 @@ impl Queue {
     ) -> Option<Result<PreparedDetailCollision, String>> {
         match self.result.as_ref() {
             None => return None,
-            Some(result) if result.generation != self.generation => {
+            Some(result) if !Arc::ptr_eq(&result.epoch, &self.epoch) => {
                 self.result = None;
-                self.discarded += 1;
+                self.discarded = self.discarded.saturating_add(1);
                 return None;
             }
-            Some(result) if result.version != *version => return None,
+            Some(result)
+                if result.version != *version || self.requested.as_ref() != Some(version) =>
+            {
+                return None
+            }
             Some(_) => {}
         }
         Some(self.result.take().expect("result present").outcome)
@@ -159,13 +181,13 @@ impl Queue {
 
     /// Reset: cancel pending and buffered work and advance the generation.
     fn cancel(&mut self) {
-        let dropped = usize::from(self.pending.is_some())
-            + usize::from(self.result.is_some())
-            + self.inflight;
-        self.discarded += dropped as u64;
+        let dropped = usize::from(self.pending.is_some()) + usize::from(self.result.is_some());
+        self.discarded = self.discarded.saturating_add(dropped as u64);
         self.pending = None;
         self.result = None;
         self.generation = self.generation.saturating_add(1);
+        self.epoch = Arc::new(());
+        self.requested = None;
     }
 
     #[cfg(test)]
