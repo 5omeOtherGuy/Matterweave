@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 /// Frozen showcase seed (owner requirement date 2026-09-08).
 pub const SHOWCASE_SEED: u64 = 20_260_908;
 /// Bump when generated content changes; snapshot hashes are version scoped.
-pub const SHOWCASE_GENERATOR_VERSION: u32 = 2;
+pub const SHOWCASE_GENERATOR_VERSION: u32 = 3;
 
 /// Playable square edge in metres.
 pub const MAP_EDGE_M: f32 = 128.0;
@@ -284,9 +284,8 @@ fn flatten(h: f32, d: f32, radius: f32, target: f32, strength: f32) -> f32 {
     lerp(h, target, w)
 }
 
-/// Authoritative terrain height in metres. Coherent basin, creek, drainage,
-/// ash ridges, gullies, terraces and authored landmark shelves.
-pub fn terrain_height_m(seed: u64, x: f32, z: f32) -> f32 {
+/// Natural landform height before the authored trail corridors are graded in.
+fn base_height_m(seed: u64, x: f32, z: f32) -> f32 {
     let border = x.min(MAP_EDGE_M - x).min(z).min(MAP_EDGE_M - z);
     // Ash ridge ring with a varied silhouette and a southern saddle exit.
     let ridge_shape = ((30.0 - border) / 30.0).clamp(0.0, 1.0);
@@ -344,6 +343,286 @@ pub fn terrain_height_m(seed: u64, x: f32, z: f32) -> f32 {
     }
 
     h.clamp(0.5, 46.0)
+}
+
+// ---------------------------------------------------------------------------
+// Trail corridors
+// ---------------------------------------------------------------------------
+
+/// Full-strength half width of a graded trail, in metres. Wide enough for the
+/// 0.60 m character with shoulder room, narrow enough to leave the terraces,
+/// ridges and gullies that give the map its silhouette intact.
+const TRAIL_HALF_WIDTH_M: f32 = 1.6;
+/// Distance over which a trail blends back into natural ground.
+const TRAIL_VERGE_M: f32 = 3.2;
+/// Spacing of the trail elevation profile along the corridor, in metres.
+const TRAIL_PROFILE_STEP_M: f32 = 0.5;
+/// Half length of the moving average that grades the profile, in metres. A
+/// 2.4 m terrace riser becomes a ramp of roughly 0.25 rise per metre of run.
+const TRAIL_GRADE_M: f32 = 7.0;
+/// Rounds of crossing agreement between corridors.
+const TRAIL_RELAX_ROUNDS: usize = 6;
+/// Samples within this index distance along the *same* corridor are its own
+/// neighbours, not a crossing, and are excluded from the agreement pass.
+const TRAIL_SELF_SKIP: usize = 24;
+/// Steepest walking grade a corridor may keep, in metres of rise per metre of
+/// run. Smoothing alone cannot fix a sustained natural slope, and the terrain
+/// classifier refuses anything above 0.85 as a cliff, so the profile is also
+/// gradient limited. 0.40 is about 22 degrees: a steep but walked hill path.
+const TRAIL_MAX_GRADE: f32 = 0.30;
+
+/// Arc-length elevation profile of one authored corridor.
+///
+/// Grading a walking corridor into generated terrain is the standard road/path
+/// pass (the same idea as the landmark shelves this map already grades with
+/// [`flatten`]): sample the natural ground along the spine, smooth that profile
+/// until its gradient is walkable, then blend it back in over a narrow verge.
+/// The alternative considered and rejected was leaving the terrain untouched
+/// and routing around every riser: the eastern terraces quantise to 3 m steps,
+/// so no continuous ground route to the viewpoint exists at all.
+struct TrailProfile {
+    /// Cumulative arc length at each spine vertex.
+    arc: Vec<f32>,
+    /// Graded height at every [`TRAIL_PROFILE_STEP_M`] of arc length.
+    heights: Vec<f32>,
+}
+
+impl TrailProfile {
+    /// Samples the natural ground along one spine at [`TRAIL_PROFILE_STEP_M`].
+    fn sample(seed: u64, spine: &[[f32; 2]], close: bool) -> (Self, Vec<[f32; 2]>) {
+        let mut points: Vec<[f32; 2]> = spine.to_vec();
+        if close {
+            points.push(spine[0]);
+        }
+        let arc = arc_lengths(&points);
+        let total = *arc.last().expect("seeded");
+        let samples = (total / TRAIL_PROFILE_STEP_M).ceil() as usize + 1;
+        let positions: Vec<[f32; 2]> = (0..samples)
+            .map(|i| point_on_polyline(&points, &arc, (i as f32 * TRAIL_PROFILE_STEP_M).min(total)))
+            .collect();
+        let heights = positions
+            .iter()
+            .map(|p| base_height_m(seed, p[0], p[1]))
+            .collect();
+        (Self { arc, heights }, positions)
+    }
+
+    /// Moving average along the corridor, then a gradient limit. Smoothing
+    /// shortens a riser; only the limit bounds a sustained natural slope,
+    /// which is what makes the ridge and terrace legs walkable at all.
+    fn grade_profile(&mut self) {
+        let samples = self.heights.len();
+        let window = (TRAIL_GRADE_M / TRAIL_PROFILE_STEP_M) as usize;
+        self.heights = (0..samples)
+            .map(|i| {
+                let lo = i.saturating_sub(window);
+                let hi = (i + window).min(samples - 1);
+                let span = &self.heights[lo..=hi];
+                span.iter().sum::<f32>() / span.len() as f32
+            })
+            .collect();
+        self.limit_gradient();
+    }
+
+    fn limit_gradient(&mut self) {
+        let samples = self.heights.len();
+        let limit = TRAIL_MAX_GRADE * TRAIL_PROFILE_STEP_M;
+        for _ in 0..4 {
+            for i in 1..samples {
+                let previous = self.heights[i - 1];
+                self.heights[i] = self.heights[i].clamp(previous - limit, previous + limit);
+            }
+            for i in (0..samples - 1).rev() {
+                let next = self.heights[i + 1];
+                self.heights[i] = self.heights[i].clamp(next - limit, next + limit);
+            }
+        }
+    }
+
+    fn height_at(&self, s: f32) -> f32 {
+        let t = (s / TRAIL_PROFILE_STEP_M).max(0.0);
+        let i = (t.floor() as usize).min(self.heights.len() - 1);
+        let j = (i + 1).min(self.heights.len() - 1);
+        lerp(self.heights[i], self.heights[j], t - t.floor())
+    }
+}
+
+fn arc_lengths(points: &[[f32; 2]]) -> Vec<f32> {
+    let mut arc = vec![0.0f32];
+    for pair in points.windows(2) {
+        let last = *arc.last().expect("seeded");
+        arc.push(last + dist2(pair[0][0], pair[0][1], pair[1][0], pair[1][1]));
+    }
+    arc
+}
+
+fn point_on_polyline(points: &[[f32; 2]], arc: &[f32], s: f32) -> [f32; 2] {
+    for i in 1..points.len() {
+        if s <= arc[i] || i + 1 == points.len() {
+            let span = (arc[i] - arc[i - 1]).max(1e-6);
+            let t = ((s - arc[i - 1]) / span).clamp(0.0, 1.0);
+            return [
+                lerp(points[i - 1][0], points[i][0], t),
+                lerp(points[i - 1][1], points[i][1], t),
+            ];
+        }
+    }
+    points[0]
+}
+
+/// Distance to a polyline and the arc length of the closest point on it.
+fn polyline_distance(points: &[[f32; 2]], arc: &[f32], x: f32, z: f32) -> (f32, f32) {
+    let mut best = f32::INFINITY;
+    let mut best_s = 0.0;
+    for i in 1..points.len() {
+        let a = points[i - 1];
+        let b = points[i];
+        let (vx, vz) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = vx * vx + vz * vz;
+        let t = if len2 > 0.0 {
+            (((x - a[0]) * vx + (z - a[1]) * vz) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let d = dist2(x, z, a[0] + vx * t, a[1] + vz * t);
+        if d < best {
+            best = d;
+            best_s = arc[i - 1] + (arc[i] - arc[i - 1]) * t;
+        }
+    }
+    (best, best_s)
+}
+
+/// Both corridors of one seed, with their arc tables. Memoised because the
+/// profile is a pure deterministic function of the seed and every one of the
+/// map's 262,144 columns queries it.
+struct Trails {
+    spines: [(Vec<[f32; 2]>, Vec<f32>, TrailProfile); 2],
+}
+
+impl Trails {
+    fn build(seed: u64) -> Self {
+        let specs: [(&[[f32; 2]], bool); 2] = [(ROUTE_SPINE, true), (&ELEVATED_SPINE, false)];
+        let mut profiles = Vec::new();
+        let mut positions = Vec::new();
+        let mut polylines = Vec::new();
+        for (spine, close) in specs {
+            let (profile, samples) = TrailProfile::sample(seed, spine, close);
+            let mut points: Vec<[f32; 2]> = spine.to_vec();
+            if close {
+                points.push(spine[0]);
+            }
+            polylines.push((points.clone(), arc_lengths(&points)));
+            profiles.push(profile);
+            positions.push(samples);
+        }
+        for profile in &mut profiles {
+            profile.grade_profile();
+        }
+        // The ground loop crosses itself, and the elevated spur leaves and
+        // rejoins it. Grading each corridor independently left a step of
+        // several metres where two corridors meet, which is a wall exactly
+        // where the route needs to be continuous. Relax the crossings until
+        // every corridor agrees where they overlap, re-limiting the gradient
+        // after each round so the agreement stays walkable.
+        for _ in 0..TRAIL_RELAX_ROUNDS {
+            let snapshot: Vec<Vec<f32>> = profiles.iter().map(|p| p.heights.clone()).collect();
+            for (pi, profile) in profiles.iter_mut().enumerate() {
+                for (si, height) in profile.heights.iter_mut().enumerate() {
+                    let here = positions[pi][si];
+                    let mut sum = *height;
+                    let mut count = 1.0f32;
+                    for (qi, other) in positions.iter().enumerate() {
+                        for (ti, there) in other.iter().enumerate() {
+                            if pi == qi && si.abs_diff(ti) * 1 < TRAIL_SELF_SKIP {
+                                continue;
+                            }
+                            if dist2(here[0], here[1], there[0], there[1]) < TRAIL_VERGE_M {
+                                sum += snapshot[qi][ti];
+                                count += 1.0;
+                            }
+                        }
+                    }
+                    *height = sum / count;
+                }
+            }
+            for profile in &mut profiles {
+                profile.limit_gradient();
+            }
+        }
+        let mut spines = profiles.into_iter().zip(polylines);
+        let mut take = || {
+            let (profile, (points, arc)) = spines.next().expect("two corridors");
+            (points, arc, profile)
+        };
+        Self {
+            spines: [take(), take()],
+        }
+    }
+
+    /// Graded height and blend weight at a column, or `None` off every trail.
+    ///
+    /// Corridors are combined by weight rather than by nearest spine. Where the
+    /// loop runs beside the elevated spur, picking the nearer corridor left a
+    /// seam between two slightly different graded heights, and that seam was
+    /// steeper than the ground the character can walk.
+    fn grade(&self, x: f32, z: f32) -> Option<(f32, f32)> {
+        let mut sum = 0.0f32;
+        let mut total = 0.0f32;
+        let mut strongest = 0.0f32;
+        for (points, arc, profile) in &self.spines {
+            let (d, s) = polyline_distance(points, arc, x, z);
+            if d >= TRAIL_VERGE_M {
+                continue;
+            }
+            let verge = smooth(
+                ((TRAIL_VERGE_M - d) / (TRAIL_VERGE_M - TRAIL_HALF_WIDTH_M)).clamp(0.0, 1.0),
+            );
+            // Weight by proximity as well as by verge strength, so the join
+            // between two corridors is a smooth blend and never a step.
+            let weight = verge + 1e-3;
+            sum += profile.height_at(s) * weight;
+            total += weight;
+            strongest = strongest.max(verge);
+        }
+        (total > 0.0).then(|| (sum / total, strongest))
+    }
+}
+
+/// Seeds whose corridor profiles stay resident. The profile is a pure function
+/// of the seed and every one of the map's 262,144 columns queries it, so it is
+/// memoised; the cache is bounded so a caller sweeping seeds cannot grow it
+/// without limit.
+const TRAIL_CACHE_SEEDS: usize = 8;
+
+fn trails(seed: u64) -> std::sync::Arc<Trails> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Vec<(u64, Arc<Trails>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = cache.lock().expect("trail cache");
+    if let Some(index) = guard.iter().position(|(key, _)| *key == seed) {
+        let entry = guard.remove(index);
+        let trails = Arc::clone(&entry.1);
+        guard.push(entry);
+        return trails;
+    }
+    let built = Arc::new(Trails::build(seed));
+    if guard.len() >= TRAIL_CACHE_SEEDS {
+        guard.remove(0);
+    }
+    guard.push((seed, Arc::clone(&built)));
+    built
+}
+
+/// Authoritative terrain height in metres. Coherent basin, creek, drainage,
+/// ash ridges, gullies, terraces and authored landmark shelves, with the two
+/// authored walking corridors graded into that landform.
+pub fn terrain_height_m(seed: u64, x: f32, z: f32) -> f32 {
+    let h = base_height_m(seed, x, z);
+    match trails(seed).grade(x, z) {
+        Some((target, weight)) => lerp(h, target, weight).clamp(0.5, 46.0),
+        None => h,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -838,80 +1117,384 @@ const ELEVATED_SPINE: [[f32; 2]; 10] = [
     [92.0, 30.0],
 ];
 
-/// Nearest walkable column to `(x, z)`: dry land, gentle enough to stand on.
-/// Bounded deterministic ring search; `None` when nothing nearby qualifies.
-fn snap_to_walkable(terrain: &Terrain, x: f32, z: f32) -> Option<(f32, f32, SurfacePoint)> {
-    // The reported surface is already the highest uncarved solid cell, so
-    // footing is guaranteed by the query. Columns that are the thin roof of a
-    // cavity are still refused: standing on a cavity lid is walkable but is not
-    // where a showcase route should be routed.
-    let solid_footing = |_x: f32, _z: f32, p: &SurfacePoint| !p.overhung;
-    if let Some(p) = terrain.surface_at_metres(x, z) {
-        if p.is_dry_land() && p.slope <= 0.85 && solid_footing(x, z, &p) {
-            return Some((x, z, p));
-        }
-    }
-    let mut best: Option<(f32, f32, f32, SurfacePoint)> = None;
-    for ring in 1..=28 {
-        let r = ring as f32 * 0.5;
-        for step in 0..24 {
-            let angle = step as f32 * std::f32::consts::TAU / 24.0;
-            let (cx, cz) = (x + angle.cos() * r, z + angle.sin() * r);
-            let Some(p) = terrain.surface_at_metres(cx, cz) else {
-                continue;
-            };
-            if !p.is_dry_land() || p.slope > 0.85 || !solid_footing(cx, cz, &p) {
-                continue;
-            }
-            if best.is_none_or(|(_, _, d, _)| r < d) {
-                best = Some((cx, cz, r, p));
-            }
-        }
-        if best.is_some() {
-            break;
-        }
-    }
-    best.map(|(cx, cz, _, p)| (cx, cz, p))
+/// Largest rise a walking character may take between adjacent 25 cm terrain
+/// cells: one source cell, 0.25 m, well inside the character controller's
+/// autostep. A 0.50 m step is admitted by the controller but was measured to
+/// trap the capsule on narrow treads, so routes do not use one.
+const NAV_STEP_CELLS: i32 = 1;
+/// Rise taken without penalty. Single-cell steps are preferred, so a route
+/// only uses the taller step where the terrain offers nothing gentler.
+const NAV_FREE_STEP_CELLS: i32 = 1;
+/// Extra search cost of a step taller than [`NAV_FREE_STEP_CELLS`].
+const NAV_STEP_PENALTY: i64 = 2_000;
+/// Steepest ground a route point may sit on, in metres of rise per metre of
+/// run. The terrain classifier tolerates 0.85 (40 degrees) as standable, but a
+/// route drawn across it stalled the actual character controller, which slides
+/// on such a face. Corridors are graded to [`TRAIL_MAX_GRADE`], so this keeps
+/// routes on the graded ground.
+const NAV_MAX_SLOPE: f32 = 0.60;
+/// Deepest standing water a route may wade, in metres. The creek and the basin
+/// shallows are genuine crossings the app already models at wading speed;
+/// anything deeper is water the route must go around.
+const NAV_WADE_DEPTH_M: f32 = 0.5;
+/// Extra search cost of a waded cell. Wading is four times slower than
+/// walking, so a route wades only where dry ground does not connect.
+const NAV_WADE_PENALTY: i64 = 6_000;
+/// Chebyshev radius, in cells, inspected for taller terrain beside a route
+/// cell. The capsule radius is 0.30 m, so a route hugging a wall scrapes it;
+/// such cells are penalised, not forbidden, because forbidding them fragments
+/// every slope into disconnected shelves.
+const NAV_CLEARANCE_CELLS: i32 = 2;
+/// Extra search cost of a cell within [`NAV_CLEARANCE_CELLS`] of a wall.
+const NAV_WALL_PENALTY: i64 = 1_500;
+/// Route search bound per spine segment, in expanded cells.
+const NAV_MAX_EXPANSIONS: usize = 400_000;
+/// Ring search bound, in cells, when snapping a spine anchor onto the grid.
+const NAV_SNAP_CELLS: i32 = 56;
+
+/// Derived walking connectivity of the terrain, at the terrain's own 25 cm
+/// column resolution. This is *derived* data: the terrain grid stays
+/// authoritative and nothing here changes a single voxel.
+///
+/// A route point on its own proves nothing about walking. Independently
+/// snapping route samples to nearby standable columns produced waypoint pairs
+/// separated by a 0.5-1.9 m wall, which the actual character controller cannot
+/// cross. Connectivity therefore has to be a property of the *edges*, which is
+/// what this grid stores.
+struct NavGrid {
+    /// Column may carry a route point: dry, gentle and with real footing.
+    walkable: Vec<bool>,
+    /// Column carries standing water shallow enough to wade.
+    waded: Vec<bool>,
+    /// Column stands within shoulder reach of terrain the character cannot
+    /// step onto, so a route through it scrapes a wall.
+    pinched: Vec<bool>,
+    /// Top solid cell per column, copied for cheap edge tests.
+    top: Vec<i32>,
 }
 
-fn densify(terrain: &Terrain, spine: &[[f32; 2]], close: bool) -> Vec<[f32; 3]> {
-    let mut points: Vec<[f32; 2]> = spine.to_vec();
-    if close {
-        points.push(spine[0]);
+fn nav_index(x: i32, z: i32) -> Option<usize> {
+    column_index(x, z)
+}
+
+impl NavGrid {
+    fn build(terrain: &Terrain) -> Self {
+        let cells = (MAP_EDGE_CELLS * MAP_EDGE_CELLS) as usize;
+        let top = terrain.top.clone();
+        // Standable columns: dry land, gentle enough to stand on and real
+        // footing (a cavity roof is standable but is not where a route
+        // belongs). Shoulder room is a *cost*, applied below: requiring it
+        // outright severs every slope, because a 0.85 gradient already rises
+        // more than one cell across the capsule's width.
+        let mut walkable = vec![false; cells];
+        let mut waded = vec![false; cells];
+        for x in 0..MAP_EDGE_CELLS {
+            for z in 0..MAP_EDGE_CELLS {
+                let idx = (x * MAP_EDGE_CELLS + z) as usize;
+                let depth = ((terrain.water_top[idx] - terrain.top[idx]) as f32
+                    * TERRAIN_CELL_M)
+                    .max(0.0);
+                walkable[idx] = depth <= NAV_WADE_DEPTH_M
+                    && !terrain.overhung[idx]
+                    && terrain.slope_cells(x, z) <= NAV_MAX_SLOPE;
+                waded[idx] = walkable[idx] && depth > 0.0;
+            }
+        }
+        // A cell is pinched when something the character cannot step onto
+        // stands within shoulder reach. Routes prefer open ground and only
+        // accept a pinch when no open path exists.
+        let mut pinched = vec![false; cells];
+        for x in 0..MAP_EDGE_CELLS {
+            for z in 0..MAP_EDGE_CELLS {
+                let idx = (x * MAP_EDGE_CELLS + z) as usize;
+                if !walkable[idx] {
+                    continue;
+                }
+                let here = top[idx];
+                pinched[idx] = (-NAV_CLEARANCE_CELLS..=NAV_CLEARANCE_CELLS).any(|dx| {
+                    (-NAV_CLEARANCE_CELLS..=NAV_CLEARANCE_CELLS).any(|dz| {
+                        match nav_index(x + dx, z + dz) {
+                            Some(n) => top[n] > here + NAV_CLEARANCE_CELLS,
+                            None => true,
+                        }
+                    })
+                });
+            }
+        }
+        Self {
+            walkable,
+            waded,
+            pinched,
+            top,
+        }
     }
-    let mut out = Vec::new();
-    for pair in points.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
+
+    fn walkable(&self, x: i32, z: i32) -> bool {
+        nav_index(x, z).is_some_and(|idx| self.walkable[idx])
+    }
+
+    fn top(&self, x: i32, z: i32) -> i32 {
+        nav_index(x, z).map_or(i32::MIN, |idx| self.top[idx])
+    }
+
+    /// A single walking step between adjacent columns: both standable, and the
+    /// rise no more than one source cell in either direction.
+    fn step_ok(&self, from: (i32, i32), to: (i32, i32)) -> bool {
+        self.walkable(to.0, to.1)
+            && (self.top(to.0, to.1) - self.top(from.0, from.1)).abs() <= NAV_STEP_CELLS
+    }
+
+    /// Nearest walkable column to a metre position; bounded ring search.
+    fn snap(&self, x: f32, z: f32) -> Option<(i32, i32)> {
+        let cx = (x / TERRAIN_CELL_M).floor() as i32;
+        let cz = (z / TERRAIN_CELL_M).floor() as i32;
+        if self.walkable(cx, cz) {
+            return Some((cx, cz));
+        }
+        for ring in 1..=NAV_SNAP_CELLS {
+            let mut best: Option<((i32, i32), i32)> = None;
+            for d in -ring..=ring {
+                for candidate in [
+                    (cx + d, cz - ring),
+                    (cx + d, cz + ring),
+                    (cx - ring, cz + d),
+                    (cx + ring, cz + d),
+                ] {
+                    if !self.walkable(candidate.0, candidate.1) {
+                        continue;
+                    }
+                    let cost = (candidate.0 - cx).pow(2) + (candidate.1 - cz).pow(2);
+                    if best.is_none_or(|(_, b)| cost < b) {
+                        best = Some((candidate, cost));
+                    }
+                }
+            }
+            if let Some((cell, _)) = best {
+                return Some(cell);
+            }
+        }
+        None
+    }
+
+    /// Bounded A* over walking edges. Eight-connected; a diagonal is admitted
+    /// only when both of its orthogonal neighbours are walkable, so a path can
+    /// never squeeze through a diagonal seam the capsule cannot pass.
+    fn path(&self, start: (i32, i32), goal: (i32, i32)) -> Option<Vec<(i32, i32)>> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        if !self.walkable(start.0, start.1) || !self.walkable(goal.0, goal.1) {
+            return None;
+        }
+        // Octile distance in the same fixed-point units as the edge costs, so
+        // the heuristic stays admissible.
+        let heuristic = |c: (i32, i32)| -> i64 {
+            let dx = (c.0 - goal.0).abs() as i64;
+            let dz = (c.1 - goal.1).abs() as i64;
+            1_000 * (dx + dz) + (1_414 - 2_000) * dx.min(dz)
+        };
+        let cells = (MAP_EDGE_CELLS * MAP_EDGE_CELLS) as usize;
+        let mut cost = vec![i64::MAX; cells];
+        let mut from = vec![u32::MAX; cells];
+        let mut heap: BinaryHeap<Reverse<(i64, u32)>> = BinaryHeap::new();
+        let start_idx = nav_index(start.0, start.1)?;
+        cost[start_idx] = 0;
+        heap.push(Reverse((heuristic(start), start_idx as u32)));
+        let mut expansions = 0usize;
+        while let Some(Reverse((_, packed))) = heap.pop() {
+            let idx = packed as usize;
+            let (x, z) = (
+                packed as i32 / MAP_EDGE_CELLS,
+                packed as i32 % MAP_EDGE_CELLS,
+            );
+            if (x, z) == goal {
+                let mut path = vec![(x, z)];
+                let mut cursor = idx;
+                while from[cursor] != u32::MAX {
+                    cursor = from[cursor] as usize;
+                    path.push((
+                        cursor as i32 / MAP_EDGE_CELLS,
+                        cursor as i32 % MAP_EDGE_CELLS,
+                    ));
+                }
+                path.reverse();
+                return Some(path);
+            }
+            expansions += 1;
+            if expansions > NAV_MAX_EXPANSIONS {
+                return None;
+            }
+            let here = cost[idx];
+            for (dx, dz) in [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+            ] {
+                let next = (x + dx, z + dz);
+                if !self.step_ok((x, z), next) {
+                    continue;
+                }
+                let diagonal = dx != 0 && dz != 0;
+                if diagonal
+                    && !(self.step_ok((x, z), (x + dx, z)) && self.step_ok((x, z), (x, z + dz)))
+                {
+                    continue;
+                }
+                let Some(next_idx) = nav_index(next.0, next.1) else {
+                    continue;
+                };
+                let mut edge = if diagonal { 1_414 } else { 1_000 };
+                if self.pinched[next_idx] {
+                    edge += NAV_WALL_PENALTY;
+                }
+                if self.waded[next_idx] {
+                    edge += NAV_WADE_PENALTY;
+                }
+                if (self.top(next.0, next.1) - self.top(x, z)).abs() > NAV_FREE_STEP_CELLS {
+                    edge += NAV_STEP_PENALTY;
+                }
+                let candidate = here + edge;
+                if candidate < cost[next_idx] {
+                    cost[next_idx] = candidate;
+                    from[next_idx] = idx as u32;
+                    heap.push(Reverse((candidate + heuristic(next), next_idx as u32)));
+                }
+            }
+        }
+        None
+    }
+
+    /// Can the character walk the straight line between two columns? The route
+    /// is followed as straight segments between waypoints, so the *line* has to
+    /// be walkable, not only the cells the search visited.
+    fn straight_walk(&self, a: (i32, i32), b: (i32, i32)) -> bool {
+        let ax = a.0 as f32 + 0.5;
+        let az = a.1 as f32 + 0.5;
+        let bx = b.0 as f32 + 0.5;
+        let bz = b.1 as f32 + 0.5;
+        let span = ((bx - ax).abs()).max((bz - az).abs());
+        let samples = (span * 4.0).ceil().max(1.0) as usize;
+        let mut previous = self.top(a.0, a.1);
+        for step in 1..=samples {
+            let t = step as f32 / samples as f32;
+            let x = lerp(ax, bx, t).floor() as i32;
+            let z = lerp(az, bz, t).floor() as i32;
+            if !self.walkable(x, z) {
+                return false;
+            }
+            let top = self.top(x, z);
+            if (top - previous).abs() > NAV_STEP_CELLS {
+                return false;
+            }
+            previous = top;
+        }
+        true
+    }
+}
+
+/// Route waypoints in metres from a walked cell path: greedily merge cells the
+/// character can cross in a straight line, then resample at [`ROUTE_STEP_M`].
+fn waypoints(terrain: &Terrain, nav: &NavGrid, cells: &[(i32, i32)]) -> Vec<[f32; 3]> {
+    let mut corners = Vec::new();
+    let mut anchor = 0usize;
+    corners.push(cells[0]);
+    while anchor + 1 < cells.len() {
+        let mut next = anchor + 1;
+        let mut furthest = next;
+        while next < cells.len() {
+            if nav.straight_walk(cells[anchor], cells[next]) {
+                furthest = next;
+                next += 1;
+            } else {
+                break;
+            }
+        }
+        corners.push(cells[furthest]);
+        anchor = furthest;
+    }
+    let to_m = |c: (i32, i32)| {
+        [
+            (c.0 as f32 + 0.5) * TERRAIN_CELL_M,
+            (c.1 as f32 + 0.5) * TERRAIN_CELL_M,
+        ]
+    };
+    let mut out: Vec<[f32; 3]> = Vec::new();
+    let push = |x: f32, z: f32, out: &mut Vec<[f32; 3]>| {
+        let Some(height) = terrain.height_at_metres(x, z) else {
+            return;
+        };
+        let point = [x, height, z];
+        if out.last() != Some(&point) {
+            out.push(point);
+        }
+    };
+    for pair in corners.windows(2) {
+        let a = to_m(pair[0]);
+        let b = to_m(pair[1]);
         let len = dist2(a[0], a[1], b[0], b[1]);
         let steps = (len / ROUTE_STEP_M).ceil().max(1.0) as usize;
         for step in 0..steps {
             let t = step as f32 / steps as f32;
-            let x = lerp(a[0], b[0], t);
-            let z = lerp(a[1], b[1], t);
-            if let Some((sx, sz, surface)) = snap_to_walkable(terrain, x, z) {
-                let point = [sx, surface.height_m, sz];
-                if out.last() != Some(&point) {
-                    out.push(point);
+            push(lerp(a[0], b[0], t), lerp(a[1], b[1], t), &mut out);
+        }
+    }
+    if let Some(last) = corners.last().copied() {
+        let p = to_m(last);
+        push(p[0], p[1], &mut out);
+    }
+    out
+}
+
+/// Builds a route that is actually connected on the terrain: each spine anchor
+/// is snapped onto the walking grid, and consecutive anchors are joined by a
+/// searched walking path rather than a straight line of independent samples.
+/// An anchor that cannot be reached is skipped, so one unreachable authored
+/// waypoint shortens the route instead of inserting an uncrossable jump.
+fn densify(terrain: &Terrain, spine: &[[f32; 2]], close: bool) -> (Vec<[f32; 3]>, usize) {
+    let nav = NavGrid::build(terrain);
+    let mut anchors: Vec<(i32, i32)> = Vec::new();
+    for point in spine {
+        match nav.snap(point[0], point[1]) {
+            Some(cell) => {
+                if anchors.last() != Some(&cell) {
+                    anchors.push(cell);
                 }
             }
+            None => (),
         }
     }
     if close {
-        if let Some(first) = out.first().copied() {
-            out.push(first);
-        }
-    } else if let Some(last) = points.last().copied() {
-        // An open route must actually reach its terminal waypoint: the per-
-        // segment loop stops one step short of `t == 1`, so without this the
-        // elevated route silently ended before the viewpoint spur.
-        if let Some((sx, sz, surface)) = snap_to_walkable(terrain, last[0], last[1]) {
-            let point = [sx, surface.height_m, sz];
-            if out.last() != Some(&point) {
-                out.push(point);
-            }
+        if let Some(first) = anchors.first().copied() {
+            anchors.push(first);
         }
     }
-    out
+    if anchors.len() < 2 {
+        return (Vec::new(), anchors.len());
+    }
+    let mut unreachable: Vec<(i32, i32)> = Vec::new();
+    let mut cells: Vec<(i32, i32)> = vec![anchors[0]];
+    let mut current = anchors[0];
+    for anchor in anchors.iter().skip(1) {
+        if *anchor == current {
+            continue;
+        }
+        let Some(path) = nav.path(current, *anchor) else {
+            // A spine anchor the walking grid cannot reach is a real routing
+            // failure, not something to paper over: the caller reports it.
+            unreachable.push(*anchor);
+            continue;
+        };
+        cells.extend(path.into_iter().skip(1));
+        current = *anchor;
+    }
+    if cells.len() < 2 {
+        return (Vec::new(), unreachable.len());
+    }
+    (waypoints(terrain, &nav, &cells), unreachable.len())
 }
 
 fn landmarks(terrain: &Terrain) -> Vec<Landmark> {
@@ -1359,8 +1942,18 @@ pub fn build_showcase(seed: u64) -> Result<Showcase> {
     let mut scene = DetailScene::new();
     let build = build_terrain_voxels(&mut scene, &terrain)?;
 
-    let route = densify(&terrain, ROUTE_SPINE, true);
-    let elevated_route = densify(&terrain, &ELEVATED_SPINE, false);
+    let (route, route_unreachable) = densify(&terrain, ROUTE_SPINE, true);
+    let (elevated_route, elevated_unreachable) = densify(&terrain, &ELEVATED_SPINE, false);
+    if route_unreachable > 0 {
+        return Err(DetailError::BudgetExceeded(
+            "ground spine anchor unreachable on the walking grid",
+        ));
+    }
+    if elevated_unreachable > 0 {
+        return Err(DetailError::BudgetExceeded(
+            "elevated spine anchor unreachable on the walking grid",
+        ));
+    }
     if route.len() < 2 {
         return Err(DetailError::BudgetExceeded("route left the map"));
     }
