@@ -13,11 +13,12 @@
 //!   so the nearer of the two surfaces wins per pixel with correct mutual
 //!   occlusion. This is a real combination, not a renamed path.
 //!
-//! The two cell sets are disjoint and separated by an empty column, so neither
-//! path alone can draw the whole scene and the hybrid image is the union.
+//! Split fixtures use disjoint sets separated by an empty column to test mutual
+//! occlusion. Matched fixtures give each path the complete authoritative world
+//! and require full-image color/depth agreement within declared tolerances.
 //!
 //! Pass criteria (declared before measurement, see
-//! `docs/performance/logs/engine-03-comparison.md`):
+//! `docs/performance/renderer-comparison.md`):
 //!
 //! 1. every path produces an image and raster plus ray both cover pixels;
 //! 2. hybrid equals the per-pixel minimum-depth composite of raster and ray
@@ -25,9 +26,10 @@
 //! 3. the ray path agrees with the CPU `World::raycast` oracle on sampled pixels
 //!    that are not boundary-tie or inside-solid classified;
 //! 4. no Vulkan validation error is reported while the layer is active;
-//! 5. an edit invalidates the pack and changes the hybrid image.
+//! 5. an edit invalidates the same world's pack and changes the hybrid image;
+//! 6. matched raster/ray images have zero mismatches within tolerance.
 //!
-//! Costs are reported as wall time for packing, mesh build, upload and
+//! Costs are reported as wall time for packing, mesh build, combined resource/pipeline setup and
 //! draw+readback separately. Draw+readback includes a synchronous queue wait, so
 //! it is NOT isolated GPU time. No renderer is selected here.
 //!
@@ -100,7 +102,14 @@ impl Cam {
         };
         let view = Mat4::look_at_rh(eye, eye + forward, up);
         let projection = if self.orthographic {
-            Mat4::orthographic_rh(-self.extent, self.extent, -self.extent, self.extent, NEAR, FAR)
+            Mat4::orthographic_rh(
+                -self.extent,
+                self.extent,
+                -self.extent,
+                self.extent,
+                NEAR,
+                FAR,
+            )
         } else {
             Mat4::perspective_rh(self.extent, WIDTH as f32 / HEIGHT as f32, NEAR, FAR)
         };
@@ -290,11 +299,13 @@ fn compare(a: &Images, b: &Images, edges: &[bool]) -> Diff {
     for (index, &is_edge) in edges.iter().enumerate().take(PIXELS) {
         let ca = a.color_f32(index);
         let cb = b.color_f32(index);
-        let color_delta = (0..3)
-            .map(|c| (ca[c] - cb[c]).abs())
-            .fold(0.0f32, f32::max);
+        let color_delta = (0..3).map(|c| (ca[c] - cb[c]).abs()).fold(0.0f32, f32::max);
         let depth_delta = (a.depth[index] - b.depth[index]).abs();
-        if color_delta > COLOR_TOL || depth_delta > DEPTH_TOL {
+        if !a.depth[index].is_finite()
+            || !b.depth[index].is_finite()
+            || color_delta > COLOR_TOL
+            || depth_delta > DEPTH_TOL
+        {
             diff.mismatched += 1;
             diff.max_color = diff.max_color.max(color_delta);
             diff.sum_color += color_delta;
@@ -387,9 +398,7 @@ impl Gpu {
                 .unwrap_or_default();
             (extensions, layers)
         };
-        let want_debug = extensions
-            .iter()
-            .any(|n| n == "VK_EXT_debug_utils")
+        let want_debug = extensions.iter().any(|n| n == "VK_EXT_debug_utils")
             && layers.iter().any(|n| n == "VK_LAYER_KHRONOS_validation");
         let raw_layers: Vec<std::ffi::CString> = if want_debug {
             vec![std::ffi::CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
@@ -481,7 +490,7 @@ impl Gpu {
                 &vk::CommandPoolCreateInfo::default()
                     .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
                     .queue_family_index(family),
-                    None,
+                None,
             )
         }
         .map_err(err)?;
@@ -621,18 +630,10 @@ impl Session {
                 vk::BufferUsageFlags::INDEX_BUFFER,
                 Some(indices),
             )?;
-            let color_read = Self::buffer(
-                gpu,
-                PIXELS * 4,
-                vk::BufferUsageFlags::TRANSFER_DST,
-                None,
-            )?;
-            let depth_read = Self::buffer(
-                gpu,
-                PIXELS * 4,
-                vk::BufferUsageFlags::TRANSFER_DST,
-                None,
-            )?;
+            let color_read =
+                Self::buffer(gpu, PIXELS * 4, vk::BufferUsageFlags::TRANSFER_DST, None)?;
+            let depth_read =
+                Self::buffer(gpu, PIXELS * 4, vk::BufferUsageFlags::TRANSFER_DST, None)?;
 
             let bindings = [
                 vk::DescriptorSetLayoutBinding::default()
@@ -703,8 +704,9 @@ impl Session {
             let material_info = [vk::DescriptorBufferInfo::default()
                 .buffer(materials.handle)
                 .range(64.max(pack.materials().len() as u64 * 4))];
-            let palette_info =
-                [vk::DescriptorBufferInfo::default().buffer(palette.handle).range(4096)];
+            let palette_info = [vk::DescriptorBufferInfo::default()
+                .buffer(palette.handle)
+                .range(4096)];
             device.update_descriptor_sets(
                 &[
                     vk::WriteDescriptorSet::default()
@@ -726,7 +728,8 @@ impl Session {
                 &[],
             );
 
-            let ray_vs = ash::util::read_spv(&mut Cursor::new(VERTEX_SPIRV)).map_err(|e| e.to_string())?;
+            let ray_vs =
+                ash::util::read_spv(&mut Cursor::new(VERTEX_SPIRV)).map_err(|e| e.to_string())?;
             let ray_fs =
                 ash::util::read_spv(&mut Cursor::new(FRAGMENT_SPIRV)).map_err(|e| e.to_string())?;
             let raster_vs = ash::util::read_spv(&mut Cursor::new(RASTER_VERTEX_SPIRV))
@@ -1360,7 +1363,7 @@ struct RunResult {
     hybrid: Images,
     pack_ms: f64,
     mesh_ms: f64,
-    upload_ms: f64,
+    setup_ms: f64,
     draw_ms: [f64; 3],
 }
 
@@ -1430,7 +1433,12 @@ fn run_fixture(
     let mesh = mesh_world.mesh();
     let mut vertex_bytes = Vec::with_capacity(mesh.vertices.len() * 36);
     for vertex in &mesh.vertices {
-        for component in vertex.position.iter().chain(vertex.normal.iter()).chain(vertex.color.iter()) {
+        for component in vertex
+            .position
+            .iter()
+            .chain(vertex.normal.iter())
+            .chain(vertex.color.iter())
+        {
             vertex_bytes.extend_from_slice(&component.to_le_bytes());
         }
     }
@@ -1441,9 +1449,9 @@ fn run_fixture(
     let index_count = mesh.indices.len() as u32;
     let mesh_ms = mesh_start.elapsed().as_secs_f64() * 1000.0;
 
-    let upload_start = Instant::now();
+    let setup_start = Instant::now();
     let mut session = Session::new(gpu, &pack, &vertex_bytes, &index_bytes)?;
-    let upload_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
+    let setup_ms = setup_start.elapsed().as_secs_f64() * 1000.0;
 
     let view_projection = fixture.camera.view_projection();
     let eye = Vec3::from_array(fixture.camera.eye);
@@ -1478,14 +1486,7 @@ fn run_fixture(
     {
         let start = Instant::now();
         let image = unsafe {
-            session.render(
-                gpu,
-                &uniform_bytes,
-                &push,
-                mesh_draw,
-                ray_draw,
-                index_count,
-            )
+            session.render(gpu, &uniform_bytes, &push, mesh_draw, ray_draw, index_count)
         }?;
         draw_ms[index] = start.elapsed().as_secs_f64() * 1000.0;
         images.push(image);
@@ -1499,7 +1500,11 @@ fn run_fixture(
         if matched { "-matched" } else { "-split" },
         if edited { "-edited" } else { "" }
     );
-    for (label, image) in [("raster", &images[0]), ("ray", &images[1]), ("hybrid", &images[2])] {
+    for (label, image) in [
+        ("raster", &images[0]),
+        ("ray", &images[1]),
+        ("hybrid", &images[2]),
+    ] {
         write_ppm(&out.join(format!("{name}.{label}.ppm")), image)?;
         write_depth_pgm(&out.join(format!("{name}.{label}.pgm")), image)?;
     }
@@ -1512,7 +1517,7 @@ fn run_fixture(
         hybrid: images.next().ok_or("missing hybrid image")?,
         pack_ms,
         mesh_ms,
-        upload_ms,
+        setup_ms,
         draw_ms,
     })
 }
@@ -1537,20 +1542,9 @@ struct OracleReport {
 /// A sampled pixel is grazing when a quarter-pixel perturbation of the same ray
 /// reaches a different cell. Such samples straddle a shared edge or corner, so
 /// they are reported, not counted as path disagreements.
-fn is_grazing(
-    world: &World,
-    view_projection: Mat4,
-    x: u32,
-    y: u32,
-    cell: [i32; 3],
-) -> bool {
+fn is_grazing(world: &World, view_projection: Mat4, x: u32, y: u32, cell: [i32; 3]) -> bool {
     let inverse = view_projection.inverse();
-    for (dx, dy) in [
-        (0.25, 0.25),
-        (-0.25, 0.25),
-        (0.25, -0.25),
-        (-0.25, -0.25),
-    ] {
+    for (dx, dy) in [(0.25, 0.25), (-0.25, 0.25), (0.25, -0.25), (-0.25, -0.25)] {
         let ndc = (
             2.0 * (x as f32 + 0.5 + dx) / WIDTH as f32 - 1.0,
             1.0 - 2.0 * (y as f32 + 0.5 + dy) / HEIGHT as f32,
@@ -1575,12 +1569,7 @@ fn is_grazing(
     false
 }
 
-fn oracle_report(
-    world: &World,
-    ray: &Images,
-    view_projection: Mat4,
-    eye: Vec3,
-) -> OracleReport {
+fn oracle_report(world: &World, ray: &Images, view_projection: Mat4, eye: Vec3) -> OracleReport {
     let mut report = OracleReport {
         sampled: 0,
         hits: 0,
@@ -1612,7 +1601,8 @@ fn oracle_report(
                 Some(hit) => {
                     report.hits += 1;
                     let point = origin + direction * hit.distance;
-                    let local = point - Vec3::new(point.x.floor(), point.y.floor(), point.z.floor());
+                    let local =
+                        point - Vec3::new(point.x.floor(), point.y.floor(), point.z.floor());
                     // Only the two tangential axes decide edge/corner ties: the
                     // normal axis is always exactly on a face plane.
                     let face_axis = (0..3).find(|&axis| hit.normal[axis] != 0);
@@ -1633,15 +1623,19 @@ fn oracle_report(
                         continue;
                     }
                     let clip = view_projection * Vec4::new(point.x, point.y, point.z, 1.0);
-                    let normal = Vec3::new(hit.normal[0] as f32, hit.normal[1] as f32, hit.normal[2] as f32);
-                    let sunlight = normal.dot(Vec3::from_array(Sun::default().direction_to_sun).normalize()).max(0.0);
+                    let normal = Vec3::new(
+                        hit.normal[0] as f32,
+                        hit.normal[1] as f32,
+                        hit.normal[2] as f32,
+                    );
+                    let sunlight = normal
+                        .dot(Vec3::from_array(Sun::default().direction_to_sun).normalize())
+                        .max(0.0);
                     let ambient = 0.28 + 0.12 * normal.y.max(0.0);
                     let lit = Vec3::from_array(palette()[usize::from(hit.material)])
                         * (ambient + sunlight * Sun::default().intensity);
                     let fog = 1.0 - (-((point - eye).length()) * 0.013).exp();
-                    let color = lit
-                        .lerp(Vec3::new(0.16, 0.24, 0.29), fog)
-                        .to_array();
+                    let color = lit.lerp(Vec3::new(0.16, 0.24, 0.29), fog).to_array();
                     (clip.z / clip.w, color)
                 }
                 None => (1.0, [0.0, 0.0, 0.0]),
@@ -1722,77 +1716,73 @@ fn main() {
 
     let mut summary = String::new();
     for fixture in fixtures() {
-     for (mode, matched) in [("split", false), ("matched", true)] {
-        let runs = if fixture.edit.is_some() { 2 } else { 1 };
-        let mut previous: Option<Images> = None;
-        for run in 0..runs {
-            let edited = run == 1;
-            let label = format!(
-                "{}-{mode}{}",
-                fixture.name,
-                if edited { "-edited" } else { "" }
-            );
-            let result = match run_fixture(&gpu, &fixture, 7, edited, matched, &out) {
-                Ok(result) => result,
-                Err(message) => {
-                    failures += 1;
-                    println!("FAIL {label}: {message}");
-                    continue;
-                }
-            };
-            let coverage = |image: &Images| {
-                (0..PIXELS)
-                    .filter(|&i| image.covered(i))
-                    .count()
-            };
-            let raster_coverage = coverage(&result.raster);
-            let ray_coverage = coverage(&result.ray);
-            let hybrid_coverage = coverage(&result.hybrid);
-            println!(
+        for (mode, matched) in [("split", false), ("matched", true)] {
+            let runs = if fixture.edit.is_some() { 2 } else { 1 };
+            let mut previous: Option<Images> = None;
+            for run in 0..runs {
+                let edited = run == 1;
+                let label = format!(
+                    "{}-{mode}{}",
+                    fixture.name,
+                    if edited { "-edited" } else { "" }
+                );
+                let result = match run_fixture(&gpu, &fixture, 7, edited, matched, &out) {
+                    Ok(result) => result,
+                    Err(message) => {
+                        failures += 1;
+                        println!("FAIL {label}: {message}");
+                        continue;
+                    }
+                };
+                let coverage = |image: &Images| (0..PIXELS).filter(|&i| image.covered(i)).count();
+                let raster_coverage = coverage(&result.raster);
+                let ray_coverage = coverage(&result.ray);
+                let hybrid_coverage = coverage(&result.hybrid);
+                println!(
                 "fixture {label}: coverage raster {raster_coverage} ray {ray_coverage} hybrid {hybrid_coverage} of {PIXELS}"
             );
-            println!(
-                "  costs ms: pack {:.3} mesh {:.3} upload {:.3} draw+readback raster {:.3} ray {:.3} hybrid {:.3}",
+                println!(
+                "  costs ms: pack {:.3} mesh {:.3} combined-resource-and-pipeline-setup {:.3} draw+readback raster {:.3} ray {:.3} hybrid {:.3}",
                 result.pack_ms,
                 result.mesh_ms,
-                result.upload_ms,
+                result.setup_ms,
                 result.draw_ms[0],
                 result.draw_ms[1],
                 result.draw_ms[2]
             );
-            checks += 1;
-            if raster_coverage == 0 || ray_coverage == 0 {
-                failures += 1;
-                println!("  FAIL {label}: a path produced no geometry");
-                continue;
-            }
+                checks += 1;
+                if raster_coverage == 0 || ray_coverage == 0 {
+                    failures += 1;
+                    println!("  FAIL {label}: a path produced no geometry");
+                    continue;
+                }
 
-            // Hybrid must equal the per-pixel minimum-depth composite of both paths.
-            let expected = composite(&result.raster, &result.ray);
-            let edges = edge_mask(&result.raster, &result.ray);
-            let composite_diff = compare(&result.hybrid, &expected, &edges);
-            if composite_diff.mismatched == 0 {
-                println!(
+                // Hybrid must equal the per-pixel minimum-depth composite of both paths.
+                let expected = composite(&result.raster, &result.ray);
+                let edges = edge_mask(&result.raster, &result.ray);
+                let composite_diff = compare(&result.hybrid, &expected, &edges);
+                if composite_diff.mismatched == 0 {
+                    println!(
                     "  PASS hybrid shares depth: {composite} mismatches (edge {edge} interior {interior})",
                     composite = composite_diff.mismatched,
                     edge = composite_diff.edge,
                     interior = composite_diff.interior
                 );
-            } else {
-                failures += 1;
-                println!(
+                } else {
+                    failures += 1;
+                    println!(
                     "  FAIL hybrid composite mismatches {} (edge {} interior {}), max color delta {:.4}",
                     composite_diff.mismatched,
                     composite_diff.edge,
                     composite_diff.interior,
                     composite_diff.max_color
                 );
-            }
+                }
 
-            // Ray versus raster: silhouette-edge differences are expected
-            // rasterization conventions and are reported separately.
-            let path_diff = compare(&result.ray, &result.raster, &edges);
-            println!(
+                // Ray versus raster: silhouette-edge differences are expected
+                // rasterization conventions and are reported separately.
+                let path_diff = compare(&result.ray, &result.raster, &edges);
+                println!(
                 "  compare ray-vs-raster{note}: mismatched {mismatched} (edge-class {edge}, interior-class {interior}), mean color delta {mean:.5}, max {max:.5}",
                 mismatched = path_diff.mismatched,
                 edge = path_diff.edge,
@@ -1803,26 +1793,34 @@ fn main() {
                 // content, not rasterization convention.
                 note = if matched { "" } else { " (disjoint cell sets: content diff)" }
             );
-            if hybrid_coverage < raster_coverage.max(ray_coverage) {
-                failures += 1;
-                println!("  FAIL hybrid lost coverage present in a single path");
-            }
+                // Full matched fixtures require agreement across every pixel;
+                // edge labels are diagnostics, not a blanket mismatch exemption.
+                if matched && path_diff.mismatched != 0 {
+                    failures += 1;
+                    println!(
+                        "  FAIL matched ray/raster images differ within the declared tolerances"
+                    );
+                }
+                if hybrid_coverage < raster_coverage.max(ray_coverage) {
+                    failures += 1;
+                    println!("  FAIL hybrid lost coverage present in a single path");
+                }
 
-            let view_projection = fixture.camera.view_projection();
-            let eye = Vec3::from_array(fixture.camera.eye);
-            let oracle = oracle_report(&result.oracle_world, &result.ray, view_projection, eye);
-            if oracle.mismatched == 0 && oracle.hits > 0 {
-                println!(
+                let view_projection = fixture.camera.view_projection();
+                let eye = Vec3::from_array(fixture.camera.eye);
+                let oracle = oracle_report(&result.oracle_world, &result.ray, view_projection, eye);
+                if oracle.mismatched == 0 && oracle.hits > 0 {
+                    println!(
                     "  PASS ray matches CPU oracle: {sampled} samples, {hits} hits, {ties} ties, {grazing} grazing, {inside} inside-start, {mismatched} mismatches",
                     sampled = oracle.sampled, hits = oracle.hits, ties = oracle.ties,
                     grazing = oracle.grazing, inside = oracle.inside, mismatched = oracle.mismatched
                 );
-            } else {
-                failures += 1;
-                for line in &oracle.diagnostics {
-                    println!("{line}");
-                }
-                println!(
+                } else {
+                    failures += 1;
+                    for line in &oracle.diagnostics {
+                        println!("{line}");
+                    }
+                    println!(
                     "  FAIL ray vs CPU oracle: {mismatched} of {sampled} samples ({hits} hits, ties {ties}, grazing {grazing}, inside {inside}), max depth delta {depth:.5}, max color delta {color:.5}",
                     hits = oracle.hits,
                     mismatched = oracle.mismatched,
@@ -1833,81 +1831,85 @@ fn main() {
                     depth = oracle.max_depth_delta,
                     color = oracle.max_color_delta
                 );
-            }
+                }
 
-            // Camera and image-orientation convention: the marker cell must project
-            // onto a covered pixel no farther than the cell centre.
-            let marker = Vec3::new(
-                fixture.marker[0] as f32 + 0.5,
-                fixture.marker[1] as f32 + 0.5,
-                fixture.marker[2] as f32 + 0.5,
-            );
-            match project(view_projection, marker) {
-                Some((px, py, center_depth)) => {
-                    let index = (py * WIDTH + px) as usize;
-                    if result.hybrid.covered(index) && result.hybrid.depth[index] <= center_depth + 0.05
-                    {
-                        println!(
+                // Camera and image-orientation convention: the marker cell must project
+                // onto a covered pixel no farther than the cell centre.
+                let marker = Vec3::new(
+                    fixture.marker[0] as f32 + 0.5,
+                    fixture.marker[1] as f32 + 0.5,
+                    fixture.marker[2] as f32 + 0.5,
+                );
+                match project(view_projection, marker) {
+                    Some((px, py, center_depth)) => {
+                        let index = (py * WIDTH + px) as usize;
+                        if result.hybrid.covered(index)
+                            && result.hybrid.depth[index] <= center_depth + 0.05
+                        {
+                            println!(
                             "  PASS marker {:?} projects to ({px},{py}) depth {:.5} <= centre {:.5}",
                             fixture.marker, result.hybrid.depth[index], center_depth
                         );
-                    } else {
+                        } else {
+                            failures += 1;
+                            println!(
+                                "  FAIL marker {:?} at ({px},{py}) depth {:.5} vs centre {:.5}",
+                                fixture.marker, result.hybrid.depth[index], center_depth
+                            );
+                        }
+                    }
+                    None => {
                         failures += 1;
                         println!(
-                            "  FAIL marker {:?} at ({px},{py}) depth {:.5} vs centre {:.5}",
-                            fixture.marker, result.hybrid.depth[index], center_depth
+                            "  FAIL marker {:?} does not project into the image",
+                            fixture.marker
                         );
                     }
                 }
-                None => {
-                    failures += 1;
-                    println!("  FAIL marker {:?} does not project into the image", fixture.marker);
-                }
-            }
 
-            if let Some(previous) = previous.take() {
-                let diff = compare(&result.hybrid, &previous, &vec![false; PIXELS]);
-                if diff.mismatched > 0 {
-                    println!(
+                if let Some(previous) = previous.take() {
+                    let diff = compare(&result.hybrid, &previous, &vec![false; PIXELS]);
+                    if diff.mismatched > 0 {
+                        println!(
                         "  PASS edit changed the hybrid image on {changed} pixels (max color delta {max:.5})",
                         changed = diff.mismatched, max = diff.max_color
                     );
-                } else {
-                    failures += 1;
-                    println!("  FAIL edit left the hybrid image unchanged");
-                }
-            }
-            if edited {
-                let mut edited_world = combined_world(&fixture, true);
-                let mut stale = World::new(3);
-                for (cell, material) in &fixture.cells {
-                    if cell[0] < fixture.split {
-                        stale.set(*cell, *material);
+                    } else {
+                        failures += 1;
+                        println!("  FAIL edit left the hybrid image unchanged");
                     }
                 }
-                let (ray_origin, ray_dimensions) = bounds(&fixture.cells);
-                let pack = RayVolume::pack(&stale, 7, ray_origin, ray_dimensions, palette()).unwrap();
-                edited_world.set(fixture.marker, edited_world.get(fixture.marker));
-                if pack.valid_for(&edited_world, 7) {
-                    failures += 1;
-                    println!("  FAIL edited world still validates against the pre-edit pack");
-                } else {
-                    println!("  PASS edit invalidates the ray pack");
+                if edited {
+                    let mut edited_world = combined_world(&fixture, false);
+                    let (ray_origin, ray_dimensions) = bounds(&fixture.cells);
+                    let pack =
+                        RayVolume::pack(&edited_world, 7, ray_origin, ray_dimensions, palette())
+                            .unwrap();
+                    if let Some((cell, material)) = fixture.edit {
+                        edited_world.set(cell, material);
+                    }
+                    if pack.valid_for(&edited_world, 7) {
+                        failures += 1;
+                        println!("  FAIL edited world still validates against the pre-edit pack");
+                    } else {
+                        println!("  PASS edit invalidates the ray pack");
+                    }
                 }
-            }
-            previous = Some(result.hybrid);
-            summary.push_str(&format!(
+                previous = Some(result.hybrid);
+                summary.push_str(&format!(
                 "{label} [{mode}]: raster {raster_coverage} ray {ray_coverage} hybrid {hybrid_coverage} pixels; ray-vs-raster mismatched {m} (edge {e}, interior {i}); hybrid composite mismatches {h}\n",
                 m = path_diff.mismatched,
                 e = path_diff.edge,
                 i = path_diff.interior,
                 h = composite_diff.mismatched
             ));
+            }
         }
-     }
     }
     let errors = VALIDATION_ERRORS.load(Ordering::Relaxed);
-    if errors == 0 {
+    if !gpu.validation {
+        println!("NOT RUN Vulkan validation: layer unavailable");
+    } else if errors == 0 {
         println!("PASS Vulkan validation: no error messages");
     } else {
         failures += 1;
@@ -1957,8 +1959,14 @@ mod tests {
 
     #[test]
     fn nonfinite_depth_cannot_pass_image_comparison() {
-        let a = Images { color: vec![[0; 4]; PIXELS], depth: vec![1.0; PIXELS] };
-        let mut b = Images { color: vec![[0; 4]; PIXELS], depth: vec![1.0; PIXELS] };
+        let a = Images {
+            color: vec![[0; 4]; PIXELS],
+            depth: vec![1.0; PIXELS],
+        };
+        let mut b = Images {
+            color: vec![[0; 4]; PIXELS],
+            depth: vec![1.0; PIXELS],
+        };
         b.depth[17] = f32::NAN;
         assert_eq!(compare(&a, &b, &vec![false; PIXELS]).mismatched, 1);
     }
