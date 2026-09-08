@@ -1,0 +1,616 @@
+{
+  "result": "PASS",
+  "host_only": true,
+  "method": "six-neighbour source connectivity; actual transformed voxel centres",
+  "instance_count": 84,
+  "source_component_sizes": {
+    "clustered_mushroom": [
+      912
+    ],
+    "fan_frond": [
+      422
+    ],
+    "funnel_mushroom": [
+      1106
+    ],
+    "parasol_mushroom": [
+      938
+    ],
+    "reed_cluster": [
+      297
+    ],
+    "rosette_groundcover": [
+      109
+    ]
+  },
+  "instances": [
+    {
+      "instance": "clustered-0",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-1",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-10",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-11",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-12",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-13",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-2",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-3",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-4",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-5",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-6",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-7",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-8",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "clustered-9",
+      "prototype": "clustered_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-0",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-1",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-10",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-11",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-2",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-3",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-4",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-5",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-6",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-7",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-8",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "fan_frond-9",
+      "prototype": "fan_frond",
+      "contact_cells": 5,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-0",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-1",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-10",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-11",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-12",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-13",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-14",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-15",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-2",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-3",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-4",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-5",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-6",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-7",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-8",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "funnel-9",
+      "prototype": "funnel_mushroom",
+      "contact_cells": 13,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-0",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-1",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-10",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-11",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-2",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-3",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-4",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-5",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-6",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-7",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-8",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "parasol-9",
+      "prototype": "parasol_mushroom",
+      "contact_cells": 29,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-0",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-1",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-10",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-11",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-12",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-13",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-2",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-3",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-4",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-5",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-6",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-7",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-8",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "reed_cluster-9",
+      "prototype": "reed_cluster",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-0",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-1",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-10",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-11",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-12",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-13",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-14",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-15",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-2",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-3",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-4",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-5",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-6",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-7",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-8",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    },
+    {
+      "instance": "rosette_groundcover-9",
+      "prototype": "rosette_groundcover",
+      "contact_cells": 9,
+      "bad_contacts": 0,
+      "terrain_intersecting_cell_centres": 0
+    }
+  ]
+}

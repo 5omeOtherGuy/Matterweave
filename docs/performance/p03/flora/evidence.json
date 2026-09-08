@@ -1,0 +1,170 @@
+{
+  "source_commit": "64661cf04c85f47aef2a9bdf95774383927c605b",
+  "base": "f9251d7480c748cdcbe9506c203f55188729fba9",
+  "seed": 20260908,
+  "host_only": true,
+  "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.39",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "build": "cargo --release example flora_gallery; private target under /mnt/bench",
+  "device_tests": "NOT RUN in this lane",
+  "concurrent_work": "Pi integration/native lead active; no controlled host timing comparison",
+  "timing_file": {
+    "meshes": [
+      {
+        "host_only_ms": 1.383776,
+        "mesh": "clustered_mushroom.lod1"
+      },
+      {
+        "host_only_ms": 0.92736,
+        "mesh": "clustered_mushroom.lod2"
+      },
+      {
+        "host_only_ms": 0.793752,
+        "mesh": "clustered_mushroom.lod4"
+      },
+      {
+        "host_only_ms": 0.621382,
+        "mesh": "fan_frond.lod1"
+      },
+      {
+        "host_only_ms": 0.702679,
+        "mesh": "fan_frond.lod2"
+      },
+      {
+        "host_only_ms": 0.643871,
+        "mesh": "fan_frond.lod4"
+      },
+      {
+        "host_only_ms": 1.39062,
+        "mesh": "funnel_mushroom.lod1"
+      },
+      {
+        "host_only_ms": 0.921632,
+        "mesh": "funnel_mushroom.lod2"
+      },
+      {
+        "host_only_ms": 0.829441,
+        "mesh": "funnel_mushroom.lod4"
+      },
+      {
+        "host_only_ms": 1.2320090000000001,
+        "mesh": "parasol_mushroom.lod1"
+      },
+      {
+        "host_only_ms": 1.215806,
+        "mesh": "parasol_mushroom.lod2"
+      },
+      {
+        "host_only_ms": 0.941886,
+        "mesh": "parasol_mushroom.lod4"
+      },
+      {
+        "host_only_ms": 1.358703,
+        "mesh": "reed_cluster.lod1"
+      },
+      {
+        "host_only_ms": 0.818826,
+        "mesh": "reed_cluster.lod2"
+      },
+      {
+        "host_only_ms": 0.780692,
+        "mesh": "reed_cluster.lod4"
+      },
+      {
+        "host_only_ms": 0.5532170000000001,
+        "mesh": "rosette_groundcover.lod1"
+      },
+      {
+        "host_only_ms": 0.624246,
+        "mesh": "rosette_groundcover.lod2"
+      },
+      {
+        "host_only_ms": 0.59149,
+        "mesh": "rosette_groundcover.lod4"
+      },
+      {
+        "host_only_ms": 5.901631,
+        "mesh": "terrain_tile_16m.lod1"
+      },
+      {
+        "host_only_ms": 6.323755,
+        "mesh": "terrain_tile_16m.lod2"
+      },
+      {
+        "host_only_ms": 4.095034,
+        "mesh": "terrain_tile_16m.lod4"
+      }
+    ],
+    "note": "HOST ONLY desktop generation/meshing measurements; NOT phone performance",
+    "scene_build_ms": 2006.4002099999998
+  },
+  "artifact_sha256": {
+    "clustered_mushroom.lod1.indices.le.bin": "e8133810cda19d8c6bdd352cc7285e0fe268d000ea3cd6f21730c8ad83c959c7",
+    "clustered_mushroom.lod1.vertices.le.bin": "6c74081d54c2c0f83fdfe06055f91aa8c5f0f4e8c59c834f82da00b69116c6a2",
+    "clustered_mushroom.lod2.indices.le.bin": "b21b472b0bcd7dd81db94dd399c7677ff80d53cafd210b5f1a10d903be3aab5c",
+    "clustered_mushroom.lod2.vertices.le.bin": "e0795367c57908c2a84ba43577f85203ecbe3bb6064d87ada73b719077c0fc4d",
+    "clustered_mushroom.lod4.indices.le.bin": "445c814490686985aa752624277a3d2f996cc98ba986e9ac338354810c4c7ca4",
+    "clustered_mushroom.lod4.vertices.le.bin": "eaffc332a7c20593679b7e5be2b137240b1443b0f1091e96a3178a2749404b44",
+    "clustered_mushroom.snapshot.json": "fdecf2c0cc17248dc72ef5df6331c2c4b63c4e5fcdebbcac9b6f068916adddeb",
+    "fan_frond.lod1.indices.le.bin": "903eddbd5d80ebbc1d078e64b2af98a9525d765a9a85cff75b1b9499e9c87c8f",
+    "fan_frond.lod1.vertices.le.bin": "62ccb0b92a9d218c9e883f0d9b5642d7597efcbf457b185364a06ac7deab779b",
+    "fan_frond.lod2.indices.le.bin": "8001c9f56e2f68f5b60054add18a012db085ade90560b105550b8687c7f8c162",
+    "fan_frond.lod2.vertices.le.bin": "05be9fa6b1b0a01ad46da55fe107f5a551f061a26a30af4cd26e76df9679095a",
+    "fan_frond.lod4.indices.le.bin": "896198a445075d3b196491eaae8b76172378642136391baed15300841db03da3",
+    "fan_frond.lod4.vertices.le.bin": "2fd50528277f30a0ac1bc802be57aecaa080e56c9bc8a4963ec07b962e62c642",
+    "fan_frond.snapshot.json": "2d135d8711e5f29fbaa97c74f0c8b50266727ef303e811e151ab1a57bd78f59b",
+    "funnel_mushroom.lod1.indices.le.bin": "cb5d978e4f58bce7211f79b121f3bf1111c55a0c2faa735b8ad68171ca9e35a5",
+    "funnel_mushroom.lod1.vertices.le.bin": "613e76c219392a4f79d980ee66db00c3fa445f6135d6f56029e82ea09fb21951",
+    "funnel_mushroom.lod2.indices.le.bin": "c0c3475da5c25deead504b0e98abee99086f1e1afa3c4dc8830258aae6ba4958",
+    "funnel_mushroom.lod2.vertices.le.bin": "2f5ab6495b59b0135eac31e71daa87cd94b93f408bfcc4631068ea2b6deee25f",
+    "funnel_mushroom.lod4.indices.le.bin": "b04454948b042408c8b00a12b21dc2f9736a3349806bfa46bf33932bdc59feb0",
+    "funnel_mushroom.lod4.vertices.le.bin": "299e0885508e02fca450172be2a2fc289da2d55bd33a72896bc3f89ddb276457",
+    "funnel_mushroom.snapshot.json": "8fa4da70b086abf84fbfdc1323b0783b8ed60d24e942818ab91ab5fa3b7d211d",
+    "manifest.json": "23c81d5f19974bbe62626183fa7e1734a3edeee951ed597baf344b70babc1a65",
+    "parasol_mushroom.lod1.indices.le.bin": "adb0639062b374071b79130c737ef4ad8af3aeed071330e5ceac7dd6883b8488",
+    "parasol_mushroom.lod1.vertices.le.bin": "52c7b4bfff63009b79e8465e464b5981a1b0ae93dbeed3e4f92f1e50fbbf8a26",
+    "parasol_mushroom.lod2.indices.le.bin": "4a8338f4cdaffc53b6fb33d8f016b8051a8e23cf832b9dd627655cf8d06e9538",
+    "parasol_mushroom.lod2.vertices.le.bin": "514646f181f9a3a96fd45705d9fbee00524ba3fd7a23ebd25fbf4581eb1e1330",
+    "parasol_mushroom.lod4.indices.le.bin": "a1d5d663a50accc5f622dec9d3ec4b51f0f09da9e5162ceb50217115cf690273",
+    "parasol_mushroom.lod4.vertices.le.bin": "51ea1c313b54bfd27beded788e42054dfbf0d4de82e2ec79fa9b8d2c0f4e3e4c",
+    "parasol_mushroom.snapshot.json": "fd09a34c848342ed5de0f2733e92f56541d04d26416f712a235c6b902c6526aa",
+    "reed_cluster.lod1.indices.le.bin": "2535fc98d4651d867d68d5401ef9b51aedab3e5962bfad90ac9028a26c60e9dd",
+    "reed_cluster.lod1.vertices.le.bin": "1a382df581ea112c71691beeeef774ed85531125d95e404034dcabd8d57f04b9",
+    "reed_cluster.lod2.indices.le.bin": "6bd7a97482a3201384d8dab8a71d5dded4a8b3259001bb4dad2c299232328b10",
+    "reed_cluster.lod2.vertices.le.bin": "6c1617ebf6c850f7f2c810b2f92d96ff698384c10a3428ec3a629d16aa3535da",
+    "reed_cluster.lod4.indices.le.bin": "77b3c2dd469e82d9294d8bd0748202101a73859d1bf699b0db4302d89fa22568",
+    "reed_cluster.lod4.vertices.le.bin": "a4f4949c054eb0293be3344622ae3ee51743756ebc21ddcd3a9a4c9880a0802b",
+    "reed_cluster.snapshot.json": "11b91e2bd555bfbc4d9cca0db4ad872e407bf493018d02a17de0523bcc220dcd",
+    "rosette_groundcover.lod1.indices.le.bin": "5c818a6b99355bc59c0b65287d5c17318430ce3f19bc64b4b10ef3b8e05812fa",
+    "rosette_groundcover.lod1.vertices.le.bin": "1959a57b4d2dc03282db4268a75b2da366cf9b470cea241434fb7f48a0780315",
+    "rosette_groundcover.lod2.indices.le.bin": "21eecdd413c2dc5bec764b260db21fcef75c5483d887e7b1688ce2f7fbbe7c6a",
+    "rosette_groundcover.lod2.vertices.le.bin": "a0f65bf56515625ed63acb2a353224a46fc399ce9594ae93bc70e503647e8c3b",
+    "rosette_groundcover.lod4.indices.le.bin": "cb56f48f5ab9f8d2f235d83dd2306b185b4707cf8c17b1b32b283b8ce1246436",
+    "rosette_groundcover.lod4.vertices.le.bin": "d01f1dddd0bac24d78dd0a29f9c14711c593ef04108610922a69dd688427c885",
+    "rosette_groundcover.snapshot.json": "3f2d05bde6a04e8af4647682415a5065c174a966112f3492fd1c5df5fe4c4ff5",
+    "terrain_tile_16m.lod1.indices.le.bin": "35c5f3c2d4cbafaa12eb2e034ef94d83c2caec8cad73bec1499ada9c54ff1c99",
+    "terrain_tile_16m.lod1.vertices.le.bin": "cfde67bff01884cd86e6dd35b774bb9c145d299c4befd20977f6ed45b680b733",
+    "terrain_tile_16m.lod2.indices.le.bin": "8a4660e20277b1c26d8857091c72ff106614754722e3c3382be388a93f1e00dc",
+    "terrain_tile_16m.lod2.vertices.le.bin": "9d19e87b9c8ac2f12005e146438de1b37582fa3d491e2e1f7dfa685b4104527b",
+    "terrain_tile_16m.lod4.indices.le.bin": "7476198a7144a786aacbb828fb6cfe502c902a151f1f5d1acccc40b60d5b02d9",
+    "terrain_tile_16m.lod4.vertices.le.bin": "a1945e45cb1234710f637a3ee6fdfe8cc1d207fb0c5bfdf4f4a7922a8b4dcb94",
+    "terrain_tile_16m.snapshot.json": "99bf642f12214a4ad1d89bb649b622c98fa3cc594fd4679a27b6bde0c753f07d",
+    "timing.json": "1ceb51290357c3bd38943d85a30e8ddd4ed5b2b9a999b259319444cbc636bba8"
+  },
+  "image_sha256": {
+    "clustered_mushroom-lod.png": "095af1e1f4a8e871e00d10cc2d1e96d54637175ae78a5bede35d1b1ae645c44c",
+    "clustered_mushroom-source.png": "e86437541b1a3e55763fecbfd67035ee089313113a6e3a0fb8a509910b8e79f7",
+    "dense-tile.png": "e3d3962794ca41955235eea36c1f11f561eeb2506b2abcc2948063f428d0c760",
+    "fan_frond-lod.png": "d57f6b81f8a32aca8f5c3ea9b642fcbd190ec34b842ef80505a7e8450bbb23a3",
+    "fan_frond-source.png": "f350b78afb53a00bb00c56fb365d32ee1dae0a326b128a65595d7907b5a29c7f",
+    "funnel_mushroom-lod.png": "f3431532638cd6bf9b8f40c8b99b85cae1ce1c9b3a78bb743663f02be8952be7",
+    "funnel_mushroom-source.png": "f923bf72342ed7c36a2b085e74ba4aec411e917d77ad9fea4135d7d5e95f8eb5",
+    "parasol_mushroom-lod.png": "6817e77a84174f3a6b1d675ec475276a1ed901c41dff3a8d4a67a6d67cd68c98",
+    "parasol_mushroom-source.png": "0ece87e6431f715462253f72d26d198ecf19cbc961fed15b2f3f6b39cbcb17d2",
+    "reed_cluster-lod.png": "5f807783723c745a34d07cf9036d7a1dceab76e4340ba7c04f6895d6f8b439ab",
+    "reed_cluster-source.png": "36e41426e1b4b135488d496b413b05345aa3dbdd921f65bdf9593b4f62d28fb0",
+    "rosette_groundcover-lod.png": "f9e86f7c1b03ccde8bf0db9ebcc60751f9d910f5f72e80f48e6e44ea933698a0",
+    "rosette_groundcover-source.png": "afa7acff03ea47183130a04cc7c1d699f16bce004c7038c8f71c88ad16ce9a4f",
+    "view-conditions.json": "a098d76d5f955b1da5e4bc29ca94cd2c5b764537f78f40d08fd8df963a8c891d"
+  }
+}
