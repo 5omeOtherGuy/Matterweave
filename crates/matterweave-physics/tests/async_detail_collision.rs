@@ -11,7 +11,7 @@
 
 use matterweave_detail::{material, DetailScene, DetailVolume, Scale, Transform, Yaw};
 use matterweave_physics::{
-    AsyncDetailCollision, PreparedDetailCollision, Physics, FIXED_DT, MAX_DETAIL_COLLIDERS,
+    AsyncDetailCollision, Physics, PreparedDetailCollision, FIXED_DT, MAX_DETAIL_COLLIDERS,
 };
 use std::time::{Duration, Instant};
 
@@ -162,7 +162,10 @@ fn unrelated_scene_with_matching_counters_is_rejected() {
         "matching revision counters do not make an unrelated scene current"
     );
     // The result is still valid for the scene it was actually prepared from.
-    assert!(ctrl.poll(&scene).is_some(), "current scene still publishable");
+    assert!(
+        ctrl.poll(&scene).is_some(),
+        "current scene still publishable"
+    );
 }
 
 #[test]
@@ -265,7 +268,10 @@ fn invalid_preparation_propagates_for_the_current_scene() {
         Ok(_) => panic!("an over-budget scene must fail preparation"),
         Err(error) => error,
     };
-    assert!(error.contains("static colliders"), "explicit limit: {error}");
+    assert!(
+        error.contains("static colliders"),
+        "explicit limit: {error}"
+    );
 }
 
 #[test]
@@ -302,7 +308,11 @@ fn stats_stay_bounded_and_shutdown_is_clean() {
     let scene = scene_with_floor();
     {
         let mut ctrl = AsyncDetailCollision::new();
-        assert_eq!(ctrl.stats(), Default::default(), "fresh controller is empty");
+        assert_eq!(
+            ctrl.stats(),
+            Default::default(),
+            "fresh controller is empty"
+        );
         assert!(ctrl.request(&scene));
         // Sample bounds repeatedly across the worker lifecycle.
         let started = Instant::now();
