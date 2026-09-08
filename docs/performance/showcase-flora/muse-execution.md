@@ -76,3 +76,10 @@ horsetail y[0,2.125] (~1.9 m spire + cone); lily x[-1.375,1.375] y[0,0.75].
 - Anatomy/readability lead acceptance (in-engine front/side/underside views):
   NOTRUN — lead owns host views from the exported LE bins + manifest.
 - No full-map scatter or physics/app changes (per scope).
+
+## Lead review corrections
+- **Actions Taken:** Independent Muse and Gemini reviews completed before lead code inspection. Fixed branch side taper to be perpendicular on both axes; corrected lily notch test to check the actual slit and flanking walls; labeled the mixed-policy shrub flora-woody and clarified source-only snapshots.
+- **Issues & Friction:** Original notch test passed on incidental inter-pad gaps. Existing flora_class default mislabeled collidable shrub wood.
+- **Decisions & Rationale:** Debug-only connectivity assertions are not a defect for these fixed deterministic builders with release geometry independently checked; no runtime scan added just to repeat tests.
+- **Solutions Applied:** Narrow geometry/test/export fixes; regenerate gallery and verify before native integration.
+- **Insights:** Tests of appearance need authoritative feature locations, not any matching voxel somewhere in the bounding box.
