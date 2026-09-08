@@ -1234,6 +1234,7 @@ mod integration_tests {
         std::fs::write(&legacy, b"legacy world sentinel").unwrap();
         let mut runtime = Runtime::load(directory.clone()).expect("full wetland load");
         assert_eq!(runtime.physics.body_count(), 6);
+        assert_eq!(runtime.frame_rate, 60);
         let start = runtime.physics.character_eye();
         for _ in 0..120 {
             runtime.physics.step(1. / 60., [0.; 3], false);
@@ -1259,6 +1260,23 @@ mod integration_tests {
         let before = runtime.scene.counts().expanded_occupied_cells;
         let mut app = WetlandApp::new(directory.clone(), false, None);
         app.runtime = Some(runtime);
+        assert_eq!(app.frame_interval(), Duration::from_micros(66_667));
+        app.menu = false;
+        assert_eq!(app.frame_interval(), Duration::from_micros(16_667));
+        assert!(app.click(Vec2::new(930., 41.)), "open normal options");
+        app.runtime.as_mut().unwrap().dirty = false;
+        assert!(app.click(Vec2::new(835., 322.)), "frame-rate touch row");
+        assert_eq!(app.runtime.as_ref().unwrap().frame_rate, 30);
+        assert!(app.runtime.as_ref().unwrap().dirty);
+        assert_eq!(app.frame_interval(), Duration::from_micros(33_334));
+        app.runtime.as_mut().unwrap().dirty = false;
+        assert!(app.click(Vec2::new(835., 322.)));
+        assert_eq!(app.runtime.as_ref().unwrap().frame_rate, 60);
+        assert!(app.runtime.as_ref().unwrap().dirty);
+        assert_eq!(app.frame_interval(), Duration::from_micros(16_667));
+        assert!(app.click(Vec2::new(835., 322.)));
+        app.menu = true;
+        assert_eq!(app.frame_interval(), Duration::from_micros(66_667));
         app.action(Action::Remove);
         runtime = app.runtime.take().unwrap();
         assert!(runtime.edits.is_empty(), "main menu accepted a hidden edit");
@@ -1293,6 +1311,7 @@ mod integration_tests {
         let body_bytes = std::fs::read(&bad_body).unwrap();
         let restored = Runtime::load(directory.clone()).expect("recover edited full wetland");
         assert_eq!(restored.save_path, recovery);
+        assert_eq!(restored.frame_rate, 30);
         assert_eq!(std::fs::read(&primary).unwrap(), primary_bytes);
         assert_eq!(std::fs::read(&bad_body).unwrap(), body_bytes);
         assert_eq!(std::fs::read(&recovery).unwrap(), valid_bytes);
