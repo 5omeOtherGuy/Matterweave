@@ -12,7 +12,7 @@ was released. Its multi-model protocol and [execution log](../execution_log.md)
 record the actual delivery process. This advances M3 and direct lighting; it does
 not close equivalent-quality M2 comparisons or full M4 indirect-light/detail gates.
 
-Next: execute the [performance campaign](PERFORMANCE_PLAN.md), beginning with
+In progress: execute the [performance campaign](PERFORMANCE_PLAN.md), beginning with
 trustworthy measurements and redundant-work reduction. Its required
 [dense alien showcase](SHOWCASE.md) supplies demanding real workloads throughout.
 Use unplugged, matched thermal conditions and the [benchmark protocol](BENCHMARKS.md).

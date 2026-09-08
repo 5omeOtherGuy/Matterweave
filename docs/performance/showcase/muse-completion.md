@@ -20,3 +20,17 @@ NOT RUN = not executed in this session.
 - **Decisions & Rationale:** (see section 02)
 - **Solutions Applied:** (see section 02)
 - **Insights:** (see section 02)
+
+## Lead continuation (actual outcome)
+
+The worker was Opus medium, despite this inherited brief's filename. It reached
+its900s deadline without a final handoff. Full suite output reported16passes and
+one failing cavity assertion. Subsequent leaf test ended after timeout; its result
+was not recovered. The lead verified no remaining worker/test process before
+freezing952d630 and integratinge7f43da.
+
+Independent review exposed continuous route and diagonal source-bound errors;
+lead regressions reproduced both, and corrections pass ina22143f. The cavity
+assertion failure was separately reproduced as a placed parasol cap; terrain-only
+column validation passes610lowered and2856overhang columns. Full suite and final
+Android acceptance remain lead-owned. See STATUS and the completion execution log.

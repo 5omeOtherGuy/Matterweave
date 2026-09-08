@@ -6,3 +6,52 @@
 - **Decisions & Rationale:** Continue existing branch and code. Retire prior lead per owner; no repeated save backup/restore ritual. Keep legacy saves isolated through normal app mode paths. Preserve all density and acceptance targets.
 - **Solutions Applied:** Board now identifies sole owner and truthful pending collision state. CI dependency repair will be verified by actual workflow.
 - **Insights:** Working flora viewer is reusable input, not full-map completion.
+
+## Source assets, reviews and first full map
+- **Actions Taken:** Pushed c6e2317; host, Android and docs CI passed. Opus delivered fine-source collision with 42 physics tests reported passing. Muse delivered three support flora sources; lead reran eight focused tests and scoped Clippy after corrections. Added lead instance-isolated edits and attached bracket source; focused tests passed. Began separate-save normal wetland UI integration.
+- **Issues & Friction:** First map worker hit its 1,200 s deadline with substantial source/manifest but unfinished tests/log. Collision prechecks conflated decorative occupancy with solid costs; 4M aggregate limit cannot hold the actual 8.8M unique-cell map. GLM needed a long read/reasoning phase before producing renderer changes.
+- **Decisions & Rationale:** Continued the exact idle map session for a bounded finish; no duplicate generator. Independent Muse/Gemini reviews precede lead acceptance. Correct collision admission accounting rather than dropping source walls. Keep new UI unaccepted until compiled and exercised.
+- **Solutions Applied:** Flora branch taper, lily-notch test and exporter class metadata corrected from review evidence. Requested collision budget/filter corrections and map test handoff.
+- **Insights:** Initial map manifest reports 32,930,597 expanded occupied cells, 5,367 flora instances and 3,968,891 flora cells; only six archetypes so far. These are generated-source counts, not native delivery or performance acceptance. Phone is charging; no matched measurement is running.
+
+## Correction and integration wave
+- **Actions Taken:** Integrated flora and fine-source collision. Lead verified44 physics tests and scoped Clippy; fresh Pi Astra review returned no substantiated candidates. Rendered and inspected bracket front/side/underside/silhouette with readable shelf attachment, bands and pores. Wired normal world chooser, separate wetland save journal, custom touch zones and typed opt-in capture (not compiled/accepted yet).
+- **Issues & Friction:** Opus correction exited Interrupted; free Muse follow-up hit429 before edits. Second map run timed out while final suite/manifest commands ran; an orphaned manifest process survived runner termination. Map tests caught actual cavity/footing disagreement at cell centres; focused repairs passed but full suite remained unverified.
+- **Decisions & Rationale:** Lead completed missing collision tests instead of retrying a rate-limited writer. Frozen map submitted for independent Muse/Gemini review; new lead-owned full suite writes a durable log. Keep worker timeouts distinct from acceptance.
+- **Solutions Applied:** Stopped the identified orphaned manifest child before new tests. Collision scratch uses sparse4096-bit masks,16Maggregate filtered-source admission and unchanged262144box cap; tests cover decorative-count rejection errors and partition clearance.
+- **Insights:** Runner deadlines alone did not terminate every shell descendant; inspect processes after timeout. Phone observed52%,charging,32C; cooling requested, no benchmark started. New source counts do not establish successful traversal or mobile performance.
+
+## Frozen map and graphics verification
+- **Actions Taken:** Lead reran original full-map14-test release suite: all passed in218.98s. Muse/Gemini independent reviews identified unprotected elevated route, missing open-route endpoint and phantom cavity surface queries. Dispatched scoped Muse correction/catalog integration on isolated map branch. Integrated frozen map/GPU APIs for app compilation.
+- **Issues & Friction:** GLM second attempt timed out after source/test/example compilation but no native run. Lead native Vulkan run emitted INDEX_BUFFER-usage validation errors despite the smoke example printing success. Independent Muse review found the same source defect. Gemini renderer review timed out without handoff.
+- **Decisions & Rationale:** Native validation output overrides smoke success text and worker status. Keep frozen reviewer worktree unchanged; apply fixes on integration branch. Preserve original six flora while adding four to the actual map and protecting both routes.
+- **Solutions Applied:** Corrected static index-buffer usage and added instancing native smoke plus validation-error gate to hostCI. Added opt-in wetland procedural water highlights/ripple normals/material variation for native visual review; legacy rendering remains its comparison reference.
+- **Insights:** Source tests alone cannot validate Vulkan flags. Map's passing suite missed feature coverage found by independent reviews. No Android full-map claims yet.
+
+## Continuation: real full-map execution and correctness fixes
+- **Actions Taken:** Re-read the supplied attachment and live source/process/PR/device state. No prior worker remained active. PR8 host/Android/docs already passed atc6e2317. Continued bounded Opus map correction and independent Pi reviews. Reproduced blocked fullmap entrance, corrupt-save lockout, native unfocused smoke stall, orphan menu GPU completion, old-generator journal reuse, diagonal source-radius underestimate and between-waypoint plant intrusion. Added actual runtime/native/source regressions and repaired each verified issue.
+- **Issues & Friction:** Initial Xvfb default hardware ICD lacked DRI3; stopped that owned process and selected installed lavapipe. Native25frames passed but strict capture correctly rejected orphan completion105, absent from recorded submissions. Map Opus reached900s; a test descendant outlived the runner, then was verified terminal before freezing952d630. Its full suite was16/17, not accepted. Muse/Gemini map review first attempts timed out; exact-session no-tool finalization returned independent findings. Tool-free app correction review attempts also timed out; do not count those as successful reviews.
+- **Decisions & Rationale:** Entrance uses actual capsule/finest-source colliders and a bounded1m lift at the same position. Recovery retains invalid/old-generator bytes. Only recorded submissions may join GPU completions. Terrain cavity assertions exclude separately placed flora: point[97.375,16.125,58.125] intersected parasol cap material21, with no solid terrain. Source radius includes every occupied voxel corner; route checks use continuous segments and never connect separate routes. No density target reduced. Generation advances to2 so old instance edit IDs cannot mutate changed placements.
+- **Solutions Applied:** Commits57131c6/e0d9188, b4e7830/625da73,532f5d6/41e8af2,949da07/8008271,437b846/a22143f retain reproductions and verified fixes. Native verifier passes25frames/20valid rows/six bodies/separate save/no Vulkan validation errors. Physical phone development APK SHA256fffb3844c1e9eff6ff48f5232d3c4831b2b90553319904ef81215423f0b777de passes ordinary chooser, fullmap entry, bank movement and Home/resume with a separate wetland save. App now stopped. Raw logs/APK/captures/manifests under `/mnt/bench/matterweave-dev/performance/completion-02`.
+- **Insights:** Source/unit checks did not prove loadability, continuous clearance or valid capture joins. Phone initial scene has32,369,772 expanded cells and6716 total placements; logged1.306s CPU preparation is not first-frame latency or matched performance. That workingtree APK precedes generator2 and finalmap acceptance; no release provenance or optimization win claimed. Current Python discovery is130 total tests (31handoff+65conditions+34profile), correcting earlier handoff double-counting as226.
+
+### Final generator 2 host verification
+
+At `7e1143e`, full native capture passes 25 frames/20 valid typed rows with six
+bodies and no Vulkan validation errors (`completion-02/capture-final.log`). The
+workspace suite passed 238 tests/one ignored; that expensive runtime test was then
+explicitly run on the final map and passed in16.45s (`runtime-final-map.log`).
+Strict workspace Clippy passes; an upstream vendored winit warning remains.
+Manifest now identifies host/debug assertions honestly rather than claiming a
+release build. It reports34,864,520 expanded occupied cells,8,876,712 unique cells,
+6,221 plants/ten species and45,328,920 source mesh bytes; generator2,seed20260908,
+composition `f458591e7b345546`. Files: `completion-02/fullmap-final/`.
+
+The aggregate mesh-byte gate previously rescanned all cell counts for every
+prototype. `ea23de0` introduces the missing cache-byte getter test; `9a9acd4`
+returns the already maintained cache counter. Identical budget test passes in2.31s.
+This is a host tooling fix, not a claimed phone rendering advantage.
+
+A bounded Muse worker now owns only a full-source continuous Rapier traversal
+regression and its log in `completion-traversal`, base `7e1143e`, run directory
+`completion-02/traversal-muse`. Lead retains phone ownership and integration.

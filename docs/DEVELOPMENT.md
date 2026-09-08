@@ -261,3 +261,22 @@ python3 -m unittest discover -s tools/coordination -p 'test_*.py' -v
 
 See the [board operations guide](../tools/coordination/README.md) and
 [v0.3 protocol](V0.3.md) for bounded worker reads and ownership rules.
+
+## Full wetland integration checks
+
+The complete map remains a separate native app mode, entered through the ordinary
+chooser or the host `--showcase` flag. Run the expensive real-runtime regression
+explicitly after map/collision/app changes:
+
+```sh
+cargo test --locked -p matterweave-explorer --lib full_wetland_load_edit_collision_and_reload -- --ignored --nocapture
+cargo build --locked -p matterweave-explorer --bin matterweave-explorer
+MATTERWEAVE_VALIDATION=1 python3 tools/performance/check_wetland_capture.py target/debug/matterweave-explorer /mnt/bench/matterweave-wetland-check
+```
+
+Use a fresh artifact directory. On a host with hardware ICDs that cannot present
+to Xvfb, explicitly select the installed lavapipe ICD with `VK_ICD_FILENAMES`;
+software-renderer timings are correctness evidence only. The capture verifier
+requires25 presented frames,20 schema-valid records with actual simulation, six
+arch bodies, an isolated wetland save and no Vulkan validation errors. It retains
+failure artifacts and terminates its owned process group on timeout.

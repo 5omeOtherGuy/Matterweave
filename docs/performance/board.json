@@ -139,7 +139,7 @@
     "P03-detail-collision": {
       "attempt": 1,
       "owner": "codex-desktop-lead",
-      "state": "pending",
+      "state": "superseded",
       "workspace": "isolated; desktop to report",
       "paths": [
         "crates/matterweave-physics/src/detail_collision.rs",
@@ -149,15 +149,116 @@
         "Cargo.lock: detail dependency",
         "docs/performance/p03/collision/**"
       ],
-      "acceptance": "Verified no implementation or active worker exists; new assignment pending."
+      "acceptance": "Previously unstarted assignment replaced by completion-collision."
     },
     "P02-wsi": {
       "attempt": 1,
       "owner": "pi-lead",
-      "state": "running",
+      "state": "comparison-pending",
       "artifact": "21c060c",
       "log": "docs/performance/p02.md",
       "acceptance": "Source/final reviews + host/native functional checks pass. Paired558274 stopped safely before capture: current26.3/26.078C versus old31.3/31.483C reference. Save restored. Establish fresh cold reference; no win qualified."
+    },
+    "completion-collision": {
+      "state": "integrated-host-tested",
+      "owner": "opus-medium",
+      "attempt": 3,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-collision",
+      "branch": "codex/completion-collision",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-physics/**",
+        "docs/performance/p03/collision/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-01/collision-a1",
+      "brief": "/mnt/bench/matterweave-dev/performance/completion-01/collision-brief.md",
+      "acceptance": "44 physics tests passed; scoped Clippy passed. Independent Muse/Gemini original review, corrections then fresh Pi Astra no substantiated findings. Actual full-map/device acceptance pending.",
+      "commits": [
+        "4459b3d",
+        "5f67759"
+      ],
+      "friction": "Opus correction interrupted; Muse follow-up429; lead completed regression checks."
+    },
+    "completion-map": {
+      "state": "integrated-host-verified",
+      "owner": "sole Codex lead",
+      "attempt": 4,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-map",
+      "branch": "codex/completion-map",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-detail/src/showcase.rs",
+        "crates/matterweave-detail/tests/showcase.rs",
+        "crates/matterweave-detail/examples/showcase_manifest.rs",
+        "docs/performance/showcase/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/map-opus",
+      "brief": "/mnt/bench/matterweave-dev/performance/completion-02/map.md",
+      "acceptance": "All19 map tests pass; workspace238 tests pass plus separate full-map runtime. Final manifest34864520 expanded cells,6221flora/10species,composition f458591e7b345546. Independent Muse/Gemini correction reviews complete; phone traversal remains pending.",
+      "friction": "First attempt timed out with useful partial code; resumed exact idle session with bounded finish.",
+      "artifact": "7e1143e"
+    },
+    "completion-flora": {
+      "state": "integrated-host-tested",
+      "owner": "muse-free",
+      "attempt": 1,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-flora",
+      "branch": "codex/completion-flora",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-detail/src/wetland_flora.rs",
+        "crates/matterweave-detail/tests/wetland_flora.rs",
+        "crates/matterweave-detail/examples/wetland_flora_gallery.rs",
+        "docs/performance/showcase-flora/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-01/flora-a1",
+      "brief": "/mnt/bench/matterweave-dev/performance/completion-01/flora-brief.md",
+      "acceptance": "Three sources reviewed independently by Muse/Gemini, branch/notch/export fixes verified; source-angle visual checks passed. Integrated phone placement/LOD checks pending.",
+      "commits": [
+        "63f09fb",
+        "02a0437"
+      ]
+    },
+    "completion-instancing": {
+      "state": "integrated-native-verified",
+      "owner": "glm-high",
+      "attempt": 2,
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-instancing",
+      "base": "c6e2317",
+      "paths": [
+        "crates/matterweave-render/**",
+        "docs/performance/instancing/**"
+      ],
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-01/instancing-a2",
+      "acceptance": "Corrected index usage reviewed independently by Muse/Gemini. Native full-map25frames/20valid capture rows without Vulkan errors. Source geometry remains fixed Source LOD; matched mobile performance pending.",
+      "friction": "First attempt timed out with useful partial code; resumed exact idle session with bounded finish.",
+      "artifact": "41e8af2"
+    },
+    "completion-app": {
+      "state": "integrated-device-functional-final-map-pending",
+      "owner": "sole desktop lead",
+      "paths": [
+        "apps/explorer/src/wetland.rs",
+        "apps/explorer/src/wetland_state.rs",
+        "apps/explorer/src/wetland_metrics.rs",
+        "apps/explorer/src/experience.rs",
+        "apps/explorer/src/lib.rs",
+        "apps/explorer/src/controls.rs"
+      ],
+      "acceptance": "Runtime load/jump/edit/reload regression passes; corrupt-file recovery and generator-version isolation pass. Native strict capture passes. Initial fullmap APK fffb3844 installed, normal menu/entry/movement/Home-resume/save observed. Final10-species map and full traversal/edit/measurement/release gates pending.",
+      "artifact": "41e8af2"
+    },
+    "completion-traversal": {
+      "state": "running",
+      "owner": "muse-free",
+      "base": "7e1143e",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/completion-traversal",
+      "run_dir": "/mnt/bench/matterweave-dev/performance/completion-02/traversal-muse",
+      "paths": [
+        "crates/matterweave-physics/tests/showcase_traversal.rs",
+        "docs/performance/showcase/traversal-worker.md"
+      ],
+      "acceptance": "Must test actual continuous Rapier walking with bounded failures; no waypoint teleporting/flying. Lead owns fixes and phone evidence."
     }
   },
   "capacity": {

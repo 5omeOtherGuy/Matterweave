@@ -2,74 +2,60 @@
 
 Updated: 2026-09-08
 
-## Next campaign: performance and dense alien showcase
+## Active engine completion campaign
 
-Execution has started in the separate `codex/performance-p00` checkout from
-`7556204`; see the [sole campaign board](performance/board.json) and
-[P00 execution evidence](performance/p00.md). The existing [P00–P07 tasks](PERFORMANCE_TASKS.md)
-and mandatory [showcase](SHOWCASE.md) remain the scope, not a replacement plan.
+The full engine objective remains open. Execute [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md),
+[PERFORMANCE_TASKS](PERFORMANCE_TASKS.md), [SHOWCASE](SHOWCASE.md), then remaining
+M2–M6 requirements. The sole current integration checkout is
+`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/performance-p00`.
+The [board](performance/board.json) records ownership; the prior two-lead arrangement
+is retired. This continuation owns phone, integration and delivery.
 
-- P00: lead-written compact board and stateless patch-handoff validator implemented.
-  Real Pi cancellation retained partial work; replacement rejects stale attempts.
-  Independent Muse/Gemini reviews preceded lead inspection; 31 host validator tests
-  pass after a reproduced artifact-type correction. Six exact route selection checks
-  pass; selection alone is not model task qualification.
-- P01: corrected typed CSV v2 code slice and profile validator accepted after
-  independent Muse/Gemini reviews and lead verification. Python checks:31 handoff,
-  65 conditions and130 profile tests. Real Android captures include1000 rows/epoch1
-  and581 rows/epochs1–3; host replay fixture has10 tests. Full app/physics replay,
-  some edit/streaming/collision counters and full instrumentation overhead remain
-  incomplete. [Three short recorder pairs](evidence/2026-09-08-p01-overhead.md)
-  now completed: ON mean-interval differences +0.032/+0.700/+0.673%, thermal0 and
-  no unsupported SF gaps. Process CPU is a whole-process rate, not per-frame work.
-- P02: CPU interpolated-geometry cache and transactional GPU upload invalidation
-  implemented. Eight geometry and three upload-state tests constrain motion,
-  sleeping rotations, wake/fracture/restore, empty geometry and renderer recreation.
-  Combined native candidate `cc46873`:180 workspace tests, Clippy/fmt pass;
-  90-frame normal Vulkan lifecycle smoke passes. Serial independent Muse/Gemini
-  reviews/corrections completed and source is accepted for device evaluation.
-  Real phone normal-mode2190 rows/epochs1–2 include sleeping cache hits and a
-  resume upload without CPU rebuild. Matched APK comparison558274 stopped before
-  capture: phone was colder than its old reference, not within matching limits.
-  Establish a fresh cold reference; no qualified optimization win is claimed.
-- P03: reviewed foundation and flora source merged through PR6 (`524f29eb`) and
-  PR7 (`c71306d`), with host/Android/docs CI passing. Frozen flora64661cf/267c2c8:
-  84 plants/six types,52686 expanded flora cells. An isolated opt-in
-  [native gallery](performance/p03/native-gallery.md) now supports `flora source`,
-  caches once and preserves the user-world path by construction. Coarse flora LODs
-  are rejected. Actual phone flora rendered85 instances/120582 triangles and
-  survived HOME/resume (2194 captured rows/epochs1–2); world bytes unchanged.
-  Close-range anatomy, water/lighting, traversal/collision and cost/peak-memory
-  acceptance remain open. Desktop has the
-  nonoverlapping finest-source collision-adapter lane; lead owns app/phone/merge.
-- Device: current save backed up and installed baseline APK hash verified. Owner
-  enabled wireless debugging and unplugged USB; charging is confirmed off. Idle
-  cooling observations are not app performance. First capture was rejected for a
-  foreground/surface-identity problem. A [corrected short baseline](evidence/2026-09-08-performance-baseline.md)
-  completed: 5,477 co-observed intervals, median16.583 ms, p95/p99≈33.17 ms;
-  all eight sampled thermal statuses0. One baseline is not an optimization comparison
-  or overhead qualification. User save restored; lead retains device/settings ownership.
-- Owner authorized up to $9.99 existing Hy4 credit, capped by actual $9.985349664
-  remaining. No key-level limit is configured; enforceable no-top-up execution remains
-  pending. No purchases, top-ups or paid fallback authorized.
+Current verified progress (2026-09-08 continuation):
 
-No mobile optimization win or complete native showcase is shipped. Next: finish
-matched frozen-APK P02 comparisons and native flora quality/collision/cost gates. A separate `codex/p02-wsi-probe` diagnostic based on
-P01 (`eb045e5`) logs16 captured draws without changing rendering policy. This is
-not a performance comparator. Own-app simpleperf was denied by Android security;
-no suggested security-property change or escalation was applied. First WSI trial's
-post-reinstall save verification failed; explicit stop plus synchronous shell-write
-restoration produced two byte-identical reads of the original. Its failed trial/log
-is retained; corrected trial02 restored APK/save successfully. The subsequent
-native functional trial also restored the save. Paired supervisor558274 subsequently
-stopped after31 rejected observations (battery26.3°C/skin26.078°C versus old
-31.3°C/31.483°C reference); no comparison capture launched. Final original-save
-hash verified. Phone is stopped on the P01 baseline APK; no phone supervisor remains. Android build initially reused stale physics
-metadata from the older probe's shared target. Scoped Android workspace-package
-cleanup (no active build) and fresh rebuild passed; avoid cross-worktree targets.
-Remaining P01/P04–P07 and full-map/water/lighting/density gates are not closed.
-Raw overhead artifacts remain on `/mnt/bench`; remote artifact publication remains
-an explicit gap. Source commits/repro commands and small summaries are durable here.
+- PR8 remains draft/open. Host, Android and docs CI passed at `c6e2317`;
+  the missing X11 library was already fixed. Current local source is `7e1143e`;
+  newer work has not yet been checked remotely, merged or released.
+- The integrated 128m map contains 34,864,520 instance-expanded occupied cells,
+  8,876,712 unique stored cells and 6,221 plants across four mushroom and six other
+  flora archetypes. Flora contributes 5,908,389 expanded cells. Source meshes total
+  45,328,920 bytes. Generator 2, seed 20260908, composition hash `f458591e7b345546`.
+  These are generated-data/host results, not mobile residency or performance claims.
+- The final map's 19 source tests pass, including every continuous route segment's
+  flora clearance, actual horizontal voxel-corner radius and carve-aware terrain.
+  Independent Muse/Gemini reviews found the original radius/segment errors; both
+  reviewed the corrections without substantiated new findings. Actual continuous
+  Rapier traversal is assigned to an isolated bounded worker; phone routes remain open.
+- The workspace suite passed 238 tests, with one expensive runtime test explicitly
+  ignored. Running that full-map test separately passed load, standing, jump, source
+  edit/collision, save and reload in 16.45s on the final ten-species map. Strict
+  Clippy passes for workspace code (one upstream vendored winit warning remains).
+  Python tooling has 130 passing tests; the historical 226 count double-counted tests.
+- Entrance correction validates the actual capsule with a bounded vertical adjustment.
+  Corrupt/old-generator saves retain their bytes and select separate recovery files.
+  Invalid edit references/body data rejected later in runtime still need recovery
+  coverage. Generator 2 prevents old layout edit journals replaying against new plants.
+- The final native Vulkan/Xvfb/lavapipe capture passed 25 frames, 20 valid typed rows,
+  six physics bodies, isolated persistence and no validation errors. Menu rendering
+  is excluded from GPU completion joins. Source prototype geometry is shared on GPU;
+  source LOD remains fixed. No automatic LOD or optimization win is claimed.
+- The initial six-species full-map development APK (`fffb3844…`) was built, passed
+  ARM64/16KiB alignment and signature checks, and was installed on the OnePlus13.
+  Normal chooser/entry, movement, HOME/resume and persisted session were observed.
+  The corrected ten-species APK is rebuilding from `7e1143e`; its installation,
+  full route/edit/water/destruction checks and matched performance evidence are pending.
+
+Next: verify the final APK and native route replay, correct any blockers, then
+exercise routes, edit/reload, water/destruction and lifecycle on the phone. Preserve
+all density targets and measurement matching limits. Complete final checks, merge
+accepted work and publish a tested prerelease with durable evidence. Full automatic
+LOD, indirect illumination/reflections, second-sample reuse and remaining M2–M6 gates
+remain open. The full engine objective is active.
+
+The [completion execution log](performance/logs/completion-execution.md) and
+[prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier
+accepted P00/P01/P02/P03 slices and unavailable measurement gates. Latest published
+prerelease remains v0.3.0; development builds are reported separately.
 
 ## v0.3 verified Android slice
 

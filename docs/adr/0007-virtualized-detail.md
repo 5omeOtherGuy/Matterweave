@@ -38,3 +38,13 @@ synchronous chunk window with persistent authoritative overrides and local mesh
 revisions. This provides residency and edit correctness evidence, while automatic
 multiresolution selection, transitions and asynchronous cancellation remain open.
 Frustum culling is a draw decision and does not remove nearby collision.
+
+## Dense source instancing slice — 2026-09-08
+
+The wetland submits shared source meshes and authoritative quarter-turn placements
+through bounded pooled Vulkan buffers. Collision derives from finest source cells;
+renderer visibility never changes walls. Full-map source meshes account45,328,920
+bytes in the current host budget check, below the64MiB derived-cache cap; this is
+mesh capacity, not process memory or measured mobile residency. The full wetland
+currently renders Source LOD. Automatic selection/transitions, temporal stability
+and equivalent-quality mobile comparisons remain required and uncompleted.
