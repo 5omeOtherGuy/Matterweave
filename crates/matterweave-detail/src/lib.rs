@@ -31,6 +31,7 @@ pub use bracket::bracket_fungus;
 mod fixtures;
 mod flora;
 mod scene;
+mod select;
 mod serial;
 mod showcase;
 mod wetland_flora;
@@ -49,6 +50,9 @@ pub use flora::{
 pub use scene::{
     DetailScene, InstanceDraw, SceneCounts, SceneVersion, MAX_INSTANCES, MAX_PROTOTYPES,
     MAX_SCENE_CACHE_BYTES, MAX_SCENE_SOURCE_BYTES, MAX_SCENE_TRANSLATION_M,
+};
+pub use select::{
+    Camera, ErrorMetrics, InstanceLod, LodConfig, MeshBatch, PreparedFrame, Projection,
 };
 pub use serial::{VolumeSnapshot, MAX_SNAPSHOT_JSON_BYTES, MAX_SNAPSHOT_RUNS, SNAPSHOT_VERSION};
 pub use showcase::{
