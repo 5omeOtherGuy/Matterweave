@@ -669,6 +669,15 @@ fn interior_fill_with_equal_outer_aabb_never_publishes_through_the_body() {
 /// policy published the fallback unconditionally during pending runtime edits.
 #[test]
 fn unavailable_worker_stages_blocked_fallback_and_publishes_after_clearing() {
+    workerless_gate_after_optional_rejection(false);
+}
+
+#[test]
+fn rejected_structural_request_preserves_the_prior_staged_addition_gate() {
+    workerless_gate_after_optional_rejection(true);
+}
+
+fn workerless_gate_after_optional_rejection(reject_structural: bool) {
     let mut scene = scene_with_floor();
     let mut physics = empty_physics();
     physics.replace_detail_scene(&scene).expect("load");
@@ -701,6 +710,14 @@ fn unavailable_worker_stages_blocked_fallback_and_publishes_after_clearing() {
             .expect("staged"),
         "a blocked fallback stays pending instead of publishing through the body"
     );
+    if reject_structural {
+        let mut bad = DetailScene::new();
+        bad.add_prototype(checkerboard("over-limit", 129)).unwrap();
+        bad.place("over-limit", "over-limit", Transform::identity()).unwrap();
+        assert!(cadence.on_edit(&bad, &mut physics, None).is_err());
+        // Owner rejects the failed request and continues with the prior source.
+        // Its retained preparation must keep its original addition regions.
+    }
     assert!(
         cadence
             .step(&scene, &mut physics)
@@ -728,4 +745,19 @@ fn unavailable_worker_stages_blocked_fallback_and_publishes_after_clearing() {
         floor_colliders + 1,
         "the staged wall publishes once the body clears its cell"
     );
+}
+
+#[test]
+fn teleported_character_is_gated_before_the_next_physics_step() {
+    let floor = scene_with_floor();
+    let mut physics = empty_physics();
+    physics.replace_detail_scene(&floor).unwrap();
+    let eye = spawn_on_floor(&mut physics);
+    let scene = scene_with_floor_and_wall();
+    assert!(physics.teleport([2.1, eye[1], eye[2]]));
+    // Publication happens before stepping in the native loop. Collider caches
+    // may still describe the old pose; the gate must use the current body pose.
+    let mut cadence = DetailCollisionCadence::without_worker();
+    assert!(cadence.on_edit(&scene, &mut physics, Some(&[WALL_BOX])).unwrap());
+    assert_eq!(physics.detail_collision_stats().static_colliders, 1);
 }
