@@ -195,10 +195,14 @@ class _BoundedReader:
 
     def __iter__(self):
         while True:
-            # +3 admits the longest valid raw line: content plus CRLF.
-            chunk = self.handle.readline(MAX_LINE_BYTES + 3)
+            try:
+                chunk = self.handle.readline(MAX_LINE_BYTES + 1)
+            except OSError as error:
+                raise ValueError(f"cannot read capture: {error}") from error
             if not chunk:
                 return
+            if len(chunk) > MAX_LINE_BYTES:
+                _fail("physical line exceeds 16 KiB including its terminator")
             self.total += len(chunk)
             if self.total > MAX_TOTAL_BYTES:
                 _fail(f"capture exceeds {MAX_TOTAL_BYTES} bytes")
@@ -208,11 +212,7 @@ class _BoundedReader:
             elif chunk.endswith(b"\n"):
                 content = chunk[:-1]
             else:
-                # Final line without a terminator, or a truncated read of a
-                # longer physical line; the length check decides.
-                content = chunk
-            if len(content) > MAX_LINE_BYTES:
-                _fail("physical line exceeds 16 KiB")
+                content = chunk  # Final line without a terminator.
             try:
                 yield content.decode("utf-8")
             except UnicodeDecodeError:
