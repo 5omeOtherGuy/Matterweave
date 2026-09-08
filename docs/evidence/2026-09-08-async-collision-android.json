@@ -1,0 +1,14 @@
+{
+  "source": "9cf26a1",
+  "target": "aarch64-linux-android",
+  "ndk": "28.2.13676358",
+  "api": 28,
+  "build": "Cargo dev opt2 debug0 16KiB ELF",
+  "sha256": "4a8d2ab507957aca1628f445991c1fa41adfc6938ef67bd31f060378b650a73f",
+  "device": "OnePlus13 CPH2653 Android16",
+  "status": "PASS",
+  "returncode": 0,
+  "wall_seconds_including_adb": 0.07660198211669922,
+  "test": "native worker publishes floor; real character contact; remove authoritative floor; publish result and verify fall",
+  "limitation": "native executable correctness, no APK frame-loop or mobile performance claim"
+}

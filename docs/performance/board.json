@@ -3,7 +3,7 @@
   "run": "performance-01",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
   "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; preparing Android detail-check at1abe19b. No other phone owner.",
+  "phone_owner": "Sole lead; detail1080frames/HOME-resume PASS; app stopped, phone idle.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -427,7 +427,7 @@
     },
     "engine-detail-native": {
       "owner": "Opus4.8 high + Astra medium + lead",
-      "state": "integrated-host-verified",
+      "state": "integrated-device-verified",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-detail-native",
       "run_dir": "/mnt/bench/matterweave-dev/performance/engine-02/detail-native-astra",
       "base": "a4d7ba0",
@@ -437,7 +437,7 @@
         "docs/performance/detail-native-check.md"
       ],
       "artifact": "1abe19b",
-      "acceptance": "9-phase native Vulkan PASS; Android pending"
+      "acceptance": "9-phase native Vulkan and1080-frame OnePlus13 Android16 checks PASS, HOME/resume and explicit recreation; visual quality and performance limits remain"
     },
     "engine-detail-numeric": {
       "owner": "Pi GLM5.3 Flash high",

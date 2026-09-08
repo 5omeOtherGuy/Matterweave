@@ -38,7 +38,13 @@ For Android, write `detail` to the app's `files/engine-check.txt`, then launch.
 The one-shot request is consumed before ordinary entry; the report is written to
 `files/detail-check-report.txt`. Android holds each phase for120 presented frames.
 Delete an earlier owned report before capture to avoid attributing stale phase
-markers to a new run. Lead owns physical-device validation; it is pending here.
+markers to a new run. The OnePlus13 Android16 run now passes1080 presented frames across all9 phases,
+including real HOME/resume in phase3 and the explicit recreation in phase8.
+Three capability reports identify the recreated renderers. All9 phase screenshots
+were captured; lead viewed0/3/5. Source/Half/Quarter selections and unchanged thin
+sheet/source query are recorded. No validation layer is installed on the phone.
+See [device manifest](../evidence/2026-09-08-detail-engine.json) and
+[actual report](../evidence/2026-09-08-detail-engine-report.txt).
 
 ## Engineering log
 
@@ -58,4 +64,5 @@ query authority independently of camera choice.
 
 **Limits:** Detail error is heuristic and global dilation cannot preserve every
 small cavity. Abrupt transitions, visual stability, mobile cost and production
-residency policy remain open. Native execution is not mobile performance evidence.
+residency policy remain open. Phone images are low contrast; they establish
+presentation of the fixture, not final material/lighting or transition quality. Native execution is not mobile performance evidence.

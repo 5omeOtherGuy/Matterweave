@@ -55,8 +55,7 @@ checks pass at `7211b7d`; later changes still require their own integration chec
 Automatic detail selection is integrated at `a4d7ba0` after100 worker host tests.
 The renderer now updates instance selection without recopying geometry; its11-frame
 Vulkan check passes ([evidence](performance/instance-updates.md)). The native adapter at `1abe19b` passes9 Vulkan phases
-including perspective/orthographic zoom, edits and renderer recreation; Android
-validation of this revision is pending. GLM numeric regressions and lead corrections
+including perspective/orthographic zoom, edits and renderer recreation; OnePlus13 Android16 also passes1080 frames, all9 phases and HOME/resume. GLM numeric regressions and lead corrections
 pass103 detail tests; an additional detail snapshot test passes separately.
 Streaming latest-request/reset/reversal corrections at `02fc5d3` pass48 core tests. The first bounded diffuse indirect reference is integrated and its Vulkan
 shader passes host plus OnePlus13 off/on/sun/enclosure/HOME-resume checks. Complete
@@ -66,14 +65,15 @@ quality work remain. See [lighting evidence](performance/indirect-light-engine.m
 ## Current integration and next slice
 
 PR9 is open: <https://github.com/5omeOtherGuy/Matterweave/pull/9>. All GitHub host,
-Android and docs checks pass at `b1f6c67`; later streaming/numeric/detail-native
-commits are undergoing combined verification before final delivery. The current
+Android and docs checks pass at `b1f6c67`; the combined `1abe19b` code passes326 workspace tests (3 existing ignored),
+strict workspace Clippy and ARM64 APK/signature/alignment checks. Its phone detail
+check passes all9 phases and HOME/resume; final GitHub checks precede delivery. The
 APK test build starts from `1abe19b`; do not attribute those changes to v0.4.0.
 
 Opus4.8/high's current five-hour allowance is exhausted (next reset2026-09-08
 16:20UTC). GLM5.3 Flash/high owns a separate bounded background indirect-light
-controller experiment; it is not integrated. Hy4/high reviews the corrected
-stream/collision queues. Astra audits counter mismatches in the frozen `b1f6c67`
+controller experiment; it is not integrated. Hy4/high reached its240-second review deadline without a result; no
+queue findings or review completion are claimed. Astra audits counter mismatches in the frozen `b1f6c67`
 instrumented coverage report. Host tests and four instrumented Vulkan examples
 passed, but the combined percentage remains provisional pending that audit.
 
