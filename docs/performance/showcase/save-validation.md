@@ -109,3 +109,33 @@ Cargo target is removed after completed verification; no shared cache is cleaned
 - Lead should assess whether collision-build and both-pose-blocked failures need
   candidate-level validation before integration; this leaf makes no final product
   acceptance claim.
+
+
+## Lead integration correction
+
+The two limits above describe worker commit `f50f114`, integrated as `1bc2be4`.
+They are superseded by the lead's completion: source collision construction,
+bounded saved/entrance pose clearance, body restoration and actual source-mesh
+construction all run before candidate acceptance. Prepared physics and graphics
+are reused by Runtime; they are not rebuilt after selection. Any error discards
+the fork and derived state, so selection proceeds to an older valid journal or
+an unused recovery path. Clear saved poses remain exact.
+
+A new regression failed on the inherited implementation (`dae066f`): a journal
+that fills both the saved and entrance capsule columns was accepted. It passes
+after the correction and the live source remains unchanged. Another real test
+adds one solid instance above Rapier's16,384 static-collider budget, verifies
+rejection leaves source counts/cells intact, and accepts the subsequent valid
+candidate. This is a real budget boundary, not a mocked failure.
+
+Lead checks: all62 app tests including the normally ignored full-map Runtime
+recovery gate passed in17.43s; the added collision-budget test passed separately
+in0.06s. Strict workspace/all-target Clippy passed in11.40s, with the unchanged
+vendored winit warning. All170 performance Python tests passed. The first run
+of the longer-cooling test still expected the old32-observation rejection and
+failed; corrected the boundary to62, accepting61. Phone collector A4 was already
+running; its thermal limits and readiness checks did not change.
+
+No final Android or worst-case recovery startup measurement has run on this
+source yet. The transient candidate can now also hold derived meshes/colliders;
+source payload bounds alone remain insufficient to claim total memory bounds.

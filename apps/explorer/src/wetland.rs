@@ -10,7 +10,9 @@ use crate::{
 use glam::{Vec2, Vec3};
 use matterweave_core::{Mesh, World};
 use matterweave_detail::{DetailScene, Lod, Yaw};
-use matterweave_physics::{BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot};
+use matterweave_physics::{
+    BodySnapshot, DetailCollisionStats, DynamicMeshCache, Physics, PhysicsSnapshot,
+};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance};
 use std::{
     collections::BTreeSet,
@@ -82,8 +84,15 @@ fn graphics(scene: &mut DetailScene) -> Result<(Vec<Mesh>, Vec<StaticInstance>),
     Ok((meshes, instances))
 }
 
-/// Applies one candidate journal to the authoritative source scene and validates
-/// its body payload against the real physics contract.
+struct PreparedJournal {
+    physics: Physics,
+    collision: DetailCollisionStats,
+    meshes: Vec<Mesh>,
+    instances: Vec<StaticInstance>,
+}
+
+/// Validates candidate source, collision, bodies, player pose and derived meshes
+/// before accepting any of it into the runtime.
 ///
 /// Isolation: the candidate is applied to a transient [`DetailScene::fork_source`]
 /// copy of the authoritative data — never to the live scene — and the body
@@ -99,7 +108,9 @@ fn apply_journal(
     probe: &mut Physics,
     instances: &BTreeSet<String>,
     save: &SavedWetland,
-) -> Result<(), String> {
+    world: &World,
+    spawn: [f32; 3],
+) -> Result<PreparedJournal, String> {
     for edit in &save.edits {
         if !instances.contains(&edit.instance) {
             return Err(format!(
@@ -114,8 +125,30 @@ fn apply_journal(
         fork.edit_instance(&edit.instance, edit.cell, edit.material)
             .map_err(|error| error.to_string())?;
     }
+    let mut physics = Physics::new(world);
+    let collision = physics.replace_detail_scene(&fork)?;
+    // Validate source collision before restoring bodies: contact with a saved
+    // dynamic body must not itself relocate the player.
+    let desired = save.physics.eye;
+    let eye = clear_pose(&mut physics, desired)
+        .or_else(|| clear_pose(&mut physics, spawn))
+        .ok_or("Wetland save and entrance both overlap solid geometry")?;
+    physics.restore(&PhysicsSnapshot {
+        eye,
+        ..save.physics.clone()
+    })?;
+    let (meshes, instances) = graphics(&mut fork)?;
+    if eye != desired {
+        log::warn!("Wetland saved viewpoint {desired:?} was inside source; moved to {eye:?}");
+        eprintln!("WETLAND POSE CORRECTED: {desired:?} -> {eye:?}");
+    }
     *scene = fork;
-    Ok(())
+    Ok(PreparedJournal {
+        physics,
+        collision,
+        meshes,
+        instances,
+    })
 }
 
 /// First pose at or bounded-above `desired` that the actual source colliders
@@ -144,7 +177,7 @@ impl Runtime {
         let route = built.route;
         let elevated_route = built.elevated_route;
         let empty_world = World::new(SEED);
-        let mut physics = Physics::new(&empty_world);
+        let mut restored = None;
         // Separate empty world: validating a candidate body payload must not add
         // bodies to the physics that a later candidate or the session itself uses.
         let mut probe = Physics::new(&empty_world);
@@ -153,11 +186,39 @@ impl Runtime {
             &directory.join(wetland_state::SAVE_FILE),
             GENERATOR,
             SEED,
-            |save| apply_journal(&mut scene, &mut probe, &instances, save),
+            |save| {
+                restored = Some(apply_journal(
+                    &mut scene,
+                    &mut probe,
+                    &instances,
+                    save,
+                    &empty_world,
+                    spawn,
+                )?);
+                Ok(())
+            },
         )?;
         drop(probe);
         let fresh = saved.is_none();
-        let collision = physics.replace_detail_scene(&scene)?;
+        let PreparedJournal {
+            mut physics,
+            collision,
+            meshes,
+            instances,
+        } = match restored {
+            Some(value) => value,
+            None => {
+                let mut physics = Physics::new(&empty_world);
+                let collision = physics.replace_detail_scene(&scene)?;
+                let (meshes, instances) = graphics(&mut scene)?;
+                PreparedJournal {
+                    physics,
+                    collision,
+                    meshes,
+                    instances,
+                }
+            }
+        };
         let mut camera = Camera {
             position: Vec3::from_array(spawn),
             yaw: 0.,
@@ -165,28 +226,7 @@ impl Runtime {
         };
         let mut lighting = LightingSettings::default();
         let edits = if let Some(save) = saved {
-            // The saved edits and bodies are authoritative and are restored whole.
-            // Only the viewpoint is correctable: saved source edits (or an older
-            // generator's settled pose) can leave the capsule inside solid source,
-            // and restore deliberately keeps an exact pose. Probe the real source
-            // colliders before the bodies exist, so resting on a saved body is not
-            // mistaken for being buried, and lift within the same bounded step used
-            // at the entrance, falling back to the validated entrance pose.
-            let desired = save.physics.eye;
-            let eye = clear_pose(&mut physics, desired)
-                .or_else(|| clear_pose(&mut physics, spawn))
-                .ok_or("Wetland save and entrance both overlap solid geometry")?;
-            if eye != desired {
-                log::warn!(
-                    "Wetland saved viewpoint {desired:?} was inside source; moved to {eye:?}"
-                );
-                eprintln!("WETLAND POSE CORRECTED: {desired:?} -> {eye:?}");
-            }
-            physics.restore(&PhysicsSnapshot {
-                eye,
-                ..save.physics
-            })?;
-            camera.position = Vec3::from_array(eye);
+            camera.position = Vec3::from_array(physics.character_eye());
             camera.yaw = save.yaw;
             camera.pitch = save.pitch;
             lighting.shadows = save.shadows;
@@ -209,7 +249,6 @@ impl Runtime {
             "{} cells / {} placed objects",
             counts.expanded_occupied_cells, counts.instances
         );
-        let (meshes, instances) = graphics(&mut scene)?;
         log::info!(
             "WETLAND LOADED: {counts}; collision {collision:?}; {:.3}s",
             started.elapsed().as_secs_f64()
@@ -1402,7 +1441,9 @@ mod journal_tests {
             [50., 50., 50.],
         );
         assert!(bad.validate(99, 7).is_ok(), "journal must be shallow-valid");
-        let error = apply_journal(&mut scene, &mut probe, &instances, &bad).unwrap_err();
+        let error = apply_journal(&mut scene, &mut probe, &instances, &bad, &world, [50.; 3])
+            .err()
+            .unwrap();
         assert!(
             error.contains("__instance_edit:b"),
             "unexpected error: {error}"
@@ -1421,7 +1462,7 @@ mod journal_tests {
             vec![good_body()],
             [50., 50., 50.],
         );
-        apply_journal(&mut scene, &mut probe, &instances, &good).unwrap();
+        apply_journal(&mut scene, &mut probe, &instances, &good, &world, [50.; 3]).unwrap();
         assert_eq!(
             proto_of(&scene, "b"),
             "rock",
@@ -1452,10 +1493,10 @@ mod journal_tests {
         bad_body.material = 0;
         let bad = journal(vec![], vec![bad_body], [50., 50., 50.]);
         assert!(bad.validate(99, 7).is_ok(), "journal must be shallow-valid");
-        assert!(apply_journal(&mut scene, &mut probe, &instances, &bad).is_err());
+        assert!(apply_journal(&mut scene, &mut probe, &instances, &bad, &world, [50.; 3]).is_err());
         assert_eq!(scene.prototype_ids(), before);
         let good = journal(vec![], vec![good_body()], [50., 50., 50.]);
-        apply_journal(&mut scene, &mut probe, &instances, &good).unwrap();
+        apply_journal(&mut scene, &mut probe, &instances, &good, &world, [50.; 3]).unwrap();
         assert_eq!(probe.snapshot().bodies.len(), 1);
         assert_eq!(probe.snapshot().eye, [50., 50., 50.]);
     }
@@ -1511,7 +1552,7 @@ mod journal_tests {
         let primary_bytes = std::fs::read(&path).unwrap();
         let recovery_bytes = std::fs::read(&recovery).unwrap();
         let (selected, saved) = SavedWetland::load_recovering_with(&path, 99, 7, |save| {
-            apply_journal(&mut scene, &mut probe, &instances, save)
+            apply_journal(&mut scene, &mut probe, &instances, save, &world, [50.; 3]).map(|_| ())
         })
         .unwrap();
         assert_eq!(selected, recovery);
@@ -1546,7 +1587,15 @@ mod journal_tests {
         let original_counts = pristine.counts();
         let original_ids = pristine.prototype_ids();
         let (fresh_path, saved) = SavedWetland::load_recovering_with(&path, 99, 7, |save| {
-            apply_journal(&mut pristine, &mut probe, &instances, save)
+            apply_journal(
+                &mut pristine,
+                &mut probe,
+                &instances,
+                save,
+                &world,
+                [50.; 3],
+            )
+            .map(|_| ())
         })
         .unwrap();
         assert!(saved.is_none());
@@ -1570,12 +1619,64 @@ mod journal_tests {
         let before = scene.counts();
         let eye = [0.5, 2.7, 0.5];
         let bad = journal(
-            (1..6).map(|y| Edit {
-                instance: "a".into(), cell: [0, y, 0], material: material::BANK_STONE,
-            }).collect(), vec![], eye,
+            (1..6)
+                .map(|y| Edit {
+                    instance: "a".into(),
+                    cell: [0, y, 0],
+                    material: material::BANK_STONE,
+                })
+                .collect(),
+            vec![],
+            eye,
         );
-        assert!(apply_journal(&mut scene, &mut probe, &instances, &bad).is_err());
+        assert!(apply_journal(&mut scene, &mut probe, &instances, &bad, &world, eye).is_err());
         assert_eq!(scene.counts(), before);
+    }
+
+    #[test]
+    fn collision_budget_rejection_keeps_source_and_accepts_later_candidate() {
+        let world = World::new(7);
+        let mut scene = DetailScene::new();
+        let mut rock = DetailVolume::new("rock", Scale::new(1.).unwrap());
+        rock.set([0; 3], material::BANK_STONE).unwrap();
+        scene.add_prototype(rock).unwrap();
+        scene
+            .add_prototype(DetailVolume::new("empty", Scale::new(1.).unwrap()))
+            .unwrap();
+        for index in 0..matterweave_physics::MAX_DETAIL_COLLIDERS {
+            scene
+                .place(
+                    format!("rock-{index}"),
+                    "rock",
+                    Transform::new([100., 0., 0.], Yaw::Deg0).unwrap(),
+                )
+                .unwrap();
+        }
+        scene
+            .place("trigger", "empty", Transform::identity())
+            .unwrap();
+        let mut probe = Physics::new(&world);
+        let instances = scene.instance_ids().into_iter().collect();
+        let before = scene.counts();
+        let bad = journal(
+            vec![Edit {
+                instance: "trigger".into(),
+                cell: [0; 3],
+                material: material::BANK_STONE,
+            }],
+            vec![],
+            [50.; 3],
+        );
+        let error = apply_journal(&mut scene, &mut probe, &instances, &bad, &world, [50.; 3])
+            .err()
+            .expect("one extra solid instance must exceed collision budget");
+        assert!(error.contains("static colliders"), "{error}");
+        assert_eq!(scene.counts(), before);
+        let good = journal(vec![], vec![], [50.; 3]);
+        let prepared =
+            apply_journal(&mut scene, &mut probe, &instances, &good, &world, [50.; 3]).unwrap();
+        assert_eq!(prepared.physics.character_eye(), [50.; 3]);
+        assert_eq!(scene.prototype("empty").unwrap().get([0; 3]), 0);
     }
 
     #[test]
