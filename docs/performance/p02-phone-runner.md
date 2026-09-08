@@ -225,3 +225,15 @@ remote missing-file error in stdout. The alleged pre-existing recovery127 was
 absent in `ls` and `test -f` returned1. Private reads now use shell-v2 `-T`, which
 preserves the remote status and separate stderr. Both failed attempts removed no
 files; neither produced a measurement. A3 starts again with new real observations.
+
+
+A3 completed the first reference/candidate pair, then rejected trial3 before
+launch: 31 observations (about15minutes) did not reach the original reference's
+battery temperature within1C. Cleanup stopped the app and removed only owned
+files. Increase the bounded cooling allowance to61 observations (about30minutes),
+with unchanged readiness and thermal matching limits. A4 runs the remaining two
+pairs as a separate recorded batch with a freshly observed reference. Its local
+order is AB/BA; across completed batches the planned order becomes AB/AB/BA.
+A3's two valid captures remain evidence; its rejected trial is not a measurement.
+Each batch's metadata and mutual within-pair matching are checked independently;
+no raw files or timestamps are spliced into a fictional single run.

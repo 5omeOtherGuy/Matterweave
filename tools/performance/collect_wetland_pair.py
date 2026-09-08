@@ -75,7 +75,7 @@ EXPECTED_SCENE = {"cells": 34864520, "instances": 8324}
 MAX_EDITS = 4096          # apps/explorer/src/wetland_state.rs MAX_EDITS
 MAX_PITCH = 1.5           # SavedWetland::validate
 MAX_EYE_ABS = 16384.0     # SavedWetland::validate
-MAX_OBSERVATIONS_CAP = 31
+MAX_OBSERVATIONS_CAP = 61
 MIN_SAMPLE_INTERVAL_S = 30.0   # validate_conditions requires >= 120 s over 5 samples
 MAX_SAMPLE_INTERVAL_S = 35.0   # validate_conditions rejects gaps > 35 s
 READINESS_FRESHNESS_S = 180.0
