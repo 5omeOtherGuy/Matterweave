@@ -1,4 +1,4 @@
-// Comparison-only raster path for docs/performance/engine-03-comparison.md.
+// Comparison-only raster path for docs/performance/renderer-comparison.md.
 // Deliberately minimal: exposed-surface mesh in, matched sun/ambient/fog out.
 // No shadow map, no indirect lighting, no water/grain enhancement and no
 // instancing, so its output is directly comparable with ray_reference.wgsl on

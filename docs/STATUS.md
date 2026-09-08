@@ -351,3 +351,5 @@ retains the previously documented Vulkan 1.1 WSI idle fallback.
 
 Project licensing, production signing ownership and store publication remain owner
 decisions. This is a GitHub development prerelease, not a store build.
+
+Engine-03 full-image comparison: [12 host and Android fixture runs pass](performance/renderer-comparison.md), including six matched ray/raster images and real shared-depth hybrid composition. This is bounded 128×128 correctness evidence; primary-path selection, representative total costs and sustained comparison remain open. Detail topology review exposed joint closure of a 2×2 tunnel across coarse boundaries (RED `11f70da`); repair is underway before integrating the revised selector.

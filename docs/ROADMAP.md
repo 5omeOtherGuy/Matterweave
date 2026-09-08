@@ -99,3 +99,5 @@ Neural radiance caching, ReSTIR-family sampling, frame generation, advanced acce
 ## Definition of engine demonstrator done
 
 M0–M6 acceptance criteria are met for a declared device/profile set, or remaining gaps are explicitly identified rather than hidden. A fresh checkout builds, documented samples run on real Android hardware, and evidence covers fine geometry, automatic detail, dynamic lighting, interactive physics, resource efficiency and reuse. The repository contains all code, build instructions, dependency provenance, results and known limitations needed to continue development. This is an engine demonstrator, not a claim of commercial production readiness.
+
+Engine-03 comparison progress: [bounded full-image ray/raster/hybrid checks](performance/renderer-comparison.md) pass on Android and host. This advances M2 feasibility while equivalent production quality and primary-path cost selection remain open.

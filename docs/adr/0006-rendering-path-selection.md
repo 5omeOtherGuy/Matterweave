@@ -64,3 +64,5 @@ and mobile precision failures were reproduced and corrected; [evidence](../perfo
 records numerical tolerances and bounds. This resolves shader-execution feasibility
 for a bounded reference, not the equivalent-quality renderer comparison. The
 primary path remains unselected under this ADR's gate.
+
+The [full-image comparison reference](../performance/renderer-comparison.md) now has 12 passing Android/host fixture runs, including six complete-world matched images and split shared-depth hybrid occlusion. It establishes bounded correctness at 128×128 with matched simple shading. Combined setup costs and single tiny-fixture draws cannot justify primary-path selection; representative quality, sustained total costs and residency comparisons remain required.

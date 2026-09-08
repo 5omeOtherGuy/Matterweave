@@ -390,3 +390,5 @@ standalone lighting check, push it under `/data/local/tmp`, and run it with
 `600 /data/local/tmp/matterweave-stream-new.json` for a ten-minute gate.
 Record exact source/binary checksum, device and build configuration alongside
 stdout and health observations. See [streaming stress](performance/stream-stress.md).
+
+Full-image ray/raster/shared-depth hybrid correctness: `cargo run --locked -p matterweave-render --example renderer_comparison`. See [comparison protocol](performance/renderer-comparison.md) for tolerances, artifacts and Android evidence.
