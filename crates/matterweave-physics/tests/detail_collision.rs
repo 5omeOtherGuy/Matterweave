@@ -682,3 +682,35 @@ fn character_walks_quarter_metre_stairs_but_stops_at_a_tall_riser() {
         "character lost stair support: {eye:?}"
     );
 }
+
+#[test]
+fn collision_preparation_on_another_thread_does_not_publish_early() {
+    use matterweave_physics::PreparedDetailCollision;
+    let scene = scene_with_floor();
+    let snapshot = scene.fork_source();
+    let prepared = std::thread::spawn(move || PreparedDetailCollision::build(&snapshot).unwrap())
+        .join().unwrap();
+    let mut physics = Physics::new(&matterweave_core::World::new(1));
+    assert_eq!(physics.detail_collider_count(), 0);
+    assert_eq!(prepared.stats().static_colliders, 1);
+    physics.publish_detail_scene(&scene, prepared).unwrap();
+    assert!(physics.teleport([2., 2., 2.]));
+    settle(&mut physics, 120);
+    assert!(physics.grounded());
+}
+
+#[test]
+fn stale_prepared_collision_cannot_replace_live_walls() {
+    use matterweave_physics::PreparedDetailCollision;
+    let mut scene = scene_with_floor();
+    let mut physics = physics_on(&scene);
+    let before = physics.detail_collision_stats();
+    let pending = PreparedDetailCollision::build(&scene).unwrap();
+    scene.edit_prototype("floor", [0, 0, 0], material::AIR).unwrap();
+    assert!(physics.publish_detail_scene(&scene, pending).is_err());
+    assert_eq!(physics.detail_collision_stats(), before);
+    // Scene replacement with matching per-volume counters must also reject.
+    let pending = PreparedDetailCollision::build(&scene).unwrap();
+    assert!(physics.publish_detail_scene(&scene_with_floor(), pending).is_err());
+    assert_eq!(physics.detail_collision_stats(), before);
+}
