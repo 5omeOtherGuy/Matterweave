@@ -48,6 +48,33 @@ fn thin_stem(id: &str) -> DetailVolume {
     v
 }
 
+/// 13-cell solid (odd edge, so factor-2 boundary coarse cells exist) with a
+/// 2-cell pit carved in the +x face at x == 12. The pit sits inside a coarse
+/// cell whose footprint extends past the occupied bounds, which the
+/// footprint-fully-inside guard ignores; global dilation is ~0.20 at Half,
+/// well under the bias, so the pit is filled away by an unsafe Half choice.
+fn block_with_face_pit(id: &str) -> DetailVolume {
+    let mut v = solid_block(id, 13);
+    v.set([12, 6, 6], material::AIR).unwrap();
+    v.set([12, 7, 6], material::AIR).unwrap();
+    v
+}
+
+/// Dense cuboid on negative coordinates with odd edges: every clipped
+/// footprint is fully occupied, so the refined guard must read exactly zero
+/// and let it coarsen (`div_euclid` correctness control).
+fn solid_block_negative(id: &str, edge: i32) -> DetailVolume {
+    let mut v = DetailVolume::new(id, Scale::new(SCALE_FINE_M).unwrap());
+    for x in -edge..0 {
+        for y in -edge..0 {
+            for z in -edge..0 {
+                v.set([x, y, z], STONE).unwrap();
+            }
+        }
+    }
+    v
+}
+
 fn thin_sheet(id: &str) -> DetailVolume {
     let mut v = DetailVolume::new(id, Scale::new(SCALE_FINE_M).unwrap());
     for x in 0..16 {
@@ -120,6 +147,73 @@ fn through_tunnel_is_held_at_source_orthographic_zoomed_out() {
         lod_of(&mut scene, &ortho_at(1.0, 10.0, 4.0), &config),
         Lod::Source
     );
+}
+
+#[test]
+fn boundary_face_pit_is_held_at_source_far_away() {
+    // Blind spot: the pit lives in a boundary-partial coarse cell, so the
+    // footprint-fully-inside guard reads 0 and dilation (~0.20 at Half)
+    // passes the bias. Coarsening to Half deletes the pit faces.
+    let config = LodConfig::default();
+    let mut scene = DetailScene::new();
+    scene.add_prototype(block_with_face_pit("pit")).unwrap();
+    scene.place("p", "pit", Transform::identity()).unwrap();
+    assert_eq!(
+        lod_of(&mut scene, &persp_at(1.0, 300.0), &config),
+        Lod::Source,
+        "boundary face pit must hold Source"
+    );
+    assert_eq!(
+        lod_of(&mut scene, &ortho_at(1.0, 10.0, 200.0), &config),
+        Lod::Source,
+        "boundary face pit must hold Source orthographically"
+    );
+    // Control: relaxing only the local guard recovers the unsafe coarse
+    // choice, proving which guard held it.
+    let relaxed = LodConfig {
+        max_local_loss_fraction: 1.0,
+        ..config
+    };
+    assert!(
+        lod_of(&mut scene, &persp_at(1.0, 300.0), &relaxed) > Lod::Source,
+        "relaxed local guard must allow coarsening"
+    );
+}
+
+#[test]
+fn unaligned_dense_cuboids_still_coarsen_including_negatives() {
+    // Odd edges and negative coordinates produce boundary-partial coarse
+    // cells, but every clipped footprint is fully occupied: loss reads exactly
+    // zero and dense geometry must still coarsen. Edge 15 keeps Quarter
+    // dilation (~0.18) under the bias so the control reaches Quarter. Thin
+    // sheets stay held by the global dilation bias (clipped loss 0).
+    let config = LodConfig::default();
+    let mut scene = DetailScene::new();
+    scene.add_prototype(solid_block("odd", 15)).unwrap();
+    scene.add_prototype(solid_block_negative("neg", 15)).unwrap();
+    scene.add_prototype(thin_sheet("sheet")).unwrap();
+    scene.place("o", "odd", Transform::identity()).unwrap();
+    scene
+        .place(
+            "n",
+            "neg",
+            Transform::new([-20.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+        )
+        .unwrap();
+    scene
+        .place(
+            "h",
+            "sheet",
+            Transform::new([20.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+        )
+        .unwrap();
+    for camera in [persp_at(1.0, 300.0), ortho_at(1.0, 10.0, 200.0)] {
+        let selected = scene.select_lods(&camera, &config).unwrap();
+        let at = |id: &str| selected.iter().find(|s| s.instance == id).unwrap().lod;
+        assert_eq!(at("o"), Lod::Quarter, "odd-edge dense cuboid coarsens");
+        assert_eq!(at("n"), Lod::Quarter, "negative dense cuboid coarsens");
+        assert_eq!(at("h"), Lod::Source, "thin sheet still held");
+    }
 }
 
 #[test]
