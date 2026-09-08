@@ -3,6 +3,7 @@ mod frustum;
 mod hud;
 mod lighting;
 mod shadow;
+mod static_scene;
 mod timing;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
@@ -12,6 +13,8 @@ pub use lighting::{LightingSettings, Sun};
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use shadow::Shadow;
+use static_scene::StaticScene;
+pub use static_scene::{StaticInstance, StaticSceneStats};
 use std::{collections::BTreeMap, ffi::CStr, sync::Arc, time::Instant};
 pub use timing::GpuTimings;
 use timing::TimestampQueries;
@@ -201,7 +204,7 @@ struct GpuMesh {
     bounds: [[f32; 3]; 2],
 }
 
-fn validate_mesh(mesh: &Mesh) -> Result<(u32, [[f32; 3]; 2])> {
+pub(crate) fn validate_mesh(mesh: &Mesh) -> Result<(u32, [[f32; 3]; 2])> {
     let count = u32::try_from(mesh.indices.len()).map_err(|_| "Mesh has more than u32 indices")?;
     if mesh
         .indices
@@ -763,12 +766,22 @@ fn pipeline(
                             .name(c"fs_main"),
                     );
                 }
-                let bindings = [vk::VertexInputBindingDescription {
+                let mut bindings = vec![vk::VertexInputBindingDescription {
                     binding: 0,
                     stride: if hud { 24 } else { 36 },
                     input_rate: vk::VertexInputRate::VERTEX,
                 }];
-                let attributes = if hud {
+                // World and shadow pipelines read one packed instance record
+                // (translation xyz, quarter yaw) per instance at location 3.
+                // Legacy/chunk/dynamic draws bind a single identity record.
+                if !hud {
+                    bindings.push(vk::VertexInputBindingDescription {
+                        binding: 1,
+                        stride: 16,
+                        input_rate: vk::VertexInputRate::INSTANCE,
+                    });
+                }
+                let mut attributes: Vec<_> = if hud {
                     vec![
                         vk::VertexInputAttributeDescription {
                             location: 0,
@@ -793,6 +806,14 @@ fn pipeline(
                         })
                         .collect()
                 };
+                if !hud {
+                    attributes.push(vk::VertexInputAttributeDescription {
+                        location: 3,
+                        binding: 1,
+                        format: vk::Format::R32G32B32A32_SFLOAT,
+                        offset: 0,
+                    });
+                }
                 let vertex = vk::PipelineVertexInputStateCreateInfo::default()
                     .vertex_binding_descriptions(&bindings)
                     .vertex_attribute_descriptions(&attributes);
@@ -1035,6 +1056,9 @@ pub struct Renderer {
     legacy: Option<GpuMesh>,
     chunks: BTreeMap<[i32; 3], GpuMesh>,
     dynamic: Option<GpuMesh>,
+    static_scene: Option<StaticScene>,
+    // One zeroed instance record: identity transform for non-instanced draws.
+    identity: Buffer,
     hud: Option<Buffer>,
     requested: vk::Extent2D,
     recreate: bool,
@@ -1221,6 +1245,14 @@ impl Renderer {
         let commands = Commands::new(device.clone())?;
         let shadow = Shadow::new(device.clone(), LightingSettings::default().shadow_map_size)?;
         let timestamps = TimestampQueries::new(device.clone())?;
+        // One zeroed packed instance record: identity transform fallback so the
+        // legacy/chunk/dynamic paths keep rendering unchanged through the
+        // instanced vertex pipeline.
+        let identity = Buffer::new(
+            device.clone(),
+            &[0u8; 16],
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
         Ok(Self {
             device,
             commands,
@@ -1234,6 +1266,8 @@ impl Renderer {
             legacy: None,
             chunks: BTreeMap::new(),
             dynamic: None,
+            static_scene: None,
+            identity,
             hud: None,
             requested: vk::Extent2D {
                 width: size.width,
@@ -1323,6 +1357,45 @@ impl Renderer {
         Ok(())
     }
 
+    /// Atomically replaces the instanced static scene: unique prototype
+    /// geometry is pooled into shared vertex/index buffers plus one packed
+    /// instance buffer, and each prototype is drawn as one batch carrying all
+    /// of its instances. An empty instance list clears the scene. Validation
+    /// and budget checks (128 MiB geometry, 16 MiB instances) run before any
+    /// allocation; on any error, including allocation failure mid-build, the
+    /// previous scene is retained unchanged. Callers should treat this as a
+    /// load/edit-time operation, not a per-frame path.
+    pub fn replace_static_scene(
+        &mut self,
+        meshes: &[Mesh],
+        instances: &[StaticInstance],
+    ) -> Result<StaticSceneStats> {
+        // Host-side planning validates everything before touching the device or
+        // the live scene; an error here retains the previous scene untouched.
+        let plan = static_scene::plan_static_scene(meshes, instances)?;
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        if plan.instance_count == 0 {
+            self.static_scene = None;
+            self.update_counters();
+            return Ok(StaticSceneStats::default());
+        }
+        // Construction is transactional: all buffers exist before the swap, so
+        // a failed allocation drops only the partial build. The fence wait above
+        // guarantees no submitted frame references the retired scene.
+        let scene = StaticScene::new(self.device.clone(), plan)?;
+        let stats = scene.stats();
+        self.static_scene = Some(scene);
+        self.update_counters();
+        Ok(stats)
+    }
+
+    /// Honest accounting of the currently resident static scene, if any.
+    pub fn static_scene_stats(&self) -> Option<StaticSceneStats> {
+        self.static_scene.as_ref().map(|scene| scene.stats())
+    }
+
     fn update_counters(&mut self) {
         self.resident_chunks = self.chunks.len();
         self.visible_chunks = self.visible_chunks.min(self.resident_chunks);
@@ -1332,7 +1405,13 @@ impl Renderer {
             .chain(self.legacy.iter())
             .chain(self.dynamic.iter())
             .map(GpuMesh::allocated_bytes)
-            .sum();
+            .sum::<usize>()
+            // Pooled static geometry capacity; per-buffer and instance-buffer
+            // capacities are broken out in StaticSceneStats.
+            + self
+                .static_scene
+                .as_ref()
+                .map_or(0, |scene| scene.allocated_bytes);
     }
 
     pub fn render(&mut self, view_proj: [[f32; 4]; 4], eye: [f32; 3], hud: &Hud) -> FrameResult {
@@ -1439,7 +1518,7 @@ impl Renderer {
             // Construct replacement transactionally, then retire the idle old map.
             self.shadow = Shadow::new(self.device.clone(), lighting.shadow_map_size)?;
         }
-        let bounds: Vec<_> = self
+        let mut bounds: Vec<_> = self
             .chunks
             .values()
             .chain(self.legacy.iter())
@@ -1447,6 +1526,13 @@ impl Renderer {
             .filter(|m| m.index_count > 0)
             .map(|m| m.bounds)
             .collect();
+        // Shadow depth fitting must include the instanced scene bounds so
+        // offscreen static casters stay inside the map.
+        if let Some(scene) = &self.static_scene {
+            if scene.has_geometry {
+                bounds.push(scene.bounds);
+            }
+        }
         self.shadow.update(eye, lighting, &bounds)?;
         if self.recreate {
             // SAFETY: exceptional resize/retirement only. This is the standard
@@ -1522,6 +1608,8 @@ impl Renderer {
                     .values()
                     .chain(self.legacy.iter())
                     .chain(self.dynamic.iter()),
+                self.static_scene.as_ref(),
+                self.identity.raw,
             );
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 1);
@@ -1574,6 +1662,8 @@ impl Renderer {
                 &[self.shadow.set],
                 &[],
             );
+            // Identity instance record for the non-instanced draws below.
+            d.cmd_bind_vertex_buffers(cmd, 1, &[self.identity.raw], &[0]);
             d.cmd_push_constants(
                 cmd,
                 s.layout,
@@ -1603,6 +1693,12 @@ impl Renderer {
                     d.cmd_bind_index_buffer(cmd, i.raw, 0, vk::IndexType::UINT32);
                     d.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
                 }
+            }
+            // Instanced static scene: one batch per prototype carrying all of
+            // its instances; whole-batch frustum culling only, never applied
+            // to the shadow pass above.
+            if let Some(scene) = &self.static_scene {
+                scene.record_batches(d, cmd, Some(&frustum));
             }
             if hud_count > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.hud);

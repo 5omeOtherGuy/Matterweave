@@ -1,5 +1,7 @@
 //! A single directional depth map. Resource replacement is serialized by Renderer.
-use super::{err, pipeline, Buffer, Depth, Device, Frustum, GpuMesh, PipelineKind, Result};
+use super::{
+    err, pipeline, Buffer, Depth, Device, Frustum, GpuMesh, PipelineKind, Result, StaticScene,
+};
 use crate::lighting::{LightingSettings, ShadowCamera};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
@@ -268,11 +270,16 @@ impl Shadow {
 
     /// Record a clear even on the first shadows-off frame: descriptor layout and
     /// depth contents must be valid before the world pipeline can reference them.
+    /// Static instanced batches are recorded without frustum culling so
+    /// offscreen casters are retained; non-instanced meshes draw one identity
+    /// instance through the shared record at `identity`.
     pub fn record<'a>(
         &mut self,
         cmd: vk::CommandBuffer,
         enabled: bool,
         meshes: impl Iterator<Item = &'a GpuMesh>,
+        static_scene: Option<&StaticScene>,
+        identity: vk::Buffer,
     ) {
         self.caster_meshes = 0;
         if !enabled && self.initialized {
@@ -325,6 +332,7 @@ impl Shadow {
                 0,
                 bytemuck::cast_slice(&self.camera.view_proj),
             );
+            d.cmd_bind_vertex_buffers(cmd, 1, &[identity], &[0]);
             if enabled {
                 let frustum = Frustum::new(self.camera.view_proj);
                 for mesh in meshes.filter(|m| m.index_count > 0 && frustum.intersects(m.bounds)) {
@@ -334,6 +342,11 @@ impl Shadow {
                         d.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
                         self.caster_meshes += 1;
                     }
+                }
+                // Instanced batches apply the same transforms and are never
+                // discarded here: the shadow camera frustum does not gate casters.
+                if let Some(scene) = static_scene {
+                    self.caster_meshes += scene.record_batches(d, cmd, None);
                 }
             }
             d.cmd_end_render_pass(cmd);

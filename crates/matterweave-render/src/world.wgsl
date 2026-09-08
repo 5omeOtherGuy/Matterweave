@@ -16,6 +16,9 @@ struct Input {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
+    // Packed instance record: translation xyz, quarter-turn yaw in w. The
+    // identity record (0,0,0,0) leaves non-instanced geometry unchanged.
+    @location(3) instance: vec4<f32>,
 };
 struct Output {
     @builtin(position) clip: vec4<f32>,
@@ -23,11 +26,27 @@ struct Output {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
 };
+// Exact quarter-turn yaw about Y: x' = c*x + s*z, z' = -s*x + c*z.
+// Must match static_scene.rs rotate_xz and the packed instance record.
+fn quarter_rotation(yaw: f32) -> mat2x2<f32> {
+    var quarter_cos = array<f32, 4>(1.0, 0.0, -1.0, 0.0);
+    var quarter_sin = array<f32, 4>(0.0, 1.0, 0.0, -1.0);
+    let q = u32(yaw) & 3u;
+    return mat2x2<f32>(
+        vec2(quarter_cos[q], -quarter_sin[q]),
+        vec2(quarter_sin[q], quarter_cos[q]),
+    );
+}
 @vertex fn vs_main(v: Input) -> Output {
+    let rotation = quarter_rotation(v.instance.w);
+    let xz = rotation * vec2(v.position.x, v.position.z);
+    let world_position = vec3(xz.x, v.position.y, xz.y) + v.instance.xyz;
+    let nxz = rotation * vec2(v.normal.x, v.normal.z);
+    let world_normal = vec3(nxz.x, v.normal.y, nxz.y);
     var out: Output;
-    out.clip = camera.view_proj * vec4(v.position, 1.0);
-    out.world = v.position;
-    out.normal = v.normal;
+    out.clip = camera.view_proj * vec4(world_position, 1.0);
+    out.world = world_position;
+    out.normal = world_normal;
     out.color = v.color;
     return out;
 }
