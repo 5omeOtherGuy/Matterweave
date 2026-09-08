@@ -1562,6 +1562,23 @@ mod journal_tests {
     }
 
     #[test]
+    fn journal_that_blocks_saved_and_entrance_pose_is_rejected() {
+        let world = World::new(7);
+        let mut scene = fixture();
+        let mut probe = Physics::new(&world);
+        let instances = scene.instance_ids().into_iter().collect();
+        let before = scene.counts();
+        let eye = [0.5, 2.7, 0.5];
+        let bad = journal(
+            (1..6).map(|y| Edit {
+                instance: "a".into(), cell: [0, y, 0], material: material::BANK_STONE,
+            }).collect(), vec![], eye,
+        );
+        assert!(apply_journal(&mut scene, &mut probe, &instances, &bad).is_err());
+        assert_eq!(scene.counts(), before);
+    }
+
+    #[test]
     fn buried_pose_is_lifted_but_clear_pose_is_kept() {
         // Real source colliders: a buried saved eye is lifted straight up
         // within the bounded step, while a valid grounded pose is preserved.
