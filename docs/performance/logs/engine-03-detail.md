@@ -95,3 +95,64 @@ renderer/app/physics edits. Renderer adapter and Android captures are lead-owned
   entry-count bound), single-cell void fraction `1/f^3` (was misstated as
   `1 - 1/f^3` in `select.rs` docs), and `together` claims rescoped to tested
   fixtures only.
+
+## Round 4 — local topology gate for the default guard (worker, from 1a42f59)
+
+Task: fix the default guard's blanket rejection of organic/stepped geometry
+while preserving local passages. Source/tests/docs in `matterweave-detail`
+only; no app/renderer/physics changes.
+
+### RED (commit `ec11bbe`)
+
+`cargo test -p matterweave-detail --test local_loss` → 10 passed, 3 failed:
+
+- `stepped_wedge_surface_coarsens_under_the_default_guard` — left `Source`,
+  right `Quarter` (F1: a safe 45° stepped wedge, `z <= x`, pinned at Source).
+- `prototype_edit_carving_a_channel_reverts_the_wedge_to_source`
+- `instance_edit_holds_only_the_edited_instance_at_source`
+
+Also added, passing at RED time (characterization, not a defect claim):
+`material_filled_channel_is_outside_the_occupancy_guard` — a `WATER`-filled
+channel coarsens while the same geometry in `AIR` holds `Source`. This scopes
+the guard to occupancy explicitly rather than silently.
+`unaligned_dense_cuboids_still_coarsen_including_negatives` now builds a fresh
+scene per projection so hysteresis cannot carry the perspective selection into
+the orthographic assertion.
+
+### GREEN
+
+`worst_interior_loss` now gates each partially filled coarse cell through
+`local_fill_destroys_feature`: a `(factor + 2)^3` window (footprint + one-cell
+halo), fixed stack scratch, no heap, no flood outside the window. A cell
+contributes loss only if the fill closes a passage between halo air sites, or
+buries an enclosed cavity or a pit (air site with ≥4 solid face neighbours).
+Reuse checked first: the criterion is the block generalization of the
+simple-point test from 3D thinning (Bertrand/Malandain); no Rust crate exposes
+it outside a whole meshing/skeletonization engine, so ~60 lines here beat a
+dependency. Budget `LOCAL_TOPOLOGY_CELL_BUDGET = 8192` analyzed cells per
+(revision, factor); past it a cell keeps the old conservative verdict, which
+can only hold a finer level. Cached exactly as before, by source revision.
+
+Verification (`CARGO_BUILD_JOBS=1`,
+`CARGO_TARGET_DIR=/mnt/bench/matterweave-dev/performance/engine-03/detail-target`):
+
+- `cargo test -p matterweave-detail` → 118 passed, 0 failed across 15 targets
+  (local_loss 13, detail 34, showcase 20, flora 15, lod_selection 15, …).
+- `cargo clippy -p matterweave-detail --all-targets -- -D warnings` → clean.
+- Measured cost, `scene::local_topology_cost` unit test (`--nocapture`), real
+  prototypes: terrain_detail_tile 1488/535 analyzed cells and 95232/115560
+  site visits at factor 2/4; parasol_mushroom 152/44 (9728/9504);
+  funnel_mushroom 192/59 (12288/12744); fan_frond 136/49 (8704/10584);
+  reed_cluster 108/29 (6912/6264). `budget_exhausted_cells == 0` everywhere —
+  no real fixture falls back.
+
+### Honest limits
+
+- Occupancy only: material-heterogeneous channels remain unprotected
+  (documented + pinned by test, not fixed).
+- Rough organic surfaces (terrain tile, flora) still read high loss and stay
+  at `Source`: their 1-cell crevices/pits are genuine features under the
+  ≥4-solid-neighbour rule. Smooth stepped/sloped/wedge surfaces are the class
+  unblocked this round.
+- No device, Android or on-screen temporal-quality evidence: NOT RUN. All
+  figures above are host `cargo` results on this worktree.

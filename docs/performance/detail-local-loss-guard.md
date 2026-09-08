@@ -45,10 +45,55 @@ censused coarse occupancy; it now counts occupied source cells per coarse cell
 
 `choose_lod` breaks out of the coarsening walk when
 `local_loss_fraction > max_local_loss_fraction`, exactly like the dilation
-bias. `max_local_loss_fraction` defaults to `0.0` (any interior heterogeneity
-holds the finer level) and validates as finite within `0.0..=1.0`. Clipped
-boundary cells on dense solids read exactly `0.0`, so ordinary surface steps
-never trip it.
+bias. `max_local_loss_fraction` defaults to `0.0` and validates as finite within
+`0.0..=1.0`. The threshold is applied to the *finest* coarse level first and
+the walk breaks there, so loss being non-monotone in coarseness (a tunnel
+reads `0.25` at Half and `0.0625` at Quarter) means an intermediate threshold
+between those values reaches `Source`, not `Quarter`.
+
+## Local topology gate (round 4)
+
+Clipping alone is a *global* clip against the prototype's occupied bounds, so
+it only neutralizes the outer box: every partially filled coarse cell on a
+sloped, stepped or curved surface still read `> 0` and the `0.0` default
+pinned essentially all non-cuboid content at `Source`. Partially filled cells
+are now gated by a bounded digital-topology test before they contribute loss.
+
+Per partially filled occupied coarse cell, on a `(factor + 2)^3` window (the
+footprint plus a one-cell halo; 64 sites at factor 2, 216 at factor 4, fixed
+stack scratch, no heap, no flood outside the window):
+
+- **Channel closure**: label 6-connected air before and after filling the
+  footprint. If two halo air sites connected before are separated after, the
+  fill closes a passage (through-tunnels and channels wider than one cell).
+- **Cavity or pit**: an air site inside the footprint that is unreachable from
+  the halo (enclosed void), or that has at least four solid face neighbours
+  (pinhole, blind pit, slot) — features that through-connectivity cannot see.
+
+Only cells failing one of those contribute `(expected - count) / expected`.
+An exterior staircase or wedge has one open air region touching the halo on
+many sides and at most three solid face neighbours per air site, so it reads
+`0.0` and coarsens. This is the block generalization of the simple-point
+criterion used in 3D thinning (Bertrand/Malandain); no Rust crate exposes that
+test outside a full meshing/skeletonization engine, so it is ~60 lines here
+rather than a dependency.
+
+Analysis is bounded by `LOCAL_TOPOLOGY_CELL_BUDGET = 8192` analyzed cells per
+(revision, factor). Past the budget a partial cell keeps the pre-topology
+conservative verdict, which can only hold a finer level, never select an
+unsafe one. Measured on representative prototypes (unit test
+`scene::local_topology_cost`), no fixture reaches the budget:
+
+| prototype | occupied | partial cells @2 / @4 | site visits @2 / @4 | fallback |
+| --- | --- | --- | --- | --- |
+| `terrain_detail_tile` | 25076 | 1488 / 535 | 95232 / 115560 | 0 |
+| `parasol_mushroom` | 938 | 152 / 44 | 9728 / 9504 | 0 |
+| `funnel_mushroom` | 1106 | 192 / 59 | 12288 / 12744 | 0 |
+| `fan_frond` | 422 | 136 / 49 | 8704 / 10584 | 0 |
+| `reed_cluster` | 297 | 108 / 29 | 6912 / 6264 | 0 |
+
+Worst case is `8192 * 216` site visits per factor, once per source revision;
+`select_lods` still reads only the cached digest.
 
 ## Cost quantities (not device claims)
 
@@ -77,6 +122,19 @@ never trip it.
 - Worst-cell sensitivity cuts both ways: one stray interior air cell (e.g. a
   deliberate 1-cell mortise) holds the prototype finer. That is the intended
   trade until a per-opening allowlist exists.
+- **Occupancy only.** The guard reads occupancy, not material. A channel or
+  pocket filled with `WATER` (or any non-`AIR` material) has no partially
+  filled coarse cell, so it is invisible to the guard and `coarsen`'s majority
+  vote replaces it with the host material at `Half`/`Quarter`. Pinned by
+  `material_filled_channel_is_outside_the_occupancy_guard`. Authoritative
+  source, sampling and collision are unaffected. Extending the guard to
+  material heterogeneity is open work; a naive version would hold every
+  multi-material flora prototype at `Source`.
+- The topology gate is still conservative for rough organic surfaces: a
+  measured `terrain_detail_tile` and the flora prototypes still read a high
+  loss (their surfaces contain genuine 1-cell pits/crevices that trip the
+  four-solid-neighbour rule), so they stay at `Source` under the default.
+  Smooth stepped/sloped surfaces are the class this round unblocked.
 - Negative coordinates are handled (`div_euclid` footprints); the footprint
   products cannot overflow (`|cell| <= 2^16`, `factor <= 4`).
 
