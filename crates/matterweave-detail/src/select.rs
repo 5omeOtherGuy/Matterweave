@@ -246,15 +246,21 @@ impl LodConfig {
         // `budget * (1 + hysteresis)`); finite inputs can still multiply to
         // infinity or underflow the low threshold to zero, leaving the
         // dead-band vacuous. Reject thresholds that do not survive f32.
-        let one_plus = 1.0 + f64::from(self.hysteresis);
-        let low = (f64::from(self.error_budget_px) / one_plus) as f32;
-        let high = (f64::from(self.error_budget_px) * one_plus) as f32;
+        let [low, high] = self.thresholds();
         let thresholds_ok = low.is_finite() && low > 0.0 && high.is_finite() && high > 0.0;
         if ok && thresholds_ok {
             Ok(())
         } else {
             Err(DetailError::InvalidScale)
         }
+    }
+
+    fn thresholds(&self) -> [f32; 2] {
+        let one_plus = 1.0 + f64::from(self.hysteresis);
+        [
+            (f64::from(self.error_budget_px) / one_plus) as f32,
+            (f64::from(self.error_budget_px) * one_plus) as f32,
+        ]
     }
 
     /// Disable coarsening entirely: always draw the authoritative source.
@@ -326,8 +332,7 @@ pub(crate) fn choose_lod(
     metrics: &[Option<ErrorMetrics>; 3],
     depth_m: f32,
 ) -> (Lod, f32, f32) {
-    let low = config.error_budget_px / (1.0 + config.hysteresis);
-    let high = config.error_budget_px * (1.0 + config.hysteresis);
+    let [low, high] = config.thresholds();
     let mut chosen = Lod::Source;
     let mut chosen_error_m = 0.0;
     let mut chosen_projected = camera.projected_error_px(0.0, depth_m);

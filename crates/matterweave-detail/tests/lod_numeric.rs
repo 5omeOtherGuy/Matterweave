@@ -19,9 +19,7 @@ fn persp(forward_m: [f32; 3], vertical_fov_rad: f32, viewport_height_px: f32) ->
         forward_m,
         viewport_height_px,
         near_m: 0.1,
-        projection: Projection::Perspective {
-            vertical_fov_rad,
-        },
+        projection: Projection::Perspective { vertical_fov_rad },
     }
 }
 
@@ -114,14 +112,14 @@ fn config_thresholds_that_leave_f32_are_rejected() {
         "budget * (1 + hysteresis) overflows f32 and must not validate"
     );
 
-    let overflowing_sum = LodConfig {
+    let large_hysteresis_product = LodConfig {
         error_budget_px: 2.0,
         hysteresis: 3.0e38,
         ..LodConfig::default()
     };
     assert!(
-        overflowing_sum.validate().is_err(),
-        "1 + hysteresis overflows f32 and must not validate"
+        large_hysteresis_product.validate().is_err(),
+        "budget times large hysteresis overflows f32 and must not validate"
     );
 
     // Large but representable thresholds stay accepted.
