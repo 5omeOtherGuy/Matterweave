@@ -27,7 +27,8 @@
 //!    that are not boundary-tie or inside-solid classified;
 //! 4. no Vulkan validation error is reported while the layer is active;
 //! 5. an edit invalidates the same world's pack and changes the hybrid image;
-//! 6. matched raster/ray images have zero mismatches within tolerance.
+//! 6. matched images have zero unexplained mismatches; at most 0.05% of
+//!    pixels may differ only at CPU-confirmed face edges within 0.001 pixel.
 //!
 //! Costs are reported as wall time for packing, mesh build, combined resource/pipeline setup and
 //! draw+readback separately. Draw+readback includes a synchronous queue wait, so
@@ -448,6 +449,26 @@ impl Gpu {
                 {
                     continue;
                 }
+                let supported_formats = [
+                    (
+                        vk::Format::R8G8B8A8_UNORM,
+                        vk::FormatFeatureFlags::COLOR_ATTACHMENT,
+                    ),
+                    (
+                        vk::Format::D32_SFLOAT,
+                        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+                    ),
+                ]
+                .into_iter()
+                .all(|(format, attachment)| {
+                    instance
+                        .get_physical_device_format_properties(device, format)
+                        .optimal_tiling_features
+                        .contains(attachment | vk::FormatFeatureFlags::TRANSFER_SRC)
+                });
+                if !supported_formats {
+                    continue;
+                }
                 for (index, queue) in instance
                     .get_physical_device_queue_family_properties(device)
                     .iter()
@@ -716,7 +737,7 @@ impl Session {
                 .range(192)];
             let material_info = [vk::DescriptorBufferInfo::default()
                 .buffer(materials.handle)
-                .range(64.max(pack.materials().len() as u64 * 4))];
+                .range(pack.materials().len() as u64 * 4)];
             let palette_info = [vk::DescriptorBufferInfo::default()
                 .buffer(palette.handle)
                 .range(4096)];
@@ -1286,6 +1307,9 @@ impl Session {
                     vk::MemoryMapFlags::empty(),
                 )
                 .map_err(err)?
+                // SAFETY: offset zero; Vulkan minMemoryMapAlignment is at
+                // least 64, sufficient for f32. Transfer->HOST_READ and idle
+                // wait precede this coherent mapping.
                 .cast::<f32>();
             let slice = std::slice::from_raw_parts(p, PIXELS);
             let value = slice.to_vec();
@@ -1932,7 +1956,9 @@ fn main() {
                 let view_projection = fixture.camera.view_projection();
                 let eye = Vec3::from_array(fixture.camera.eye);
                 let oracle = oracle_report(&result.oracle_world, &result.ray, view_projection, eye);
-                if oracle.mismatched == 0 && oracle.hits > 0 {
+                if oracle.mismatched == 0
+                    && oracle.hits > oracle.ties + oracle.grazing + oracle.inside
+                {
                     println!(
                     "  PASS ray matches CPU oracle: {sampled} samples, {hits} hits, {ties} ties, {grazing} grazing, {inside} inside-start, {mismatched} mismatches",
                     sampled = oracle.sampled, hits = oracle.hits, ties = oracle.ties,
@@ -2079,6 +2105,54 @@ fn combined_world(fixture: &Fixture, edited: bool) -> World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn face_edge_exception_requires_both_cpu_colors_and_preserved_coverage() {
+        let fixture = fixtures()
+            .into_iter()
+            .find(|f| f.name == "orthographic-opening-removal")
+            .unwrap();
+        let world = combined_world(&fixture, false);
+        let vp = fixture.camera.view_projection();
+        let inverse = vp.inverse();
+        let (nx, ny) = pixel_to_ndc(40, 17);
+        let near = inverse * Vec4::new(nx, ny, 0.0, 1.0);
+        let far = inverse * Vec4::new(nx, ny, 1.0, 1.0);
+        let origin = near.truncate() / near.w;
+        let endpoint = far.truncate() / far.w;
+        let direction = (endpoint - origin).normalize();
+        let hit = world
+            .raycast(
+                origin.to_array(),
+                direction.to_array(),
+                (endpoint - origin).length(),
+            )
+            .unwrap();
+        let clip = vp * (origin + direction * hit.distance).extend(1.0);
+        let mut a = Images {
+            color: vec![[0; 4]; PIXELS],
+            depth: vec![1.0; PIXELS],
+        };
+        let mut b = Images {
+            color: vec![[0; 4]; PIXELS],
+            depth: vec![1.0; PIXELS],
+        };
+        let i = 17 * WIDTH as usize + 40;
+        a.depth[i] = clip.z / clip.w;
+        b.depth[i] = a.depth[i];
+        // Actual +Y/+X face colors observed at the same geometric edge.
+        a.color[i] = [101, 181, 173, 255];
+        b.color[i] = [60, 106, 103, 255];
+        let eye = Vec3::from_array(fixture.camera.eye);
+        assert_eq!(explained_face_edges(&world, vp, eye, &a, &b), 1);
+        b.color[i] = [255, 0, 255, 255];
+        assert_eq!(explained_face_edges(&world, vp, eye, &a, &b), 0);
+        b.color[i] = [60, 106, 103, 255];
+        b.depth[i] = 1.0;
+        assert_eq!(explained_face_edges(&world, vp, eye, &a, &b), 0);
+        b.depth[i] = f32::NAN;
+        assert_eq!(explained_face_edges(&world, vp, eye, &a, &b), 0);
+    }
 
     #[test]
     fn nonfinite_depth_cannot_pass_image_comparison() {
