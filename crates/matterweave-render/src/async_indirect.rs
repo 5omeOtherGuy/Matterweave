@@ -179,6 +179,9 @@ impl Queue {
     /// rejected by the caller before this runs and can never displace queued
     /// work.
     fn enqueue_request(&mut self, key: SourceKey, sun: Sun, fork: impl FnOnce() -> World) -> bool {
+        if self.shutdown {
+            return false;
+        }
         self.requested = Some(key.clone());
         if self.pending.as_ref().is_some_and(|job| job.key == key) {
             return false;
@@ -295,7 +298,6 @@ impl Queue {
         self.resets = self.resets.saturating_add(1);
         self.generation = Arc::new(());
     }
-
 }
 
 struct Shared {
