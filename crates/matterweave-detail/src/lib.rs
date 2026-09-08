@@ -27,12 +27,20 @@
 //!   phone feasibility.
 
 mod fixtures;
+mod flora;
 mod scene;
 mod serial;
 
 pub use fixtures::{
     column_top, gallery_scene, parasol_mushroom, terrain_detail_tile, FIXTURE_GENERATOR_VERSION,
     MUSHROOM_FOOT_RADIUS_CELLS, MUSHROOM_SCALE, TILE_EDGE_CELLS, TILE_WATER_LEVEL_CELLS,
+};
+pub use flora::{
+    assert_policy, clustered_mushroom, dense_tile, fan_frond, flora_class, flora_prototype,
+    funnel_mushroom, instance_support, reed_cluster, rosette_groundcover, CORRIDOR_TILE_X,
+    DENSE_FLORA_CELLS_MIN, DENSE_PER_SPECIES_MIN, DENSE_TYPES_MIN, DENSE_VEGETATION_MIN,
+    FLORA_CANONICAL_SEED, FLORA_FUNGUS_SCALE_M, FLORA_GENERATOR_VERSION, FLORA_LEAF_SCALE_M,
+    FLORA_SPECIES,
 };
 pub use scene::{
     DetailScene, InstanceDraw, SceneCounts, MAX_INSTANCES, MAX_PROTOTYPES, MAX_SCENE_CACHE_BYTES,
@@ -248,6 +256,29 @@ pub mod material {
     pub const MUSHROOM_CAP: u8 = 21;
     pub const MUSHROOM_RIM: u8 = 22;
     pub const MUSHROOM_GILL: u8 = 23;
+    // Additive flora catalogue palette (IDs 30..63). Existing IDs above are unchanged.
+    pub const FLORA_FUNNEL_STIPE: u8 = 30;
+    pub const FLORA_FUNNEL_CAP: u8 = 31;
+    pub const FLORA_FUNNEL_RIM: u8 = 32;
+    pub const FLORA_FUNNEL_GILL: u8 = 33;
+    pub const FLORA_CLUSTER_STIPE: u8 = 34;
+    pub const FLORA_CLUSTER_CAP: u8 = 35;
+    pub const FLORA_CLUSTER_RIM: u8 = 36;
+    pub const FLORA_CLUSTER_GILL: u8 = 37;
+    pub const FLORA_FROND_STEM: u8 = 38;
+    pub const FLORA_FROND_BLADE: u8 = 39;
+    pub const FLORA_FROND_RIB: u8 = 40;
+    pub const FLORA_REED_STEM: u8 = 41;
+    pub const FLORA_REED_LEAF: u8 = 42;
+    pub const FLORA_REED_PLUME: u8 = 43;
+    pub const FLORA_ROSETTE_LEAF: u8 = 44;
+    pub const FLORA_ROSETTE_HEART: u8 = 45;
+    pub const FLORA_ROSETTE_SPOT: u8 = 46;
+    pub const FLORA_LUMEN_DOT: u8 = 47;
+    /// Luminous accent grown *in fungal flesh*. Separate ID from
+    /// [`FLORA_LUMEN_DOT`] precisely because it is part of a substantive body
+    /// and must collide; colour may match, policy may not.
+    pub const FLORA_FUNGUS_LUMEN: u8 = 48;
 }
 
 pub fn material_name(material: u8) -> &'static str {
@@ -260,6 +291,25 @@ pub fn material_name(material: u8) -> &'static str {
         material::MUSHROOM_CAP => "mushroom_cap",
         material::MUSHROOM_RIM => "mushroom_rim",
         material::MUSHROOM_GILL => "mushroom_gill",
+        material::FLORA_FUNNEL_STIPE => "flora_funnel_stipe",
+        material::FLORA_FUNNEL_CAP => "flora_funnel_cap",
+        material::FLORA_FUNNEL_RIM => "flora_funnel_rim",
+        material::FLORA_FUNNEL_GILL => "flora_funnel_gill",
+        material::FLORA_CLUSTER_STIPE => "flora_cluster_stipe",
+        material::FLORA_CLUSTER_CAP => "flora_cluster_cap",
+        material::FLORA_CLUSTER_RIM => "flora_cluster_rim",
+        material::FLORA_CLUSTER_GILL => "flora_cluster_gill",
+        material::FLORA_FROND_STEM => "flora_frond_stem",
+        material::FLORA_FROND_BLADE => "flora_frond_blade",
+        material::FLORA_FROND_RIB => "flora_frond_rib",
+        material::FLORA_REED_STEM => "flora_reed_stem",
+        material::FLORA_REED_LEAF => "flora_reed_leaf",
+        material::FLORA_REED_PLUME => "flora_reed_plume",
+        material::FLORA_ROSETTE_LEAF => "flora_rosette_leaf",
+        material::FLORA_ROSETTE_HEART => "flora_rosette_heart",
+        material::FLORA_ROSETTE_SPOT => "flora_rosette_spot",
+        material::FLORA_LUMEN_DOT => "flora_lumen_dot",
+        material::FLORA_FUNGUS_LUMEN => "flora_fungus_lumen",
         _ => "unknown",
     }
 }
@@ -270,6 +320,25 @@ pub fn material_policy(material: u8) -> MaterialPolicy {
     match material {
         material::WATER => MaterialPolicy::Liquid,
         material::AIR => MaterialPolicy::Decorative,
+        material::FLORA_FUNNEL_STIPE
+        | material::FLORA_FUNNEL_CAP
+        | material::FLORA_FUNNEL_RIM
+        | material::FLORA_FUNNEL_GILL
+        | material::FLORA_CLUSTER_STIPE
+        | material::FLORA_CLUSTER_CAP
+        | material::FLORA_CLUSTER_RIM
+        | material::FLORA_CLUSTER_GILL
+        | material::FLORA_FUNGUS_LUMEN => MaterialPolicy::Collision,
+        material::FLORA_FROND_STEM
+        | material::FLORA_FROND_BLADE
+        | material::FLORA_FROND_RIB
+        | material::FLORA_REED_STEM
+        | material::FLORA_REED_LEAF
+        | material::FLORA_REED_PLUME
+        | material::FLORA_ROSETTE_LEAF
+        | material::FLORA_ROSETTE_HEART
+        | material::FLORA_ROSETTE_SPOT
+        | material::FLORA_LUMEN_DOT => MaterialPolicy::Decorative,
         _ => MaterialPolicy::Collision,
     }
 }
@@ -284,6 +353,25 @@ pub fn material_color(material: u8) -> [f32; 3] {
         material::MUSHROOM_CAP => [0.72, 0.45, 0.22],
         material::MUSHROOM_RIM => [0.58, 0.33, 0.18],
         material::MUSHROOM_GILL => [0.91, 0.86, 0.78],
+        material::FLORA_FUNNEL_STIPE => [0.80, 0.68, 0.47],
+        material::FLORA_FUNNEL_CAP => [0.66, 0.42, 0.20],
+        material::FLORA_FUNNEL_RIM => [0.50, 0.30, 0.16],
+        material::FLORA_FUNNEL_GILL => [0.90, 0.84, 0.72],
+        material::FLORA_CLUSTER_STIPE => [0.78, 0.74, 0.80],
+        material::FLORA_CLUSTER_CAP => [0.45, 0.32, 0.55],
+        material::FLORA_CLUSTER_RIM => [0.33, 0.22, 0.42],
+        material::FLORA_CLUSTER_GILL => [0.85, 0.80, 0.88],
+        material::FLORA_FROND_STEM => [0.25, 0.45, 0.40],
+        material::FLORA_FROND_BLADE => [0.24, 0.52, 0.38],
+        material::FLORA_FROND_RIB => [0.55, 0.75, 0.60],
+        material::FLORA_REED_STEM => [0.35, 0.50, 0.30],
+        material::FLORA_REED_LEAF => [0.30, 0.55, 0.33],
+        material::FLORA_REED_PLUME => [0.80, 0.75, 0.60],
+        material::FLORA_ROSETTE_LEAF => [0.28, 0.50, 0.36],
+        material::FLORA_ROSETTE_HEART => [0.45, 0.68, 0.40],
+        material::FLORA_ROSETTE_SPOT => [0.75, 0.55, 0.25],
+        material::FLORA_LUMEN_DOT => [0.65, 0.85, 0.80],
+        material::FLORA_FUNGUS_LUMEN => [0.62, 0.88, 0.76],
         _ => [0.60, 0.60, 0.60],
     }
 }
