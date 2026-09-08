@@ -55,6 +55,8 @@ The detail crate now selects Source/Half/Quarter per instance using perspective
 view-forward depth or orthographic scale, hysteresis, a global dilation bias and
 budgeted mesh preparation. Error values are estimates: any-occupied coarsening
 can fill a deep narrow opening, and no guaranteed surface-error bound is claimed.
-Host approach/retreat/zoom, off-axis and source-authority tests pass. Native/device
-transition checks are under implementation. See [detail engine notes](../performance/automatic-detail-engine.md).
+Host approach/retreat/zoom, off-axis and source-authority tests pass. The9-phase native Vulkan check now exercises retained geometry, perspective
+FOV/orthographic zoom, edits, zero extent and renderer recreation. The thin-sheet
+fixture stays at Source; physical-device transition review is pending. See
+[native gate](../performance/detail-native-check.md). See [detail engine notes](../performance/automatic-detail-engine.md).
 This advances the prototype; the ADR's visual/residency acceptance remains open.

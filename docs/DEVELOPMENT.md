@@ -182,9 +182,11 @@ These are not GPU timestamps or CPU execution samples. DATA counts voxel payload
 not process memory. GPU heap sizes are queried capacities, not free memory.
 
 Terrain generation and dirty chunk meshing now use bounded background preparation.
-Collision publication, GPU uploads, snapshot copying and autosaves remain synchronous. Greedy chunk meshes and conservative frustum culling are implemented;
-Filtered directional shadows are implemented; automatic LOD and indirect
-illumination remain future work. Physics runs
+The normal app still publishes collision and uploads GPU resources on its owner
+thread. Engine APIs additionally support background detail-collision preparation,
+shared chunk snapshots, automatic LOD and an opt-in diffuse-light reference. Greedy
+chunk meshes, conservative frustum culling and filtered cached shadows are implemented.
+See STATUS for native/Android checks and remaining scheduling/quality limits. Physics runs
 at 60 Hz with bounded catch-up and interpolated object rendering. The resident
 window, stored-override limit and save size are explicit in the core README.
 Corrupt world/session snapshots remain intact; numbered recovery snapshots are
