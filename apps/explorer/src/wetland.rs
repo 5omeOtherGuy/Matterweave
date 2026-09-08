@@ -1056,6 +1056,12 @@ mod integration_tests {
         runtime.camera.position = Vec3::from_array(runtime.physics.character_eye());
         runtime.camera.pitch = -1.2;
         let before = runtime.scene.counts().expanded_occupied_cells;
+        let mut app = WetlandApp::new(directory.clone(), false, None);
+        app.runtime = Some(runtime);
+        app.action(Action::Remove);
+        runtime = app.runtime.take().unwrap();
+        assert!(runtime.edits.is_empty(), "main menu accepted a hidden edit");
+        assert_eq!(runtime.scene.counts().expanded_occupied_cells, before);
         runtime
             .edit(false)
             .expect("remove actual aimed source cell");

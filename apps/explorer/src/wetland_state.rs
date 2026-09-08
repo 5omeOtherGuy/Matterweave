@@ -453,4 +453,30 @@ mod tests {
             "stone"
         );
     }
+    #[test]
+    fn internal_corner_hits_offer_only_face_adjacent_placement() {
+        let mut scene = DetailScene::new();
+        let mut volume = DetailVolume::new("corners", Scale::new(0.25).unwrap());
+        volume.set([-1, -1, 0], material::BANK_STONE).unwrap();
+        volume.set([1, 1, 0], material::BANK_STONE).unwrap();
+        scene.add_prototype(volume).unwrap();
+        scene
+            .place("corner", "corners", Transform::identity())
+            .unwrap();
+        for direction in [[1., 1., 0.], [-1., -1., 0.]] {
+            let hit = raycast(&scene, [0.125; 3], direction, 2.).unwrap();
+            let previous = hit.previous.unwrap();
+            assert_eq!(
+                previous
+                    .iter()
+                    .zip(hit.cell)
+                    .map(|(a, b)| (a - b).abs())
+                    .sum::<i32>(),
+                1,
+                "corner hit gives diagonal placement: {:?} -> {:?}",
+                hit.cell,
+                previous
+            );
+        }
+    }
 }
