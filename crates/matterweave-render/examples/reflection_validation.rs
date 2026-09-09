@@ -2292,10 +2292,7 @@ const NOT_RUN: &[(&str, &str)] = &[
         "10-device-gpu-timings",
         "GPU interval timings if the device exposes timestamp queries",
     ),
-    (
-        "10-device-thermal",
-        "thermal conditions during measurement",
-    ),
+    ("10-device-thermal", "thermal conditions during measurement"),
     (
         "11-device-captures",
         "edit, camera motion and HOME/resume captures on the reserved device",
