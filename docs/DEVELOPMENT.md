@@ -392,3 +392,38 @@ Record exact source/binary checksum, device and build configuration alongside
 stdout and health observations. See [streaming stress](performance/stream-stress.md).
 
 Full-image ray/raster/shared-depth hybrid correctness: `cargo run --locked -p matterweave-render --example renderer_comparison`. See [comparison protocol](performance/renderer-comparison.md) for tolerances, artifacts and Android evidence.
+
+## Audio service correctness
+
+Host tests and the real-time allocation detector:
+
+```sh
+cargo test --locked -p matterweave-audio
+```
+
+The mock-backend diagnostic runs on any host without audio hardware and prints
+negotiated properties, frame/callback counters and ten open/play/stop/close
+cycles:
+
+```sh
+cargo run --locked -p matterweave-audio --example audio_diagnostic
+```
+
+For a real Android device, cross-compile the diagnostic with the pinned NDK
+API-28 linker, push it to `/data/local/tmp` and run it. It opens real AAudio
+output, plays a quiet known sine, suspends/resumes, recreates the stream and
+completes ten service lifecycles. Audibility is a human observation; the
+printed counters alone do not prove audibility.
+
+```sh
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
+cargo build --locked --release -p matterweave-audio --example audio_diagnostic \
+  --target aarch64-linux-android --no-default-features --features backend-android,diagnostic
+adb push "$CARGO_TARGET_DIR/aarch64-linux-android/release/examples/audio_diagnostic" /data/local/tmp/matterweave-audio-diagnostic
+adb shell chmod 755 /data/local/tmp/matterweave-audio-diagnostic
+adb shell /data/local/tmp/matterweave-audio-diagnostic
+```
+
+Record the device model, Android version, negotiated stream properties and the
+printed health snapshot with the run. See [ADR-0016](adr/0016-audio-service.md)
+for the service contracts and limits.

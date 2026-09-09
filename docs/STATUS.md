@@ -14,6 +14,36 @@ remaining M2–M6 engine requirements. The sole current integration checkout is
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
 
+## Current M6 audio-service trial (eval/glm-audio)
+
+Branch `eval/glm-audio` (base `5b90975`) adds the reusable bounded audio
+service: crate `matterweave-audio` with a deterministic mixer core, a game-facing
+handle API (register/play/stop/gain/suspend/resume, 32 clips, 8 voices, 4 MiB
+PCM, 64 commands, explicit rejection instead of stealing/overwriting) and a real
+Android AAudio backend through the pinned `ndk 0.9.0` bindings plus `ringbuf
+0.5.1`. Decision record: [ADR-0016](adr/0016-audio-service.md) (Proposed).
+
+Verification actually executed for this trial:
+
+| Check | Result |
+| --- | --- |
+| Baseline at frozen base | PASS: `cargo test --workspace --locked` exit 0 before changes. |
+| Crate behavioral tests | PASS: 22 tests (4 suites): two-voice fixture within 1e-6, limits at/over and after reuse, atomic rejection, stale handles, saturation/backpressure recovery, suspend/resume continuation policy, fault-injected device loss with recreation, threaded mixer interleaving. |
+| Real-time allocation detector | PASS: zero allocations and deallocations across 10,000 mixer callback invocations including completion and stop handling (dedicated test binary). |
+| Formatting / Clippy | PASS: `cargo fmt --check`; `cargo clippy -p matterweave-audio --all-targets -- -D warnings`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; Android-target scoped Clippy for the `backend-android` feature. |
+| Workspace tests / docs | PASS: `cargo test --workspace --locked` exit 0 after changes; `python3 tools/check_docs.py` PASS. |
+| Android cross-compilation | PASS: diagnostic example builds for `aarch64-linux-android` (debug and release) with the pinned NDK 28.2.13676358 API-28 linker, links `libaaudio`; release artifact SHA-256 `5b2a66036e6b94d1dacecaea013bef4344df603de29a0b23b75db3efce221c2b`. |
+| Host diagnostic | PASS: negotiated properties, nonzero frames, suspend/resume continuation, controlled recreation, ten open/play/stop/close cycles (mock backend; silent by design). |
+| Reserved-device diagnostic | NOT RUN: no Android device was attached during the trial window (`adb devices` empty). Executable, checksum and exact procedure are delivered; final acceptance requires the coordinating reviewer to execute it. |
+
+Limitations: no resampling and no compressed formats (48 kHz f32 mono/stereo
+only; a device that cannot negotiate that fails open explicitly); a failed
+stream close aborts through the ndk wrapper's drop contract; the on-device
+recreation check is a controlled close/reopen, while true device-loss behavior
+is validated through shared-atomics fault injection on host and the AAudio
+error-callback wiring compiled on device. The earlier `engine-audio-service`
+worktree (Hy4 trial) was preserved untouched and not copied.
+
 ## Current engine advancement — shadow reuse
 
 The reusable Vulkan renderer now reuses unchanged directional shadow depth and
