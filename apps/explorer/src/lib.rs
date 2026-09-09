@@ -7,6 +7,7 @@ mod experience;
 mod gallery;
 mod metrics;
 mod reflection_check;
+pub mod voxel_relay;
 mod wetland;
 mod wetland_metrics;
 mod wetland_replay;
@@ -22,6 +23,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+pub use voxel_relay::VoxelRelayApp;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, TouchPhase, WindowEvent},
@@ -1430,6 +1432,7 @@ pub fn run_desktop() {
     let mut gallery_exercise = false;
     let mut showcase = false;
     let mut sandbox = false;
+    let mut voxel_relay = false;
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
@@ -1444,6 +1447,7 @@ pub fn run_desktop() {
             }
             "--showcase" => showcase = true,
             "--sandbox" => sandbox = true,
+            "--voxel-relay" => voxel_relay = true,
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
@@ -1460,7 +1464,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1560,6 +1564,16 @@ pub fn run_desktop() {
         smoke_frames = Some(30);
     }
     let event_loop = EventLoop::new().expect("event loop");
+    if voxel_relay {
+        let mut relay = voxel_relay::VoxelRelayApp::new(save_path, smoke_frames);
+        event_loop
+            .run_app(&mut relay)
+            .expect("voxel relay event loop run");
+        if relay.failed {
+            std::process::exit(1);
+        }
+        return;
+    }
     if showcase || (!sandbox && !smoke_exercise && smoke_frames.is_none()) {
         let mut experience = experience::Experience::new(save_path, showcase, smoke_frames);
         event_loop.run_app(&mut experience).expect("event loop run");

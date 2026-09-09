@@ -1,5 +1,6 @@
 use glam::{Mat4, Vec2, Vec3};
-use std::collections::{HashMap, HashSet};
+use matterweave_core::{InputService, VirtualKey};
+use std::collections::HashSet;
 use winit::keyboard::KeyCode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,31 +20,46 @@ pub enum Action {
     Sun,
     ShadowQuality,
 }
-#[derive(Debug, Clone, Copy)]
-enum Finger {
-    Move { origin: Vec2, current: Vec2 },
-    Look { previous: Vec2 },
-    Up,
-    Down,
-    Button,
+
+impl Action {
+    fn to_u32(self) -> u32 {
+        self as u32
+    }
+
+    fn from_u32(val: u32) -> Option<Self> {
+        match val {
+            0 => Some(Action::Remove),
+            1 => Some(Action::Place),
+            2 => Some(Action::Save),
+            3 => Some(Action::Swap),
+            4 => Some(Action::Size),
+            5 => Some(Action::Grab),
+            6 => Some(Action::Throw),
+            7 => Some(Action::Break),
+            8 => Some(Action::Flight),
+            9 => Some(Action::Home),
+            10 => Some(Action::ResetObjects),
+            11 => Some(Action::Shadows),
+            12 => Some(Action::Sun),
+            13 => Some(Action::ShadowQuality),
+            _ => None,
+        }
+    }
 }
+
 #[derive(Default)]
 pub struct Controls {
-    fingers: HashMap<u64, Finger>,
+    pub service: InputService,
     pub keys: HashSet<KeyCode>,
     pub swapped: bool,
     pub large: bool,
-    look_delta: Vec2,
-    jump_pressed: bool,
     pub mouse_look: bool,
     pub cursor: Option<Vec2>,
 }
 impl Controls {
     pub fn clear(&mut self) {
-        self.fingers.clear();
+        self.service.clear();
         self.keys.clear();
-        self.look_delta = Vec2::ZERO;
-        self.jump_pressed = false;
         self.mouse_look = false;
         self.cursor = None;
     }
@@ -87,124 +103,71 @@ impl Controls {
         [[x, 390., 70., 48.], [x, 450., 70., 48.]]
     }
     pub fn start(&mut self, id: u64, p: Vec2) -> Option<Action> {
+        self.service.clear_button_zones();
         for (rect, _, action) in self.buttons() {
-            if contains(rect, p) {
-                self.fingers.insert(id, Finger::Button);
-                return Some(action);
-            }
+            self.service.add_button_zone(rect, action.to_u32());
         }
+        self.service.clear_motion_zones();
         let elevations = self.elevation_zones();
-        let role = if contains(elevations[0], p) {
-            self.jump_pressed = true;
-            Finger::Up
-        } else if contains(elevations[1], p) {
-            Finger::Down
-        } else if contains(self.move_zone(), p)
-            && !self
-                .fingers
-                .values()
-                .any(|f| matches!(f, Finger::Move { .. }))
-        {
-            Finger::Move {
-                origin: p,
-                current: p,
-            }
-        } else if !self
-            .fingers
-            .values()
-            .any(|f| matches!(f, Finger::Look { .. }))
-        {
-            Finger::Look { previous: p }
-        } else {
-            Finger::Button
-        };
-        self.fingers.insert(id, role);
-        None
+        self.service
+            .add_motion_zone(elevations[0], [0., 1., 0.], true);
+        self.service
+            .add_motion_zone(elevations[1], [0., -1., 0.], false);
+        self.service.set_move_zone(self.move_zone(), 70.0);
+        self.service.clear_look_zones();
+
+        self.service
+            .pointer_down(id, [p.x, p.y])
+            .and_then(Action::from_u32)
     }
     /// Gesture roles for the wetland HUD, independent of sandbox buttons.
     pub fn start_wetland(&mut self, id: u64, p: Vec2) {
-        let role = if contains([910., 367., 64., 55.], p) {
-            self.jump_pressed = true;
-            Finger::Up
-        } else if contains([60., 410., 142., 142.], p)
-            && !self
-                .fingers
-                .values()
-                .any(|f| matches!(f, Finger::Move { .. }))
-        {
-            Finger::Move {
-                origin: p,
-                current: p,
-            }
-        } else if !self
-            .fingers
-            .values()
-            .any(|f| matches!(f, Finger::Look { .. }))
-        {
-            Finger::Look { previous: p }
-        } else {
-            Finger::Button
-        };
-        self.fingers.insert(id, role);
+        self.service.clear_button_zones();
+        self.service.clear_motion_zones();
+        self.service
+            .add_motion_zone([910., 367., 64., 55.], [0., 1., 0.], true);
+        self.service.set_move_zone([60., 410., 142., 142.], 70.0);
+        self.service.clear_look_zones();
+
+        self.service.pointer_down(id, [p.x, p.y]);
     }
     pub fn moved(&mut self, id: u64, p: Vec2) {
-        if let Some(f) = self.fingers.get_mut(&id) {
-            match f {
-                Finger::Move { current, .. } => *current = p,
-                Finger::Look { previous } => {
-                    self.look_delta += p - *previous;
-                    *previous = p;
-                }
-                _ => {}
-            }
-        }
+        self.service.pointer_move(id, [p.x, p.y]);
     }
     pub fn end(&mut self, id: u64) {
-        self.fingers.remove(&id);
+        self.service.pointer_up(id);
     }
     pub fn mouse(&mut self, p: Vec2) {
         if self.mouse_look {
             if let Some(previous) = self.cursor {
-                self.look_delta += p - previous;
+                let delta = p - previous;
+                self.service.add_look_delta([delta.x, delta.y]);
             }
         }
         self.cursor = Some(p);
     }
     pub fn consume(&mut self) -> (Vec3, Vec2) {
-        let mut motion = Vec3::ZERO;
-        for f in self.fingers.values() {
-            match *f {
-                Finger::Move { origin, current } => {
-                    let delta = ((current - origin) / 70.).clamp_length_max(1.);
-                    motion.x += delta.x;
-                    motion.z -= delta.y;
-                }
-                Finger::Up => motion.y += 1.,
-                Finger::Down => motion.y -= 1.,
-                _ => {}
-            }
-        }
-        for (key, axis) in [
-            (KeyCode::KeyW, Vec3::Z),
-            (KeyCode::KeyS, Vec3::NEG_Z),
-            (KeyCode::KeyA, Vec3::NEG_X),
-            (KeyCode::KeyD, Vec3::X),
-            (KeyCode::Space, Vec3::Y),
-            (KeyCode::ShiftLeft, Vec3::NEG_Y),
+        for (key, vk) in [
+            (KeyCode::KeyW, VirtualKey::W),
+            (KeyCode::KeyS, VirtualKey::S),
+            (KeyCode::KeyA, VirtualKey::A),
+            (KeyCode::KeyD, VirtualKey::D),
+            (KeyCode::Space, VirtualKey::Space),
+            (KeyCode::ShiftLeft, VirtualKey::Shift),
         ] {
             if self.keys.contains(&key) {
-                motion += axis;
+                self.service.key_down(vk);
+            } else {
+                self.service.key_up(vk);
             }
         }
-        if std::mem::take(&mut self.jump_pressed) {
-            motion.y = motion.y.max(1.);
-        }
-        let delta = std::mem::take(&mut self.look_delta);
-        (motion.clamp_length_max(1.), delta)
+        let motion = self.service.consume_motion();
+        let delta = self.service.consume_look();
+        (Vec3::from_array(motion), Vec2::from_array(delta))
     }
 }
 pub fn contains([x, y, w, h]: [f32; 4], p: Vec2) -> bool {
-    p.x >= x && p.x < x + w && p.y >= y && p.y < y + h
+    matterweave_core::input::contains([x, y, w, h], [p.x, p.y])
 }
 
 pub struct Camera {
