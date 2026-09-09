@@ -231,25 +231,23 @@ fn voice_limit_enforced_at_8_with_no_stealing() {
         .expect("play after stop");
     let err = service.play(clip, PlayOptions::default()).unwrap_err();
     assert_eq!(err, AudioServiceError::VoiceLimit);
-    // The stopped voice's handle cannot be confused with the fresh one in the same
-    // slot (fresh voice may even reuse the same slot index).
-    let fresh_slot = fresh.slot();
-    let stale_slot = voices[3].slot();
-    let _ = (fresh_slot, stale_slot);
-    // Stopping the stale handle again must not silence the fresh voice even if it
-    // was placed in the same slot.
-    if fresh_slot == stale_slot {
-        assert_eq!(
-            service.stop_voice(voices[3]).unwrap_err(),
-            AudioServiceError::StaleVoiceHandle
-        );
-        // One render applies the fresh voice's play (liveness lags one callback).
-        render_stereo(&mut service, 1);
-        assert!(
-            service.is_voice_active(fresh),
-            "fresh voice unaffected by stale stop"
-        );
-    }
+    // Slot 3 is the only free voice slot, so the fresh voice must take it; assert
+    // that determinism instead of conditionally skipping the stale-handle check.
+    assert_eq!(
+        fresh.slot(),
+        voices[3].slot(),
+        "fresh voice takes the freed slot"
+    );
+    assert_eq!(
+        service.stop_voice(voices[3]).unwrap_err(),
+        AudioServiceError::StaleVoiceHandle
+    );
+    // One render applies the fresh voice's play (liveness lags one callback).
+    render_stereo(&mut service, 1);
+    assert!(
+        service.is_voice_active(fresh),
+        "fresh voice unaffected by stale stop"
+    );
 }
 
 #[test]
