@@ -1,6 +1,48 @@
 # Current status
 
-Updated: 2026-09-08
+Updated: 2026-09-09
+
+## Milestone M6 Advancement — Voxel Relay Puzzle Sample & Engine Reusability
+
+On branch `eval/gemini-voxel-relay`, implemented "Voxel Relay", a playable orthographic
+Android puzzle sample proving Matterweave's engine framework supports another distinct
+game genre without duplicating or copying its engine implementation.
+
+Key Accomplishments:
+- **Reusable Input Service (`matterweave_core::input::InputService`)**: Extracted a platform-independent
+  multi-touch pointer and keyboard tracker into `matterweave-core`. Reused across existing
+  explorer/wetland controls (`apps/explorer/src/controls.rs`) and Voxel Relay (`apps/explorer/src/voxel_relay.rs`)
+  with zero engine code duplication.
+- **Orthographic Camera & Touch Controls**: Rendered high-angle isometric chamber views via Vulkan
+  `Renderer` (`Mat4::orthographic_rh` and `Mat4::look_at_rh`). On-screen virtual joystick and touch action
+  buttons mapped via `Hud`.
+- **Dynamic Voxel Crate & Pressure Plate**: Authentic `[2, 2, 2]` rigid body pushed across stone floor
+  using physical kinematic character impulses in Rapier (`controller.solve_character_collision_impulses`).
+  No teleportation or artificial forces used.
+- **Authoritative Voxel Door**: Occupancy of pressure plate (`Z = 7.0`) triggers removal of door cells
+  (`Z = 10.0`) in `World`, synchronizing compound static colliders in `Physics` via `sync_world`.
+- **Player Voxel Removal**: Player triggers action button to remove destructible obstacle voxels (`Z = 15.0`)
+  in `World`, opening path to exit zone (`Z >= 19.5`).
+- **Atomic Persistence**: Game state atomically preserved alongside world chunks via `World::save_with_attachment`,
+  restoring player position, crate rigid body pose/velocity, door open state, voxel edits, and puzzle status.
+- **Comprehensive Verification**:
+  - Deterministic replay flow (`test_deterministic_replay_flow`): closed door physically stops player
+    (`9.5 < eye[2] < 9.75`), crate is pushed to plate, door opens, doorway traversed, obstacle cleared, exit reached.
+  - Save/reload invariance (`test_save_reload_intermediate_and_unrelated_invariance`): intermediate puzzle state
+    restored, pre-existing unrelated save verified 100% byte-identical.
+  - Repeatability (`test_ten_repeated_replays_deterministic_outcome`): 10 repeated replay trials produce identical
+    world revisions and spatial endpoints within float tolerance.
+  - Input edge cases (`test_input_service_comprehensive_edge_cases`): simultaneous touch/action, cancellation,
+    focus loss, and recovery.
+- **Verification Gates**:
+  - Workspace tests: All tests pass (`cargo test --workspace --locked`). Explorer suite has 86 passed tests.
+  - Format & Clippy: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean (0 warnings).
+  - Android APK: Debug APK built successfully with Gradle 8.11.1 (`:app:assembleDebug`).
+    SHA256: `aba3d489ad12d9e38573686e38fa8bd3f7646312029a1b78da9caf623e6e0165`.
+    Native library `libmatterweave_explorer.so` ELF 16 KiB page alignment verified (`0x4000`).
+  - Physical Device Gate: **NOT RUN** (no exclusive reservation held on the shared OnePlus 13 device; honest reporting per project rules).
+- **Independent Architecture & Verification Review**: Conducted by independent subagent; verified complete
+  engine/game separation, zero leakage into `crates/matterweave-*`, and rigorous physics-backed verification.
 
 ## Active engine completion campaign
 
