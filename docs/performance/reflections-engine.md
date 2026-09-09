@@ -151,6 +151,12 @@ xvfb-run -a cargo run -p matterweave-explorer --locked -- --reflection-check --s
   stream.
 - App gate (`--reflection-check`) runs eight scripted phases and reports
   publication cost, owned bytes and frame-time percentiles per phase.
+- Existing gates re-run unchanged: `ray_reference_vulkan` 30 checks / 0 failures,
+  `renderer_comparison` 16 fixture runs / 0 failures ("PASS Vulkan validation: no
+  error messages"), `cache_smoke` ten frames, `indirect_smoke` PASS.
+- Workspace: `cargo test --workspace` 404 passed / 0 failed / 3 pre-existing
+  ignored; `cargo clippy --workspace --all-targets -- -D warnings` clean;
+  `cargo fmt --all -- --check` clean; `python3 tools/check_docs.py` passes.
 
 Host numbers come from llvmpipe, a software rasterizer; they are correctness and
 mechanism evidence only and are never presented as device performance.

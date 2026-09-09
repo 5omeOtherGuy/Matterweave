@@ -48,7 +48,11 @@ a headless host validator, a real-Renderer smoke example and an app validation
 mode. Limits: 64³ source volume, configurable trace steps with a 512 hard
 maximum, one secondary ray, no recursion or temporal history.
 
-Host evidence: 28 predetermined non-edge probes and 346 seeded randomized probes
+Host verification: 404 workspace tests pass (3 pre-existing ignored gates), strict
+Clippy and `cargo fmt --check` pass, `tools/check_docs.py` passes, and the existing
+ray-reference (30 checks), renderer-comparison (16 fixture runs), cache_smoke and
+indirect_smoke gates all pass with no Vulkan validation errors. 28 predetermined
+non-edge probes and 346 seeded randomized probes
 agree with an independent `World::raycast` oracle within 0.5/255 (3/255
 tolerance); the nonreflective baseline is preserved within 0.5/255 (1/255
 tolerance); recorded images show all seven required responses including an
@@ -56,8 +60,9 @@ object outside the camera frustum visible only through reflection; the real
 Renderer passes enable/disable/edit/resize/recreation with an empty Vulkan
 validation stream. **Device gates are NOT RUN** — the shared phone is
 owner-reserved; the ready-to-run candidate is the `--reflection-cost` app gate.
-See [reflection evidence](performance/reflections-engine.md). This advances R09/M4
-and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
+See [reflection evidence](performance/reflections-engine.md) and
+[draft PR 13](https://github.com/5omeOtherGuy/Matterweave/pull/13). This advances
+R09/M4 and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
 
 ## Current engine systems branch
 
