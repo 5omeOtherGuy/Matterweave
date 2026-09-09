@@ -82,3 +82,33 @@ The background adapter also passes OnePlus 13 Android 16 off/on/light/edit/enclo
 and HOME/resume checks, with nine presentations while preparation was pending.
 PR10 and v0.5 deliver this bounded slice; [evidence](../performance/async-indirect.md)
 records exact source and artifact checksums. M4 acceptance remains open.
+
+## Bounded specular reflection reference — 2026-09-09
+
+An opt-in, bounded single specular bounce now runs in the existing Vulkan raster
+renderer. One secondary ray per reflective fragment is traced through a source
+volume of at most 64³ authoritative voxel cells with a configurable step budget
+(hard maximum 512); a ray that leaves the volume, self-intersects or exhausts the
+budget terminates against the scene background/fog colour. Nonreflective
+rendering is the default and bit-identical to the previous output. Mirror
+strength is a per-material property; a fragment's material is the authoritative
+voxel at the shaded face, so no vertex-format change was needed.
+
+Invalidation is explicit: geometry uploads and shadow-resource replacement
+disable reflection, publication validates `(epoch, revision, seed)` plus a
+footprint digest so an equal-revision scene replacement cannot publish, and a
+rejected publication disables first. The sun is a live per-frame uniform, so sun
+changes need no republication.
+
+Host evidence: 28 predetermined non-edge probes and 346 seeded randomized probes
+agree with an independent CPU `World::raycast` oracle within 0.5/255 (tolerance
+3/255), the nonreflective baseline is preserved within 0.5/255 (tolerance 1/255),
+recorded images show all seven required responses including an object outside the
+camera frustum visible only through reflection, and the real Renderer passes
+enabling/disabling/editing/resize/recreation with an empty Vulkan validation
+stream. Device gates are NOT RUN: the shared phone is owner-reserved.
+
+This is one bounded specular capability, not Lumen-like lighting. Glossy
+reflection, shadowed reflected hits, temporal accumulation, denoising, multiple
+bounces and reflective non-voxel meshes are deferred. See
+[reflection evidence](../performance/reflections-engine.md). ADR remains Proposed.

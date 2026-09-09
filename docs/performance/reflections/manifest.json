@@ -1,0 +1,22 @@
+{
+  "artifacts": {
+    "images": "PPM, sRGB-encoded for viewing, linear R8G8B8A8 source",
+    "extents": "probe 1x1, scenes 192x144",
+    "elapsed_seconds": 0.277
+  },
+  "cases": [
+    {"id": "1-nonreflective-baseline-1-255", "status": "PASS", "detail": "28 pixels, worst 0.001955 <= 0.003922"},
+    {"id": "2-predetermined-probes-vs-oracle", "status": "PASS", "detail": "28 probes, 14 hits, 14 misses, worst 0.001931 <= 0.011765, rejected 0"},
+    {"id": "3-seeded-randomized-scenes", "status": "PASS", "detail": "64 worlds, 346 probes, 166 skipped by the pre-registered edge filter, worst 0.001948"},
+    {"id": "4b-oracle-response-per-change", "status": "PASS", "detail": "base material 1 cell [6, 3, 5]; responses verified for camera/material/occluder/removal/sun"},
+    {"id": "4-recorded-images-seven-responses", "status": "PASS", "detail": "direct-change 0, off-screen 23268, camera 21370, material 1737, occluder 2410, removed 1737, sun 14546, replacement 18259, recreation drift 0"},
+    {"id": "5-delayed-result-cannot-publish", "status": "PASS", "detail": "A->B->A rejected true, equal-revision replacement rejected true"},
+    {"id": "6-volume-and-budget-bounds", "status": "PASS", "detail": "rejects axis>64 and steps>512; 64^3 = 262144 cells, bound 193"}
+  ],
+  "not_run": [
+    {"id": "10-device-frame-cost-off-on", "status": "NOT RUN", "detail": "120 warmup + 1000 measured frames per mode at matched resolution"},
+    {"id": "10-device-gpu-timings", "status": "NOT RUN", "detail": "GPU interval timings if the device exposes timestamp queries"},
+    {"id": "10-device-thermal", "status": "NOT RUN", "detail": "thermal conditions during measurement"},
+    {"id": "11-device-captures", "status": "NOT RUN", "detail": "edit, camera motion and HOME/resume captures on the reserved device"}
+  ]
+}
