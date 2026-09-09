@@ -1,0 +1,779 @@
+//! The game-facing audio service.
+//!
+//! [`AudioService`] is the single owner of the mixer core, the command producer, the
+//! handle mirrors and the output backend. It is designed for one controlling thread
+//! (`&mut self` API) and never exposes backend or real-time primitives.
+
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+use crate::backend::{self, BackendError, CorePtr, OutputBackend};
+use crate::clip::ClipSpec;
+use crate::command::{queue, Command};
+use crate::config::{MAX_CLIPS, MAX_GAIN, MAX_PCM_BYTES, MAX_VOICES, SAMPLE_RATE};
+use crate::error::AudioServiceError;
+use crate::handle::{ClipHandle, VoiceHandle};
+use crate::mixer::{MixerCore, SharedRt};
+
+/// Negotiated output stream properties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamProperties {
+    /// Actual sample rate in Hz.
+    pub sample_rate: u32,
+    /// Actual channel count (1 or 2 after verification).
+    pub channels: u8,
+    /// True iff the stream format is 32-bit float.
+    pub float_format: bool,
+    /// Device burst size in frames.
+    pub frames_per_burst: u32,
+    /// Total buffer capacity in frames.
+    pub buffer_capacity_frames: u32,
+    /// Fixed callback batch size, if the device provides one.
+    pub frames_per_data_callback: Option<u32>,
+    /// Platform device id (negative = unspecified/mock).
+    pub device_id: i32,
+    /// Platform session id, if allocated.
+    pub session_id: Option<i32>,
+    /// True iff low-latency performance mode was granted.
+    pub low_latency: bool,
+    /// True iff the stream is exclusive (not mixed by the platform).
+    pub sharing_exclusive: bool,
+}
+
+/// Options for starting a voice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlayOptions {
+    /// Linear gain applied to every sample of the voice. Must be finite and within
+    /// ±[`MAX_GAIN`].
+    pub gain: f32,
+}
+
+impl Default for PlayOptions {
+    fn default() -> Self {
+        Self { gain: 1.0 }
+    }
+}
+
+impl PlayOptions {
+    /// Options with an explicit gain.
+    pub fn with_gain(gain: f32) -> Self {
+        Self { gain }
+    }
+}
+
+/// Operational counters and diagnostics.
+///
+/// Counters are monotonic for the service lifetime. RT-side counters reflect the
+/// last completed render invocation; control-side counters are exact at return time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthSnapshot {
+    /// Completed render-callback invocations.
+    pub callback_count: u64,
+    /// Frames handed to the output device.
+    pub frames_rendered: u64,
+    /// Commands applied by the render thread.
+    pub commands_applied: u64,
+    /// Commands pushed but not yet applied (converges to exact between callbacks).
+    pub pending_commands: usize,
+    /// Commands rejected because the queue was full (backpressure, never overwrite).
+    pub rejected_commands: u64,
+    /// Playback requests rejected because all voices were active.
+    pub rejected_voice_starts: u64,
+    /// Clip registrations rejected (limits, budget, invalid data, full queue).
+    pub rejected_registrations: u64,
+    /// Voices silenced because their clip was unregistered.
+    pub voices_silenced: u64,
+    /// Voices that finished playing their clip.
+    pub voices_completed: u64,
+    /// Commands rejected by the render thread (generation mismatch). Expected zero.
+    pub rt_rejected_commands: u64,
+    /// Device-reported underruns/overruns for the current stream.
+    pub device_xruns: u32,
+    /// Device errors observed since creation (each normally followed by recreation).
+    pub device_errors: u64,
+    /// Times the output stream was closed and reopened (device loss, diagnostic).
+    pub stream_recreations: u64,
+    /// Render-thread ack epoch (advances once per completed invocation).
+    pub ack_epoch: u64,
+    /// Render thread's suspended truth (as of the last completed invocation).
+    pub suspended: bool,
+}
+
+/// Control-side mirror of one clip slot.
+#[derive(Debug, Clone, Copy)]
+struct ClipMirror {
+    generation: u32,
+    active: bool,
+    /// First pool sample.
+    start: u32,
+    /// Length in samples.
+    samples: u32,
+    /// 1 or 2.
+    channels: u8,
+}
+
+impl ClipMirror {
+    const fn empty() -> Self {
+        Self {
+            generation: 0,
+            active: false,
+            start: 0,
+            samples: 0,
+            channels: 1,
+        }
+    }
+}
+
+/// Control-side mirror of one voice slot.
+#[derive(Debug, Clone, Copy)]
+struct VoiceMirror {
+    generation: u32,
+    /// Whether the control thread believes the voice is active (the RT live mask is
+    /// the authoritative truth once the play command was applied).
+    live: bool,
+    /// Clip slot the voice plays from.
+    clip_slot: u8,
+    /// Ack epoch snapshot taken after the play command was queued. While
+    /// `ack_epoch <= play_epoch` the play may not be applied yet, so the RT live
+    /// mask says nothing about this voice yet (conservative: treat as occupied).
+    play_epoch: u64,
+}
+
+impl VoiceMirror {
+    const fn empty() -> Self {
+        Self {
+            generation: 0,
+            live: false,
+            clip_slot: 0,
+            play_epoch: 0,
+        }
+    }
+}
+
+/// A PCM range in the clip pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PoolRange {
+    start: u32,
+    samples: u32,
+}
+
+/// The bounded audio service.
+///
+/// One instance owns one output stream and one mixer core. All operations validate
+/// completely before mutating state; rejected operations leave the service exactly
+/// as they found it.
+///
+/// # Drop order
+///
+/// The backend (owning the stream and the callback closures) is dropped before the
+/// mixer core. AAudio closes the stream when the stream object drops and joins all
+/// callback threads before returning, so no callback can observe the freed core.
+pub struct AudioService {
+    backend: Option<Box<dyn OutputBackend>>,
+    core: Option<Box<MixerCore>>,
+    /// Alias of `core`'s contents; handed to output callbacks. Valid while `core` is
+    /// `Some`, which outlives every callback (see drop order above).
+    core_ptr: CorePtr,
+    shared: Arc<SharedRt>,
+    producer: queue::Producer,
+
+    clip_mirror: [ClipMirror; MAX_CLIPS],
+    voice_mirror: [VoiceMirror; MAX_VOICES],
+    free_ranges: Vec<PoolRange>,
+    /// Ranges freed whose unload the render thread has not acknowledged yet.
+    pending_ranges: Vec<(PoolRange, u64)>,
+    /// Sum of registered clip samples (the "retained PCM payload").
+    used_samples: usize,
+    running: bool,
+
+    commands_pushed: u64,
+    rejected_commands: u64,
+    rejected_voice_starts: u64,
+    rejected_registrations: u64,
+    device_errors: u64,
+    stream_recreations: u64,
+}
+
+// SAFETY: the raw core pointer is dereferenced only by output callbacks (which are
+// quiesced before the core drops); everything else is ordinary single-thread state
+// or atomics behind an Arc.
+unsafe impl Send for AudioService {}
+
+impl AudioService {
+    /// Create the service and open the platform output stream.
+    ///
+    /// Allocates the fixed PCM pool (4 MiB), the bounded command queue (64 commands)
+    /// and the mixer core, then opens and starts the output stream. The stream
+    /// properties are verified after open.
+    pub fn new() -> Result<Self, AudioServiceError> {
+        let pool = vec![0.0f32; MAX_PCM_BYTES / 4].into_boxed_slice();
+        let shared = Arc::new(SharedRt::default());
+        let (core, producer) = MixerCore::new(pool, shared.clone());
+        Self::assemble(Box::new(core), producer, shared)
+    }
+
+    fn assemble(
+        mut core: Box<MixerCore>,
+        producer: queue::Producer,
+        shared: Arc<SharedRt>,
+    ) -> Result<Self, AudioServiceError> {
+        let core_ptr = CorePtr(&mut *core as *mut MixerCore);
+        let mut free_ranges = Vec::with_capacity(256);
+        free_ranges.push(PoolRange {
+            start: 0,
+            samples: (MAX_PCM_BYTES / 4) as u32,
+        });
+        let mut service = Self {
+            backend: None,
+            core: Some(core),
+            core_ptr,
+            shared,
+            producer,
+            clip_mirror: core::array::from_fn(|_| ClipMirror::empty()),
+            voice_mirror: core::array::from_fn(|_| VoiceMirror::empty()),
+            free_ranges,
+            pending_ranges: Vec::with_capacity(256),
+            used_samples: 0,
+            running: false,
+            commands_pushed: 0,
+            rejected_commands: 0,
+            rejected_voice_starts: 0,
+            rejected_registrations: 0,
+            device_errors: 0,
+            stream_recreations: 0,
+        };
+        service.open_output()?;
+        service.start_output()?;
+        Ok(service)
+    }
+
+    fn open_output(&mut self) -> Result<(), AudioServiceError> {
+        let backend = backend::open_backend(self.core_ptr, self.shared.clone())?;
+        self.backend = Some(backend);
+        Ok(())
+    }
+
+    fn start_output(&mut self) -> Result<(), AudioServiceError> {
+        let backend = self
+            .backend
+            .as_mut()
+            .ok_or(AudioServiceError::StreamStartFailed { code: 0 })?;
+        backend.start()?;
+        self.running = true;
+        Ok(())
+    }
+
+    /// Register a clip. Validates completely, then copies the samples into the pool.
+    ///
+    /// Rejections are atomic: the clip limit (32), the PCM budget (4 MiB), invalid
+    /// data and a full command queue all leave the service unchanged.
+    pub fn register_clip(&mut self, spec: ClipSpec<'_>) -> Result<ClipHandle, AudioServiceError> {
+        let validated = match spec.validate() {
+            Ok(validated) => validated,
+            Err(e) => {
+                self.rejected_registrations += 1;
+                return Err(e);
+            }
+        };
+        let slot = match self.clip_mirror.iter().position(|mirror| !mirror.active) {
+            Some(slot) => slot,
+            None => {
+                self.rejected_registrations += 1;
+                return Err(AudioServiceError::ClipLimit);
+            }
+        };
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_registrations += 1;
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        // First-fit range search (deterministic). A range is only reused after the
+        // audio thread acknowledged the unload (ack epoch advanced past the unload
+        // command), so no voice can still reference it.
+        let range = match self.take_free_range(spec.samples.len()) {
+            Ok(range) => range,
+            Err(e) => {
+                self.rejected_registrations += 1;
+                return Err(e);
+            }
+        };
+        let generation = next_generation(self.clip_mirror[slot].generation);
+        let start = range.start;
+        let samples = spec.samples.len();
+        self.core.as_mut().expect("core present").pool[start as usize..start as usize + samples]
+            .copy_from_slice(spec.samples);
+        self.used_samples += samples;
+
+        self.push(Command::LoadClip {
+            slot: slot as u8,
+            generation,
+        })
+        .expect("queue space checked above");
+
+        self.clip_mirror[slot] = ClipMirror {
+            generation,
+            active: true,
+            start,
+            samples: samples as u32,
+            channels: validated.channels,
+        };
+        Ok(ClipHandle {
+            slot: slot as u8,
+            generation,
+        })
+    }
+
+    /// Unregister a clip. Every voice still playing it is silenced (their handles
+    /// become inactive; `stop_voice` on them stays a successful no-op).
+    ///
+    /// The freed PCM range becomes reusable only after the render thread applied the
+    /// unload command (one ack epoch later), which is what makes reusing pool memory
+    /// safe without locks. If the render thread is suspended, freed ranges stay
+    /// pending until resume; a registration needing that memory then returns
+    /// [`AudioServiceError::RangeNotYetAcknowledged`].
+    pub fn unregister_clip(&mut self, clip: ClipHandle) -> Result<(), AudioServiceError> {
+        let slot = self.validate_clip(clip)?;
+        let generation = next_generation(clip.generation);
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        self.push(Command::UnloadClip {
+            slot: clip.slot,
+            generation,
+        })
+        .expect("queue space checked above");
+        let range = PoolRange {
+            start: self.clip_mirror[slot].start,
+            samples: self.clip_mirror[slot].samples,
+        };
+        let clip_slot = clip.slot;
+        self.clip_mirror[slot] = ClipMirror {
+            generation,
+            ..ClipMirror::empty()
+        };
+        self.used_samples -= range.samples as usize;
+        // Retire the voices pointing at this clip on the control side; the render
+        // thread silences them when it applies the command.
+        for voice in self.voice_mirror.iter_mut() {
+            if voice.clip_slot == clip_slot {
+                voice.live = false;
+            }
+        }
+        // Snapshot the ack epoch AFTER queueing the command: every invocation that
+        // applies the command bumps the epoch past this value when it completes.
+        let epoch = self.shared.ack_epoch.load(Ordering::Acquire);
+        self.pending_ranges.push((range, epoch));
+        Ok(())
+    }
+
+    /// Start a new voice playing `clip`. Voices are never stolen: if all 8 slots are
+    /// active, [`AudioServiceError::VoiceLimit`] is returned and nothing changes.
+    ///
+    /// Capacity reflects render-thread applied state: a play immediately after a
+    /// stop (or after a previous play whose slot is being reused) may be rejected
+    /// with `VoiceLimit` until the next callback applies the pending commands.
+    /// Retry after the next callback on a live device.
+    pub fn play(
+        &mut self,
+        clip: ClipHandle,
+        options: PlayOptions,
+    ) -> Result<VoiceHandle, AudioServiceError> {
+        if !options.gain.is_finite() || options.gain.abs() > MAX_GAIN {
+            return Err(AudioServiceError::InvalidGain);
+        }
+        let clip_slot = self.validate_clip(clip)?;
+        let voice_slot = match self.find_free_voice_slot() {
+            Some(slot) => slot,
+            None => {
+                self.rejected_voice_starts += 1;
+                return Err(AudioServiceError::VoiceLimit);
+            }
+        };
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        let clip_mirror = self.clip_mirror[clip_slot];
+        let voice_generation = next_generation(self.voice_mirror[voice_slot].generation);
+        self.push(Command::Play {
+            voice_slot: voice_slot as u8,
+            voice_generation,
+            clip_slot: clip.slot,
+            clip_generation: clip.generation,
+            start: clip_mirror.start,
+            frames: clip_mirror.samples / clip_mirror.channels as u32,
+            clip_channels: clip_mirror.channels,
+            gain: options.gain,
+        })
+        .expect("queue space checked above");
+        // Snapshot after queueing: once the ack epoch advances past this value, the
+        // RT live mask is authoritative for this voice.
+        let play_epoch = self.shared.ack_epoch.load(Ordering::Acquire);
+        self.voice_mirror[voice_slot] = VoiceMirror {
+            generation: voice_generation,
+            live: true,
+            clip_slot: clip.slot,
+            play_epoch,
+        };
+        Ok(VoiceHandle {
+            slot: voice_slot as u8,
+            generation: voice_generation,
+        })
+    }
+
+    /// Stop a voice. Stopping an already-finished voice is a successful no-op; a
+    /// stale handle is rejected and cannot affect the voice that now owns the slot.
+    pub fn stop_voice(&mut self, voice: VoiceHandle) -> Result<(), AudioServiceError> {
+        let slot = self.validate_voice(voice)?;
+        if self.voice_definitely_finished(slot) {
+            self.voice_mirror[slot].live = false;
+            return Ok(());
+        }
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        self.push(Command::Stop {
+            voice_slot: slot as u8,
+            voice_generation: voice.generation,
+        })
+        .expect("queue space checked above");
+        Ok(())
+    }
+
+    /// Change a voice's gain. The voice must still be active.
+    pub fn set_voice_gain(
+        &mut self,
+        voice: VoiceHandle,
+        gain: f32,
+    ) -> Result<(), AudioServiceError> {
+        if !gain.is_finite() || gain.abs() > MAX_GAIN {
+            return Err(AudioServiceError::InvalidGain);
+        }
+        let slot = self.validate_voice(voice)?;
+        if self.voice_definitely_finished(slot) {
+            return Err(AudioServiceError::VoiceNotActive);
+        }
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        self.push(Command::SetGain {
+            voice_slot: slot as u8,
+            voice_generation: voice.generation,
+            gain,
+        })
+        .expect("queue space checked above");
+        Ok(())
+    }
+
+    /// Suspend output: freeze the mixer clock mid-sample and silence the device.
+    ///
+    /// Nothing is dropped or restarted: voices active at suspend continue exactly
+    /// where they stopped on resume, and commands queued during suspension are
+    /// applied in FIFO order when the mixer resumes (a queued play that had not yet
+    /// started begins after resume). Idempotent while already suspended.
+    pub fn suspend(&mut self) -> Result<(), AudioServiceError> {
+        if !self.running {
+            return Ok(());
+        }
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        self.push(Command::Suspend)
+            .expect("queue space checked above");
+        // Pause the device after the mixer command is queued; in-flight callbacks
+        // render silence because the core is suspended first. If the device pause
+        // fails, compensate by un-suspending the core so device and mixer agree.
+        if let Some(backend) = self.backend.as_mut() {
+            if let Err(device_error) = backend.suspend() {
+                let _ = self.push(Command::Resume);
+                return Err(device_error);
+            }
+        }
+        self.running = false;
+        Ok(())
+    }
+
+    /// Resume output after [`AudioService::suspend`]. Idempotent while running.
+    pub fn resume(&mut self) -> Result<(), AudioServiceError> {
+        if self.running {
+            return Ok(());
+        }
+        if queue::vacant(&self.producer) == 0 {
+            self.rejected_commands += 1;
+            return Err(AudioServiceError::CommandQueueFull);
+        }
+        // Queue Resume before starting the stream so the first callback after the
+        // start applies the whole pending command batch (no silent gap).
+        self.push(Command::Resume)
+            .expect("queue space checked above");
+        self.start_output()?;
+        Ok(())
+    }
+
+    /// Check for device loss and recreate the output stream around the same mixer
+    /// core. Voices continue where they stopped. Call this from the game loop; after
+    /// a device loss [`AudioService::stream_properties`] returns `None` until a
+    /// successful recreation.
+    pub fn poll_device(&mut self) -> Result<(), AudioServiceError> {
+        let error = self
+            .backend
+            .as_mut()
+            .and_then(|backend| backend.take_error());
+        let Some(BackendError { code: _code }) = error else {
+            return Ok(());
+        };
+        self.device_errors += 1;
+        // Close the failed stream (joins callbacks), then open a new one around the
+        // same core. On open/start failure the service stays closed and
+        // recoverable: a later poll_device retries.
+        if let Some(backend) = self.backend.as_mut() {
+            backend.close()?;
+        }
+        self.backend = None;
+        self.running = false;
+        self.open_output()?;
+        self.start_output()?;
+        self.stream_recreations += 1;
+        self.shared.error_code.store(0, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Last negotiated stream properties, or `None` while the stream is closed or
+    /// lost.
+    pub fn stream_properties(&self) -> Option<StreamProperties> {
+        self.backend
+            .as_ref()
+            .and_then(|backend| backend.properties())
+    }
+
+    /// Whether a clip is registered with this exact handle.
+    pub fn clip_is_registered(&self, clip: ClipHandle) -> bool {
+        let slot = clip.slot as usize;
+        slot < MAX_CLIPS
+            && self.clip_mirror[slot].active
+            && self.clip_mirror[slot].generation == clip.generation
+    }
+
+    /// Whether a voice is currently audible (generation-checked).
+    ///
+    /// On a device the answer can lag one render callback behind reality.
+    pub fn is_voice_active(&self, voice: VoiceHandle) -> bool {
+        let slot = voice.slot as usize;
+        slot < MAX_VOICES
+            && self.voice_mirror[slot].generation == voice.generation
+            && self.voice_mirror[slot].live
+            && self.rt_voice_live(slot)
+    }
+
+    /// Operational counters (see [`HealthSnapshot`]).
+    pub fn health(&self) -> HealthSnapshot {
+        let xruns = self.backend.as_ref().map(|b| b.xrun_count()).unwrap_or(0);
+        let ack = self.shared.ack_epoch.load(Ordering::Acquire);
+        let applied = self.shared.commands_applied.load(Ordering::Acquire);
+        HealthSnapshot {
+            callback_count: self.shared.callback_count.load(Ordering::Acquire),
+            frames_rendered: self.shared.frames_rendered.load(Ordering::Acquire),
+            commands_applied: applied,
+            pending_commands: self.commands_pushed.saturating_sub(applied) as usize,
+            rejected_commands: self.rejected_commands,
+            rejected_voice_starts: self.rejected_voice_starts,
+            rejected_registrations: self.rejected_registrations,
+            voices_silenced: self.shared.voices_silenced.load(Ordering::Acquire),
+            voices_completed: self.shared.voices_completed.load(Ordering::Acquire),
+            rt_rejected_commands: self.shared.rt_rejected_commands.load(Ordering::Acquire),
+            device_xruns: xruns,
+            device_errors: self.device_errors,
+            stream_recreations: self.stream_recreations,
+            ack_epoch: ack,
+            suspended: self.shared.suspended.load(Ordering::Acquire),
+        }
+    }
+
+    /// Total bytes of PCM currently retained by registered clips.
+    pub fn retained_pcm_bytes(&self) -> usize {
+        self.used_samples * 4
+    }
+
+    /// The required output sample rate.
+    pub const SAMPLE_RATE: u32 = SAMPLE_RATE;
+
+    /// Typed access to the mock backend, if the current backend is one (test and
+    /// diagnostic fault injection).
+    #[cfg(feature = "backend-mock")]
+    pub fn mock_backend(&mut self) -> Option<&mut crate::backend::mock::MockOutput> {
+        self.backend.as_mut().and_then(|backend| backend.as_mock())
+    }
+
+    /// Drive one render invocation synchronously through the mock backend (host
+    /// tests and the host diagnostic). Returns frames rendered.
+    #[cfg(feature = "backend-mock")]
+    pub fn mock_render(
+        &mut self,
+        out: &mut [f32],
+    ) -> Result<usize, crate::backend::mock::MockRenderError> {
+        match self.backend.as_mut().and_then(|backend| backend.as_mock()) {
+            Some(mock) => mock.render(out),
+            // Not a mock (e.g. Android build with real output enabled).
+            None => Err(crate::backend::mock::MockRenderError::Closed),
+        }
+    }
+
+    // ---- internals ---------------------------------------------------------
+
+    fn validate_clip(&self, clip: ClipHandle) -> Result<usize, AudioServiceError> {
+        let slot = clip.slot as usize;
+        if slot >= MAX_CLIPS {
+            return Err(AudioServiceError::StaleClipHandle);
+        }
+        let mirror = &self.clip_mirror[slot];
+        if !mirror.active || mirror.generation != clip.generation {
+            return Err(AudioServiceError::StaleClipHandle);
+        }
+        Ok(slot)
+    }
+
+    fn validate_voice(&self, voice: VoiceHandle) -> Result<usize, AudioServiceError> {
+        let slot = voice.slot as usize;
+        if slot >= MAX_VOICES || self.voice_mirror[slot].generation != voice.generation {
+            return Err(AudioServiceError::StaleVoiceHandle);
+        }
+        Ok(slot)
+    }
+
+    /// RT truth for voice liveness (as of the last completed invocation).
+    fn rt_voice_live(&self, slot: usize) -> bool {
+        self.shared.live_mask.load(Ordering::Acquire) & (1 << slot) != 0
+    }
+
+    /// First voice slot that is either unused on the control side or already
+    /// reported inactive by the render thread (completion). Reuse bumps the
+    /// generation, which invalidates the old handle.
+    fn find_free_voice_slot(&self) -> Option<usize> {
+        let ack = self.shared.ack_epoch.load(Ordering::Acquire);
+        for (index, mirror) in self.voice_mirror.iter().enumerate() {
+            if !mirror.live {
+                return Some(index);
+            }
+            // Only trust the RT mask once this slot's play was applied.
+            if ack > mirror.play_epoch && !self.rt_voice_live(index) {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    /// A voice is finished when the control side retired it or when its play was
+    /// applied (ack advanced) and the RT reported it inactive.
+    fn voice_definitely_finished(&self, slot: usize) -> bool {
+        let mirror = &self.voice_mirror[slot];
+        !mirror.live
+            || (self.shared.ack_epoch.load(Ordering::Acquire) > mirror.play_epoch
+                && !self.rt_voice_live(slot))
+    }
+
+    fn take_free_range(&mut self, samples: usize) -> Result<PoolRange, AudioServiceError> {
+        self.reclaim_acknowledged_ranges();
+        let largest = self
+            .free_ranges
+            .iter()
+            .map(|r| r.samples)
+            .max()
+            .unwrap_or(0);
+        let Some(index) = self
+            .free_ranges
+            .iter()
+            .position(|r| r.samples as usize >= samples)
+        else {
+            if !self.pending_ranges.is_empty() {
+                return Err(AudioServiceError::RangeNotYetAcknowledged);
+            }
+            return Err(AudioServiceError::PcmBudgetExceeded {
+                required_samples: samples,
+                largest_free_range_samples: largest as usize,
+            });
+        };
+        let range = self.free_ranges[index];
+        let rest = range.samples - samples as u32;
+        if rest == 0 {
+            self.free_ranges.remove(index);
+        } else {
+            self.free_ranges[index] = PoolRange {
+                start: range.start + samples as u32,
+                samples: rest,
+            };
+        }
+        Ok(range)
+    }
+
+    /// Move pending ranges whose unload command the render thread has applied (ack
+    /// epoch advanced past the recorded epoch) back into the free list. Satisfied
+    /// entries always form a prefix because epochs are recorded in push order.
+    fn reclaim_acknowledged_ranges(&mut self) {
+        let ack = self.shared.ack_epoch.load(Ordering::Acquire);
+        let mut count = 0;
+        while count < self.pending_ranges.len() && ack > self.pending_ranges[count].1 {
+            let (range, _) = self.pending_ranges[count];
+            self.free_ranges.push(range);
+            count += 1;
+        }
+        self.pending_ranges.drain(..count);
+    }
+
+    fn push(&mut self, command: Command) -> Result<(), AudioServiceError> {
+        use ringbuf::traits::Producer;
+        match self.producer.try_push(command) {
+            Ok(()) => {
+                self.commands_pushed += 1;
+                Ok(())
+            }
+            Err(_) => {
+                self.rejected_commands += 1;
+                Err(AudioServiceError::CommandQueueFull)
+            }
+        }
+    }
+}
+
+/// Bump a generation, skipping zero (zero means "never registered").
+fn next_generation(current: u32) -> u32 {
+    let next = current.wrapping_add(1);
+    if next == 0 {
+        1
+    } else {
+        next
+    }
+}
+
+#[cfg(feature = "diagnostic")]
+impl AudioService {
+    /// Diagnostic helper: close and reopen the output stream around the same mixer
+    /// core without a real device disconnect. Used by the audio diagnostic to prove
+    /// recreation on-device; the real device-loss path is validated through fault
+    /// injection in tests.
+    pub fn diagnostic_recreate_output(&mut self) -> Result<(), AudioServiceError> {
+        if let Some(backend) = self.backend.as_mut() {
+            backend.close()?;
+        }
+        self.backend = None;
+        self.running = false;
+        self.open_output()?;
+        self.start_output()?;
+        self.stream_recreations += 1;
+        Ok(())
+    }
+}
+
+impl Drop for AudioService {
+    fn drop(&mut self) {
+        // 1) Drop the backend: closes the stream, which joins all render callbacks
+        //    (platform contract) before returning, and drops the callback closures
+        //    holding the core pointer.
+        self.backend = None;
+        // 2) Only now drop the mixer core (and its PCM pool).
+        self.core = None;
+    }
+}

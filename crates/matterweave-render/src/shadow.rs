@@ -1,21 +1,20 @@
-//! A single directional depth map. Resource replacement is serialized by Renderer.
+//! A single directional depth map and the group-0 descriptor set shared with the
+//! world pipeline. Resource replacement is serialized by Renderer.
+//! The uniform layout lives in [`crate::shader_contract`] so the renderer and host
+//! validation harnesses cannot drift apart.
 use super::{
     err, pipeline, Buffer, Depth, Device, Frustum, GpuMesh, PipelineKind, Result, StaticScene,
 };
 use crate::lighting::{LightingSettings, ShadowCamera};
+use crate::reflection::{ReflectionVolume, SURFACE_OFFSET};
+use crate::shader_contract::{
+    LightingUniform as Uniform, BINDING_INDIRECT_FACES, BINDING_LIGHTING,
+    BINDING_REFLECTION_MATERIALS, BINDING_REFLECTION_PALETTE, BINDING_SHADOW_MAP,
+    BINDING_SHADOW_SAMPLER,
+};
 use ash::vk;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Zeroable;
 use std::sync::Arc;
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Uniform {
-    view_proj: [[f32; 4]; 4],
-    sun: [f32; 4],
-    params: [f32; 4],
-    indirect_origin: [i32; 4],
-    indirect_dimensions: [u32; 4],
-}
 
 /// Validity follows submitted depth contents, never a recording attempt. Geometry
 /// invalidation is explicit because moving vertices can retain their source revision.
@@ -45,6 +44,12 @@ pub(crate) struct Shadow {
     indirect_origin: [i32; 4],
     indirect_dimensions: [u32; 4],
     indirect_sun: Option<[f32; 4]>,
+    reflection_materials: Option<Buffer>,
+    reflection_palette: Option<Buffer>,
+    reflection_origin: [i32; 4],
+    /// `w` is the enable flag, matching `indirect_dimensions` and `world.wgsl`.
+    reflection_dimensions: [u32; 4],
+    reflection_steps: f32,
     pass: vk::RenderPass,
     frame: vk::Framebuffer,
     pipeline: vk::Pipeline,
@@ -70,6 +75,11 @@ impl Shadow {
             indirect_origin: [0; 4],
             indirect_dimensions: [0; 4],
             indirect_sun: None,
+            reflection_materials: None,
+            reflection_palette: None,
+            reflection_origin: [0; 4],
+            reflection_dimensions: [0; 4],
+            reflection_steps: crate::reflection::DEFAULT_TRACE_STEPS as f32,
             pass: vk::RenderPass::null(),
             frame: vk::Framebuffer::null(),
             pipeline: vk::Pipeline::null(),
@@ -114,6 +124,18 @@ impl Shadow {
                 bytemuck::cast_slice(&[[0.0f32; 4]]),
                 vk::BufferUsageFlags::STORAGE_BUFFER,
             )?);
+            // Reflection starts disabled with minimal placeholder storage; both
+            // buffers grow transactionally on publication.
+            out.reflection_materials = Some(Buffer::new(
+                d.clone(),
+                &[],
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+            )?);
+            out.reflection_palette = Some(Buffer::new(
+                d.clone(),
+                bytemuck::cast_slice(&[[0.0f32; 4]; 256]),
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+            )?);
             // Nearest comparison samples plus explicit 3x3 PCF need no optional
             // linear-filtering capability for the selected depth format.
             out.sampler = d
@@ -139,7 +161,10 @@ impl Shadow {
                 vk::DescriptorType::SAMPLED_IMAGE,
                 vk::DescriptorType::SAMPLER,
                 vk::DescriptorType::STORAGE_BUFFER,
+                vk::DescriptorType::STORAGE_BUFFER,
+                vk::DescriptorType::STORAGE_BUFFER,
             ];
+            assert_eq!(types.len(), 6, "bindings stay contiguous from zero");
             let bindings: Vec<_> = types
                 .iter()
                 .enumerate()
@@ -158,13 +183,17 @@ impl Shadow {
                     None,
                 )
                 .map_err(err)?;
-            let sizes: Vec<_> = types
-                .iter()
-                .map(|&ty| vk::DescriptorPoolSize {
-                    ty,
-                    descriptor_count: 1,
-                })
-                .collect();
+            // Pool sizes must not repeat a descriptor type; count each once.
+            let mut sizes: Vec<vk::DescriptorPoolSize> = Vec::new();
+            for &ty in types.iter() {
+                match sizes.iter_mut().find(|size| size.ty == ty) {
+                    Some(size) => size.descriptor_count += 1,
+                    None => sizes.push(vk::DescriptorPoolSize {
+                        ty,
+                        descriptor_count: 1,
+                    }),
+                }
+            }
             out.pool = d
                 .raw
                 .create_descriptor_pool(
@@ -192,28 +221,44 @@ impl Shadow {
                 .image_view(out.depth.as_ref().unwrap().view)
                 .image_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)];
             let samplers = [vk::DescriptorImageInfo::default().sampler(out.sampler)];
+            let reflection_materials = [vk::DescriptorBufferInfo::default()
+                .buffer(out.reflection_materials.as_ref().unwrap().raw)
+                .range(vk::WHOLE_SIZE)];
+            let reflection_palette = [vk::DescriptorBufferInfo::default()
+                .buffer(out.reflection_palette.as_ref().unwrap().raw)
+                .range(vk::WHOLE_SIZE)];
             d.raw.update_descriptor_sets(
                 &[
                     vk::WriteDescriptorSet::default()
                         .dst_set(out.set)
-                        .dst_binding(0)
+                        .dst_binding(BINDING_LIGHTING)
                         .descriptor_type(types[0])
                         .buffer_info(&buffers),
                     vk::WriteDescriptorSet::default()
                         .dst_set(out.set)
-                        .dst_binding(1)
+                        .dst_binding(BINDING_SHADOW_MAP)
                         .descriptor_type(types[1])
                         .image_info(&images),
                     vk::WriteDescriptorSet::default()
                         .dst_set(out.set)
-                        .dst_binding(2)
+                        .dst_binding(BINDING_SHADOW_SAMPLER)
                         .descriptor_type(types[2])
                         .image_info(&samplers),
                     vk::WriteDescriptorSet::default()
                         .dst_set(out.set)
-                        .dst_binding(3)
+                        .dst_binding(BINDING_INDIRECT_FACES)
                         .descriptor_type(types[3])
                         .buffer_info(&indirect_buffers),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(out.set)
+                        .dst_binding(BINDING_REFLECTION_MATERIALS)
+                        .descriptor_type(types[4])
+                        .buffer_info(&reflection_materials),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(out.set)
+                        .dst_binding(BINDING_REFLECTION_PALETTE)
+                        .descriptor_type(types[5])
+                        .buffer_info(&reflection_palette),
                 ],
                 &[],
             );
@@ -308,6 +353,9 @@ impl Shadow {
                 view_proj: self.camera.view_proj,
                 indirect_origin: self.indirect_origin,
                 indirect_dimensions,
+                reflection_origin: self.reflection_origin,
+                reflection_dimensions: self.reflection_dimensions,
+                reflection_params: [self.reflection_steps, SURFACE_OFFSET, 0., 0.],
                 sun: [sun[0], sun[1], sun[2], settings.sun.intensity],
                 // World-space bias preserves its scale when the fitted depth span changes.
                 params: [
@@ -322,6 +370,7 @@ impl Shadow {
     pub fn invalidate(&mut self) {
         self.reuse.invalidate();
         self.disable_indirect();
+        self.disable_reflection();
     }
 
     pub fn disable_indirect(&mut self) {
@@ -330,6 +379,103 @@ impl Shadow {
 
     pub fn indirect_enabled(&self) -> bool {
         self.indirect_sun.is_some()
+    }
+
+    pub fn disable_reflection(&mut self) {
+        self.reflection_dimensions[3] = 0;
+    }
+
+    pub fn reflection_enabled(&self) -> bool {
+        self.reflection_dimensions[3] != 0
+    }
+
+    /// Current reflection residency: (material grid bytes, palette bytes). This is
+    /// allocated buffer capacity, not driver-side residency or allocator padding.
+    pub fn reflection_resident_bytes(&self) -> (usize, usize) {
+        (
+            self.reflection_materials.as_ref().map_or(0, |b| b.size),
+            self.reflection_palette.as_ref().map_or(0, |b| b.size),
+        )
+    }
+
+    /// Caller has waited the frame fence; no submitted descriptor uses these buffers.
+    /// Both buffers are grown or rewritten before any descriptor points at new
+    /// memory, so a failed allocation leaves the previous publication readable.
+    pub fn upload_reflection(&mut self, volume: &ReflectionVolume) -> Result<usize> {
+        self.disable_reflection();
+        let materials = bytemuck::cast_slice::<u32, u8>(volume.materials());
+        let palette = bytemuck::cast_slice::<[f32; 4], u8>(volume.palette());
+        if self
+            .reflection_materials
+            .as_ref()
+            .is_none_or(|b| b.size < materials.len())
+        {
+            let buffer = Buffer::new(
+                self.device.clone(),
+                materials,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+            )?;
+            self.reflection_materials = Some(buffer);
+        } else {
+            self.reflection_materials
+                .as_ref()
+                .unwrap()
+                .write(materials)?;
+        }
+        if self
+            .reflection_palette
+            .as_ref()
+            .is_none_or(|b| b.size < palette.len())
+        {
+            let buffer = Buffer::new(
+                self.device.clone(),
+                palette,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+            )?;
+            self.reflection_palette = Some(buffer);
+        } else {
+            self.reflection_palette.as_ref().unwrap().write(palette)?;
+        }
+        let infos = [
+            vk::DescriptorBufferInfo::default()
+                .buffer(self.reflection_materials.as_ref().unwrap().raw)
+                .range(materials.len() as u64),
+            vk::DescriptorBufferInfo::default()
+                .buffer(self.reflection_palette.as_ref().unwrap().raw)
+                .range(palette.len() as u64),
+        ];
+        // SAFETY: idle descriptor after the frame fence; both buffers are owned.
+        unsafe {
+            self.device.raw.update_descriptor_sets(
+                &[
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.set)
+                        .dst_binding(BINDING_REFLECTION_MATERIALS)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[..1]),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.set)
+                        .dst_binding(BINDING_REFLECTION_PALETTE)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[1..]),
+                ],
+                &[],
+            );
+        }
+        self.reflection_origin = [
+            volume.origin()[0],
+            volume.origin()[1],
+            volume.origin()[2],
+            0,
+        ];
+        self.reflection_dimensions = [
+            volume.dimensions()[0],
+            volume.dimensions()[1],
+            volume.dimensions()[2],
+            1,
+        ];
+        self.reflection_steps = volume.trace_bound() as f32;
+        Ok(materials.len() + palette.len())
     }
 
     /// Caller has waited the frame fence; no submitted descriptor uses this buffer.

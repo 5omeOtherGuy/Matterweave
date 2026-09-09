@@ -210,6 +210,39 @@ timeout 60s xvfb-run -a cargo run --locked -p matterweave-render --example cache
 It covers submitted-buffer replacement, stale/invalid uploads, eviction, culling,
 dynamic buffer reuse/growth and teardown under Vulkan validation.
 
+The bounded reflection gate has three entry points. The headless host validator
+compiles the shipping `world.wgsl` through the renderer's group-0 layout, renders
+one analytic mirror pixel per probe and compares it with the independent CPU
+`World::raycast` oracle; it writes PPM images, `probes.txt` and `manifest.json`
+into the directory argument and exits 0 (pass), 1 (fail) or 2 (no Vulkan device):
+
+```sh
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+cargo run --locked -p matterweave-render --example reflection_validation -- /tmp/reflection-evidence
+```
+
+The real-Renderer smoke drives enabling, edit invalidation, stale rejection, epoch
+replacement, disabling, resizing and renderer recreation; require an empty
+validation stream:
+
+```sh
+MATTERWEAVE_VALIDATION=1 timeout 300s xvfb-run -a cargo run --locked -p matterweave-render --example reflection_smoke
+```
+
+The app gate runs the camera/edit/occluder/removal/sun/replacement/disable phases
+and writes `reflection-check-report.txt` beside the save. On Android, place
+`reflection-check.txt` containing `reflection` (quality phases) or
+`reflection-cost` (120 warmup + 1000 measured frames per mode) in the app data
+directory; on desktop use `--reflection-check` or `--reflection-cost`:
+
+```sh
+timeout 300s xvfb-run -a cargo run --locked -p matterweave-explorer -- --reflection-check --save /tmp/x.json
+```
+
+Device frame-cost evidence requires the owner-reserved phone; report frame-time
+p50/p95/p99 per mode, publication cost, owned bytes, device/OS/driver and thermal
+conditions. No minimum FPS is required and no cost may be hidden.
+
 Changing dependencies requires regenerating Cargo.lock and provenance intentionally.
 For a deliberate Gradle dependency update, regenerate verification metadata from
 trusted upstreams with `--write-verification-metadata sha256`, review it, then rerun
@@ -392,3 +425,38 @@ Record exact source/binary checksum, device and build configuration alongside
 stdout and health observations. See [streaming stress](performance/stream-stress.md).
 
 Full-image ray/raster/shared-depth hybrid correctness: `cargo run --locked -p matterweave-render --example renderer_comparison`. See [comparison protocol](performance/renderer-comparison.md) for tolerances, artifacts and Android evidence.
+
+## Audio service correctness
+
+Host tests and the real-time allocation detector:
+
+```sh
+cargo test --locked -p matterweave-audio
+```
+
+The mock-backend diagnostic runs on any host without audio hardware and prints
+negotiated properties, frame/callback counters and ten open/play/stop/close
+cycles:
+
+```sh
+cargo run --locked -p matterweave-audio --example audio_diagnostic
+```
+
+For a real Android device, cross-compile the diagnostic with the pinned NDK
+API-28 linker, push it to `/data/local/tmp` and run it. It opens real AAudio
+output, plays a quiet known sine, suspends/resumes, recreates the stream and
+completes ten service lifecycles. Audibility is a human observation; the
+printed counters alone do not prove audibility.
+
+```sh
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
+cargo build --locked --release -p matterweave-audio --example audio_diagnostic \
+  --target aarch64-linux-android --no-default-features --features backend-android,diagnostic
+adb push "$CARGO_TARGET_DIR/aarch64-linux-android/release/examples/audio_diagnostic" /data/local/tmp/matterweave-audio-diagnostic
+adb shell chmod 755 /data/local/tmp/matterweave-audio-diagnostic
+adb shell /data/local/tmp/matterweave-audio-diagnostic
+```
+
+Record the device model, Android version, negotiated stream properties and the
+printed health snapshot with the run. See [ADR-0016](adr/0016-audio-service.md)
+for the service contracts and limits.

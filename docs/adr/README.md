@@ -27,6 +27,7 @@ For an accepted ADR, append implementation/evidence notes without rewriting its 
 | [0013](0013-advanced-hardware-and-research.md) | Capability-based acceleration and frontier research | Proposed | Inventory in M0; workload-specific experiment before adoption. |
 | [0014](0014-rust-modularity-and-evidence-led-reuse.md) | Rust, modularity and evidence-led reuse | Accepted | Owner policy; component decisions must meet its criteria. |
 | [0015](0015-rust-native-foundation.md) | Rust native Android foundation | Accepted | M0 reproducible Rust/native build and integration checks. |
+| [0016](0016-audio-service.md) | Bounded audio service with deterministic mixer and AAudio output | Proposed | M6 sound-effect slice: host tests plus reserved-device diagnostic run. |
 
 ## Current decision order
 

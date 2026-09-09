@@ -128,6 +128,10 @@ impl RayVolume {
     pub fn source_revision(&self) -> u64 {
         self.source_revision
     }
+    /// Seed of the World this pack was derived from; part of the validity key.
+    pub fn source_seed(&self) -> u64 {
+        self.source_seed
+    }
     /// Conservative: even edits outside the crop invalidate this pack.
     pub fn valid_for(&self, world: &World, epoch: u64) -> bool {
         self.source_epoch == epoch
