@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Matterweave bounded specular reflection — implementation notes</title>
+</head>
+<body>
+<h1>Implementation notes — bounded specular reflection (eval/hy4-reflections)</h1>
+<p>Task-local reviewer log. Every entry below is transferred to the draft pull
+request body and to <code>docs/performance/reflections-engine.md</code>.</p>
+
+<h2>Decisions not explicit in the specification</h2>
+<ol>
+<li><b>How a fragment learns it is reflective.</b> The specification requires a
+material/reflection API but not how a fragment binds to a material. Chosen: the
+mirror strength is the <code>w</code> component of the reflection palette entry
+for the authoritative voxel material at <code>floor(p - n * SURFACE_OFFSET)</code>,
+read from the source volume. Rationale: adds no field to
+<code>matterweave_core::Vertex</code> (which would touch core meshing, detail,
+physics, gallery and four examples), and ties reflectivity to authoritative world
+data rather than to derived mesh attributes. <b>Consequence:</b> dynamic meshes,
+static instances and detail geometry are neither reflective nor reflected, and a
+reflective face on the outward shell of the source volume terminates as a miss.</li>
+
+<li><b>Equal-revision scene replacement.</b> <code>RayVolume::valid_for</code>
+compares epoch, revision and seed only, so a replaced scene at an unchanged
+revision would be accepted if the caller kept the epoch. The specification
+requires that it must not be. Added an FNV-1a footprint digest over the volume
+cells, recomputed at publication. Cost: one <code>World::get</code> per cell
+(at most 262,144), publication only, never per frame.</li>
+
+<li><b>Sun handling.</b> The diffuse cache bakes the sun and therefore keys on it;
+reflections do not bake the sun, so the sun stays a live per-frame uniform and a
+sun change needs no republication. The specification's "light invalidation" is
+satisfied by geometry/shadow-resource invalidation plus this recorded difference.</li>
+
+<li><b>Shadow on the reflected hit.</b> Not applied. A reflected hit uses
+<code>albedo * (ambient + sun term)</code> only. Recorded limitation: an object in
+shadow appears fully lit in a mirror. Including it would have made the CPU oracle
+depend on rendered shadow-map contents and weakened the independence of the
+agreement test.</li>
+
+<li><b>Background termination.</b> A ray that leaves the volume, self-intersects,
+starts outside, meets a zero-length interval, or exhausts the step budget
+terminates against the scene background/fog colour <code>vec3(0.16,0.24,0.29)</code>
+at the volume-exit distance — the same colour the fog uses, so a miss and a fully
+fogged hit agree.</li>
+
+<li><b>Headless validation compiles the shipping shader.</b> Rather than a second
+copy of the algorithm, the harness builds the renderer's group-0 layout from a new
+public <code>shader_contract</code> module and compiles the Naga SPIR-V the
+Renderer itself uses. This required exposing <code>WORLD_VERTEX_SPIRV</code>,
+<code>WORLD_FRAGMENT_SPIRV</code> and <code>LightingUniform</code>.</li>
+</ol>
+
+<h2>Bounds and tolerances</h2>
+<ul>
+<li>Source volume ≤ 64³ cells, each axis ≤ 64, endpoints within ±8192.</li>
+<li>Trace steps configurable 1..=512; effective WGSL bound is
+<code>min(steps, dims.x+dims.y+dims.z+1)</code>, so a generous budget cannot
+lengthen a ray.</li>
+<li>One secondary ray per reflective fragment; no recursion, no temporal history.</li>
+<li>Owned GPU bytes: ≤ 1 MiB material grid + 4 KiB palette
+(<code>reflection_state()</code>). No staging buffer: one host-visible coherent
+destination buffer per resource, rewritten in place after the frame fence.</li>
+<li>Tolerances: 3/255 per channel for mirror probes, 1/255 for the nonreflective
+baseline. Measured worst case 0.00193 (≈0.49/255) and 0.00196 (≈0.50/255); the
+residual is 8-bit quantisation of the expected value, not model error.</li>
+<li>Probe "non-edge" filter, registered before any comparison and applied to
+predetermined probes too: minimum parametric gap between consecutive DDA
+crossings ≥ 1e-3 and hit clearance ≥ 0.05 cell. All 28 predetermined probes pass
+the filter, so no probe was excluded after seeing a result.</li>
+</ul>
+
+<h2>Deviations and corrections during the work</h2>
+<ul>
+<li>Four initially chosen probe eye offsets produced near-simultaneous DDA
+crossings (gap &lt; 5e-5). They were <b>redesigned</b> from a numeric search for
+large crossing gaps rather than excluded; the final 28 all have gaps ≥ 0.195.</li>
+<li>The first image fixture put a stone wall between the camera and the mirror,
+hiding the reflection entirely (0 changed pixels). Fixed in the fixture.</li>
+<li>The first off-screen-removal comparison reused the previously published GPU
+buffers, so the removal appeared to change nothing. Fixed by republishing; the
+gate now also asserts that with reflection disabled the removal changes zero
+pixels, which proves the object is off-screen.</li>
+<li><code>clearance</code> initially walked past the volume bounds, reporting
+spurious near-ties for long miss rays. Fixed by stopping at the volume AABB.</li>
+</ul>
+
+<h2>Reviewer risks and follow-ups</h2>
+<ul>
+<li><b>Cost.</b> The traversal runs per reflective fragment with up to 193
+iterations for a 64³ volume. On llvmpipe it roughly doubles frame time; mobile
+cost is unmeasured. No mitigation (roughness LOD, half-resolution tracing,
+planar-reflection specialisation) is implemented.</li>
+<li><b>Device gates NOT RUN.</b> The shared phone is owner-reserved. Items 10 and
+11 of the acceptance list remain pending; the ready-to-run candidate is the
+<code>--reflection-cost</code> / <code>reflection-check.txt</code> app gate.</li>
+<li>Reflections omit dynamic meshes, static instances and detail geometry, and
+omit shadows on reflected hits.</li>
+<li>The footprint digest makes publication O(cells); for a 64³ volume this is a
+measurable few milliseconds that is reported as part of request-to-publication
+latency, not hidden.</li>
+<li>The <code>shader_contract</code> module exposes shader SPIR-V and the uniform
+struct publicly for validation harnesses; a reviewer may prefer to gate this
+behind a feature flag.</li>
+</ul>
+</body>
+</html>

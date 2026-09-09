@@ -3,6 +3,9 @@ struct Camera {
     eye: vec4<f32>,
 };
 var<push_constant> camera: Camera;
+// Layout is defined once in Rust: crates/matterweave-render/src/shader_contract.rs.
+// `indirect_dimensions.w` and `reflection_dimensions.w` are enable flags.
+// `reflection_params` is (trace step bound, surface offset, 0, 0).
 struct Lighting {
     view_proj: mat4x4<f32>,
     sun: vec4<f32>,
@@ -10,11 +13,20 @@ struct Lighting {
     params: vec4<f32>,
     indirect_origin: vec4<i32>,
     indirect_dimensions: vec4<u32>,
+    reflection_origin: vec4<i32>,
+    reflection_dimensions: vec4<u32>,
+    reflection_params: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> lighting: Lighting;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var<storage, read> indirect_faces: array<vec4<f32>>;
+// Bounded reflection source: one u32 material per cell, x + dims.x * (y + dims.y * z).
+@group(0) @binding(4) var<storage, read> reflection_materials: array<u32>;
+// 256 vec4s: rgb reflectance plus mirror strength in w.
+@group(0) @binding(5) var<storage, read> reflection_palette: array<vec4<f32>>;
+// Colour a reflected ray terminates against; identical to the fog target.
+const REFLECTION_BACKGROUND = vec3<f32>(0.16, 0.24, 0.29);
 struct Input {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -110,6 +122,100 @@ fn indirect_diffuse(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     let index = ((c.z * dims.y + c.y) * dims.x + c.x) * 6u + face;
     return indirect_faces[index].xyz;
 }
+struct ReflectionSample {
+    color: vec3<f32>,
+    distance: f32,
+    hit: bool,
+};
+// Mirror strength of the authoritative voxel at the shaded face. A surface whose
+// voxel is outside the source volume, or whose material is nonreflective, is zero.
+fn reflection_mirror(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if lighting.reflection_dimensions.w == 0u { return 0.0; }
+    let local = floor(world - normal * lighting.reflection_params.y)
+        - vec3<f32>(lighting.reflection_origin.xyz);
+    let dims = lighting.reflection_dimensions.xyz;
+    if any(local < vec3(0.0)) || any(local >= vec3<f32>(dims)) { return 0.0; }
+    let c = vec3<u32>(local);
+    let index = c.x + dims.x * (c.y + dims.y * c.z);
+    return reflection_palette[reflection_materials[index]].w;
+}
+// One ideal specular bounce: r = d - 2 * dot(d, n) * n with d = normalize(world - eye).
+// The single secondary ray starts at world + n * offset and is clipped to the source
+// volume. A miss terminates against REFLECTION_BACKGROUND at the volume exit distance.
+// Reflected hits use documented simple shading: no shadow lookup, no second bounce.
+fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) -> ReflectionSample {
+    var out: ReflectionSample;
+    out.hit = false;
+    out.color = REFLECTION_BACKGROUND;
+    out.distance = 0.0;
+    let incident = normalize(world_pos - eye);
+    let direction = incident - 2.0 * dot(incident, normal) * normal;
+    if any(incident != incident) || any(direction != direction) { return out; }
+    if dot(direction, direction) < 1.0e-12 { return out; }
+    let origin = world_pos + normal * lighting.reflection_params.y;
+    let lower = vec3<f32>(lighting.reflection_origin.xyz);
+    let dims = lighting.reflection_dimensions.xyz;
+    let upper = lower + vec3<f32>(dims);
+    // Outside the half-open volume, or on its outward-facing shell: a miss.
+    if any(origin < lower) || any(origin >= upper) { return out; }
+    var exit = 3.0e38;
+    for (var axis = 0u; axis < 3u; axis = axis + 1u) {
+        if direction[axis] > 0.0 {
+            exit = min(exit, (upper[axis] - origin[axis]) / direction[axis]);
+        } else if direction[axis] < 0.0 {
+            exit = min(exit, (lower[axis] - origin[axis]) / direction[axis]);
+        }
+    }
+    out.distance = max(exit, 0.0);
+    if !(exit > 0.0) { return out; }
+    var cell = vec3<i32>(floor(origin - lower));
+    let stride = vec3<i32>(sign(direction));
+    let requested = u32(max(lighting.reflection_params.x, 1.0));
+    let bound = min(requested, dims.x + dims.y + dims.z + 1u);
+    var distance = 0.0;
+    var hit_normal = vec3(0.0);
+    for (var iteration = 0u; iteration < bound; iteration = iteration + 1u) {
+        if any(cell < vec3(0)) || any(cell >= vec3<i32>(dims)) { return out; }
+        let index = u32(cell.x) + dims.x * (u32(cell.y) + dims.y * u32(cell.z));
+        let material = reflection_materials[index];
+        if material != 0u {
+            // Self-intersection: a solid start cell is the surface being shaded.
+            if iteration == 0u { return out; }
+            let albedo = reflection_palette[material].xyz;
+            var term = 0.28 + 0.12 * max(hit_normal.y, 0.0);
+            if any(hit_normal != vec3(0.0)) {
+                let n = normalize(hit_normal);
+                term = term + max(dot(n, lighting.sun.xyz), 0.0) * lighting.sun.w;
+            }
+            out.hit = true;
+            out.color = albedo * term;
+            out.distance = distance;
+            return out;
+        }
+        // Recompute from integer planes instead of accumulating tDelta error.
+        var next = vec3(exit + 1.0);
+        for (var axis = 0u; axis < 3u; axis = axis + 1u) {
+            if stride[axis] != 0 {
+                let boundary = lower[axis] + f32(cell[axis]) + select(0.0, 1.0, stride[axis] > 0);
+                next[axis] = (boundary - origin[axis]) / direction[axis];
+            }
+        }
+        distance = min(next.x, min(next.y, next.z));
+        if !(distance < exit) { return out; }
+        hit_normal = vec3(0.0);
+        var first = true;
+        for (var axis = 0u; axis < 3u; axis = axis + 1u) {
+            if next[axis] == distance && stride[axis] != 0 {
+                cell[axis] = cell[axis] + stride[axis];
+                if first {
+                    hit_normal[axis] = -f32(stride[axis]);
+                    first = false;
+                }
+            }
+        }
+    }
+    return out;
+}
 @fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
     var normal = normalize(v.normal);
     var color = v.color;
@@ -138,7 +244,16 @@ fn indirect_diffuse(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     let ambient = 0.28 + 0.12 * max(normal.y, 0.0);
     let visibility = shadow_visibility(v.world,v.normal);
     let indirect = indirect_diffuse(v.world, v.normal);
-    let lit = color * (vec3(ambient + sunlight * lighting.sun.w * visibility) + indirect) + highlight*visibility;
-    let fog = 1.0 - exp(-distance(v.world, camera.eye.xyz) * 0.013);
-    return vec4(mix(lit, vec3(0.16, 0.24, 0.29), fog), 1.0);
+    var lit = color * (vec3(ambient + sunlight * lighting.sun.w * visibility) + indirect) + highlight*visibility;
+    // Opt-in single specular bounce. With every mirror strength zero this block is
+    // skipped and the result is bit-identical to nonreflective rendering.
+    var path_length = distance(v.world, camera.eye.xyz);
+    let mirror = reflection_mirror(v.world, v.normal);
+    if mirror > 0.0 {
+        let sample = specular_reflection(v.world, normal, camera.eye.xyz);
+        path_length = path_length + sample.distance;
+        lit = mix(lit, sample.color, mirror);
+    }
+    let fog = 1.0 - exp(-path_length * 0.013);
+    return vec4(mix(lit, REFLECTION_BACKGROUND, fog), 1.0);
 }

@@ -210,6 +210,39 @@ timeout 60s xvfb-run -a cargo run --locked -p matterweave-render --example cache
 It covers submitted-buffer replacement, stale/invalid uploads, eviction, culling,
 dynamic buffer reuse/growth and teardown under Vulkan validation.
 
+The bounded reflection gate has three entry points. The headless host validator
+compiles the shipping `world.wgsl` through the renderer's group-0 layout, renders
+one analytic mirror pixel per probe and compares it with the independent CPU
+`World::raycast` oracle; it writes PPM images, `probes.txt` and `manifest.json`
+into the directory argument and exits 0 (pass), 1 (fail) or 2 (no Vulkan device):
+
+```sh
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+cargo run --locked -p matterweave-render --example reflection_validation -- /tmp/reflection-evidence
+```
+
+The real-Renderer smoke drives enabling, edit invalidation, stale rejection, epoch
+replacement, disabling, resizing and renderer recreation; require an empty
+validation stream:
+
+```sh
+MATTERWEAVE_VALIDATION=1 timeout 300s xvfb-run -a cargo run --locked -p matterweave-render --example reflection_smoke
+```
+
+The app gate runs the camera/edit/occluder/removal/sun/replacement/disable phases
+and writes `reflection-check-report.txt` beside the save. On Android, place
+`reflection-check.txt` containing `reflection` (quality phases) or
+`reflection-cost` (120 warmup + 1000 measured frames per mode) in the app data
+directory; on desktop use `--reflection-check` or `--reflection-cost`:
+
+```sh
+timeout 300s xvfb-run -a cargo run --locked -p matterweave-explorer -- --reflection-check --save /tmp/x.json
+```
+
+Device frame-cost evidence requires the owner-reserved phone; report frame-time
+p50/p95/p99 per mode, publication cost, owned bytes, device/OS/driver and thermal
+conditions. No minimum FPS is required and no cost may be hidden.
+
 Changing dependencies requires regenerating Cargo.lock and provenance intentionally.
 For a deliberate Gradle dependency update, regenerate verification metadata from
 trusted upstreams with `--write-verification-metadata sha256`, review it, then rerun

@@ -1,6 +1,6 @@
 # Current status
 
-Updated: 2026-09-08
+Updated: 2026-09-09
 
 ## Active engine completion campaign
 
@@ -33,6 +33,31 @@ PR8 merged at `ba6c894` after all required checks passed;
 is published with APK, manifests and both evidence archives. Next engine capabilities are automatic
 detail selection and indirect illumination/reflections, plus remaining streaming,
 renderer comparison and framework milestones. Do not resume demo-save/UI refinement.
+
+## Reflection evaluation branch (eval/hy4-reflections, submitted for review)
+
+A separate evaluation worktree, `/mnt/bench/matterweave-dev/worktrees/eval-hy4-reflections`,
+branch `eval/hy4-reflections` from frozen base `5b90975`, adds an opt-in bounded
+specular reflection to the reusable Vulkan raster renderer. It is **not** merged
+and changes no gameplay, audio, input or world system.
+
+What exists: a `reflection` module (`ReflectionVolume`, `MaterialTable`, CPU
+oracle), two new group-0 descriptor bindings, a `world.wgsl` single-bounce path,
+`Renderer::upload_reflection/disable_reflection/reflection_enabled/reflection_state`,
+a headless host validator, a real-Renderer smoke example and an app validation
+mode. Limits: 64³ source volume, configurable trace steps with a 512 hard
+maximum, one secondary ray, no recursion or temporal history.
+
+Host evidence: 28 predetermined non-edge probes and 346 seeded randomized probes
+agree with an independent `World::raycast` oracle within 0.5/255 (3/255
+tolerance); the nonreflective baseline is preserved within 0.5/255 (1/255
+tolerance); recorded images show all seven required responses including an
+object outside the camera frustum visible only through reflection; the real
+Renderer passes enable/disable/edit/resize/recreation with an empty Vulkan
+validation stream. **Device gates are NOT RUN** — the shared phone is
+owner-reserved; the ready-to-run candidate is the `--reflection-cost` app gate.
+See [reflection evidence](performance/reflections-engine.md). This advances R09/M4
+and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
 
 ## Current engine systems branch
 

@@ -6,6 +6,7 @@ mod engine_check;
 mod experience;
 mod gallery;
 mod metrics;
+mod reflection_check;
 mod wetland;
 mod wetland_metrics;
 mod wetland_replay;
@@ -1432,6 +1433,7 @@ pub fn run_desktop() {
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
+    let mut reflection_check = None;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -1445,6 +1447,8 @@ pub fn run_desktop() {
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
+            "--reflection-check" => reflection_check = Some(crate::reflection_check::Mode::Quality),
+            "--reflection-cost" => reflection_check = Some(crate::reflection_check::Mode::Cost),
             "--smoke-exercise" => smoke_exercise = true,
             "--gallery-exercise" => gallery_exercise = true,
             "--smoke-frames" => {
@@ -1456,7 +1460,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1477,6 +1481,13 @@ pub fn run_desktop() {
             .expect("event loop")
             .run_app(&mut check)
             .expect("engine check loop");
+        return;
+    }
+    if let Some(mode) = reflection_check {
+        crate::reflection_check::run(
+            save_path.with_file_name("reflection-check-report.txt"),
+            mode,
+        );
         return;
     }
     if detail_check {
@@ -1592,6 +1603,25 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     let requested_check = std::fs::read_to_string(&request)
         .ok()
         .map(|s| s.trim().to_string());
+    let reflection_mode = match requested_check.as_deref() {
+        Some("reflection") => Some(crate::reflection_check::Mode::Quality),
+        Some("reflection-cost") => Some(crate::reflection_check::Mode::Cost),
+        _ => None,
+    };
+    if reflection_mode.is_some() {
+        if let Err(e) = std::fs::remove_file(&request) {
+            log::error!("Reflection check request: {e}");
+            return;
+        }
+        let mut check = crate::reflection_check::ReflectionCheck::new(
+            directory.join("reflection-check-report.txt"),
+            reflection_mode.unwrap(),
+        );
+        if let Err(e) = event_loop.run_app(&mut check) {
+            log::error!("Reflection check: {e}");
+        }
+        return;
+    }
     if matches!(
         requested_check.as_deref(),
         Some("indirect") | Some("detail") | Some("indirect-async")

@@ -9,6 +9,8 @@ mod indirect_edge_tests;
 mod indirect_tests;
 mod lighting;
 pub mod ray_reference;
+pub mod reflection;
+pub mod shader_contract;
 mod shadow;
 mod static_scene;
 mod timing;
@@ -969,6 +971,31 @@ impl Drop for Commands {
 /// API call boundaries, not GPU execution time, and never a presentation
 /// (scanout) timestamp. Absent values mean the boundary was not reached or
 /// diagnostics are disabled.
+/// Timing and payload of one reflection publication. Wall-clock CPU measurements
+/// only: they cover preparation hand-off and the CPU upload, never GPU execution
+/// or presentation, which are reported separately by [`ReflectionState`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ReflectionUploadStats {
+    /// Waiting for the in-flight frame fence before touching GPU-visible memory.
+    pub fence_wait_ms: f64,
+    /// CPU write of the material grid and palette plus the descriptor update.
+    pub upload_ms: f64,
+    /// Logical payload bytes written, excluding allocator padding.
+    pub bytes: usize,
+}
+
+/// Publication and presentation bookkeeping for the current reflection data.
+/// `presented_submission` is the first presented submission at or after
+/// publication, so the two counters separate CPU publication from GPU/present
+/// completion instead of conflating them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReflectionState {
+    pub published_submission: Option<u64>,
+    pub presented_submission: Option<u64>,
+    pub material_bytes: usize,
+    pub palette_bytes: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DrawDiagnostics {
     /// GPU submission identity produced by this draw attempt, if it submitted.
@@ -1072,6 +1099,8 @@ pub struct Renderer {
     hud: Option<Buffer>,
     requested: vk::Extent2D,
     recreate: bool,
+    reflection_published: Option<u64>,
+    reflection_presented: Option<u64>,
     pub mesh_revision: Option<u64>,
     pub capabilities: String,
     /// Allocated vertex/index buffer capacity; excludes HUD, depth and driver overhead.
@@ -1287,6 +1316,8 @@ impl Renderer {
                 height: size.height,
             },
             recreate: true,
+            reflection_published: None,
+            reflection_presented: None,
             mesh_revision: None,
             capabilities,
             mesh_bytes: 0,
@@ -1439,7 +1470,11 @@ impl Renderer {
     fn update_counters(&mut self) {
         // Every committed geometry replacement/removal comes through here.
         // Rejected transactional uploads leave both geometry and validity intact.
+        // Reflection depends on the geometry it was published against, so all of
+        // these retire the publication identity as well.
         self.shadow.invalidate();
+        self.reflection_published = None;
+        self.reflection_presented = None;
         self.resident_chunks = self.chunks.len();
         self.visible_chunks = self.visible_chunks.min(self.resident_chunks);
         self.mesh_bytes = self
@@ -1516,6 +1551,65 @@ impl Renderer {
     /// Current validity, not a GPU timing or proof of nonzero pixel contribution.
     pub fn indirect_enabled(&self) -> bool {
         self.shadow.indirect_enabled()
+    }
+
+    /// Publish a bounded reflection source volume for the current authoritative
+    /// World and replacement epoch, never a stale snapshot. Rejection disables the
+    /// previous publication first, so obsolete data can never remain visible.
+    ///
+    /// The volume covers unit World voxels only: dynamic meshes, static instances
+    /// and detail geometry are neither reflective nor reflected. Any later geometry
+    /// upload or shadow-resource replacement disables reflection until republished.
+    /// The sun is a live per-frame uniform rather than baked data, so a sun change
+    /// needs no republication; this differs from the diffuse cache deliberately.
+    pub fn upload_reflection(
+        &mut self,
+        volume: &reflection::ReflectionVolume,
+        world: &matterweave_core::World,
+        source_epoch: u64,
+    ) -> Result<ReflectionUploadStats> {
+        self.disable_reflection();
+        if !volume.valid_for(world, source_epoch) {
+            return Err("Stale reflection source revision/epoch".into());
+        }
+        let fence_begin = Instant::now();
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        let fence_wait_ms = elapsed_ms(fence_begin);
+        let upload_begin = Instant::now();
+        let bytes = self.shadow.upload_reflection(volume)?;
+        self.reflection_published = Some(self.submissions);
+        Ok(ReflectionUploadStats {
+            fence_wait_ms,
+            upload_ms: elapsed_ms(upload_begin),
+            bytes,
+        })
+    }
+
+    /// Disables reflection and drops the publication bookkeeping. Allocated
+    /// storage buffers are retained for reuse; use the counters to report them.
+    pub fn disable_reflection(&mut self) {
+        self.shadow.disable_reflection();
+        self.reflection_published = None;
+        self.reflection_presented = None;
+    }
+
+    /// Whether matching reflection data is currently published for this frame's
+    /// geometry. This is a validity flag, not proof of a visible reflection.
+    pub fn reflection_enabled(&self) -> bool {
+        self.shadow.reflection_enabled()
+    }
+
+    /// Publication/presentation identity and owned GPU bytes for the reflection path.
+    pub fn reflection_state(&self) -> ReflectionState {
+        let (material_bytes, palette_bytes) = self.shadow.reflection_resident_bytes();
+        ReflectionState {
+            published_submission: self.reflection_published,
+            presented_submission: self.reflection_presented,
+            material_bytes,
+            palette_bytes,
+        }
     }
 
     /// Sunlight and shadow settings apply to this frame. Invalid settings return Fatal.
@@ -1618,7 +1712,10 @@ impl Renderer {
         if lighting.shadow_map_size != self.shadow.size {
             // Identical descriptor layout definitions remain pipeline-compatible.
             // Construct replacement transactionally, then retire the idle old map.
+            // A fresh Shadow owns empty reflection storage: drop the bookkeeping.
             self.shadow = Shadow::new(self.device.clone(), lighting.shadow_map_size)?;
+            self.reflection_published = None;
+            self.reflection_presented = None;
         }
         let mut bounds: Vec<_> = self
             .chunks
@@ -1869,6 +1966,11 @@ impl Renderer {
                 }
                 PresentOutcome::Failed(e) => return Err(err(e)),
             }
+        }
+        // The first presented submission at or after publication is the honest
+        // completion point; CPU publication alone proves nothing about pixels.
+        if self.shadow.reflection_enabled() && self.reflection_presented.is_none() {
+            self.reflection_presented = Some(self.submissions);
         }
         Ok(FrameResult::Presented)
     }

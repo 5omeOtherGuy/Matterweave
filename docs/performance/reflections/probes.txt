@@ -1,0 +1,28 @@
+probe 00 centre to target block                       hit=true  material=1   cell=[3, 0, 0] error=0.00128 gap=0.9985 clearance=1.000
+probe 01 centre to stone wall                         hit=true  material=2   cell=[7, 0, 2] error=0.00175 gap=0.4216 clearance=1.000
+probe 02 centre away from geometry                    hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=0.5623 clearance=1.000
+probe 03 centre, ray parallel to z                    hit=true  material=1   cell=[3, 0, 0] error=0.00074 gap=11.3728 clearance=1.000
+probe 04 -XZ to target block                          hit=true  material=1   cell=[3, 0, -1] error=0.00136 gap=0.4216 clearance=1.000
+probe 05 -XZ to stone wall                            hit=true  material=2   cell=[7, 2, -8] error=0.00123 gap=0.5682 clearance=1.000
+probe 06 -XZ away from geometry                       hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=0.5641 clearance=1.000
+probe 07 +XZ to target block                          hit=true  material=1   cell=[3, 0, 0] error=0.00188 gap=1.1915 clearance=1.000
+probe 08 near wall to stone wall                      hit=true  material=2   cell=[7, 0, -6] error=0.00069 gap=3.0695 clearance=1.000
+probe 09 -X +Z open sky                               hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=1.6421 clearance=1.000
+probe 10 to stone wall at -Z                          hit=true  material=2   cell=[7, 0, -6] error=0.00184 gap=0.4792 clearance=1.000
+probe 11 negative to stone slab                       hit=true  material=2   cell=[-9, -4, -15] error=0.00170 gap=0.5682 clearance=1.000
+probe 12 negative open sky                            hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=0.5701 clearance=1.000
+probe 13 negative to target block                     hit=true  material=1   cell=[-12, -4, -9] error=0.00175 gap=0.3368 clearance=1.000
+probe 14 negative shallow to target                   hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=0.1958 clearance=1.000
+probe 15 negative +X to stone slab                    hit=true  material=2   cell=[-9, -4, -9] error=0.00069 gap=3.0695 clearance=1.000
+probe 16 negative +X to target                        hit=true  material=1   cell=[-12, -4, -9] error=0.00112 gap=1.6421 clearance=1.000
+probe 17 negative -X to target                        hit=true  material=1   cell=[-13, -4, -8] error=0.00060 gap=0.5671 clearance=1.000
+probe 18 negative +X to stone slab 2                  hit=true  material=2   cell=[-9, -4, -14] error=0.00193 gap=1.6421 clearance=1.000
+probe 19 negative open +Z                             hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=1.1915 clearance=1.000
+probe 20 empty oblique                                hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=0.5701 clearance=1.000
+probe 21 empty ray parallel to z                      hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=10.3702 clearance=1.000
+probe 22 empty away +X                                hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=1.6421 clearance=1.000
+probe 23 empty away -X                                hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=2.0340 clearance=1.000
+probe 24 empty away +X high                           hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=2.6870 clearance=1.000
+probe 25 empty away +Z                                hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=2.2598 clearance=1.000
+probe 26 empty steep                                  hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=0.5999 clearance=1.000
+probe 27 empty shallow +X                             hit=false material=0   cell=[0, 0, 0] error=0.00078 gap=7.7991 clearance=1.000
