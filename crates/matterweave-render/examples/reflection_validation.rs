@@ -2249,7 +2249,7 @@ fn camera_for(probe: &Probe) -> (Camera, [f32; 3]) {
     )
 }
 
-fn render_manifest(cases: &[Case], seconds: f64, harness: &Harness) -> String {
+fn render_manifest(cases: &[Case], seconds: f64, _harness: &Harness) -> String {
     let mut out = String::from("{\n  \"artifacts\": {\n");
     out.push_str("    \"images\": \"PPM, sRGB-encoded for viewing, linear R8G8B8A8 source\",\n");
     out.push_str(&format!(

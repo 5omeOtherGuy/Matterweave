@@ -274,7 +274,7 @@ impl ReflectionVolume {
         self.palette()[self.material_at(cell) as usize][3]
     }
     pub fn memory_stats(&self) -> ReflectionMemoryStats {
-        let material_bytes = self.materials().len() * size_of::<u32>();
+        let material_bytes = std::mem::size_of_val(self.materials());
         ReflectionMemoryStats {
             material_bytes,
             palette_bytes: REFLECTION_PALETTE_BYTES,
@@ -375,7 +375,8 @@ pub fn reflect_sample(
             exit = exit.min((lower[axis] - origin[axis]) / direction[axis]);
         }
     }
-    if !exit.is_finite() || !(exit > 0.) {
+    // The is_finite guard short-circuits NaN, so `exit <= 0.` is exact here.
+    if !exit.is_finite() || exit <= 0. {
         return ReflectionSample::miss(0.);
     }
     let start = std::array::from_fn(|a| origin[a].floor() as i32);

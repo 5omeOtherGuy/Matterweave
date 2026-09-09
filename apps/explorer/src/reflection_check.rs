@@ -483,7 +483,7 @@ impl ApplicationHandler for ReflectionCheck {
                 m.intervals.push(interval);
                 m.calls.push(call_ms);
                 if let Some(timing) = self.renderer.as_ref().unwrap().gpu_timings() {
-                    m.gpu = Some(timing.render_ms as f64);
+                    m.gpu = Some(timing.render_ms);
                 }
             }
             if m.frames >= phase.measured && phase.measured > 0 {
