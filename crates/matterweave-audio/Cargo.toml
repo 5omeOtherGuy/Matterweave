@@ -1,0 +1,25 @@
+[package]
+name = "matterweave-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Bounded PCM sound-effect service with a deterministic mixer and an Android AAudio output backend"
+
+[dependencies]
+ringbuf = "=0.5.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "=0.9.0", default-features = false, features = ["audio", "api-level-28"] }
+
+[features]
+default = ["backend-mock", "diagnostic"]
+# Host backend driven by the test/control thread. Required for host tests and the
+# allocation detector; never used to claim device behavior.
+backend-mock = []
+# Real Android output through the pinned ndk AAudio bindings. Compile with
+# --no-default-features --features backend-android for device builds.
+backend-android = []
+# Opt-in helper surface used by the audio diagnostic example (controlled stream
+# recreation without a real device disconnect).
+diagnostic = []
