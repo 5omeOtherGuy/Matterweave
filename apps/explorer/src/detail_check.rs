@@ -34,6 +34,8 @@ const LODS: [Lod; 3] = [Lod::Source, Lod::Half, Lod::Quarter];
 
 const BOULDER: &str = "boulder";
 const SHEET: &str = "sheet";
+const OPENING: &str = "opening";
+const OPENING_INSTANCE: &str = "opening_guard";
 const SHEET_INSTANCE: &str = "sheet_yaw";
 const NEAR_INSTANCE: &str = "solid_near";
 
@@ -64,6 +66,29 @@ fn irregular_solid(id: &str) -> DetailVolume {
     v
 }
 
+/// Dense control with no local voids: safe to coarsen under the default guard.
+fn dense_solid(id: &str) -> DetailVolume {
+    let mut v = DetailVolume::new(id, Scale::new(SCALE_FINE_M).expect("fine scale"));
+    for x in 0..8 {
+        for y in 0..8 {
+            for z in 0..8 {
+                v.set([x, y, z], material::BANK_STONE).expect("dense cell");
+            }
+        }
+    }
+    v
+}
+
+/// Retains the old irregular fixture and adds a through-opening that coarse
+/// any-occupied cells would fill. Its source must stay selected at every phase.
+fn opening_solid() -> DetailVolume {
+    let mut v = irregular_solid(OPENING);
+    for x in 0..8 {
+        v.set([x, 4, 4], material::AIR).expect("opening cell");
+    }
+    v
+}
+
 /// A one-cell-thick sheet. Any-occupied coarsening fills mostly air, driving the
 /// dilation fraction high, so the thin-feature guard holds it at `Source`.
 fn thin_sheet(id: &str) -> DetailVolume {
@@ -76,15 +101,23 @@ fn thin_sheet(id: &str) -> DetailVolume {
     v
 }
 
-/// The disposable engine fixture: two prototypes and four instances covering the
+/// The disposable engine fixture: three prototypes and five instances covering the
 /// origin, a yaw-rotated negative-coordinate placement, a far placement and the
-/// thin sheet.
+/// thin sheet plus a protected local opening.
 pub fn fixture_scene() -> DetailScene {
     let mut scene = DetailScene::new();
     scene
-        .add_prototype(irregular_solid(BOULDER))
+        .add_prototype(dense_solid(BOULDER))
         .expect("add boulder");
     scene.add_prototype(thin_sheet(SHEET)).expect("add sheet");
+    scene.add_prototype(opening_solid()).expect("add opening");
+    scene
+        .place(
+            OPENING_INSTANCE,
+            OPENING,
+            Transform::new([1.2, 0.0, 0.0], Yaw::Deg90).expect("opening transform"),
+        )
+        .expect("place opening");
     scene
         .place(NEAR_INSTANCE, BOULDER, Transform::identity())
         .expect("place near boulder");
@@ -597,6 +630,15 @@ impl DetailCheck {
             ));
         }
 
+        let opening = frame
+            .selected
+            .iter()
+            .find(|s| s.instance == OPENING_INSTANCE)
+            .ok_or("opening instance missing from selection")?;
+        if opening.lod != Lod::Source {
+            return Err(format!("local opening coarsened to {:?}", opening.lod));
+        }
+
         // Track approach (near = Source) versus retreat (near coarsened).
         if let Some(near) = frame.selected.iter().find(|s| s.instance == NEAR_INSTANCE) {
             if near.lod == Lod::Source {
@@ -647,7 +689,7 @@ impl DetailCheck {
             .join(",");
         let counts = self.scene.counts();
         Ok(format!(
-            "phase={phase} {} proj={} lods[{}] instances={} builds_this_call={} cached_bytes={} source_cells={} source_bytes={} sheet=Source selected=[{selections}] resident_prototypes={}",
+            "phase={phase} {} proj={} lods[{}] instances={} builds_this_call={} cached_bytes={} source_cells={} source_bytes={} sheet=Source opening=Source selected=[{selections}] resident_prototypes={}",
             plan.name,
             match plan.projection {
                 Projection::Perspective { .. } => "perspective",
@@ -826,7 +868,7 @@ impl ApplicationHandler for DetailCheck {
                     let seen: Vec<String> =
                         self.lods_seen.iter().map(|l| format!("{l:?}")).collect();
                     self.record(format!(
-                        "PASS detail: approach/retreat/zoom perspective+orthographic selection over {} phases; LODs chosen {}; thin sheet held at Source; source collision/query invariant; edit invalidation rebuilt once; resident zero-build budget, zero extent and lifecycle recreation verified (cold-cache fallback: unit test only)",
+                        "PASS detail: approach/retreat/zoom perspective+orthographic selection over {} phases; LODs chosen {}; thin sheet and local opening held at Source; source collision/query invariant; edit invalidation rebuilt once; resident zero-build budget, zero extent and lifecycle recreation verified (cold-cache fallback: unit test only)",
                         self.plans.len(),
                         seen.join("/")
                     ));
@@ -881,10 +923,10 @@ mod tests {
         let mut scene = fixture_scene();
         let before = scene.counts().mesh_builds;
         let catalog = StaticCatalog::preload(&mut scene).unwrap();
-        // Two nonempty prototypes x three LODs.
-        assert_eq!(catalog.meshes.len(), 6);
-        assert_eq!(scene.counts().mesh_builds, before + 6);
-        for id in [BOULDER, SHEET] {
+        // Three nonempty prototypes x three LODs.
+        assert_eq!(catalog.meshes.len(), 9);
+        assert_eq!(scene.counts().mesh_builds, before + 9);
+        for id in [BOULDER, SHEET, OPENING] {
             let source_rev = scene.prototype(id).unwrap().revision();
             for lod in LODS {
                 assert!(catalog.instance_index(id, lod).is_some());
@@ -898,13 +940,38 @@ mod tests {
                 [
                     catalog.instance_index(BOULDER, lod),
                     catalog.instance_index(SHEET, lod),
+                    catalog.instance_index(OPENING, lod),
                 ]
             })
             .map(|i| i.unwrap())
             .collect();
         indices.sort();
         indices.dedup();
-        assert_eq!(indices.len(), 6);
+        assert_eq!(indices.len(), 9);
+    }
+
+    #[test]
+    fn native_fixture_preserves_opening_while_dense_control_coarsens() {
+        let mut scene = fixture_scene();
+        let plan = phases()[1];
+        let frame = scene
+            .prepare_batches(&plan.lod_camera(1080.0), &plan.config)
+            .unwrap();
+        let opening = frame
+            .selected
+            .iter()
+            .find(|s| s.instance == "opening_guard")
+            .expect("native fixture must exercise the local opening guard");
+        assert_eq!(opening.lod, Lod::Source);
+        let control = frame
+            .selected
+            .iter()
+            .find(|s| s.instance == NEAR_INSTANCE)
+            .unwrap();
+        assert!(
+            control.lod > Lod::Source,
+            "safe dense control must still coarsen"
+        );
     }
 
     #[test]

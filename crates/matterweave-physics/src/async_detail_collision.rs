@@ -157,12 +157,14 @@ impl Queue {
     }
 
     /// Poll: consume and return the buffered result only if it is current for
-    /// `version`; drop a reset-cancelled result; leave a foreign-source result.
+    /// `version` and `gate` accepts it; drop a reset-cancelled result; leave a
+    /// foreign-source or gate-refused result buffered for a later retry.
     fn take_result(
         &mut self,
         version: &SceneVersion,
+        gate: impl FnOnce(&Result<PreparedDetailCollision, String>) -> bool,
     ) -> Option<Result<PreparedDetailCollision, String>> {
-        match self.result.as_ref() {
+        let accept = match self.result.as_ref() {
             None => return None,
             Some(result) if !Arc::ptr_eq(&result.epoch, &self.epoch) => {
                 self.result = None;
@@ -174,9 +176,9 @@ impl Queue {
             {
                 return None
             }
-            Some(_) => {}
-        }
-        Some(self.result.take().expect("result present").outcome)
+            Some(result) => gate(&result.outcome),
+        };
+        accept.then(|| self.result.take().expect("result present").outcome)
     }
 
     /// Reset: cancel pending and buffered work and advance the generation.
@@ -227,6 +229,23 @@ impl Default for AsyncDetailCollision {
 }
 
 impl AsyncDetailCollision {
+    /// Fallback-path constructor: no worker thread is spawned and every
+    /// request is refused, so the caller exercises the synchronous path.
+    /// Used by [`DetailCollisionCadence::without_worker`] for fallback tests.
+    pub fn without_worker() -> Self {
+        let shared = Arc::new(Shared {
+            queue: Mutex::new(Queue {
+                shutdown: true,
+                ..Queue::default()
+            }),
+            wake: Condvar::new(),
+        });
+        Self {
+            shared,
+            worker: None,
+        }
+    }
+
     /// Starts the single background worker. One worker keeps ordering obvious;
     /// widening it is a measurement-led change, not a correctness requirement.
     pub fn new() -> Self {
@@ -291,9 +310,22 @@ impl AsyncDetailCollision {
         &mut self,
         current: &DetailScene,
     ) -> Option<Result<PreparedDetailCollision, String>> {
+        self.poll_retaining(current, |_| true)
+    }
+
+    /// Like [`poll`](Self::poll), but *retains* the buffered result when `gate`
+    /// refuses it, so a publication the live world cannot safely accept yet —
+    /// for example new collision overlapping a body that moved into its region
+    /// while preparation was pending — stays buffered and is retried on a later
+    /// frame instead of being dropped or forced through.
+    pub fn poll_retaining(
+        &mut self,
+        current: &DetailScene,
+        gate: impl FnOnce(&Result<PreparedDetailCollision, String>) -> bool,
+    ) -> Option<Result<PreparedDetailCollision, String>> {
         let version = current.source_version();
         let mut queue = self.shared.lock();
-        queue.take_result(&version)
+        queue.take_result(&version, gate)
     }
 
     /// Cancels the pending snapshot and any buffered result, and invalidates the
@@ -460,7 +492,7 @@ mod queue_tests {
         let second = q.begin_job();
         assert!(!q.enqueue_request(a.source_version(), || a.fork_source()));
         q.finish_job(second, Err("B".into()));
-        assert!(matches!(q.take_result(&a.source_version()), Some(Err(e)) if e == "A"));
+        assert!(matches!(q.take_result(&a.source_version(), |_| true), Some(Err(e)) if e == "A"));
     }
 
     #[test]

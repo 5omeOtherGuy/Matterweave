@@ -74,7 +74,9 @@ voxel enclosures with the synchronous producer. Open/reopened samples were
 correctness evidence only. Its manifest and report are under
 `/mnt/bench/matterweave-dev/performance/engine-02/phone-async-cpu`.
 The [retained manifest](../evidence/2026-09-08-async-lighting.json) records exact
-source and evidence checksums. Durable archive upload remains a delivery task.
+source and evidence checksums. The [v0.5 evidence archive](https://github.com/5omeOtherGuy/Matterweave/releases/download/v0.5.0/matterweave-v0.5-lighting-evidence.tar.gz)
+retains these records and a fresh six-phase phone pass at `577dff8`. Its SHA-256 is
+`07301d6e20d55310eedab48c797fde930464e180021d9c82f28bb38284523247`.
 
 ## Instrumented controller coverage
 

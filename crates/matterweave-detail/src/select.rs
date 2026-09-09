@@ -21,8 +21,18 @@
 //!   fraction of the coarse solid newly filled by expansion, aggregated over the
 //!   whole prototype. It *biases* thin, perforated prototypes (fronds, stems,
 //!   sheets) toward finer levels, but it is global: a small deep opening inside a
-//!   large solid contributes a negligible fraction and is **not** guaranteed to be
-//!   preserved. Callers needing a specific opening kept must cap the level.
+//!   large solid contributes a negligible fraction on its own. That case is
+//!   caught by the companion `local_loss_fraction` guard below instead.
+//! - `local_loss_fraction` is the worst per-coarse-cell expansion, evaluated
+//!   against each footprint *clipped to the prototype's occupied cell bounds*:
+//!   `max((expected - count) / expected)`, or `0` when every clipped cell is
+//!   full. A through-tunnel, deep pinhole or face-pit leaves a surrounding
+//!   coarse cell partially filled, so the worst cell reads `0.25` at factor 2
+//!   (`1/8` for a single missing cell) while an unaligned dense cuboid reads
+//!   exactly `0`. It is still conservative, not a visual proof: it cannot tell
+//!   an enclosed void (invisible until cut open) from a through-tunnel, and
+//!   it holds the whole prototype at the finer level. Callers that can
+//!   tolerate a specific opening set `max_local_loss_fraction`.
 //! - The pixel figure is a *working estimate* for prioritization, never a proof of
 //!   temporal visual quality. Approach/retreat/zoom capture review on-device is
 //!   still owed before trusting a coarse level.
@@ -57,14 +67,21 @@ pub struct ErrorMetrics {
     pub error_estimate_m: f32,
     /// Fraction of the coarse solid newly filled by any-occupied expansion,
     /// aggregated over the whole prototype. A thin-feature bias, not a per-opening
-    /// guarantee.
+    /// guarantee (see `local_loss_fraction`).
     pub dilation_fraction: f32,
+    /// Worst per-coarse-cell expansion, each footprint clipped to the
+    /// prototype's occupied cell bounds: `max((expected - count) / expected)`,
+    /// `0` when every clipped cell is full. Catches tunnels, pinholes and
+    /// boundary notches the global dilation misses; unaligned dense geometry
+    /// reads exactly `0` by construction.
+    pub local_loss_fraction: f32,
 }
 
 impl ErrorMetrics {
     pub(crate) const SOURCE: Self = Self {
         error_estimate_m: 0.0,
         dilation_fraction: 0.0,
+        local_loss_fraction: 0.0,
     };
 }
 
@@ -216,6 +233,12 @@ pub struct LodConfig {
     /// Thin-feature/opening bias: a level whose `dilation_fraction` exceeds this is
     /// never selected (nor any coarser level). Global, not a per-opening guarantee.
     pub max_dilation_fraction: f32,
+    /// Local interior-loss guard: a level whose `local_loss_fraction` exceeds this
+    /// is never selected (nor any coarser level). `0.0` (the default) holds any
+    /// prototype with a partially filled interior coarse cell — tunnels, pinholes,
+    /// enclosed voids — at the finer level; dense solids read exactly `0` and are
+    /// unaffected. Raise toward `1.0` only for openings known to be tolerable.
+    pub max_local_loss_fraction: f32,
     /// Optional cap on *new coarse* mesh builds per prepare call. When reached,
     /// remaining instances fall back to the authoritative `Source` mesh instead of
     /// building more derived geometry. `Source` builds are always permitted.
@@ -229,6 +252,7 @@ impl Default for LodConfig {
             hysteresis: 0.4,
             max_lod: Lod::Quarter,
             max_dilation_fraction: 0.45,
+            max_local_loss_fraction: 0.0,
             max_coarse_builds: None,
         }
     }
@@ -241,7 +265,9 @@ impl LodConfig {
             && self.hysteresis.is_finite()
             && self.hysteresis >= 0.0
             && self.max_dilation_fraction.is_finite()
-            && (0.0..=1.0).contains(&self.max_dilation_fraction);
+            && (0.0..=1.0).contains(&self.max_dilation_fraction)
+            && self.max_local_loss_fraction.is_finite()
+            && (0.0..=1.0).contains(&self.max_local_loss_fraction);
         // The hysteresis thresholds are f32 (`budget / (1 + hysteresis)` and
         // `budget * (1 + hysteresis)`); finite inputs can still multiply to
         // infinity or underflow the low threshold to zero, leaving the
@@ -344,6 +370,9 @@ pub(crate) fn choose_lod(
             break;
         };
         if metric.dilation_fraction > config.max_dilation_fraction {
+            break;
+        }
+        if metric.local_loss_fraction > config.max_local_loss_fraction {
             break;
         }
         let projected = camera.projected_error_px(metric.error_estimate_m, depth_m);

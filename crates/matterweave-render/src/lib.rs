@@ -8,6 +8,7 @@ mod indirect_edge_tests;
 #[cfg(test)]
 mod indirect_tests;
 mod lighting;
+pub mod ray_reference;
 mod shadow;
 mod static_scene;
 mod timing;

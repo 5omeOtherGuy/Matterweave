@@ -55,3 +55,14 @@ bounded experiment. The next M2 experiment remains shared-fixture traversal vers
 raster costs, including edits/preparation and orthographic views. This ADR remains
 Proposed; neither phone operation nor greedy triangle reduction accepts the final
 mobile rendering choice. See [STATUS](../STATUS.md) and the [execution log](../../execution_log.md).
+
+## Bounded GPU ray reference — 2026-09-08
+
+The retained unit-voxel ray pack and shader now pass 30 color/depth probes on host
+Vulkan with synchronization validation and on Adreno 830 Android. Initial sync
+and mobile precision failures were reproduced and corrected; [evidence](../performance/ray-reference.md)
+records numerical tolerances and bounds. This resolves shader-execution feasibility
+for a bounded reference, not the equivalent-quality renderer comparison. The
+primary path remains unselected under this ADR's gate.
+
+The [full-image comparison reference](../performance/renderer-comparison.md) now has 12 passing Android/host fixture runs, including six complete-world matched images and split shared-depth hybrid occlusion. It establishes bounded correctness at 128×128 with matched simple shading. Combined setup costs and single tiny-fixture draws cannot justify primary-path selection; representative quality, sustained total costs and residency comparisons remain required.

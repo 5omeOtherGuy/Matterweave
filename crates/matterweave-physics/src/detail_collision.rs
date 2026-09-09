@@ -313,6 +313,18 @@ impl PreparedDetailCollision {
         self.version == scene.source_version()
     }
 
+    /// World-space AABB of every collider this preparation would install.
+    /// Used only for the conservative structural gate (unknown scene change):
+    /// publication defers while any dynamic body overlaps any of these, which
+    /// is over-conservative but can never miss new material the way a
+    /// whole-collider "unchanged" comparison would.
+    pub fn collider_aabbs(&self) -> Vec<Aabb> {
+        self.pending
+            .iter()
+            .map(|(pose, shape)| shape.compute_local_aabb().transform_by(pose))
+            .collect()
+    }
+
     pub fn build(scene: &DetailScene) -> Result<Self, String> {
         let counts = scene.counts();
         // Instance count alone is never a rejection: liquid and decorative
@@ -440,6 +452,49 @@ impl Physics {
         stats.woken_bodies = woken_bodies;
         self.detail_stats = stats;
         Ok(stats)
+    }
+
+    /// World-space AABBs of every dynamic body: the character capsule plus one
+    /// entry per collider of every dynamic voxel object.
+    pub fn dynamic_body_aabbs(&self) -> Vec<Aabb> {
+        let mut aabbs = Vec::with_capacity(1 + self.objects.len() * 2);
+        let current_aabb = |collider: &Collider| {
+            // Rapier updates cached collider poses during a physics step;
+            // input can teleport a body before this frame's publication gate.
+            let pose = collider.parent().map_or(*collider.position(), |parent| {
+                *self.bodies[parent].position()
+                    * *collider.position_wrt_parent().expect("parent pose")
+            });
+            collider.shape().compute_aabb(&pose)
+        };
+        aabbs.push(current_aabb(&self.colliders[self.character_collider]));
+        for object in &self.objects {
+            for collider in self.bodies[object.handle].colliders() {
+                if let Some(collider) = self.colliders.get(*collider) {
+                    aabbs.push(current_aabb(collider));
+                }
+            }
+        }
+        aabbs
+    }
+
+    /// Whether any dynamic body AABB intersects any region in `added`.
+    ///
+    /// `added` must cover every world-space region where the pending source
+    /// added solid collision material relative to the last accepted
+    /// publication; removals are never included because removing collision
+    /// cannot trap a body. The [`DetailCollisionCadence`] accumulates this set
+    /// from the owner's edit journal, so no collider-geometry comparison is
+    /// needed here: coarse whole-collider AABBs can never establish unchanged
+    /// shape (filling an interior hole leaves the outer AABB identical), and
+    /// are therefore used only for the conservative structural fallback below.
+    pub fn detail_added_blocked(&self, added: &[Aabb]) -> bool {
+        if added.is_empty() {
+            return false;
+        }
+        self.dynamic_body_aabbs()
+            .iter()
+            .any(|body| added.iter().any(|region| region.intersects(body)))
     }
 
     /// Counters of the last accepted detail replacement. A rejected replacement

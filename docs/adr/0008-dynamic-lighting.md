@@ -77,3 +77,8 @@ was pending. Publication retains the existing frame-fence contract. This address
 scheduling of the current unit-voxel diffuse reference; reflections, production
 quality, representation coverage and sustained mobile cost remain open. See
 [controller evidence](../performance/async-indirect.md). ADR remains Proposed.
+
+The background adapter also passes OnePlus 13 Android 16 off/on/light/edit/enclosure
+and HOME/resume checks, with nine presentations while preparation was pending.
+PR10 and v0.5 deliver this bounded slice; [evidence](../performance/async-indirect.md)
+records exact source and artifact checksums. M4 acceptance remains open.

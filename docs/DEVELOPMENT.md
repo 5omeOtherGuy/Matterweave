@@ -375,3 +375,20 @@ adb shell /data/local/tmp/matterweave-async-indirect
 Set `CARGO_TARGET_DIR` to a dedicated build directory before these commands.
 This headless test proves CPU-controller correctness only; the APK adapter check
 above separately exercises presentation, upload and lifecycle behavior.
+
+### Sustained native streaming correctness gate
+
+```sh
+cargo run --locked -p matterweave-core --example stream_stress -- 2 /tmp/matterweave-stream-new.json
+```
+
+The second argument must be an unused disposable save path. A successful run
+removes only that test-created file; failed runs retain it for diagnosis. Duration
+is 1–1800 seconds, with at least six route changes. CI executes the short gate.
+Cross-compile `--example stream_stress` using the same Android linker as the
+standalone lighting check, push it under `/data/local/tmp`, and run it with
+`600 /data/local/tmp/matterweave-stream-new.json` for a ten-minute gate.
+Record exact source/binary checksum, device and build configuration alongside
+stdout and health observations. See [streaming stress](performance/stream-stress.md).
+
+Full-image ray/raster/shared-depth hybrid correctness: `cargo run --locked -p matterweave-render --example renderer_comparison`. See [comparison protocol](performance/renderer-comparison.md) for tolerances, artifacts and Android evidence.

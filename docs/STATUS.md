@@ -10,7 +10,7 @@ and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) and
 [PERFORMANCE_TASKS](PERFORMANCE_TASKS.md). The [showcase](SHOWCASE.md) is a test
 workload; further showcase polish and old demo-save compatibility must not delay
 remaining M2–M6 engine requirements. The sole current integration checkout is
-`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-light-scheduling`.
+`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-completion-03`.
 The [board](performance/board.json) records ownership; the prior two-lead arrangement
 is retired. This continuation owns phone, integration and delivery.
 
@@ -84,11 +84,25 @@ failed attempt. The APK source is `9854723`; the standalone ARM64 CPU check at
 open, closed and reopened enclosure. See [background lighting](performance/async-indirect.md).
 These functional checks do not establish full GI/reflections or sustained efficiency.
 
-PR10 is draft/open; its remote `ca26d58` passed host, Android and docs CI.
-The local `70a231a` example and these final evidence records await delivery and
-final-revision checks. v0.5 is not yet released. Model availability/quota notes
-from the interrupted session are historical; the owner authorizes paid Muse 1.3
-Contributor, GLM 5.3 Flash, Hy4 and Opus 5 for this continuation.
+PR10 merged at `3ad0d27` after all final-revision host, Android and docs CI
+passed at `577dff8`. Paid Muse Contributor reviewed the controller, queue lifetime,
+Vulkan publication and standalone check without actionable findings; lead owns
+executed checks. A fresh local APK rebuild was byte-identical to the `9854723`
+artifact, passed signature/16 KiB checks and another six-phase OnePlus 13 run with
+HOME/resume and nine presentations during preparation.
+[v0.5.0](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.5.0) is published
+with APK, exact-source manifest and retained lighting/detail/collision evidence.
+See [delivery manifest](evidence/v0.5-release.json). This is an intermediate engine
+delivery; M2–M6 remain open.
+
+The integration branch is `codex/engine-completion-03` (PR11 draft). Hy4's ray
+and comparison prototypes were recovered and corrected by lead; paid Muse repaired
+collision cadence; Opus refined the detail topology guard after counterexamples.
+Both paid Muse Contributor and Opus 5 are working now. Earlier quota notes are
+historical; a transient Muse429 was retried successfully. Lead owns integration
+and the connected OnePlus 13. The ten-minute native streaming gate passed
+39,761 cycles, 219,832 meshes and 3,615 save/reloads within its declared limits.
+See [streaming stress](performance/stream-stress.md).
 
 The frozen `b1f6c67` instrumented
 tests and four Vulkan examples passed. Per-object LCOV line union reports
@@ -96,6 +110,41 @@ tests and four Vulkan examples passed. Per-object LCOV line union reports
 [coverage evidence](performance/engine-coverage.md). This is not Android/shader
 coverage or an engine-completion percentage. The stopped temporary coverage
 build target was removed; profile/report evidence was retained.
+
+## Engine-03 renderer reference
+
+The bounded authoritative ray-volume pack and Naga shader now execute through
+a headless Vulkan probe harness. All 73 renderer tests and strict scoped Clippy
+pass. Lead corrected 48 host synchronization hazards, then two Adreno precision
+failures; the expanded 30-probe suite now passes host synchronization validation
+and physical Android. The [manifest](evidence/2026-09-08-ray-reference.json)
+retains source/binary checksum and the complete phone report. See
+[ray reference](performance/ray-reference.md) for bounds and numerical tolerances.
+This is shader correctness evidence only; the full-image same-quality ray/raster/
+hybrid comparison and primary-path selection remain in progress.
+
+The ten-minute streaming run sampled RSS between 7,052 and 16,128 KiB, and battery
+temperature rose 28.3 to 37.5 C with Android thermal status reaching 3. These are
+headless CPU-fixture observations, not a graphics-efficiency claim. See its
+[exact summary](evidence/2026-09-08-stream-stress.json).
+
+## Detail and collision integration — Android check pending
+
+The topology guard now evaluates coarse fills sequentially. Independent fills had
+jointly closed a 2×2 tunnel; the reproduced regression and all-axis/negative
+variants now pass. Opus records 122 detail tests passing, including safe stepped
+wedge coarsening, preserved passages, aligned channels that safely reach Half,
+and per-instance edit invalidation. Rough concavities remain conservative;
+material-filled channels and full temporal/quality M4 acceptance remain open.
+See [guard limitations and costs](performance/detail-local-loss-guard.md).
+
+Production wetland edits now queue collision preparation and poll publication
+before each simulation step. Added-solid regions defer publication while occupied;
+the workerless fallback applies the same gate. Rejection restores prior journal
+entries, and current rigid-body poses protect teleports before physics stepping.
+Eleven cadence tests and scoped strict Clippy pass. Publication has no fixed time
+bound while an addition is occupied; rendering may lead collision. Native/Android
+integration validation of this revision remains pending. See [collision log](performance/logs/engine-03-collision.md).
 
 ## Earlier continuation evidence (historical pre-release checkpoints)
 
@@ -185,7 +234,7 @@ not completed by that release.
 The [completion execution log](performance/logs/completion-execution.md) and
 [prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier
 accepted P00/P01/P02/P03 slices and unavailable measurement gates. Latest published
-prerelease is v0.4.0; newer engine-systems development is reported separately.
+prerelease is v0.5.0; subsequent engine development is reported separately.
 
 ## v0.3 verified Android slice
 
@@ -305,3 +354,11 @@ retains the previously documented Vulkan 1.1 WSI idle fallback.
 
 Project licensing, production signing ownership and store publication remain owner
 decisions. This is a GitHub development prerelease, not a store build.
+
+Engine-03 full-image comparison: the initial 12-run Android gate passes at
+`bfb65ca`; the expanded 16-run host gate includes orthographic opening removal.
+It permits at most 0.05% CPU-proven face-edge ambiguity and zero unexplained
+mismatches. One/two edge pixels are recorded on the new fixture, not silently
+classified away. The one-cell descriptor regression is corrected; matched CPU
+oracle acceptance requires at least one non-excluded hit. Final Android repeat
+and combined workspace checks are running. [Protocol](performance/renderer-comparison.md).

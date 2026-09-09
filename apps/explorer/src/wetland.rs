@@ -11,7 +11,8 @@ use glam::{Vec2, Vec3};
 use matterweave_core::{Mesh, World};
 use matterweave_detail::{DetailScene, Lod, Yaw};
 use matterweave_physics::{
-    BodySnapshot, DetailCollisionStats, DynamicMeshCache, Physics, PhysicsSnapshot,
+    BodySnapshot, DetailCollisionCadence, DetailCollisionStats, DynamicMeshCache, Physics,
+    PhysicsSnapshot,
 };
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance};
 use std::{
@@ -50,6 +51,86 @@ struct Runtime {
     graphics_dirty: bool,
     dynamic_dirty: bool,
     counts: String,
+    /// Edit-to-collision cadence: preparation is queued per edit and
+    /// published at most once per frame; see `sync_detail_collision`.
+    collision: DetailCollisionCadence,
+    /// Edits queued for collision preparation but not yet confirmed by a
+    /// publication. Reverted as a group if preparation of the current
+    /// source fails, so the authoritative scene returns to the state its
+    /// live collision was published from.
+    pending_edits: Vec<PendingEdit>,
+}
+
+/// One authoritative edit awaiting collision publication.
+struct PendingEdit {
+    instance: String,
+    cell: [i32; 3],
+    /// Scene material the cell held before this unconfirmed burst.
+    old: u8,
+    /// Save-journal entry the cell held before this burst: `Some(material)`
+    /// when a confirmed entry already existed, `None` when this burst created
+    /// it. Rollback restores exactly this — a confirmed removal (journal
+    /// material 0) reverted by a failed re-add must come back as a journal
+    /// removal, not vanish — because restoring only the scene material would
+    /// silently drop confirmed history and corrupt save replay.
+    journal: Option<u8>,
+}
+
+impl PendingEdit {
+    /// Restores the scene cell and the exact prior save-journal state.
+    fn rollback(self, scene: &mut DetailScene, edits: &mut Vec<Edit>) {
+        let _ = scene.edit_instance(&self.instance, self.cell, self.old);
+        match self.journal {
+            None => {
+                edits.retain(|edit| edit.instance != self.instance || edit.cell != self.cell);
+            }
+            Some(material) => {
+                if let Some(edit) = edits
+                    .iter_mut()
+                    .find(|edit| edit.instance == self.instance && edit.cell == self.cell)
+                {
+                    edit.material = material;
+                } else {
+                    edits.push(Edit {
+                        instance: self.instance,
+                        cell: self.cell,
+                        material,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// World-space `(min, max)` box of one prototype cell of a placed instance.
+/// All eight corners go through the exact instance transform, so quarter-turn
+/// yaw is honoured without assuming axis order. `None` when the prototype is
+/// gone; the caller then treats the change as structural.
+fn cell_world_aabb(
+    scene: &DetailScene,
+    draw: &matterweave_detail::InstanceDraw,
+    cell: [i32; 3],
+) -> Option<([f32; 3], [f32; 3])> {
+    let scale = scene.prototype(&draw.prototype)?.scale().metres();
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for dx in 0..=1 {
+        for dy in 0..=1 {
+            for dz in 0..=1 {
+                let local = [
+                    (cell[0] + dx) as f32 * scale,
+                    (cell[1] + dy) as f32 * scale,
+                    (cell[2] + dz) as f32 * scale,
+                ];
+                let world = draw.transform.point_to_world(local);
+                for axis in 0..3 {
+                    lo[axis] = lo[axis].min(world[axis]);
+                    hi[axis] = hi[axis].max(world[axis]);
+                }
+            }
+        }
+    }
+    Some((lo, hi))
 }
 
 fn graphics(scene: &mut DetailScene) -> Result<(Vec<Mesh>, Vec<StaticInstance>), String> {
@@ -284,6 +365,8 @@ impl Runtime {
             graphics_dirty: true,
             dynamic_dirty: true,
             counts,
+            collision: DetailCollisionCadence::new(),
+            pending_edits: Vec::new(),
         };
         if fresh {
             runtime.playground()?;
@@ -360,11 +443,68 @@ impl Runtime {
                 return Err(error);
             }
         };
-        if let Err(error) = self.physics.replace_detail_scene(&self.scene) {
-            self.scene
-                .edit_instance(&hit.instance, cell, old)
-                .map_err(|e| e.to_string())?;
-            return Err(error);
+        // The world-space box of the edited cell: the publication gate defers
+        // the new collision while a body overlaps it. Only newly added solid
+        // material gates; removals publish as soon as preparation completes.
+        let adds_solid = matterweave_detail::material_policy(value)
+            == matterweave_detail::MaterialPolicy::Collision
+            && matterweave_detail::material_policy(old)
+                != matterweave_detail::MaterialPolicy::Collision;
+        // A missing prototype here means the scene changed under the edit;
+        // report a structural change so the gate stays conservative.
+        let added_region: Option<Vec<([f32; 3], [f32; 3])>> = if !adds_solid {
+            Some(Vec::new())
+        } else {
+            cell_world_aabb(&self.scene, &draw, cell).map(|bounds| vec![bounds])
+        };
+        // The edit is authoritative now; collision preparation is queued and
+        // published on the frame cadence (`sync_detail_collision`). Live
+        // collision keeps serving movement until the newer shapes publish, so
+        // movement and queries stay correct while the work is pending. The
+        // visible scene may lead the world (a new wall is seen before it is
+        // solid); the cadence's publication gate guarantees added solid
+        // material can never materialise through the character.
+        match self
+            .collision
+            .on_edit(&self.scene, &mut self.physics, added_region.as_deref())
+        {
+            Ok(true) => {
+                // Coalesce per (instance, cell): one entry per edited cell,
+                // carrying the scene material and the save-journal entry from
+                // before this unconfirmed burst, so `pending_edits` stays
+                // bounded by distinct edited cells and a failed preparation
+                // reverts the whole burst exactly, including confirmed
+                // journal history.
+                let exists = self
+                    .pending_edits
+                    .iter()
+                    .any(|pending| pending.instance == hit.instance && pending.cell == cell);
+                if !exists {
+                    let journal = self
+                        .edits
+                        .iter()
+                        .find(|edit| edit.instance == hit.instance && edit.cell == cell)
+                        .map(|edit| edit.material);
+                    self.pending_edits.push(PendingEdit {
+                        instance: hit.instance.clone(),
+                        cell,
+                        old,
+                        journal,
+                    });
+                }
+            }
+            Ok(false) => {
+                // A synchronous acceptance confirms the whole pending burst too.
+                self.pending_edits.clear();
+            }
+            Err(error) => {
+                // Even the synchronous fallback rejected the source: restore
+                // the scene and leave live collision untouched.
+                self.scene
+                    .edit_instance(&hit.instance, cell, old)
+                    .map_err(|e| e.to_string())?;
+                return Err(error);
+            }
         }
         self.meshes = meshes;
         self.instances = instances;
@@ -389,6 +529,55 @@ impl Runtime {
             "Voxel removed"
         }
         .into())
+    }
+
+    /// Per-frame detail-collision publication, called on the simulation
+    /// thread before physics stepping.
+    ///
+    /// Publishes at most one completed preparation per frame. Results for a
+    /// scene that has since been edited, replaced or reset are rejected by
+    /// the cadence and simply do not publish; movement and queries keep using
+    /// the last accepted collision meanwhile. When preparation of the current
+    /// source fails, every unconfirmed edit is reverted as a group (scene,
+    /// journal and meshes) and the reverted source is re-queued, so the
+    /// authoritative scene returns to the state its live collision was
+    /// published from. Returns a status message only on failure.
+    fn sync_detail_collision(&mut self) -> Option<String> {
+        match self.collision.step(&self.scene, &mut self.physics) {
+            Ok(None) => None,
+            Ok(Some(_)) => {
+                // A publication always covers the current scene version, so
+                // it confirms the whole unconfirmed burst.
+                self.pending_edits.clear();
+                None
+            }
+            Err(error) => {
+                // Revert the whole unconfirmed burst, restoring each cell's
+                // exact prior save-journal entry (see `PendingEdit`): a
+                // confirmed removal re-added by this burst comes back as a
+                // journal removal instead of vanishing from the save.
+                for pending in self.pending_edits.drain(..).rev() {
+                    pending.rollback(&mut self.scene, &mut self.edits);
+                }
+                // The reverted content is exactly what graphics accepted
+                // before, so this only fails if the scene is otherwise
+                // corrupt; the last meshes stay up rather than blanking.
+                if let Ok((meshes, instances)) = graphics(&mut self.scene) {
+                    self.meshes = meshes;
+                    self.instances = instances;
+                    self.graphics_dirty = true;
+                }
+                self.dirty = true;
+                // Re-queue the reverted source; its publication restores the
+                // collision/scene match (it is usually already live). The
+                // reverted scene matches the last accepted publication, so no
+                // added-solid region is outstanding.
+                let _ = self
+                    .collision
+                    .on_edit(&self.scene, &mut self.physics, Some(&[]));
+                Some(format!("Edit rejected: {error}"))
+            }
+        }
     }
     fn playground(&mut self) -> Result<(), String> {
         // A bounded six-body arch containing exactly64 half-metre voxels. The
@@ -887,6 +1076,12 @@ impl WetlandApp {
                 }
                 r.physics
                     .update_grab(r.camera.position.to_array(), r.camera.forward().to_array());
+                // Publish at most one completed detail-collision preparation
+                // before stepping, so movement always runs against a
+                // consistent, accepted collision state.
+                if let Some(message) = r.sync_detail_collision() {
+                    self.status = message;
+                }
                 row.physics_fixed_steps = Some(r.physics.step(
                     dt,
                     velocity.to_array(),
@@ -1770,5 +1965,103 @@ mod journal_tests {
         }
         physics.replace_detail_scene(&scene).unwrap();
         assert_eq!(clear_pose(&mut physics, standing), None);
+    }
+
+    fn rollback_fixture() -> DetailScene {
+        let mut scene = DetailScene::new();
+        let mut rock = DetailVolume::new("rock", Scale::new(1.0).unwrap());
+        for x in 0..3 {
+            rock.set([x, 0, 0], material::BANK_STONE).unwrap();
+        }
+        scene.add_prototype(rock).unwrap();
+        scene.place("a", "rock", Transform::identity()).unwrap();
+        scene
+    }
+
+    fn cell_of(scene: &DetailScene, instance: &str, cell: [i32; 3]) -> u8 {
+        let proto = proto_of(scene, instance);
+        scene.prototype(&proto).unwrap().get(cell)
+    }
+
+    #[test]
+    fn pending_rollback_restores_confirmed_journal_removal() {
+        // Lead-confirmed gap: a confirmed removal (journal material 0)
+        // re-added by a failed burst must come back as a journal removal.
+        // Restoring only the scene material deletes confirmed history and
+        // corrupts save replay.
+        let mut scene = rollback_fixture();
+        scene.edit_instance("a", [0, 0, 0], 0).unwrap();
+        let mut edits = vec![Edit {
+            instance: "a".into(),
+            cell: [0, 0, 0],
+            material: 0,
+        }];
+        // Failed burst re-adds the cell; Runtime.edit updates the entry.
+        scene
+            .edit_instance("a", [0, 0, 0], material::BANK_STONE)
+            .unwrap();
+        edits[0].material = material::BANK_STONE;
+        PendingEdit {
+            instance: "a".into(),
+            cell: [0, 0, 0],
+            old: 0,
+            journal: Some(0),
+        }
+        .rollback(&mut scene, &mut edits);
+        assert_eq!(cell_of(&scene, "a", [0, 0, 0]), 0);
+        assert_eq!(
+            edits,
+            vec![Edit {
+                instance: "a".into(),
+                cell: [0, 0, 0],
+                material: 0,
+            }],
+            "confirmed removal history must survive the rollback"
+        );
+    }
+
+    #[test]
+    fn pending_rollback_drops_burst_created_journal_entry() {
+        // No confirmed entry existed: rollback removes the burst's entry and
+        // restores the scene cell.
+        let mut scene = rollback_fixture();
+        scene.edit_instance("a", [1, 0, 0], 0).unwrap();
+        let mut edits = vec![Edit {
+            instance: "a".into(),
+            cell: [1, 0, 0],
+            material: 0,
+        }];
+        PendingEdit {
+            instance: "a".into(),
+            cell: [1, 0, 0],
+            old: material::BANK_STONE,
+            journal: None,
+        }
+        .rollback(&mut scene, &mut edits);
+        assert_eq!(cell_of(&scene, "a", [1, 0, 0]), material::BANK_STONE);
+        assert!(edits.is_empty(), "burst entry removed: {edits:?}");
+    }
+
+    #[test]
+    fn pending_rollback_reinserts_missing_journal_entry() {
+        // Defensive arm: a confirmed entry absent at rollback time is
+        // reinserted with its prior material, never left dropped.
+        let mut scene = rollback_fixture();
+        let mut edits = Vec::new();
+        PendingEdit {
+            instance: "a".into(),
+            cell: [2, 0, 0],
+            old: material::BANK_STONE,
+            journal: Some(material::BANK_STONE),
+        }
+        .rollback(&mut scene, &mut edits);
+        assert_eq!(
+            edits,
+            vec![Edit {
+                instance: "a".into(),
+                cell: [2, 0, 0],
+                material: material::BANK_STONE,
+            }]
+        );
     }
 }

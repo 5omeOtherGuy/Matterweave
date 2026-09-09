@@ -1,0 +1,38 @@
+{
+  "source": "ea436d3",
+  "binary_sha256": "5586590fc99a59d2eade0929a66ac43ab39c411926e5bf92b5cb182111e20877",
+  "device": "CPH2653",
+  "os": "16",
+  "fingerprint": "OnePlus/CPH2653EEA/OP5D55L1:16/BP2A.250605.015/V.R4T3.52da06f-2e397f6-2e81775:user/release-keys",
+  "seconds_requested": 600,
+  "seed": 20260908,
+  "profile": "Cargo dev opt2 debug0, ARM64 Android API28",
+  "scope": "Sustained CPU streaming/meshing/persistence correctness; no GPU or comparative efficiency claim",
+  "exit_code": 0,
+  "elapsed_s": 607.1846934659989,
+  "terminal_pass": true,
+  "report": "PASS stream stress: seconds=600.013 cycles=39761 meshes=219832 resets=9296 reloads=3615 peak_result_bytes=8387904 peak_queued=32; CPU correctness only",
+  "health_samples": 59,
+  "rss_kib": {
+    "min": 7052.0,
+    "max": 16128.0,
+    "first": 7052.0,
+    "last": 8180.0
+  },
+  "battery_c": {
+    "first": 28.3,
+    "last": 37.5,
+    "max": 37.5
+  },
+  "thermal_statuses": [
+    0.0,
+    1.0,
+    2.0,
+    3.0
+  ],
+  "raw_checksums": {
+    "report.txt": "423a2264caaadb6ffbd63b8e9131f1b1d4d023d5a4bea4d7cd6c9b3837c65d5d",
+    "health.jsonl": "cdeeedbf87d5756364b7fc93bf05431efd4d336b26b51dcb8bf78b09f1245448",
+    "manifest.json": "37790f54482290c25c0696eb736a44527b7b43f85a6539e4a8f2744e70caadd6"
+  }
+}
