@@ -196,5 +196,44 @@ None is a device measurement.
     closed-loop tests; the ratchet guard observed `[1, 2, 3]` for a 5 ms workload in the first
     three frames, and the series ratcheted to `[1, 2, 3, 4, 4, ...]`.
 
+## Device gate — OnePlus 13, executed
+
+Lead-owned and actually run on 2026-09-10. Device: OnePlus 13 (`CPH2653`), Android 16,
+Adreno 830, Vulkan 1.3.284, driver 2150760522, presenting FIFO. APK
+`f7523ed8a9e2e9791ba63c226a3c1e6445e665d28c5908f8315aeb72a501d19d`, source `c37f2e3`, 16 KiB
+ELF alignment and v2 signature verified before installation. The display reported a 16.667 ms
+period (the panel also advertises 90 and 120 Hz modes). Full report:
+[raw device report](../evidence/2026-09-10-pacing-oneplus13.txt).
+
+| Phase | work p95 | raw mean | blocked mean | blocked share | interval p50 | jitter | missed | cadence | changes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline | 4.108 ms | 4.321 ms | 0.098 ms | 2.3% | 16.688 ms | 0.004 ms | 0/120 | 1x | 0 |
+| loaded | 24.987 ms | 25.000 ms | 0.023 ms | 0.1% | 33.341 ms | 0.009 ms | 0/120 | 2x | 1 |
+| parked | 15.803 ms | 15.834 ms | 0.057 ms | 0.4% | 33.355 ms | 0.004 ms | 0/120 | 2x | 0 |
+| recovered | 4.108 ms | 4.168 ms | 0.066 ms | 1.6% | 16.688 ms | 0.002 ms | 0/120 | 1x | 1 |
+
+All four phases PASS, each judged against the cost the device measured. The `parked` phase
+records **zero cadence changes across its 240 frames**, so the hysteresis claim rests on the
+whole phase rather than its last frame: a cost of 15.803 ms, inside the 2.083 ms guard band
+below the 16.667 ms boundary, held 2x throughout. `loaded` and `recovered` each record exactly
+one change, the single step up and the single step down.
+
+**How much the FIFO blocking mattered, measured.** The blocked share of measured frame cost —
+upload and render fence waits plus `vkAcquireNextImageKHR` — was 2.3% at worst and 0.1% under
+load, with no frame left unmeasured. The concern that vsync blocking would contaminate the load
+signal is therefore real in principle and small on this device under this pacing; the gate
+subtracts it regardless, and the raw and corrected costs are both reported so the difference
+stays visible rather than assumed.
+
+An earlier run of the same gate, before these fixes, was interrupted by a real device suspend:
+it truncated one phase to 72 of 120 samples and would have judged a later phase against cadence
+the suspend had destroyed. That is why the gate now ends INCONCLUSIVE on an interruption. This
+run was executed with the display held awake and completed all four phases uninterrupted.
+
+**What this does not establish.** It is a scheduling-correctness result on one device, one
+scene and a synthetic frame cost. No throughput, power, thermal or battery claim follows from
+it, no comparison against the previous fixed-cadence loop is made, and the 90/120 Hz panel
+modes and the re-arm path for a mid-run refresh change were not exercised.
+
 The [performance campaign README](README.md) and [development guide](../DEVELOPMENT.md) hold
 the lead-owned execution record and build/test instructions.

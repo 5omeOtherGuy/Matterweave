@@ -1,6 +1,61 @@
 # Current status
 
-Updated: 2026-09-09
+Updated: 2026-09-10
+
+## Production frame-loop scheduling — integrated and device-checked
+
+Branch `codex/engine-frame-pacing` closes the roadmap's open "production frame-loop
+scheduling" item and reassesses the unintegrated 30/60 Hz frame-cap experiment as
+reusable engine work, per owner steering.
+
+New crate `matterweave-pacing`: a deterministic, clock-free pacer (std only, no
+`unsafe`, fixed 120-sample rings, no allocation after construction) that recommends a
+present cadence and reports frame-timing statistics. It integrates the two evaluation
+candidates preserved on `eval/pacing-muse` and `eval/pacing-glm` — Muse's structure and
+public surface, GLM's typed configuration validation and deadline tolerance — and
+corrects a defect **both** of them shared.
+
+**The defect.** Both decided cadence from the presentation interval between frames. In a
+loop that paces itself, that interval is the pacer's own recommendation plus the caller's
+wait overshoot, so using it as the load signal closes a positive-feedback loop. Measured:
+a simulated loop with a 200 microsecond overshoot ratchets to the slowest cadence within
+three frames and stays there regardless of real cost, pacing a 5 ms workload on a 120 Hz
+display down to 30 Hz; with zero overshoot the same loop holds correctly, which isolates
+the feedback as the cause. `FrameSample` now carries the frame-boundary timestamp and the
+frame production cost separately: intervals drive the statistics, cost alone drives the
+cadence. `tests/closed_loop.rs` is the executable guard and fails if the two are
+reconnected.
+
+The wetland frame loop now uses it, replacing two hard-coded cadences (16.667 ms in world,
+66.667 ms in menu) with a measured-cost-driven adaptive policy and an explicit idle policy.
+The display period comes from the monitor and is rechecked about once a second, re-arming
+only on a material change, because the OnePlus 13 panel advertises 120/90/60 Hz modes.
+
+**Verification actually executed:**
+
+| Check | Result |
+| --- | --- |
+| Workspace tests | PASS: `cargo test --workspace --locked` exit 0, 467 passed across 42 suites, 3 pre-existing ignored gates. |
+| Strict Clippy / fmt / docs | PASS: `cargo clippy --workspace --all-targets --locked -- -D warnings` exit 0; `cargo fmt --all -- --check`; `python3 tools/check_docs.py`. |
+| Mutation checks | PASS: every load-bearing assertion shown to fail when the behaviour it names is broken, then restored exactly. The lead independently reproduced the cost/interval-split, settle-window and single-sample mutations. |
+| Host gate (real Vulkan) | PASS: `--pacing-check` under Xvfb/llvmpipe, 4 phases on a 16.667 ms period. |
+| Device gate (OnePlus 13) | PASS: 4 of 4 phases, Adreno 830, Vulkan 1.3.284, APK `f7523ed8…`, source `c37f2e3`. `parked` recorded zero cadence changes across 240 frames; FIFO blocking measured at 2.3% of frame cost at worst. See [frame pacing](performance/frame-pacing.md). |
+| Efficiency / thermal claim | NOT MADE: this is scheduling correctness only. No throughput, power, thermal or battery result, and no comparison against the previous fixed-cadence loop. |
+
+**Review.** A four-perspective review swarm examined the change at a frozen revision. The
+behaviour and interface reviewers returned no findings with substantive reasoning; the
+lifecycle and test reviewers returned ten, of which the lead verified nine and rejected
+one (a pre-existing, effectively unreachable busy-spin under frame-limited suspend, left
+unfixed and recorded here). All verified findings are fixed on the branch.
+
+**Known pre-existing flake, not caused by this branch.**
+`matterweave-physics::detail_cadence::reversed_addition_never_publishes_through_the_character`
+fails intermittently under full-workspace parallelism: it asserts a background worker has
+discarded a superseded preparation before a simulated walk completes, and a starved worker
+loses that race (observed `inflight: 1, discarded: 0`). Cargo builds a byte-identical test
+binary for this branch and untouched `origin/main` (`detail_cadence-dd12247ded27a4cf`,
+SHA-256 `302a3d16…`), and 100 interleaved runs of each showed zero failures, so the change
+cannot affect it. The test's timing assumption should be repaired separately.
 
 ## Milestone M6 Advancement — Voxel Relay Puzzle Sample & Engine Reusability
 

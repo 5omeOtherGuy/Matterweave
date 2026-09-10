@@ -34,12 +34,17 @@ source/build/artifact distinctions.
 Owner steering (2026-09-08): prioritize reusable engine implementation. The
 wetland supplies validation workloads; additional demo-save compatibility and
 showcase UI/content refinement are not gates ahead of M2–M5 engine progress.
-The unintegrated frame-cap experiment requires reassessment as engine pacing work.
+The frame-cap experiment has been reassessed as engine pacing work and closed:
+`matterweave-pacing` is integrated into the production frame loop and passes a host and a
+physical OnePlus 13 gate. Production frame-loop scheduling is no longer open. Its fixed cap
+survives as one policy; no efficiency or thermal benefit is claimed. See
+[frame pacing](performance/frame-pacing.md).
 
 Engine-systems follow-up: source-version-checked collision preparation and shared
 chunk snapshots are host-tested on the integration branch. Automatic detail selection and instance-only updates now pass a9-phase native
 Vulkan gate; background collision preparation/publication passes a direct native
-Android floor creation/removal gate. Production frame-loop scheduling remains open. The first
+Android floor creation/removal gate. Production frame-loop scheduling is now integrated and
+device-checked. The first
 diffuse indirect reference passes Android functional/lifecycle checks; its current
 39–45ms synchronous full preparation/upload phases motivated background scheduling.
 The background adapter now passes host and Android checks with nine Android
