@@ -14,6 +14,10 @@ use matterweave_physics::{
     BodySnapshot, DetailCollisionCadence, DetailCollisionStats, DynamicMeshCache, Physics,
     PhysicsSnapshot,
 };
+use matterweave_pacing::{
+    Config as PacingConfig, FrameSample, Pacer, Policy as PacingPolicy,
+    DEFAULT_SETTLE_FRAMES, MAX_DIVISOR,
+};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance};
 use std::{
     collections::BTreeSet,
@@ -30,6 +34,18 @@ use winit::{
 };
 const SEED: u64 = matterweave_detail::SHOWCASE_SEED;
 const GENERATOR: u32 = matterweave_detail::SHOWCASE_GENERATOR_VERSION;
+/// Display period assumed when the platform reports no usable refresh rate.
+/// 60 Hz is the conservative floor for the declared Android profile.
+const FALLBACK_REFRESH_PERIOD_NS: u64 = 16_666_667;
+/// Idle cadence for the menu. The menu is static, so it is paced well below the
+/// display rather than adaptively: there is no frame cost worth measuring there.
+const MENU_INTERVAL_NS: u64 = 66_666_667;
+
+/// Duration to nanoseconds, saturating. A session would have to run for roughly
+/// 584 years to reach the cap.
+fn nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
 
 struct Runtime {
     scene: DetailScene,
@@ -648,6 +664,12 @@ pub struct WetlandApp {
     status: String,
     last: Instant,
     next_frame: Instant,
+    /// Monotonic base for the pacer's nanosecond timestamps. Re-armed whenever the
+    /// pacer is rebuilt, so a long-lived session cannot overflow its `u64`.
+    frame_epoch: Instant,
+    /// Engine frame-loop scheduling. Decides the present cadence from measured
+    /// frame production cost; the app owns the clock and the waiting.
+    pacer: Pacer,
     focused: bool,
     frames: u64,
     frame_limit: Option<u64>,
@@ -677,6 +699,12 @@ impl WetlandApp {
             status: String::new(),
             last: Instant::now(),
             next_frame: Instant::now(),
+            frame_epoch: Instant::now(),
+            // The app opens in the menu; `resumed` rebuilds this for the real display.
+            pacer: Pacer::new(
+                PacingConfig::fixed(FALLBACK_REFRESH_PERIOD_NS, MENU_INTERVAL_NS)
+                    .expect("constant fallback pacing configuration is valid"),
+            ),
             focused: true,
             frames: 0,
             frame_limit,
@@ -1009,6 +1037,12 @@ impl WetlandApp {
         }
         let capturing = self.capture.enabled() && !self.menu && self.runtime.is_some();
         let capture_start = Instant::now();
+        // Menu and world are different scheduling problems. Switching clears the
+        // history, so idle-cap intervals are never read as interactive frame cost.
+        let policy = self.pacing_policy();
+        if let Err(e) = self.pacer.set_policy(policy) {
+            log::error!("Wetland pacing policy rejected: {e}");
+        }
         let capture_cpu = metrics::CpuBusySpan::begin(capturing);
         let mut row = metrics::FrameRow::default();
         if let Some(renderer) = &mut self.renderer {
@@ -1204,6 +1238,7 @@ impl WetlandApp {
             self.capture
                 .record(renderer, &result, row, capture_start, capture_cpu);
         }
+        let presented = matches!(&result, FrameResult::Presented);
         match result {
             FrameResult::Presented => {
                 if !self.menu {
@@ -1231,8 +1266,59 @@ impl WetlandApp {
             event_loop.exit();
         }
         self.finish_replay();
-        self.next_frame =
-            capture_start + Duration::from_micros(if self.menu { 66_667 } else { 16_667 });
+        // Frame-loop scheduling. The pacer is given what this frame actually cost to
+        // produce, never the interval it was paced to: a paced interval is the pacer's
+        // own output plus this loop's wait overshoot, and feeding that back makes every
+        // overshoot look like load and ratchets the cadence down until it sticks.
+        let decision = if presented {
+            let finished = Instant::now();
+            self.pacer.observe(FrameSample {
+                present_ns: nanos(finished.saturating_duration_since(self.frame_epoch)),
+                work_ns: nanos(finished.saturating_duration_since(capture_start)),
+            })
+        } else {
+            // A retried or failed attempt presented nothing, so it is not a frame
+            // boundary and must not enter the statistics.
+            self.pacer.decision()
+        };
+        self.next_frame = capture_start + Duration::from_nanos(decision.interval_ns);
+    }
+    /// Pacing policy for the current mode. The menu holds a low idle cadence; the
+    /// world adapts to what its frames actually cost.
+    fn pacing_policy(&self) -> PacingPolicy {
+        if self.menu {
+            PacingPolicy::Fixed {
+                interval_ns: MENU_INTERVAL_NS,
+            }
+        } else {
+            PacingPolicy::Adaptive {
+                max_divisor: MAX_DIVISOR,
+                settle_frames: DEFAULT_SETTLE_FRAMES,
+                margin_ns: 0,
+            }
+        }
+    }
+    /// Rebuild the pacer for `window`'s display and re-arm the timestamp base.
+    /// Called whenever the window and renderer are created, because a recreated
+    /// surface can land on a different display with a different refresh rate.
+    fn rearm_pacing(&mut self, window: &Window) {
+        let refresh_period_ns = window
+            .current_monitor()
+            .and_then(|monitor| monitor.refresh_rate_millihertz())
+            .filter(|rate| *rate > 0)
+            // Millihertz to nanosecond period: 1e12 / rate. A non-zero u32 rate
+            // always yields a non-zero period.
+            .map_or(FALLBACK_REFRESH_PERIOD_NS, |rate| {
+                1_000_000_000_000 / u64::from(rate)
+            });
+        let config = PacingConfig::new(refresh_period_ns, self.pacing_policy())
+            .expect("a non-zero display period and a static policy are always valid");
+        log::info!(
+            "Wetland pacing: {:.3} ms display period",
+            config.refresh_period_ns() as f64 / 1e6
+        );
+        self.pacer = Pacer::new(config);
+        self.frame_epoch = Instant::now();
     }
     fn point(&self, x: f64, y: f64) -> Vec2 {
         let s = self.window.as_ref().unwrap().inner_size();
@@ -1268,6 +1354,7 @@ impl ApplicationHandler for WetlandApp {
                 self.capture.renderer_created(&mut renderer);
                 log::info!("Wetland graphics: {}", renderer.capabilities);
                 self.renderer = Some(renderer);
+                self.rearm_pacing(&window);
                 self.window = Some(window);
                 if let Some(r) = &mut self.runtime {
                     r.graphics_dirty = true;
@@ -1291,6 +1378,8 @@ impl ApplicationHandler for WetlandApp {
         self.save();
         self.focused = false;
         self.controls.clear();
+        // Timestamps taken before a suspension say nothing about the frames after it.
+        self.pacer.reset();
         self.renderer = None;
         self.window = None;
     }
@@ -1324,6 +1413,8 @@ impl ApplicationHandler for WetlandApp {
             WindowEvent::Focused(f) => {
                 self.focused = f;
                 self.last = Instant::now();
+                // The loop stops drawing while unfocused; the gap is not a frame interval.
+                self.pacer.reset();
                 if !f {
                     self.controls.clear();
                     self.save();

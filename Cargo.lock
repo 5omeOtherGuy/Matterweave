@@ -962,6 +962,7 @@ dependencies = [
  "log",
  "matterweave-core",
  "matterweave-detail",
+ "matterweave-pacing",
  "matterweave-physics",
  "matterweave-render",
  "pollster",
