@@ -382,6 +382,23 @@ one-shot mechanism above accepts `detail` and writes `detail-check-report.txt`.
 The9 phases exercise retained geometry with automatic perspective/orthographic
 LOD, an edit, zero extent and recreation. See [evidence and limits](performance/detail-native-check.md).
 
+## Frame-pacing gate
+
+Run `cargo run --locked -p matterweave-explorer -- --pacing-check --save /tmp/unused.json`
+and require a final `PASS pacing gate` line in `/tmp/pacing-check-report.txt`. On
+Android the one-shot marker above accepts `pacing` and writes
+`pacing-check-report.txt` to the app data directory.
+
+The gate drives the production pacer against a real window, present and display
+refresh over four phases — baseline, loaded, boundary-parked and recovered — with
+a controlled synthetic frame cost. Every expectation is derived from the frame
+cost the device actually measured, so a device that cannot place its cost in the
+window a phase needs reports `INCONCLUSIVE`; it never reports `PASS`. Phases also
+report `over_budget_frames`, the frames whose real render already exceeded the
+requested cost so no synthetic cost could be added. This is a scheduling
+correctness gate, not a throughput, power or thermal measurement. See
+[frame pacing](performance/frame-pacing.md).
+
 ## Background indirect-light check
 
 Run `cargo run --locked -p matterweave-explorer -- --async-engine-check --save /tmp/unused.json`

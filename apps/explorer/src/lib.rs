@@ -6,6 +6,7 @@ mod engine_check;
 mod experience;
 mod gallery;
 mod metrics;
+mod pacing_check;
 mod reflection_check;
 pub mod voxel_relay;
 mod wetland;
@@ -1436,6 +1437,7 @@ pub fn run_desktop() {
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
+    let mut pacing_check = false;
     let mut reflection_check = None;
     let mut explicit_save = false;
     let mut args = std::env::args().skip(1);
@@ -1451,6 +1453,7 @@ pub fn run_desktop() {
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
+            "--pacing-check" => pacing_check = true,
             "--reflection-check" => reflection_check = Some(crate::reflection_check::Mode::Quality),
             "--reflection-cost" => reflection_check = Some(crate::reflection_check::Mode::Cost),
             "--smoke-exercise" => smoke_exercise = true,
@@ -1464,7 +1467,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1501,6 +1504,15 @@ pub fn run_desktop() {
             .expect("event loop")
             .run_app(&mut check)
             .expect("detail check loop");
+        return;
+    }
+    if pacing_check {
+        let mut check =
+            pacing_check::PacingCheck::new(save_path.with_file_name("pacing-check-report.txt"));
+        EventLoop::new()
+            .expect("event loop")
+            .run_app(&mut check)
+            .expect("pacing check loop");
         return;
     }
     // Explicit developer opt-in is resolved before any world is loaded, so an
@@ -1633,6 +1645,18 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         );
         if let Err(e) = event_loop.run_app(&mut check) {
             log::error!("Reflection check: {e}");
+        }
+        return;
+    }
+    if requested_check.as_deref() == Some("pacing") {
+        if let Err(e) = std::fs::remove_file(&request) {
+            log::error!("Pacing check request: {e}");
+            return;
+        }
+        let mut check =
+            crate::pacing_check::PacingCheck::new(directory.join("pacing-check-report.txt"));
+        if let Err(e) = event_loop.run_app(&mut check) {
+            log::error!("Pacing check: {e}");
         }
         return;
     }
