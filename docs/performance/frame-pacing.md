@@ -15,7 +15,7 @@ Each presented frame contributes exactly one `FrameSample` carrying two independ
 | Field | Meaning | Drives |
 | --- | --- | --- |
 | `present_ns` | Monotonic frame-boundary timestamp on the caller's clock | Presentation intervals, and through them every reported statistic |
-| `work_ns` | Cost of producing the frame, **excluding** any pacing wait the caller performed | The adaptive cadence |
+| `work_ns` | Cost of producing the frame, **excluding** pacing waits: the caller's own wait and any display-paced blocking the caller measured | The adaptive cadence |
 
 The core keeps two fixed rings of `HISTORY_CAPACITY` (120) samples, one per series, overwritten
 in ring order. Both series share one sample count, so state is bounded under any input sequence.
@@ -40,6 +40,22 @@ The two series are summarised separately, and the distinction is deliberate, not
 
 `target_interval_ns`, `divisor` and `throttled` report the current recommendation. `Snapshot`
 is `Copy`; reading it never disturbs the pacer.
+
+### Display-paced blocking is not frame cost
+
+The caller's own pacing wait is not the only wait that can hide inside `work_ns`. A renderer that
+presents with FIFO (hard vsync) can block in `vkAcquireNextImageKHR` and on the submission fence
+until the display's own cadence allows the next frame. That time is paced by the display, not by
+the engine's work, but it sits in the production path; feeding it to the pacer as load is the same
+feedback the cost/interval split exists to avoid, one layer down.
+
+The native gate (`--pacing-check`) enables the renderer's draw diagnostics, sums the measured
+upload fence waits, submission fence wait and swapchain acquire time, and feeds the pacer a
+`work_ns` with that sum subtracted saturating at zero. `present_ms` is excluded because it times
+queueing the present request, not waiting on scanout. Every phase line reports both the raw
+measured mean frame cost and the blocked share (`work_raw_mean_ms`, `blocked_mean_ms`,
+`blocked_share_pct`), and counts frames whose blocking the renderer did not measure
+(`blocked_unavailable_frames`) instead of substituting a zero silently.
 
 ## Why cost and interval are separate
 
@@ -97,12 +113,38 @@ is the failure mode: too-eager steps up and down produce oscillating cadence and
 deadline misses. Requiring a sustained, margin-guarded signal to speed up trades a little
 latency for stability. Retreat fast, advance slowly.
 
+## Frame-loop gate
+
+The `--pacing-check` gate drives this component against a real window, present and display
+refresh, with a per-phase synthetic frame cost. Three properties of the gate matter when reading
+its report:
+
+- **Per-phase cadence evidence.** Every phase line reports `cadence_changes`, `divisor_min` and
+  `divisor_max` over the phase's frames, not only the final `divisor`. The parked phase also
+  requires zero cadence changes, so a cadence that oscillated and happened to end on 2x no longer
+  passes, and its PASS text claims only what was checked.
+- **Blocked-time correction.** `work_ns` is the measured frame cost minus the display-paced
+  blocking the renderer measured (see above), and the line reports the raw mean and the blocked
+  share so the size of the correction is visible.
+- **Lifecycle interruption.** A suspend rebuilds the pacer with `Pacer::new`, whose history is
+  empty and whose divisor starts at 1, while the gate's phase state survives. The gate therefore
+  ends the run `INCONCLUSIVE` and names the interruption rather than judging later phases against
+  state the suspend destroyed.
+
 ## Limitations
 
 - **Host-only evidence.** The behaviour below is proven by deterministic host tests. No
   device or emulator measurement was performed by the pacing work; real wait overshoot,
   display/vsync behaviour, GPU and CPU scheduling, thermals and surface lifecycle are not
   modelled. Frame-loop integration and the device gates are lead-owned.
+- **The blocked-time correction is unverified on a device.** The gate subtracts measured
+  display-paced blocking from the cost it feeds the pacer, but no run in this record shows whether
+  that correction changes a cadence decision on a real FIFO panel. Only the host-reported blocked
+  share exists so far.
+- **The gate samples the display period periodically.** The frame path rechecks the monitor's
+  reported refresh period about once a second and re-arms pacing on a change larger than one
+  percent; a genuine variable-refresh change is handled, but a change during the first second
+  after a resize or a monitor move is not.
 - **The model simplifies the caller's wait.** Tests use a constant overshoot. A real caller's
   wait is jittery and occasionally much larger, and a single large overrun is not a cadence
   signal.
@@ -121,22 +163,38 @@ latency for stability. Retreat fast, advance slowly.
 
 ## Verification
 
-All checks below were run on this host by the pacing work. None is a device measurement.
+All checks below were re-run on this host when the review findings described above were applied.
+None is a device measurement.
 
-- `cargo test -p matterweave-pacing --offline` with
-  `CARGO_TARGET_DIR=/mnt/bench/matterweave-dev/targets/pacing-deepseek`: exit 0,
-  `5 passed; 0 failed` for the [closed-loop suite](../../crates/matterweave-pacing/tests/closed_loop.rs),
-  `15 passed; 0 failed` for the [unit-level suite](../../crates/matterweave-pacing/tests/pacing.rs),
-  and `1 passed; 0 failed` doctest.
+- `cargo test -p matterweave-pacing --offline`: exit 0; `5 passed; 0 failed` for the
+  [closed-loop suite](../../crates/matterweave-pacing/tests/closed_loop.rs), `16 passed; 0 failed`
+  for the [unit-level suite](../../crates/matterweave-pacing/tests/pacing.rs), and `1 passed;
+  0 failed` doctest.
+- `cargo test -p matterweave-explorer --offline`: exit 0; `89 passed; 0 failed; 1 ignored`. The
+  ignored test is the opt-in full-map wetland integration check.
 - `cargo fmt --all -- --check`: exit 0, no output.
-- `cargo clippy -p matterweave-pacing --all-targets --offline -- -D warnings`: exit 0, zero
-  warnings.
-- `python3 tools/check_docs.py`: exit 0.
-- **Mutation check.** Temporarily reconnecting the adaptive policy to the presentation
-  interval (`self.p95_ns()` in place of `self.work_p95_ns()` in `update_adaptive`) made all
-  five closed-loop tests fail, with the ratchet guard observing divisors
-  `[1, 2, 3, 4, 4, ...]` on a 5 ms workload. The file was restored exactly
-  (`git diff --stat` empty) and the suite re-ran green.
+- `cargo clippy -p matterweave-pacing -p matterweave-explorer --all-targets --offline -- -D
+  warnings`: exit 0. The only warning emitted is a pre-existing rustc lint in vendored `winit`
+  (`function_casts_as_integer`), which belongs to neither selected package.
+- `python3 tools/check_docs.py`: exit 0 (`PASS: 156 Markdown files, 350 local links, 16 ADRs and
+  20 requirements`).
+- **Mutation checks.** Each new or changed assertion was shown to fail by breaking the behaviour it
+  names, then restored exactly (`git diff --stat -- crates/matterweave-pacing/src/lib.rs` empty)
+  with the suites re-running green:
+  - **Settle window.** Replacing `if self.stable >= settle_frames.max(1)` with
+    `if self.stable >= 1` made the recovery test fail with step-downs `113` and `113` for the
+    10- and 40-frame settle windows instead of a difference of 30. That the step-down was already
+    `113` with no settle window is also why the removed `step_down >= settle_frames` bound was
+    vacuous.
+  - **Jitter.** Stubbing the deviation sum to zero (`.map(|sample| ...)` ->
+    `.map(|_| 0_u128)`) failed the new test with `left: 0, right: 633333`.
+  - **Robust cost.** Replacing the robust cost with the latest frame (`self.work_p95_ns()` ->
+    `self.latest_work_ns`) made the alternating-workload test fail: the observed divisor series
+    stepped to 2 on every boundary-crossing frame and back to 1 after the settle window.
+  - **Cost/interval split** (re-run of the earlier check). Reconnecting the adaptive policy to the
+    presentation interval (`self.p95_ns()` in place of `self.work_p95_ns()`) failed all five
+    closed-loop tests; the ratchet guard observed `[1, 2, 3]` for a 5 ms workload in the first
+    three frames, and the series ratcheted to `[1, 2, 3, 4, 4, ...]`.
 
 The [performance campaign README](README.md) and [development guide](../DEVELOPMENT.md) hold
 the lead-owned execution record and build/test instructions.

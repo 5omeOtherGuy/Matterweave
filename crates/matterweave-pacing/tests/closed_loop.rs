@@ -287,10 +287,6 @@ fn cadence_recovers_after_sustained_load_clears() {
         "recovery took {step_down} cheap frames, exceeding the asserted bound {bound}"
     );
     assert!(
-        step_down >= settle_frames as usize,
-        "recovery must respect the settle hysteresis, not be immediate"
-    );
-    assert!(
         run.divisors[heavy_frames + step_down..]
             .iter()
             .all(|d| *d == 1),
@@ -298,22 +294,90 @@ fn cadence_recovers_after_sustained_load_clears() {
         &run.divisors[heavy_frames + step_down..]
     );
     assert_eq!(run.pacer.decision().divisor, 1);
+
+    // Make the settle window observable. The old `step_down >= settle_frames` assertion
+    // was vacuous: nearest-rank p95 over the 120-sample ring cannot fall to the cheap
+    // value until 114 cheap samples have displaced the expensive tail, so `step_down` was
+    // always at least 114, and `114 >= 10` held even with the settle window deleted.
+    // Everything before the settle wait is identical in both runs, so two configurations
+    // differing only in `settle_frames` must differ in the step-down frame by exactly the
+    // settle difference.
+    let longer = recovery_step_down_frames(settle_frames + 30);
+    assert_eq!(
+        longer - step_down,
+        30,
+        "a {}-frame settle window must delay step-down by exactly 30 frames over the \
+         {settle_frames}-frame window; observed step-downs {step_down} and {longer}",
+        settle_frames + 30,
+    );
+}
+
+/// Frames of the cheap phase that elapse before the cadence reaches 1x on the same
+/// 10 ms -> 3 ms recovery as [`cadence_recovers_after_sustained_load_clears`], with the
+/// given settle window. Only the settle window differs between calls.
+fn recovery_step_down_frames(settle_frames: u32) -> usize {
+    let config =
+        Config::adaptive(HZ_120_PERIOD, MAX_DIVISOR, settle_frames, 0).expect("valid config");
+    let heavy_frames: usize = 200;
+    let cheap_frames: usize = 200;
+    let run = run_paced_loop(
+        config,
+        heavy_frames + cheap_frames,
+        OVERSHOOT_NS,
+        START_NS,
+        |frame| {
+            if frame < heavy_frames {
+                10_000_000
+            } else {
+                3_000_000
+            }
+        },
+    );
+    assert_eq!(run.divisors[heavy_frames - 1], 2);
+    run.divisors[heavy_frames..]
+        .iter()
+        .position(|d| *d == 1)
+        .expect("the cadence must recover once the load clears")
 }
 
 #[test]
 fn workload_alternating_within_one_cadence_never_changes_cadence() {
-    // Both costs fit one 120 Hz refresh, so their alternation must not move the cadence
-    // even though it makes the realized work series jump by 4 ms every frame.
-    let run = run_paced_loop(adaptive_hz120(), 400, OVERSHOOT_NS, START_NS, |frame| {
-        if frame % 2 == 0 {
-            3_000_000
+    // One frame in 39 costs 9.5 ms, which does not fit a single 120 Hz refresh
+    // (8.333 ms), while the frames between it cost 3 ms. Four boundary-crossing frames
+    // can appear in a 120-sample window, fewer than the six largest samples nearest-rank
+    // p95 excludes, so the robust cost stays at 3 ms on the cheap side of the boundary.
+    // A controller that reacts to the latest frame's cost — or to any other single-sample
+    // statistic — steps to 2x on every 9.5 ms spike; the real p95-based pacer must not.
+    let work_for_frame = |frame: usize| {
+        if frame > 0 && frame.is_multiple_of(39) {
+            9_500_000
         } else {
-            7_000_000
+            3_000_000
         }
-    });
+    };
+    let crossings = (1..400)
+        .filter(|frame| work_for_frame(*frame) > HZ_120_PERIOD)
+        .count();
+    assert!(
+        crossings > 0,
+        "the workload must contain frames that cross the cadence boundary"
+    );
+    let run = run_paced_loop(
+        adaptive_hz120(),
+        400,
+        OVERSHOOT_NS,
+        START_NS,
+        work_for_frame,
+    );
+    assert_eq!(
+        run.pacer.work_p95_ns(),
+        3_000_000,
+        "the robust cost must stay on the cheap side of the boundary while individual \
+         frames cross it"
+    );
     assert!(
         run.divisors.iter().all(|d| *d == 1),
-        "alternating 3 ms / 7 ms both fit 120 Hz, so the cadence must never change; \
+        "boundary-crossing frames inside one p95 window must never change the cadence; \
          observed divisors {:?}",
         run.divisors
     );

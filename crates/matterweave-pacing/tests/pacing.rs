@@ -78,6 +78,43 @@ fn steady_pacing_low_cadence() {
 }
 
 #[test]
+fn jitter_is_mean_absolute_deviation_from_the_lower_median() {
+    // Every other test uses a uniform interval sequence, where `jitter_ns == 0` is true
+    // for any pacer, including a stub that always reports zero. This drives deliberately
+    // non-uniform intervals and pins the documented definition instead.
+    //
+    // Recorded intervals, in order: 8_900_000, 10_000_000, 8_000_000, 9_100_000,
+    // 9_900_000, 8_300_000 ns. Sorted: 8_000_000, 8_300_000, 8_900_000, 9_100_000,
+    // 9_900_000, 10_000_000. n = 6, so the lower median is index (6 - 1) / 2 = 2 ->
+    // 8_900_000 ns. Absolute deviations from it: 900_000, 600_000, 0, 200_000, 1_000_000,
+    // 1_100_000. Sum = 3_800_000; mean = 3_800_000 / 6 = 633_333.33..., rounded down
+    // (integer division) -> 633_333 ns.
+    let intervals = [
+        8_900_000_u64,
+        10_000_000,
+        8_000_000,
+        9_100_000,
+        9_900_000,
+        8_300_000,
+    ];
+    let mut pacer = Pacer::new(Config::adaptive_default(HZ_120_PERIOD).expect("valid config"));
+    let samples: Vec<(u64, u64)> = intervals.iter().map(|i| (*i, 4_000_000)).collect();
+    drive(&mut pacer, 1_000_000_000, &samples);
+    assert_eq!(pacer.sample_count(), intervals.len());
+    assert_eq!(
+        pacer.median_ns(),
+        8_900_000,
+        "the lower median is index (n - 1) / 2 of the sorted intervals"
+    );
+    assert_eq!(
+        pacer.jitter_ns(),
+        633_333,
+        "hand-computed mean absolute deviation from the median, rounded down"
+    );
+    assert_eq!(pacer.snapshot().jitter_ns, 633_333);
+}
+
+#[test]
 fn fixed_cap_recommends_configured_interval() {
     let mut pacer = Pacer::new(Config::fixed(HZ_120_PERIOD, CAP_30HZ).expect("valid config"));
     let decisions = drive_steady(&mut pacer, 1_000_000_000, 40, CAP_30HZ, 4_000_000);

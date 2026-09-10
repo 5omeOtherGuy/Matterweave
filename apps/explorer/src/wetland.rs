@@ -10,13 +10,13 @@ use crate::{
 use glam::{Vec2, Vec3};
 use matterweave_core::{Mesh, World};
 use matterweave_detail::{DetailScene, Lod, Yaw};
+use matterweave_pacing::{
+    Config as PacingConfig, FrameSample, Pacer, Policy as PacingPolicy, DEFAULT_SETTLE_FRAMES,
+    MAX_DIVISOR,
+};
 use matterweave_physics::{
     BodySnapshot, DetailCollisionCadence, DetailCollisionStats, DynamicMeshCache, Physics,
     PhysicsSnapshot,
-};
-use matterweave_pacing::{
-    Config as PacingConfig, FrameSample, Pacer, Policy as PacingPolicy,
-    DEFAULT_SETTLE_FRAMES, MAX_DIVISOR,
 };
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance};
 use std::{
@@ -40,11 +40,39 @@ const FALLBACK_REFRESH_PERIOD_NS: u64 = 16_666_667;
 /// Idle cadence for the menu. The menu is static, so it is paced well below the
 /// display rather than adaptively: there is no frame cost worth measuring there.
 const MENU_INTERVAL_NS: u64 = 66_666_667;
+/// How often the frame path rechecks the display's reported refresh period. A
+/// variable-refresh (LTPO) panel or a window moved between monitors otherwise
+/// leaves the pacer recommending multiples of the wrong period. Only a material
+/// change re-arms, because re-arming clears the history.
+const REFRESH_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Duration to nanoseconds, saturating. A session would have to run for roughly
 /// 584 years to reach the cap.
 fn nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// Display period reported by `window`'s current monitor, or the conservative
+/// fallback when the platform reports nothing usable.
+fn display_period_ns(window: &Window) -> u64 {
+    window
+        .current_monitor()
+        .and_then(|monitor| monitor.refresh_rate_millihertz())
+        .filter(|rate| *rate > 0)
+        // Millihertz to nanosecond period: 1e12 / rate. A non-zero u32 rate always
+        // yields a non-zero period.
+        .map_or(FALLBACK_REFRESH_PERIOD_NS, |rate| {
+            1_000_000_000_000 / u64::from(rate)
+        })
+}
+
+/// Whether a newly reported display period differs materially from the one in force.
+/// A refresh-rate report carries no useful sub-percent information for pacing, and
+/// re-arming clears the history, so only a change large enough to move a cadence
+/// boundary — more than one percent — counts.
+fn period_changed_materially(current_ns: u64, reported_ns: u64) -> bool {
+    let larger = current_ns.max(reported_ns);
+    current_ns.abs_diff(reported_ns).saturating_mul(100) > larger
 }
 
 struct Runtime {
@@ -667,6 +695,8 @@ pub struct WetlandApp {
     /// Monotonic base for the pacer's nanosecond timestamps. Re-armed whenever the
     /// pacer is rebuilt, so a long-lived session cannot overflow its `u64`.
     frame_epoch: Instant,
+    /// When the display's reported refresh period was last checked on the frame path.
+    refresh_checked_at: Instant,
     /// Engine frame-loop scheduling. Decides the present cadence from measured
     /// frame production cost; the app owns the clock and the waiting.
     pacer: Pacer,
@@ -700,6 +730,7 @@ impl WetlandApp {
             last: Instant::now(),
             next_frame: Instant::now(),
             frame_epoch: Instant::now(),
+            refresh_checked_at: Instant::now(),
             // The app opens in the menu; `resumed` rebuilds this for the real display.
             pacer: Pacer::new(
                 PacingConfig::fixed(FALLBACK_REFRESH_PERIOD_NS, MENU_INTERVAL_NS)
@@ -1008,6 +1039,7 @@ impl WetlandApp {
         if !self.focused && self.frame_limit.is_none() {
             return;
         }
+        self.recheck_pacing();
         if let Some(rx) = &self.loading {
             match rx.try_recv() {
                 Ok(Ok(runtime)) => {
@@ -1302,15 +1334,7 @@ impl WetlandApp {
     /// Called whenever the window and renderer are created, because a recreated
     /// surface can land on a different display with a different refresh rate.
     fn rearm_pacing(&mut self, window: &Window) {
-        let refresh_period_ns = window
-            .current_monitor()
-            .and_then(|monitor| monitor.refresh_rate_millihertz())
-            .filter(|rate| *rate > 0)
-            // Millihertz to nanosecond period: 1e12 / rate. A non-zero u32 rate
-            // always yields a non-zero period.
-            .map_or(FALLBACK_REFRESH_PERIOD_NS, |rate| {
-                1_000_000_000_000 / u64::from(rate)
-            });
+        let refresh_period_ns = display_period_ns(window);
         let config = PacingConfig::new(refresh_period_ns, self.pacing_policy())
             .expect("a non-zero display period and a static policy are always valid");
         log::info!(
@@ -1319,6 +1343,36 @@ impl WetlandApp {
         );
         self.pacer = Pacer::new(config);
         self.frame_epoch = Instant::now();
+        self.refresh_checked_at = Instant::now();
+    }
+    /// Re-arm the pacer when the display's reported refresh period has materially
+    /// changed since the last check.
+    ///
+    /// `rearm_pacing` otherwise runs only from `resumed`, so a variable-refresh panel
+    /// or a window moved between monitors leaves the pacer recommending multiples of a
+    /// stale period and counting missed deadlines against the wrong reference. The
+    /// monitor query costs a platform call, so the frame path runs this at most about
+    /// once a second, and only a material change re-arms: re-arming clears the history,
+    /// which is correct for a genuine display change but not for jitter in the report.
+    fn recheck_pacing(&mut self) {
+        if self.refresh_checked_at.elapsed() < REFRESH_RECHECK_INTERVAL {
+            return;
+        }
+        self.refresh_checked_at = Instant::now();
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let reported_ns = display_period_ns(&window);
+        let current_ns = self.pacer.config().refresh_period_ns();
+        if !period_changed_materially(current_ns, reported_ns) {
+            return;
+        }
+        log::info!(
+            "Wetland pacing: display period changed {:.3} ms -> {:.3} ms; re-arming",
+            current_ns as f64 / 1e6,
+            reported_ns as f64 / 1e6
+        );
+        self.rearm_pacing(&window);
     }
     fn point(&self, x: f64, y: f64) -> Vec2 {
         let s = self.window.as_ref().unwrap().inner_size();
@@ -1411,10 +1465,17 @@ impl ApplicationHandler for WetlandApp {
                 }
             }
             WindowEvent::Focused(f) => {
+                let was_focused = self.focused;
                 self.focused = f;
                 self.last = Instant::now();
-                // The loop stops drawing while unfocused; the gap is not a frame interval.
-                self.pacer.reset();
+                // The loop stops drawing while unfocused only when no frame limit bounds
+                // the run (`draw` returns early only for `!focused && frame_limit.is_none()`).
+                // A bounded headless run keeps presenting without focus, so a stray focus
+                // event must not wipe the rings and adaptive state mid-flight; only a run
+                // whose loop really stops has a gap that is not a frame interval.
+                if was_focused != f && self.frame_limit.is_none() {
+                    self.pacer.reset();
+                }
                 if !f {
                     self.controls.clear();
                     self.save();
@@ -2161,5 +2222,24 @@ mod journal_tests {
                 material: material::BANK_STONE,
             }]
         );
+    }
+}
+
+/// Display-period recheck constants and threshold. The monitor query itself needs a
+/// window, so only the pure decision is unit testable here.
+#[cfg(test)]
+mod pacing_tests {
+    use super::period_changed_materially;
+
+    /// Only a change large enough to move a cadence boundary may clear the pacing
+    /// history; millisecond-level jitter in the platform's millihertz report may not.
+    #[test]
+    fn display_period_change_is_material_only_above_one_percent() {
+        assert!(!period_changed_materially(8_333_333, 8_333_333));
+        // 120 Hz reported a little low: under one percent.
+        assert!(!period_changed_materially(8_333_333, 8_400_000));
+        // 60 Hz <-> 120 Hz, and 120 Hz -> 90 Hz, are genuine display changes.
+        assert!(period_changed_materially(8_333_333, 16_666_667));
+        assert!(period_changed_materially(16_666_667, 11_111_111));
     }
 }
