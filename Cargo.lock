@@ -963,6 +963,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "matterweave-pacing"
+version = "0.5.0"
+
+[[package]]
 name = "matterweave-physics"
 version = "0.5.0"
 dependencies = [

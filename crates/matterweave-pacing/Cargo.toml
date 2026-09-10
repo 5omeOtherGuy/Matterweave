@@ -1,0 +1,5 @@
+[package]
+name = "matterweave-pacing"
+version.workspace = true
+edition = "2021"
+publish = false
