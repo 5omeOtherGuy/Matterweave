@@ -213,11 +213,26 @@ fn repeated_and_reversed_edits_publish_only_the_final_source() {
     assert!(cadence
         .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
         .expect("queued"));
-    assert!(
-        cadence.stats().discarded >= 1,
-        "the superseded removal was discarded: {:?}",
-        cadence.stats()
-    );
+    // The removal is retired either synchronously, when the second `on_edit`
+    // replaces a still-pending job, or on the worker when a job it already
+    // took is found superseded. Which one happens is a scheduling detail, so
+    // wait for the outcome rather than assuming the worker had not yet run.
+    // Nothing is pumped here: publication happens in `step`, so live collision
+    // stays untouched while we wait, which the next assertions rely on.
+    let started = Instant::now();
+    while cadence.stats().discarded == 0 {
+        assert!(
+            started.elapsed() < DEADLINE,
+            "the superseded removal was discarded: {:?}",
+            cadence.stats()
+        );
+        assert_eq!(
+            physics.detail_collision_stats(),
+            initial_stats,
+            "nothing may publish while the superseded removal retires"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
     // Repeated edits of the unchanged final source are deduplicated (the
     // request is refused or the result is already buffered); nothing publishes
