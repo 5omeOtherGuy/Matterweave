@@ -213,11 +213,26 @@ fn repeated_and_reversed_edits_publish_only_the_final_source() {
     assert!(cadence
         .on_edit(&scene, &mut physics, Some(&[WALL_BOX]))
         .expect("queued"));
-    assert!(
-        cadence.stats().discarded >= 1,
-        "the superseded removal was discarded: {:?}",
-        cadence.stats()
-    );
+    // The removal is retired either synchronously, when the second `on_edit`
+    // replaces a still-pending job, or on the worker when a job it already
+    // took is found superseded. Which one happens is a scheduling detail, so
+    // wait for the outcome rather than assuming the worker had not yet run.
+    // Nothing is pumped here: publication happens in `step`, so live collision
+    // stays untouched while we wait, which the next assertions rely on.
+    let started = Instant::now();
+    while cadence.stats().discarded == 0 {
+        assert!(
+            started.elapsed() < DEADLINE,
+            "the superseded removal was discarded: {:?}",
+            cadence.stats()
+        );
+        assert_eq!(
+            physics.detail_collision_stats(),
+            initial_stats,
+            "nothing may publish while the superseded removal retires"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
     // Repeated edits of the unchanged final source are deduplicated (the
     // request is refused or the result is already buffered); nothing publishes
@@ -574,9 +589,16 @@ fn reversed_addition_never_publishes_through_the_character() {
         .on_edit(&scene, &mut physics, Some(&[]))
         .expect("queued"));
 
-    // Walk through the region: the added wall must never appear.
+    // Walk through the region: the added wall must never appear. Then keep
+    // pumping until the superseded wall preparation has actually been retired.
+    // Discard is the worker's own bookkeeping: the stale buffered result is
+    // only counted once the reversing job runs to completion, so the length of
+    // the walk is no bound on it. A starved worker leaves the walk finished
+    // with the stale result still buffered, which is a scheduling accident
+    // rather than a behavioural fault. Every pumped frame, walking or waiting,
+    // still asserts that the added wall never reaches live collision.
     let started = Instant::now();
-    while physics.character_eye()[0] < 3.0 {
+    loop {
         assert!(started.elapsed() < DEADLINE, "deadline blown walking");
         match cadence.step(&scene, &mut physics).expect("valid scene") {
             Some(stats) => assert_eq!(
@@ -592,7 +614,13 @@ fn reversed_addition_never_publishes_through_the_character() {
                 physics.character_eye()
             ),
         }
-        physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
+        if physics.character_eye()[0] < 3.0 {
+            physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
+        } else if cadence.stats().discarded >= 1 && cadence.stats().results == 0 {
+            break;
+        } else {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
     assert!(
         cadence.stats().discarded >= 1,
