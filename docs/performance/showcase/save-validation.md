@@ -27,9 +27,9 @@ or integration work. Lead owns final acceptance and STATUS/roadmap integration.
 
 ## Issues
 
-- Earlier Opus work stopped after provider quota exhaustion (HTTP429). Its
+- Earlier Opus work stopped after provider quota exhaustion (HTTP 429). Its
   cell-by-cell undo approach was rejected because it retained private prototypes.
-  Muse inherited the work and also stopped on HTTP429 before completing checks
+  Muse inherited the work and also stopped on HTTP 429 before completing checks
   or committing. Their incomplete checks are not counted as passes here.
 - The leaf's initial 300-second window interrupted final documentation/handoff;
   completion resumed with documentation/checks/commit only.
@@ -124,16 +124,16 @@ an unused recovery path. Clear saved poses remain exact.
 A new regression failed on the inherited implementation (`dae066f`): a journal
 that fills both the saved and entrance capsule columns was accepted. It passes
 after the correction and the live source remains unchanged. Another real test
-adds one solid instance above Rapier's16,384 static-collider budget, verifies
+adds one solid instance above Rapier's 16,384 static-collider budget, verifies
 rejection leaves source counts/cells intact, and accepts the subsequent valid
 candidate. This is a real budget boundary, not a mocked failure.
 
-Lead checks: all62 app tests including the normally ignored full-map Runtime
-recovery gate passed in17.43s; the added collision-budget test passed separately
-in0.06s. Strict workspace/all-target Clippy passed in11.40s, with the unchanged
-vendored winit warning. All170 performance Python tests passed. The first run
-of the longer-cooling test still expected the old32-observation rejection and
-failed; corrected the boundary to62, accepting61. Phone collector A4 was already
+Lead checks: all 62 app tests including the normally ignored full-map Runtime
+recovery gate passed in 17.43s; the added collision-budget test passed separately
+in 0.06s. Strict workspace/all-target Clippy passed in 11.40s, with the unchanged
+vendored winit warning. All 170 performance Python tests passed. The first run
+of the longer-cooling test still expected the old 32-observation rejection and
+failed; corrected the boundary to 62, accepting 61. Phone collector A4 was already
 running; its thermal limits and readiness checks did not change.
 
 No final Android or worst-case recovery startup measurement has run on this
@@ -144,6 +144,6 @@ source payload bounds alone remain insufficient to claim total memory bounds.
 The [independent review](../reviews/save-review-gemini.md) exposed an uncleared
 stored respawn point on restored sessions. Prepared state now carries a validated
 entrance, or the validated saved eye if edits completely block the entrance's
-bounded search. The current eye remains the saved eye. All64 app tests including
-the full Runtime gate pass17.33s after this correction. Camera orientation remains
+bounded search. The current eye remains the saved eye. All 64 app tests including
+the full Runtime gate pass 17.33s after this correction. Camera orientation remains
 saved, as with the existing Home action.

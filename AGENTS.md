@@ -8,7 +8,7 @@ This repository is the durable project context. Preserve decisions, evidence, us
 
 ## Authority and autonomy
 
-- The owner requested this repository setup and a subsequent session orchestrating implementation. During implementation, use available subagents for bounded independent tasks when helpful; the coordinating agent owns integration, consistency and verification. Avoid overlapping edits, and communicate concrete deliverables and shared interface changes.
+- Use subagents for bounded independent tasks. The coordinating agent owns integration, consistency and verification. Avoid overlapping edits; communicate concrete deliverables and shared interface changes.
 - Advance through working implementation and relevant verification. Do not stop after planning, scaffolding or creating a backlog when the authorized implementation task can proceed.
 - Resolve ordinary engineering choices with evidence and record them. Proposed ADRs permit experiments; they are not automatic requests for owner approval. Follow the decision process in the ADR index.
 - Preserve explicit owner requirements. Ask only when an actual missing owner decision, inaccessible capability or irreversible action prevents the next necessary step. Continue independent work and state precisely what remains blocked.
@@ -26,7 +26,7 @@ This repository is the durable project context. Preserve decisions, evidence, us
 
 ## Engineering and verification
 
-- Follow accepted [ADR-0014](docs/adr/0014-rust-modularity-and-evidence-led-reuse.md): Rust wherever feasible without material detriment, explicit modularity and reuse of viable alternatives meeting strict criteria. Use [component selection](docs/COMPONENT_SELECTION.md) for substantial decisions. The former C++ default is superseded; the current foundation proposal is ADR-0015.
+- Follow accepted [ADR-0014](docs/adr/0014-rust-modularity-and-evidence-led-reuse.md): Rust wherever feasible without material detriment, explicit modularity and reuse of viable alternatives meeting strict criteria. Use [component selection](docs/COMPONENT_SELECTION.md) for substantial decisions. The former C++ default is superseded by accepted [ADR-0015](docs/adr/0015-rust-native-foundation.md).
 - Inspect suitable existing solutions before substantial custom implementation. New technology, tools and Rust hardware interfaces are authorized where necessary or significantly advantageous. Prototype credible improvements, then validate before claiming or adopting a performance advantage. Do not rewrite adequate dependencies solely for language uniformity.
 - Evaluate suitable Rust physics first. Jolt is eligible only for major workload-relevant advantages after binding, data conversion, build and maintenance costs. No physics package is selected by policy alone.
 - Keep unsafe/FFI/GPU contracts narrow and explicit. Logical modularity need not impose runtime plugins, a permanent ABI, large copies or dynamic dispatch in inner loops. Missing Rust bindings are engineering tasks; new wrappers do not create hardware capabilities or privileged device access.

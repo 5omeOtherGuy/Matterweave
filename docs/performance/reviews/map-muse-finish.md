@@ -1,6 +1,6 @@
 # map-muse-finish
 
-Frozen952d630; independent read-only candidate findings.
+Frozen 952d630; independent read-only candidate findings.
 
 Review — `completion-map` frozen `952d630` (unchanged, no edits/shell/tests).
 
@@ -11,7 +11,7 @@ Up to 3 correctness candidates (not verdicts):
 1. `showcase.rs:114 source_radius_m` vs `showcase.rs:route_clearance` / `tests/showcase.rs:plant_source_geometry_clears_both_routes…`
    - Trigger: archetype with extent in both x and z places origin outside `ROUTE_PLAYER_CLEARANCE_M + radius_m` but diagonal corner still intrudes.
    - Consequence: cap/branch in walked corridor; route-clearance test failure.
-   - Evidence: radius = `fold(max)` over axes `0,2` (Chebyshev); clearance/test use Euclidean `dist2/sqrt`; both routes are combined into `corridor`, so scope is correct, metric is the candidate.
+   - Evidence: radius = `fold(max)` over axes `0, 2` (Chebyshev); clearance/test use Euclidean `dist2/sqrt`; both routes are combined into `corridor`, so scope is correct, metric is the candidate.
    - Uncertainty: prototype bounds in `flora.rs`/`wetland_flora.rs`/`bracket.rs` out of scope; shortfall `0` to `~0.41x` unquantified; no seed measurement.
 
 2. `showcase.rs:1128 HABITAT_*` + `showcase.rs:place_flora` + `showcase.rs:build_showcase` species check vs `tests/showcase.rs:canonical_counts_meet_showcase_targets`
@@ -38,4 +38,4 @@ Coverage gaps: flora/wetland/bracket prototype geometry; `DetailScene::{counts,s
 
 ## Lead verification
 
-Diagonal source radius and between-vertex route intrusion reproduced by actual-scene regressions; corrected without reducing density gates. Cavity overlap reproduced at [97.375,16.125,58.125] as parasol cap material21, not terrain: corrected terrain-only assertion passes610 lowered columns and2856 overhang columns. No product requirement forbids fungi on cavity floors; retaining them is intentional. Claims of measured counts in a read-only reviewer summary are not execution evidence.
+Diagonal source radius and between-vertex route intrusion reproduced by actual-scene regressions; corrected without reducing density gates. Cavity overlap reproduced at [97.375, 16.125, 58.125] as parasol cap material 21, not terrain: corrected terrain-only assertion passes 610 lowered columns and 2856 overhang columns. No product requirement forbids fungi on cavity floors; retaining them is intentional. Claims of measured counts in a read-only reviewer summary are not execution evidence.

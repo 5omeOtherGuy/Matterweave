@@ -33,31 +33,12 @@ M2/M4 record approach, retreat, zoom and rapid reversal captures; inspect seams,
 
 ## v0.2 bounded residency slice
 
-The [core contract](../../crates/matterweave-core/README.md) now implements a bounded
-synchronous chunk window with persistent authoritative overrides and local mesh
-revisions. This provides residency and edit correctness evidence, while automatic
-multiresolution selection, transitions and asynchronous cancellation remain open.
-Frustum culling is a draw decision and does not remove nearby collision.
+The [core contract](../../crates/matterweave-core/README.md) implements a bounded synchronous chunk window with persistent authoritative overrides and local mesh revisions. This provides residency and edit correctness evidence, while automatic multiresolution selection, transitions and asynchronous cancellation remain open. Frustum culling is a draw decision and does not remove nearby collision.
 
 ## Dense source instancing slice — 2026-09-08
 
-The wetland submits shared source meshes and authoritative quarter-turn placements
-through bounded pooled Vulkan buffers. Collision derives from finest source cells;
-renderer visibility never changes walls. Full-map source meshes account45,328,920
-bytes in the current host budget check, below the64MiB derived-cache cap; this is
-mesh capacity, not process memory or measured mobile residency. The full wetland
-currently renders Source LOD. Automatic selection/transitions, temporal stability
-and equivalent-quality mobile comparisons remain required and uncompleted.
+The wetland submits shared source meshes and authoritative quarter-turn placements through bounded pooled Vulkan buffers. Collision derives from finest source cells; renderer visibility never changes walls. Full-map source meshes account 45,328,920 bytes in the current host budget check, below the 64 MiB derived-cache cap; this is mesh capacity, not process memory or measured mobile residency. The full wetland currently renders Source LOD. Automatic selection/transitions, temporal stability and equivalent-quality mobile comparisons remain required and uncompleted.
 
 ## Automatic selection reference — 2026-09-08
 
-The detail crate now selects Source/Half/Quarter per instance using perspective
-view-forward depth or orthographic scale, hysteresis, a global dilation bias and
-budgeted mesh preparation. Error values are estimates: any-occupied coarsening
-can fill a deep narrow opening, and no guaranteed surface-error bound is claimed.
-Host approach/retreat/zoom, off-axis and source-authority tests pass. The9-phase native Vulkan check now exercises retained geometry, perspective
-FOV/orthographic zoom, edits, zero extent and renderer recreation. The thin-sheet
-fixture stays at Source; the physical OnePlus13 run also passes1080 frames and HOME/resume.
-Captured images do not close temporal/transition-quality acceptance. See
-[native gate](../performance/detail-native-check.md). See [detail engine notes](../performance/automatic-detail-engine.md).
-This advances the prototype; the ADR's visual/residency acceptance remains open.
+The detail crate selects Source/Half/Quarter per instance using perspective view-forward depth or orthographic scale, hysteresis, a global dilation bias and budgeted mesh preparation. Error values are estimates: any-occupied coarsening can fill a deep narrow opening, and no guaranteed surface-error bound is claimed. Host approach/retreat/zoom, off-axis and source-authority tests pass. The 9-phase native Vulkan check exercises retained geometry, perspective FOV/orthographic zoom, edits, zero extent and renderer recreation. The thin-sheet fixture stays at Source; the physical OnePlus 13 run also passes 1080 frames and HOME/resume. Captured images do not close temporal/transition-quality acceptance. See the [native gate](../performance/detail-native-check.md) and [detail engine notes](../performance/automatic-detail-engine.md). This advances the prototype; the ADR's visual/residency acceptance remains open.

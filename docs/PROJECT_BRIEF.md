@@ -39,7 +39,10 @@ The discussion began with a small browser/site technology demo: a lush, earthy, 
 
 Consequently, browser hosting, JavaScript/WebGL, the earlier demo implementation, its memory limits, fixed scene scale and its art direction are not requirements for Matterweave. A similar environment can be a showcase. Touch interaction remains a sensible Android baseline, recorded as a working implementation requirement rather than evidence that every old constraint survived.
 
-The initial setup proposed C++/Vulkan, Jolt and selective infrastructure reuse without an owner language selection. The owner subsequently selected Rust wherever feasible without detriment, required modularity and qualifying reuse, authorized necessary or significantly advantageous custom technology/tools/interfaces, and restricted Jolt to cases of major advantage. Accepted ADR-0014 supersedes the earlier foundation/reuse proposals; ADR-0015 proposes a Rust/Cargo/Vulkan foundation. Specific libraries, rendering algorithms and versions remain unselected.
+The initial setup proposed C++/Vulkan, Jolt and selective infrastructure reuse without an owner language selection. The owner subsequently selected Rust wherever feasible without detriment, required modularity and qualifying reuse, authorized necessary or significantly advantageous custom technology/tools/interfaces, and restricted Jolt to cases of major advantage. Accepted ADR-0014 supersedes the earlier foundation/reuse proposals, and ADR-0015
+records the accepted Rust/Cargo/Vulkan foundation. Specific rendering algorithms and
+production representations remain proposed; the M0/M1 toolchain and dependency
+revisions are pinned in [the dependency inventory](DEPENDENCIES.md).
 
 This expands the potential engineering work to reusable Rust hardware adapters and tools where justified. It does not mandate building an entire SDK, driver stack or every component from scratch. The selection procedure and evidence thresholds are in [component selection](COMPONENT_SELECTION.md).
 
@@ -47,8 +50,14 @@ This expands the potential engineering work to reusable Rust hardware adapters a
 
 A developer can obtain the repository, build a native Android sample, explore and manipulate a voxel world with mobile controls, and observe detailed geometry, stable detail transitions, dynamic lighting and physical interactions. The same engine supports a second, materially different camera/gameplay example without a fork of its world or renderer. Results are reproducible and include actual device performance, memory and thermal evidence.
 
-The first implementation milestone is intentionally smaller: a reliable native application with real voxel content, input, lifecycle handling and instrumentation. See [the roadmap](ROADMAP.md) for incremental definitions of done.
+The first implementation milestone, shipped as v0.1, was intentionally smaller: a
+reliable native application with real voxel content, input, lifecycle handling and
+instrumentation. See [the roadmap](ROADMAP.md) for incremental definitions of done.
 
 ## Product boundaries still open
 
-Project license, minimum supported Android/device floor, reference devices, exact visual/performance budgets, first showcase art direction and production editor/scripting scope have not been selected. The [open-questions register](OPEN_QUESTIONS.md) supplies working defaults and says when owner input is actually needed.
+Project license, minimum supported Android/device floor, reference devices, exact
+visual/performance budgets and production editor/scripting scope have not been
+selected. The mandatory campaign showcase's art direction is specified in
+[SHOWCASE.md](SHOWCASE.md). The [open-questions register](OPEN_QUESTIONS.md) supplies
+working defaults and says when owner input is actually needed.

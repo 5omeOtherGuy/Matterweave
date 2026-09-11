@@ -14,8 +14,8 @@ were read inputs only.
    repo CI (`python3 -m unittest discover -s tools/performance -p
    'test_*.py'`). All fixtures synthetic and explicit. Real private captures
    removed from the suite; checked manually via CLI below.
-2. **Late-completion reason.** Second row now uses submitted2/completed2 after
-   prior submission1 and asserts the exact `'not before submission'` message.
+2. **Late-completion reason.** Second row now uses submitted 2/completed 2 after
+   prior submission 1 and asserts the exact `'not before submission'` message.
    The check was also reordered ahead of membership: a same-epoch completion
    at/after this row's own submission is causally impossible even across
    gaps, so it reports the causal reason first; future-epoch, duplicate and
@@ -38,8 +38,8 @@ were read inputs only.
    means an OBSERVED completion whose earlier submission row is missing (only
    allowed when earlier draw attempts are genuinely missing; otherwise still
    an invalid orphan). New `uncompleted_submissions` counts
-   submitted-minus-completed. Verified by hand: draw1/submit1 +
-   draw3/submit3/complete2 → accepted with missing_attempts 1,
+   submitted-minus-completed. Verified by hand: draw 1/submit 1 +
+   draw 3/submit 3/complete 2 → accepted with missing_attempts 1,
    unmatched_completions 1, uncompleted_submissions 2; complete single
    presented row → 0/1. No join is fabricated: gap completions join nothing
    and only feed duplicate detection.
@@ -66,9 +66,9 @@ were read inputs only.
   → PASS (72 files).
 - Manual CLI, inputs unchanged (mtime/size asserted before/after):
   device-868 → VALID 1000 rows epochs [1] missing 0 unmatched **0**
-  uncompleted **1**; device-134 → VALID 581 rows epochs [1,2,3] missing 0
+  uncompleted **1**; device-134 → VALID 581 rows epochs [1, 2, 3] missing 0
   unmatched **0** uncompleted **3**; host-smoke-02 → VALID 90 rows epochs
-  [1,2] missing 0 unmatched **0** uncompleted **2**.
+  [1, 2] missing 0 unmatched **0** uncompleted **2**.
 - Lead repro (read-only): complete-single-row VALID (0/1); line-cap-plus-one
   VALID; missing-submission-row VALID (2 rows, 1/1/2 as specified);
   embedded-cr and unterminated-quote REJECTED as concise `ValueError`.

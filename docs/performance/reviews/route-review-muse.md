@@ -21,7 +21,7 @@ Why no finding:
 
 Unrun checks (explicit):
 
-- No shell run per instruction: no `git diff base3af4115`, no `cargo test`, no traversal rerun.
+- No shell run per instruction: no `git diff base 3af4115`, no `cargo test`, no traversal rerun.
 - Stated passes taken on trust: 19 detail tests incl. different-seed, ground 632 pts/197.47 sim-s + elevated 37 pts/11.35 sim-s Rapier gates.
 - Still needed independently: phone traversal of both routes, Android build/device visual + perf evidence, integration rerun/manifest. Host sim seconds are not phone evidence.
 
@@ -35,6 +35,6 @@ Engineering log for lead:
 
 
 Lead disposition: no new source correctness blocker. Astra waterside coverage
-finding addressed by `60abc39`/`f887d67`: a recorded21-point prefix with
-water-margin/endpoints checks, actual continuous traversal7.1166673simseconds.
+finding addressed by `60abc39`/`f887d67`: a recorded 21-point prefix with
+water-margin/endpoints checks, actual continuous traversal 7.1166673simseconds.
 Phone routes are a separate open gate.

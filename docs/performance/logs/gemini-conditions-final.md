@@ -6,7 +6,7 @@
 - **Frozen SHA-256 Hashes:**
   - `tools/performance/validate_conditions.py`: `113d421b68a05f1050b3a5917f7bffece5585801ac1fb2001519e6543629a8e4`
   - `tools/performance/test_validate_conditions.py`: `594218c50ac5d36e5d645354a9441782c481f9e2b510222579aab6d5c51b16f4`
-- **Lead Baseline:** 3 reproduced candidate-01 defects resolved in candidate-02; 96 total tests PASS (`conditions65` + `handoff31`), zero ResourceWarnings, real timestamped device cooling records (`device/cooling-01/health.jsonl`) validate.
+- **Lead Baseline:** 3 reproduced candidate-01 defects resolved in candidate-02; 96 total tests PASS (`conditions 65` + `handoff 31`), zero ResourceWarnings, real timestamped device cooling records (`device/cooling-01/health.jsonl`) validate.
 
 ---
 

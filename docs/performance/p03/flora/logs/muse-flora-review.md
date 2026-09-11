@@ -8,7 +8,7 @@ Review of frozen P03 flora candidate (dense 16 m HOST fixture, seed 20260908). T
 
 **Issue 1 — load-bearing stems/culms outside checked footprint**
 Path: `crates/matterweave-detail/src/flora.rs:628-644` (`support_height` filters `cell[1] != 0`), stems at `:208-211`, culms at `:391-404`.
-Trigger: `clustered_mushroom` stipes at bases e.g. `[-5,-4]` (~0.28–0.40 m offset) and `reed_cluster` outer culms at `±2` cells (~0.31 m ≈ 1.25 tile cells) land 1–2 tile columns from the `y=0` root disc/pad, on creek-bank relief where neighbour columns differ by ≥1 tile cell (0.25 m).
+Trigger: `clustered_mushroom` stipes at bases e.g. `[-5, -4]` (~0.28–0.40 m offset) and `reed_cluster` outer culms at `±2` cells (~0.31 m ≈ 1.25 tile cells) land 1–2 tile columns from the `y=0` root disc/pad, on creek-bank relief where neighbour columns differ by ≥1 tile cell (0.25 m).
 Consequence: only the central disc/pad is verified flat moss; outer stipe/culm bases can float or bury while `gap_m=0` is reported. Collision then floats/sinks vs. walkable surface.
 Evidence: contact set built from `y==0` cells only, by design comment `:607-614`; independent recheck in `crates/matterweave-detail/tests/flora.rs` (corridor/support test) uses the same `c[1]==0` filter, so it is blind to this.
 Uncertainty: actual relief at chosen placements not executed; magnitude depends on neighbour height deltas in the canonical tile.

@@ -33,8 +33,8 @@ dependencies; existing flora and palette untouched.
 | marsh_lily | 0.125 | 219 | 219 decorative | 1508/754, 576/288, 192/96 |
 
 All < 33,288-cell cap; unique stored cells total 1430; 9 derived mesh builds.
-Bounds (local m): shrub x[-1.125,1.5] y[0,2.5] z[-1.0,1.25];
-horsetail y[0,2.125] (~1.9 m spire + cone); lily x[-1.375,1.375] y[0,0.75].
+Bounds (local m): shrub x[-1.125, 1.5] y[0, 2.5] z[-1.0, 1.25];
+horsetail y[0, 2.125] (~1.9 m spire + cone); lily x[-1.375, 1.375] y[0, 0.75].
 
 ## Decisions & Rationale
 
@@ -53,7 +53,7 @@ horsetail y[0,2.125] (~1.9 m spire + cone); lily x[-1.375,1.375] y[0,0.75].
 
 - First run: lily 213→(threshold self-check) under my own 200-cell
   placeholder bar only after layout change; fixed by widening runner to
-  -7..7 and radii pattern [4,3,3,3,4].
+  -7..7 and radii pattern [4, 3, 3, 3, 4].
 - Cone-tip counting via "plume cell with air above" gave 33, not 3 (counts
   every cone surface cell). Fixed by counting plume-only 6-connected masses.
 - Added second lily bud with petals but no center cell → 5 components, caught

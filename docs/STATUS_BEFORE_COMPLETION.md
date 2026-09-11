@@ -1,6 +1,7 @@
 # Prior campaign handoff
 
-Archived before the completion continuation; historical claims, not current runtime state.
+Historical archive: written before the completion continuation; these are historical
+claims, not current runtime state.
 
 ## Next campaign: performance and dense alien showcase
 
@@ -15,30 +16,30 @@ and mandatory [showcase](SHOWCASE.md) remain the scope, not a replacement plan.
   pass after a reproduced artifact-type correction. Six exact route selection checks
   pass; selection alone is not model task qualification.
 - P01: corrected typed CSV v2 code slice and profile validator accepted after
-  independent Muse/Gemini reviews and lead verification. Python checks:31 handoff,
-  65 conditions and130 profile tests. Real Android captures include1000 rows/epoch1
-  and581 rows/epochs1–3; host replay fixture has10 tests. Full app/physics replay,
+  independent Muse/Gemini reviews and lead verification. Python checks: 31 handoff,
+  65 conditions and 130 profile tests. Real Android captures include 1000 rows/epoch 1
+  and 581 rows/epochs 1–3; host replay fixture has 10 tests. Full app/physics replay,
   some edit/streaming/collision counters and full instrumentation overhead remain
   incomplete. [Three short recorder pairs](evidence/2026-09-08-p01-overhead.md)
-  now completed: ON mean-interval differences +0.032/+0.700/+0.673%, thermal0 and
+  now completed: ON mean-interval differences +0.032/+0.700/+0.673%, thermal 0 and
   no unsupported SF gaps. Process CPU is a whole-process rate, not per-frame work.
 - P02: CPU interpolated-geometry cache and transactional GPU upload invalidation
   implemented. Eight geometry and three upload-state tests constrain motion,
   sleeping rotations, wake/fracture/restore, empty geometry and renderer recreation.
-  Combined native candidate `cc46873`:180 workspace tests, Clippy/fmt pass;
+  Combined native candidate `cc46873`: 180 workspace tests, Clippy/fmt pass;
   90-frame normal Vulkan lifecycle smoke passes. Serial independent Muse/Gemini
   reviews/corrections completed and source is accepted for device evaluation.
-  Real phone normal-mode2190 rows/epochs1–2 include sleeping cache hits and a
-  resume upload without CPU rebuild. Matched APK comparison558274 stopped before
+  Real phone normal-mode 2190 rows/epochs 1–2 include sleeping cache hits and a
+  resume upload without CPU rebuild. Matched APK comparison 558274 stopped before
   capture: phone was colder than its old reference, not within matching limits.
   Establish a fresh cold reference; no qualified optimization win is claimed.
 - P03: reviewed foundation and flora source merged through PR6 (`524f29eb`) and
-  PR7 (`c71306d`), with host/Android/docs CI passing. Frozen flora64661cf/267c2c8:
-  84 plants/six types,52686 expanded flora cells. An isolated opt-in
+  PR7 (`c71306d`), with host/Android/docs CI passing. Frozen flora 64661cf/267c2c8:
+  84 plants/six types, 52686 expanded flora cells. An isolated opt-in
   [native gallery](performance/p03/native-gallery.md) now supports `flora source`,
   caches once and preserves the user-world path by construction. Coarse flora LODs
-  are rejected. Actual phone flora rendered85 instances/120582 triangles and
-  survived HOME/resume (2194 captured rows/epochs1–2); world bytes unchanged.
+  are rejected. Actual phone flora rendered 85 instances/120582 triangles and
+  survived HOME/resume (2194 captured rows/epochs 1–2); world bytes unchanged.
   Close-range anatomy, water/lighting, traversal/collision and cost/peak-memory
   acceptance remain open. Desktop has the
   nonoverlapping finest-source collision-adapter lane; lead owns app/phone/merge.
@@ -46,8 +47,8 @@ and mandatory [showcase](SHOWCASE.md) remain the scope, not a replacement plan.
   enabled wireless debugging and unplugged USB; charging is confirmed off. Idle
   cooling observations are not app performance. First capture was rejected for a
   foreground/surface-identity problem. A [corrected short baseline](evidence/2026-09-08-performance-baseline.md)
-  completed: 5,477 co-observed intervals, median16.583 ms, p95/p99≈33.17 ms;
-  all eight sampled thermal statuses0. One baseline is not an optimization comparison
+  completed: 5,477 co-observed intervals, median 16.583 ms, p95/p99≈33.17 ms;
+  all eight sampled thermal statuses 0. One baseline is not an optimization comparison
   or overhead qualification. User save restored; lead retains device/settings ownership.
 - Owner authorized up to $9.99 existing Hy4 credit, capped by actual $9.985349664
   remaining. No key-level limit is configured; enforceable no-top-up execution remains
@@ -55,15 +56,15 @@ and mandatory [showcase](SHOWCASE.md) remain the scope, not a replacement plan.
 
 No mobile optimization win or complete native showcase is shipped. Next: finish
 matched frozen-APK P02 comparisons and native flora quality/collision/cost gates. A separate `codex/p02-wsi-probe` diagnostic based on
-P01 (`eb045e5`) logs16 captured draws without changing rendering policy. This is
+P01 (`eb045e5`) logs 16 captured draws without changing rendering policy. This is
 not a performance comparator. Own-app simpleperf was denied by Android security;
 no suggested security-property change or escalation was applied. First WSI trial's
 post-reinstall save verification failed; explicit stop plus synchronous shell-write
 restoration produced two byte-identical reads of the original. Its failed trial/log
 is retained; corrected trial02 restored APK/save successfully. The subsequent
-native functional trial also restored the save. Paired supervisor558274 subsequently
-stopped after31 rejected observations (battery26.3°C/skin26.078°C versus old
-31.3°C/31.483°C reference); no comparison capture launched. Final original-save
+native functional trial also restored the save. Paired supervisor 558274 subsequently
+stopped after 31 rejected observations (battery 26.3 °C/skin 26.078 °C versus old
+31.3 °C/31.483 °C reference); no comparison capture launched. Final original-save
 hash verified. Phone is stopped on the P01 baseline APK; no phone supervisor remains. Android build initially reused stale physics
 metadata from the older probe's shared target. Scoped Android workspace-package
 cleanup (no active build) and fresh rebuild passed; avoid cross-worktree targets.

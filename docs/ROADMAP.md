@@ -1,59 +1,67 @@
 # Delivery roadmap
 
-M0/M1 shipped as v0.1 and the owner reported a successful OnePlus 13 run.
-The [v0.2 slice](V0.2.md) advances M2/M3 with greedy chunk rendering, bounded terrain
-streaming and interactive physics. Full M2 comparison and M3 stress gates remain
-open; M4–M6 remain future work. Consult [STATUS](STATUS.md) for actual checks.
 This roadmap is an ordered delivery strategy, not an estimate or release promise.
+Latest published prerelease: v0.5.0. Consult [STATUS](STATUS.md) for checks actually
+run and exact source/build/artifact distinctions.
 
-The [v0.3 slice](V0.3.md) implements dynamic shadows, bounded background
-preparation and a destruction playground. Phone validation completed and v0.3.0
-was released. Its multi-model protocol and [execution log](../execution_log.md)
-record the actual delivery process. This advances M3 and direct lighting; it does
-not close equivalent-quality M2 comparisons or full M4 indirect-light/detail gates.
+Released slices:
 
-In progress: execute the [performance campaign](PERFORMANCE_PLAN.md), beginning with
-trustworthy measurements and redundant-work reduction. Its required
+- v0.1 (M0/M1): the owner reported a successful OnePlus 13 run.
+- [v0.2](V0.2.md) advances M2/M3 with greedy chunk rendering, bounded terrain
+  streaming and interactive physics. Full M2 comparison and M3 stress gates remain
+  open; M4–M6 remain future work.
+- [v0.3](V0.3.md) implements dynamic shadows, bounded background preparation and a
+  destruction playground; phone validation completed and v0.3.0 was released. Its
+  multi-model protocol and [execution log](../execution_log.md) record the delivery
+  process. It advances M3 and direct lighting and does not close equivalent-quality
+  M2 comparisons or full M4 indirect-light/detail gates.
+- v0.4.0 and v0.5.0 are published Android development prereleases; see below.
+
+## In progress
+
+The [performance campaign](PERFORMANCE_PLAN.md) is executing, beginning with
+trustworthy measurements and redundant-work reduction. The required
 [dense alien showcase](SHOWCASE.md) supplies demanding real workloads throughout.
-Use unplugged, matched thermal conditions and the [benchmark protocol](BENCHMARKS.md).
-The numeric showcase/performance budgets are working targets, not achieved results.
-Campaign progress: foundation/flora source merged through PR6/7. PR8 now contains
-full128m source terrain, fine-source collision/editing, water,6,192plants across
-10species and ordinary Android chooser/controls. Generator3 ground/elevated routes
-pass continuous host physics; the short waterside itinerary is recorded too.
-Normal phone entry/movement/edit persistence and6-to29-body destruction have been
-observed on development builds. Complete journal/respawn recovery is host/native
-verified; the later shadow-cache0.4.0 APK was device-checked and released through PR8. Two matched P02
-pairs show faster presentation/lower CPU and memory with increased heating;
-the third pair confirms the tradeoff. The engine now reuses unchanged shadow depth,
-with host Vulkan and Android functional checks. The separate30/60Hz experiment is
-preserved unintegrated. Automatic LOD, indirect illumination/reflections, sustained
-acceptance and remaining engine milestones are still open. See [current status](STATUS.md) for exact
-source/build/artifact distinctions.
+Use unplugged, matched thermal conditions and the [benchmark protocol](BENCHMARKS.md);
+the numeric showcase and performance budgets are working targets, not achieved results.
 
-Owner steering (2026-09-08): prioritize reusable engine implementation. The
-wetland supplies validation workloads; additional demo-save compatibility and
-showcase UI/content refinement are not gates ahead of M2–M5 engine progress.
-The frame-cap experiment has been reassessed as engine pacing work and closed:
-`matterweave-pacing` is integrated into the production frame loop and passes a host and a
-physical OnePlus 13 gate. Production frame-loop scheduling is no longer open. Its fixed cap
-survives as one policy; no efficiency or thermal benefit is claimed. See
+**Done.** Foundation/flora source merged through PR6/PR7. PR8 delivered full 128 m
+source terrain, fine-source collision/editing, water, 6,192 plants across 10 species and
+ordinary Android chooser/controls; Generator 3 ground/elevated routes pass continuous host
+physics, with the short waterside itinerary recorded too. Normal phone entry, movement and
+edit persistence, plus 6-to-29-body destruction, were observed on development builds.
+Complete journal/respawn recovery is host/native verified, and the later shadow-cache
+0.4.0 APK was device-checked and released through PR8. The engine now reuses unchanged
+shadow depth with host Vulkan and Android functional checks. Automatic detail selection
+and instance-only updates pass a 9-phase native Vulkan gate; background collision
+preparation/publication passes a direct native Android floor creation/removal gate;
+source-version-checked collision preparation and shared chunk snapshots are host-tested on
+the integration branch. The first diffuse indirect reference passes Android
+functional/lifecycle checks, and the background adapter passes host and Android checks with
+nine Android presentations during CPU preparation. Production frame-loop scheduling is
+integrated and device-checked.
+
+**Open.** Automatic LOD transitions, indirect illumination/reflections, the
+equivalent-quality renderer comparison, sustained efficiency and thermal acceptance,
+streaming completion, a second released sample (M6) and the remaining M2–M6 gates. The
+background adapter's production cadence, upload costs and quality/latency acceptance
+remain open. The first diffuse indirect reference's 39–45 ms synchronous full
+preparation/upload phases motivated background scheduling. Two matched P02 pairs show
+faster presentation and lower CPU and memory with increased heating; the third pair
+confirms the tradeoff. The [bounded full-image ray/raster/hybrid checks](performance/renderer-comparison.md)
+pass on Android and host, advancing M2 feasibility while equivalent production quality and
+primary-path cost selection remain open. These increments do not close M3/M4 acceptance,
+and v0.5 delivers them through PR9/PR10 without closing M2–M6.
+
+**Closed.** The separate 30/60 Hz frame-cap experiment was reassessed as engine pacing
+work: `matterweave-pacing` is integrated into the production frame loop and passes a host
+and a physical OnePlus 13 gate. Production frame-loop scheduling is no longer open; its
+fixed cap survives as one policy, and no efficiency or thermal benefit is claimed. See
 [frame pacing](performance/frame-pacing.md).
 
-Engine-systems follow-up: source-version-checked collision preparation and shared
-chunk snapshots are host-tested on the integration branch. Automatic detail selection and instance-only updates now pass a9-phase native
-Vulkan gate; background collision preparation/publication passes a direct native
-Android floor creation/removal gate. Production frame-loop scheduling is now integrated and
-device-checked. The first
-diffuse indirect reference passes Android functional/lifecycle checks; its current
-39–45ms synchronous full preparation/upload phases motivated background scheduling.
-The background adapter now passes host and Android checks with nine Android
-presentations during CPU preparation; production cadence, upload costs and
-quality/latency acceptance remain open. These increments
-do not close M3/M4 acceptance.
-
-The v0.5 development prerelease now delivers these systems through PR9/10, with
-final CI and repeat Android background-light checks. It does not close M2–M6.
+Owner steering (2026-09-08): prioritize reusable engine implementation. The wetland
+supplies validation workloads; additional demo-save compatibility and showcase UI/content
+refinement are not gates ahead of M2–M5 engine progress.
 
 ## M0 — Reproducible Android foundation
 
@@ -104,5 +112,3 @@ Neural radiance caching, ReSTIR-family sampling, frame generation, advanced acce
 ## Definition of engine demonstrator done
 
 M0–M6 acceptance criteria are met for a declared device/profile set, or remaining gaps are explicitly identified rather than hidden. A fresh checkout builds, documented samples run on real Android hardware, and evidence covers fine geometry, automatic detail, dynamic lighting, interactive physics, resource efficiency and reuse. The repository contains all code, build instructions, dependency provenance, results and known limitations needed to continue development. This is an engine demonstrator, not a claim of commercial production readiness.
-
-Engine-03 comparison progress: [bounded full-image ray/raster/hybrid checks](performance/renderer-comparison.md) pass on Android and host. This advances M2 feasibility while equivalent production quality and primary-path cost selection remain open.

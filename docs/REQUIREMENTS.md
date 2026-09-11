@@ -2,7 +2,7 @@
 
 ## Status meanings
 
-**Owner requirement** records an explicit current goal. **Working requirement** is an engineering interpretation or setup convention that the implementation session may refine with evidence. **Research candidate** records an opportunity, not a delivery commitment. All acceptance evidence below is currently outstanding unless [STATUS.md](STATUS.md) says otherwise.
+**Owner requirement**: an explicit current goal. **Working requirement**: an engineering interpretation or setup convention the implementation session may refine with evidence. **Research candidate**: an opportunity, not a delivery commitment. All acceptance evidence below is outstanding unless [STATUS.md](STATUS.md) says otherwise.
 
 | ID | Requirement | Basis | Evidence required | ADR / milestone |
 | --- | --- | --- | --- | --- |
@@ -29,11 +29,11 @@
 
 ## Prioritization and conflicts
 
-Android-native operation and the reusable voxel product identity take precedence over convenience of a browser or desktop-only implementation. Correct gameplay and stable world state take precedence over camera-dependent shortcuts. Optimize image and simulation quality together with sustained frame time; a feature does not qualify as an optimization if it merely moves work to another processor or hides stalls in averages.
+Android-native operation and the reusable voxel product identity take precedence over a browser or desktop-only implementation. Correct gameplay and stable world state take precedence over camera-dependent shortcuts. Optimize image and simulation quality together with sustained frame time; a feature is not an optimization if it merely moves work to another processor or hides stalls in averages.
 
 There is no accepted exact FPS target, RAM allowance, voxel size, world size, device floor or UE5 parity claim. Proposed evaluation budgets are in [BENCHMARKS.md](BENCHMARKS.md), where they are explicitly identified as working targets.
 
-Rust preference, modularity and reuse are accepted selection constraints. Significant/major advantage is assessed against a workload-specific criterion established before an experiment, not an invented universal percentage. See [component selection](COMPONENT_SELECTION.md); missing bindings do not automatically justify switching language, and Rust preference does not justify rewriting adequate tools solely for purity.
+Rust preference, modularity and reuse are accepted selection constraints. Significant or major advantage is assessed against a workload-specific criterion established before an experiment, not an invented universal percentage. See [component selection](COMPONENT_SELECTION.md); missing bindings do not automatically justify switching language, and Rust preference does not justify rewriting adequate tools solely for purity.
 
 ## Non-goals for the initial implementation
 

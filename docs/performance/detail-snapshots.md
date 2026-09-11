@@ -1,20 +1,27 @@
-# Detail source snapshots — validation engineering log
+# Detail source snapshots — validation
 
-## Correction and scope
+## What problem this solves
 
-The earlier lead/physics-worker claim that detail storage types prevent reuse of
-core chunk COW was **wrong**. `DetailVolume` wraps `matterweave_core::World`.
-Core COW at `94e51eb` already benefits detail volume clones, scene source forks
-and private instance edits. This validates an already integrated engine benefit;
-it is not a new COW feature, optimization implementation or TDD RED/GREEN cycle.
-No production changes, new dependencies or public test diagnostics were needed.
-The lead owns correction of the central physics document and central status.
+A lead/physics-worker claim that detail storage types prevented reuse of core
+chunk copy-on-write was **wrong**. The claim needed to be corrected and the
+inherited sharing verified against the detail crate's own behavior.
+
+## How it works
+
+`DetailVolume` wraps `matterweave_core::World`, so the core COW mechanism
+(described in [shared chunk snapshots](chunk-snapshots.md)) already benefits
+detail volume clones, scene source forks and private instance edits. This
+validates an already integrated engine benefit; it is not a new COW feature, an
+optimization implementation or a RED/GREEN cycle. No production changes, new
+dependencies or public test diagnostics were needed. The lead owns correction of
+the central physics document and central status.
 
 Some existing comments still describe copying prototype payloads (notably
-`scene.rs:215–222` and the comment preceding `edit_instance`'s clone); they must not be read as evidence of deep
-chunk-array copies. Their wording predates the inherited sharing implementation.
+`scene.rs:215–222` and the comment preceding `edit_instance`'s clone); they must
+not be read as evidence of deep chunk-array copies. Their wording predates the
+inherited sharing implementation.
 
-## Reuse evidence
+Reuse evidence (line numbers at the base checkout `bf5ee0e`):
 
 - `crates/matterweave-detail/src/lib.rs:424–430`: derived `Clone` includes
   `world: World`; `DetailVolume::set` delegates to `World::set` at line 507.
@@ -30,25 +37,24 @@ chunk-array copies. Their wording predates the inherited sharing implementation.
   the edited chunk detaches. Other tests cover repeated edits, streaming,
   rejected/no-op edits, deletion and re-entry. No duplicate pointer test added.
 
-## Focused additional behavior evidence
-
-Read existing `tests/detail.rs`, `tests/instance_edits.rs` and
-`tests/source_version.rs` before adding one integration scenario in
-`crates/matterweave-detail/tests/source_snapshot.rs`.
+## What was verified
 
 Existing tests already cover local/replayable instance edits, source token
-changes, no-ops/rejections and single-scene cache invalidation. The added scenario
-connects these operations across retained generations: clone a two-chunk volume,
-cache all three LODs, fork a scene, privately edit one of two instances, retain
-that candidate, then edit its original prototype. It checks unchanged serialized
-source snapshots and source versions in older generations, unchanged live draws,
-rebuilt original-prototype LOD geometry/revisions, and continued reuse of private
-and original-live mesh caches. Mesh content is checked, not merely cache counters.
-The test uses public behavior, not metadata sizes or allocation assumptions.
+changes, no-ops/rejections and single-scene cache invalidation. One integration
+scenario was added in `crates/matterweave-detail/tests/source_snapshot.rs`,
+after reading `tests/detail.rs`, `tests/instance_edits.rs` and
+`tests/source_version.rs`.
 
-## Executed verification
+The added scenario connects these operations across retained generations: clone
+a two-chunk volume, cache all three LODs, fork a scene, privately edit one of two
+instances, retain that candidate, then edit its original prototype. It checks
+unchanged serialized source snapshots and source versions in older generations,
+unchanged live draws, rebuilt original-prototype LOD geometry/revisions, and
+continued reuse of private and original-live mesh caches. Mesh content is
+checked, not merely cache counters. The test uses public behavior, not metadata
+sizes or allocation assumptions.
 
-Base checkout: `bf5ee0e`, including core COW integration `94e51eb`.
+Base checkout: `bf5ee0e`, including core COW integration `94e51eb`. Host only.
 
 ```sh
 export CARGO_TARGET_DIR=/mnt/bench/matterweave-dev/performance/completion-01/lead-target
@@ -64,16 +70,17 @@ python3 tools/check_docs.py
 - Existing core allocation-contract tests: **4 passed**, 3 unrelated tests filtered.
 - Formatting and documentation checks: passed.
 
-No descendants or benchmarks were launched. Builds used the existing shared
-lead target with one Cargo job; no worktree-local target was generated. The
-shared integration target is preserved, not removed as temporary-worker output.
+No descendants or benchmarks were launched. Builds used the existing shared lead
+target with one Cargo job; no worktree-local target was generated. The shared
+integration target is preserved, not removed as temporary-worker output.
 
-## Limits and handoff
+## Limits and open work
 
-Clones still copy map/identity/instance metadata and increment references. Source
-byte budgets remain logical accounting, not unique physical memory. Mutation may
-copy touched chunks; derived meshes and coarse volumes still require their own
-work. These host tests do not measure Android timing, RSS, thermal or energy
-improvements. No device run was performed and no new performance claim is made.
-Lead integration should carry this correction into its central engineering log
-and physics documentation; no second detail COW implementation is warranted.
+- Clones still copy map/identity/instance metadata and increment references.
+  Source byte budgets remain logical accounting, not unique physical memory.
+- Mutation may copy touched chunks; derived meshes and coarse volumes still
+  require their own work.
+- These host tests do not measure Android timing, RSS, thermal or energy
+  improvements. No device run was performed and no new performance claim is made.
+- Lead integration should carry this correction into the central engineering log
+  and physics documentation; no second detail COW implementation is warranted.

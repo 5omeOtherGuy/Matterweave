@@ -5,7 +5,7 @@
 **Verified (no finding):**
 - Exact types: `COLUMNS` 37 + header magic match `metrics.rs:COLUMNS`/`FrameRow::write`; IDs exact-int via regex+`int()` (no `float`), limits u64/u32, `gpu_prev_shadows` blank/0/1, durations finite≥0, missing stays `None` — matches `write_ms`/`write_id`/`write_count` empty-is-never-zero.
 - Identity joins: `(epoch,id)` pairs, per-epoch submission monotonicity, completion both-present-or-absent, future-epoch/duplicate/orphan rejection, no CPU→GPU join except via submission/completion pairs. `unmatched = submitted−completed` correctly lumps missing-prior-completion and trailing-unfinished as unknown without fabricating joins.
-- Bounded streaming: `readline(16KiB+1)` + total 128MiB + 240k rows, no stat-then-read, `raw_sha256` over consumed bytes; CLI catches `ValueError`/`OSError`, concise stderr, no traceback, no mutation.
+- Bounded streaming: `readline(16 KiB+1)` + total 128 MiB + 240k rows, no stat-then-read, `raw_sha256` over consumed bytes; CLI catches `ValueError`/`OSError`, concise stderr, no traceback, no mutation.
 - Malformed rejection: bad schema/header/width/empty/overlong-line/row-cap/byte-cap all `ValueError`; `csv.reader` per-line safe for this comma/int-only dialect.
 
 ### Finding 1 (test covers wrong reason; same-epoch branch unproven)

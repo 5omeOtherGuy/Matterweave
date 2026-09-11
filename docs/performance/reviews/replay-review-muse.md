@@ -27,5 +27,5 @@ Checks not run: real phone replay acceptance; `cargo test`/build; device lifecyc
 Lead integration check: native Xvfb smoke exposed a headless focus startup gap.
 `73c9b87` adds the actual-app regression; `2b08194` admits replay in explicitly
 bounded headless smoke runs using the same allowance as rendering. Corrected
-native run advances the route and records CANCEL on exit;25frames/20valid rows,
+native run advances the route and records CANCEL on exit; 25 frames/20 valid rows,
 six bodies and no Vulkan errors. Phone replay remains unrun.

@@ -7,7 +7,7 @@
 
 ## Context
 
-Rust is now the default language. The next session needs a concrete Android build and graphics starting point, with room for efficient hardware integration and reusable subsystems. No engine implementation exists at this decision point.
+Rust is the default language. The next session needs a concrete Android build and graphics starting point with room for efficient hardware integration and reusable subsystems; no engine implementation existed at this decision point.
 
 ## Decision
 
@@ -56,7 +56,7 @@ performance. Rendering selection beyond this reference remains ADR-0006/M2 work.
 
 ## v0.2 lifecycle implementation note
 
-Attached OnePlus13 testing exposed duplicate NativeActivity initialization during
+Attached OnePlus 13 testing exposed duplicate NativeActivity initialization during
 repeat launches. The activity is now singleTask and handles logical Back explicitly.
 A narrowly [vendored winit patch](../../vendor/winit/MATTERWEAVE-PATCH.md) handles
 Destroy and sequential event-loop recreation, retaining single-live-loop exclusion.

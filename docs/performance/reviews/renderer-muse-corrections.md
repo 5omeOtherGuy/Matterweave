@@ -6,7 +6,7 @@ Scope frozen: `crates/matterweave-render/src/lib.rs`, `crates/matterweave-render
 
 Verified statically:
 
-* Shared pooled buffers: `static_scene.rs:StaticScene::new` creates one `vertices` (`VERTEX_BUFFER`), one `indices` (`INDEX_BUFFER`), one packed `instances` (`VERTEX_BUFFER`, bound at `binding=1,INPUT_RATE=INSTANCE` in `lib.rs:pipeline`). `record_batches` binds `0/1 + index buffer` once, then one `cmd_draw_indexed` per `PrototypeRange`.
+* Shared pooled buffers: `static_scene.rs:StaticScene::new` creates one `vertices` (`VERTEX_BUFFER`), one `indices` (`INDEX_BUFFER`), one packed `instances` (`VERTEX_BUFFER`, bound at `binding=1, INPUT_RATE=INSTANCE` in `lib.rs:pipeline`). `record_batches` binds `0/1 + index buffer` once, then one `cmd_draw_indexed` per `PrototypeRange`.
 * Per-instance ranges: `plan_static_scene` groups by prototype, `instance_offset=instance_bytes(packed_so_far)` = instance-index count, emitted as `firstInstance` in `cmd_draw_indexed(index_count, instance_count, first_index, vertex_offset, instance_offset)`. `first_index/vertex_offset` accumulate across merged prototypes with `u32/i32` checked conversions. Correct index- vs instance-domain units.
 * `lib.rs:1372 replace_static_scene`: host plan first, `commands.wait()`, `instance_count==0 → None` clear, transactional `StaticScene::new` before `self.static_scene=Some`, old buffers dropped after fence wait. `update_counters` includes `static_scene.allocated_bytes`.
 * `lib.rs:1423 set_world_visible`: bool only, retains all GPU resources; `draw` gates `effective.shadows`, chunk/legacy/dynamic loops, static `bounds.push`, `visible_chunks` filter, `record_batches`, HUD still submits. Legacy/chunk paths preserved.

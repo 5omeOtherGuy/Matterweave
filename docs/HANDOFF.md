@@ -1,98 +1,109 @@
 # Implementation handoff
 
-## Instruction to the next session
+The entry point for a fresh session: what is true now and what is authorized next.
+[STATUS](STATUS.md) owns the dated evidence; where the two differ, STATUS is
+authoritative.
 
-Take over Matterweave from the current repository branch. Use this repository as the complete project context. Orchestrate implementation with available subagents where useful, preserve accepted requirements and decisions, resolve proposed technical choices using focused experiments, and advance into verified native Android development. Keep the repository's status and decisions current so another session can continue without chat history.
+## What the project is
 
-Do not spend the session repeating the initial requirements interview or producing another plan in place of code. Read the live repository first: this handoff may predate implementation commits.
+Matterweave is a modular native Android voxel engine and game framework, built
+primarily in Rust. Android-native delivery is mandatory. The engine is the reusable
+product; genre samples validate it. [PROJECT_BRIEF.md](PROJECT_BRIEF.md) owns product
+scope and owner priorities; [REQUIREMENTS.md](REQUIREMENTS.md) owns acceptance
+criteria; [ARCHITECTURE.md](ARCHITECTURE.md), the [ADR index](adr/README.md) and
+[COMPONENT_SELECTION.md](COMPONENT_SELECTION.md) own boundaries and selection policy.
 
-## Latest owner direction — 2026-09-08
+The repository was created empty on 2026-09-07. The setup commits established the
+requirement register (now 20 entries) and 13 ADRs; accepted ADR-0014/0015 were added
+later, ADR-0016 is a later proposal, and ADR-0003/0004 are Superseded. No engine,
+APK, dependency lock or device result existed in those documentation-only commits.
 
-Finish the engine and focus only on advancing actual engine systems. Make extensive
-use of available models for parallel implementation and review; the owner has
-explicitly overridden any conservative-delegation guidance. Retain independent
-ownership, integration and verification. The wetland
-is an existing validation workload. Further demo-save compatibility, content
-refinement or gameplay UI polish must not precede renderer, physics, streaming,
-lighting and efficiency progress. This direction supersedes the older showcase
-campaign ordering below. Read STATUS for the current verified engine slice.
+## Current state
 
-## Next authorized implementation campaign
+The workspace is at version 0.5.0; v0.5.0 is the latest published prerelease, an
+intermediate engine delivery rather than a finished engine. The tree includes a Rust
+voxel core, fine-detail volumes with automatic selection, an ash/Vulkan renderer with
+direct and bounded diffuse indirect lighting, a Rapier physics adapter, a frame
+pacer, a bounded audio service (host-tested; its reserved-device diagnostic is not
+run) and a native Android explorer. [README.md](../README.md) lists the subsystems;
+[STATUS.md](STATUS.md) gives the verified state, open gates and the live integration
+branch. M2–M6 remain open.
 
-Start from [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md), then its linked task list and
-showcase specification. The owner requested an iterative overall optimization
-campaign using all six model families, with Muse/Gemini code reviews before Astra's
-review, testable worker definitions of done and engineering-log handoffs. A small,
-dense, lush, highly detailed alien map with water, complex terrain and recognizable
-mushrooms is a mandatory deliverable. The plan is written; do not delegate another
-plan-writing round. Current source now implements the full dense map, fine-source
-collision, normal Android presentation and measurement tooling. Consult STATUS for
-verified development-device results and the still-open traversal/quality/comparison
-gates; this does not mark the campaign or full engine complete.
+## Read in this order
 
-## Current implementation entry — 2026-09-08
+1. [AGENTS.md](../AGENTS.md) — contribution, scope and evidence rules.
+2. [STATUS.md](STATUS.md) — verified state, open gates, live branch.
+3. [REQUIREMENTS.md](REQUIREMENTS.md) and the [ADR index](adr/README.md) — accepted goals and decision status.
+4. [ROADMAP.md](ROADMAP.md) and [MVP.md](MVP.md) — milestone order and the shipped M0/M1 slice.
+5. [DEVELOPMENT.md](DEVELOPMENT.md) — real build, test and Android commands.
+6. [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md), [PERFORMANCE_TASKS.md](PERFORMANCE_TASKS.md) and [SHOWCASE.md](SHOWCASE.md) — active campaign, task assignments and mandatory workload.
+7. Inspect current source, branches and worktree changes before trusting any summary, including this one.
 
-For the shipped v0.3 release, see the [v0.3 delivery and coordination plan](V0.3.md).
-It preserves the planned feature slices, multi-model assignments, board ownership,
-bounded-context protocol and startup verification gates. The board and three feature slices are implemented and phone validation passed.
-The v0.3.0 release contains shadows, background preparation and the breakable arch.
-Prioritize stationary-scene efficiency next; read BENCHMARKS for the owner’s
-unplugged/cooling requirement and the measured thermal limitations. Read
-[execution_log.md](../execution_log.md) and STATUS for actual progress; planned
-features are not shipped work.
+## Next authorized work
 
-The M0/M1 MVP shipped, and v0.2 advances M2/M3; see [v0.2 scope](V0.2.md). Start from [STATUS](STATUS.md), the
-[development guide](DEVELOPMENT.md), [MVP scope](MVP.md) and
-[component record](DEPENDENCIES.md). Code is in `crates/matterweave-core`,
-`crates/matterweave-render`, `crates/matterweave-physics` and `apps/explorer`; Android packaging is in `android`.
-The first backend is ash/direct Vulkan. Host tests and smoke execution pass and
-an ARM64 APK is built/inspected. The owner reported v0.1 working on a OnePlus 13; consult STATUS for subsequent attached-device tests.
-The remaining sections preserve the original starting context; they are not a
-request to scaffold a second app or restart completed M0/M1 work.
+Continue the engine-completion campaign in [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)
+and its [task list](PERFORMANCE_TASKS.md): advance renderer, physics, streaming,
+lighting and measured efficiency under the owner's 2026-09-08 direction to finish the
+engine and focus on actual engine systems. Open capabilities include the
+equivalent-quality ray/mesh/hybrid comparison and primary-path selection, full
+Lumen-like indirect lighting/reflections, sustained efficiency and thermal
+acceptance, streaming completion and the M6 second sample; [STATUS.md](STATUS.md)
+records which gates remain.
 
-## Starting state of this handoff
+The owner requires extensive use of all six model families (see the roster in
+[PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)) for bounded parallel implementation and
+review, with independent Muse/Gemini reviews before the lead's review, testable
+worker definitions of done and engineering-log handoffs; the owner has explicitly
+overridden conservative-delegation guidance. This direction supersedes earlier
+showcase-campaign ordering. Do not repeat the requirements interview or delegate
+another plan-writing round in place of code; the plan exists. The lead retains
+ownership, integration and verification.
 
-On 2026-09-07 the GitHub repository was empty. The initial setup established requirements and 13 ADRs. The subsequent Rust policy update adds accepted ADR-0014 and proposed ADR-0015, supersedes ADR-0003/0004, and brings the requirement register to 20 entries. **There is no engine, APK, demo, dependency lock or device result in these documentation commits.** Consult [STATUS.md](STATUS.md) and Git history for subsequent changes.
+[SHOWCASE.md](SHOWCASE.md)'s dense alien fungal wetland is a mandatory workload, not
+optional content, and is the validation workload for engine work. Further demo-save
+compatibility, showcase content refinement and gameplay UI polish must not precede
+renderer, physics, streaming, lighting and efficiency progress. Efficiency
+comparisons follow the [benchmark protocol](BENCHMARKS.md)'s unplugged, cooled,
+matched-conditions requirement. Do not treat a planned feature as shipped work.
 
-## Essential context
+## Working decisions and prohibitions
 
-Matterweave is the engine/framework product. Android-native delivery, voxel-based worlds, high fidelity, hardware efficiency, reusable game systems, dynamic lighting and automatic fine-detail management are central. Complex physics is a strategic capability. Genre examples include creature-collecting RPGs, roguelikes, exploration, tiny worlds, 3D adventures and 2.5D games.
+- Rust wherever feasible without material detriment; modularity and evidence-led
+  reuse are accepted policy ([ADR-0014](adr/0014-rust-modularity-and-evidence-led-reuse.md)).
+  The Rust/Cargo/Vulkan native foundation is accepted
+  ([ADR-0015](adr/0015-rust-native-foundation.md)). Remaining proposals (ADR-0005–0011,
+  0013 and 0016) stay Proposed until their gates are met; accept or revise routine
+  engineering choices with evidence instead of waiting for owner approval. Build new
+  technology, tools or Rust hardware interfaces only when necessary or significantly
+  advantageous, and do not restart the language debate or follow the superseded C++
+  foundation proposal (ADR-0003).
+- Jolt is eligible only for a documented major advantage over viable Rust physics
+  after binding and integration costs; Rapier is the current baseline, not a
+  policy-selected winner. Reconstruction candidates such as Arm ASR remain open under
+  [ADR-0009](adr/0009-reconstruction-and-scalable-effects.md).
+- Android-native delivery is mandatory; a web preview or desktop executable is
+  supporting evidence only. The earlier browser/site demo, its scene, memory limits,
+  fixed scale and art direction are not requirements. No separate Pokémon project,
+  prior personal conversation, copied assets or unrelated-project rules are needed.
+- Do not scaffold a second app or restart the completed M0/M1 work. Keep engine
+  services separate from game-specific content, and keep Vulkan and physics-library
+  types out of gameplay interfaces.
+- Preserve unrelated work; do not force-push shared history.
+- Owner-only decisions: project license (unselected — do not add, imply or name one),
+  purchases, repository visibility and access, release signing ownership and store
+  publication.
 
-Rust is now the owner's explicit default wherever feasible without detriment. Modularity, qualifying reuse and maximum useful speed/efficiency govern selection. Build new technology, tools or Rust hardware interfaces when necessary or significantly advantageous. Jolt is eligible only if major advantages justify it. Read [ADR-0014](adr/0014-rust-modularity-and-evidence-led-reuse.md) and [component selection](COMPONENT_SELECTION.md); do not restart the language debate or follow the superseded C++ proposal.
+## Closeout
 
-Earlier browser/site demo constraints were explicitly replaced. The former scene is neither an engine dependency nor the required art direction. No separate Pokémon project or earlier personal conversation is needed. See [PROJECT_BRIEF.md](PROJECT_BRIEF.md) for the complete scope history.
+Run the relevant checks, inspect the diff, and update [STATUS.md](STATUS.md) with
+exact accomplishments, commands and results, unresolved risks and next actions.
+Update affected ADRs and the [roadmap](ROADMAP.md). Commit coherent changes on a
+branch under the active integration authorization and preserve unrelated work.
 
-## Read and act in this order
-
-1. Read [AGENTS.md](../AGENTS.md), [STATUS.md](STATUS.md), [REQUIREMENTS.md](REQUIREMENTS.md), the [ADR index](adr/README.md) and [ROADMAP.md](ROADMAP.md).
-2. Inspect current source, branches, worktree changes, checks and tool/device availability. Preserve unrelated work. Record relevant environment facts without secrets.
-3. Resolve M0's Rust toolchain, Android shell, minimum capability profile and pinned dependency revisions. ADR-0015 proposes Cargo/NDK/Gradle, ash/Vulkan and existing Rust Android integration under accepted ADR-0014. Assess viable components before substantial custom work. Accept or revise engineering proposals with rationale; do not block implementation awaiting owner approval of routine choices.
-4. Build the native application shell and instrumentation. Include touch input, lifecycle behavior and capability reporting from the start.
-5. Deliver M1's small queryable/editable voxel world using the simplest adequate renderer. Preserve a baseline while preparing M2's ray/mesh/hybrid comparison. Do not implement three production engines before the first native sample works.
-6. Continue through authorized milestones with useful verification. The roadmap is ordered delivery work, not a requirement to stop after M1 or a promise to finish every research track in one session.
-
-## Working architecture, not a completed selection
-
-- Rust/Cargo core and Vulkan renderer, initially investigating ash; a thin Android shell using the NDK and appropriate existing Rust integration.
-- Own the architecture, contracts and world/renderer integration while reusing adequate implementations. Build or extend components only under the accepted necessity/significant-advantage policy.
-- Investigate sparse voxel blocks, separate movable object volumes and multiresolution representations.
-- Compare compute voxel traversal, rasterized voxel surfaces and a hybrid using the same scenes and quality criteria.
-- Investigate suitable Rust physics such as Rapier. Jolt requires major advantages under ADR-0014. Arm ASR remains a reconstruction candidate subject to the same integration criteria.
-- Investigate probe/cached dynamic GI with selective tracing and optional hardware RT paths.
-- Plan capability-based quality profiles and measured CPU/GPU/NPU scheduling, memory budgets and thermal adaptation.
-
-Rust preference and the selection/modularity policy are **Accepted** in ADR-0014. Specific implementation choices in ADR-0015 and the other active proposals remain **Proposed** until their gates are met. Exact shader toolchain, block size, voxel surface representation, device floor and dependencies are unresolved. ADR-0003/0004 are historical and superseded.
-
-## First handoff-worthy implementation result
-
-A clean-checkout build produces an ARM64 Android APK. A real voxel scene can be explored with touch input and queried/edited, with stable app lifecycle behavior and performance counters. Host tests cover core data correctness. The repository contains actual build/install commands and an honest test report.
-
-If no physical Android device is accessible, still complete buildable code, host tests, APK packaging, static/native validation and available emulator checks. Mark physical-device validation **not run** and provide exact reproduction steps. Do not call the result device-verified or use emulator timing to select the final mobile renderer. Independent implementation work should continue.
-
-## What requires clarification versus research
-
-Routine engineering selections, initial sample mechanics, test assets and experimental budgets can be chosen and documented by the implementation session. Missing hardware is a validation limitation, not an excuse to avoid building. Project licensing, purchases, access/visibility changes, release signing ownership and store publication are owner decisions when they become necessary. See [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
-
-## Closeout expectations
-
-Commit coherent changes using the active task's integration authorization. Run relevant checks and inspect results. Update status, ADR statuses, dependency/toolchain records, milestone evidence and outstanding issues. Report what actually works, what was tested, where the APK/evidence can be found, and the next concrete task. Do not claim the entire reusable engine is finished merely because a static scene renders.
+Report what actually works, what was tested, where the APK and evidence are, and the
+next concrete task. Do not present a build-only result as device-tested or a target
+as a measurement. If no physical device is available, complete buildable code and
+host tests, mark device validation NOT RUN, and give exact reproduction steps. Do not
+call a host or emulator result device-verified, or use emulator timing to select the
+final mobile renderer; missing hardware is a validation limitation, not a reason to
+stop.

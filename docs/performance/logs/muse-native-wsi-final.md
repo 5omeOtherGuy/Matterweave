@@ -12,7 +12,7 @@ Issues/Friction — candidate defects meeting threshold: none found (0/3).
 - Deliberately not raised as findings per task: no native collision/full-map/transparent-water/instancing; `combine` budget uses `len()` payload not `capacity()` allocation (recorded limitation); absent dynamic pipeline must stay empty not fabricated zero.
 
 Decisions/Rationale (preserved, not findings):
-- `Ok(_)=>Presented{recreate:false}` is correct per Khronos SUBOPTIMAL usable-for-present; defers to explicit `resize()` or `ERROR_OUT_OF_DATE_KHR`. Avoids per-frame pipeline rebuild seen in OnePlus13 diagnostic (same extent, `Ok(true)` every present). Mandatory paths intact: `resize→recreate=true`, acquire OOD→`Retry+recreate`, present OOD→`Retry+recreate` with `submissions` already incremented (identity kept).
+- `Ok(_)=>Presented{recreate:false}` is correct per Khronos SUBOPTIMAL usable-for-present; defers to explicit `resize()` or `ERROR_OUT_OF_DATE_KHR`. Avoids per-frame pipeline rebuild seen in OnePlus 13 diagnostic (same extent, `Ok(true)` every present). Mandatory paths intact: `resize→recreate=true`, acquire OOD→`Retry+recreate`, present OOD→`Retry+recreate` with `submissions` already incremented (identity kept).
 - Gallery row `dynamic_*=Some(0)` + `dynamic_*_ms=None→""` is direct: no dynamic pipeline exists. Differs intentionally from normal-game supported-but-skipped P02 `Some(0.0)`. Checker asserting `""` is correct; do not demand zeros.
 - Retry identity handling correct: acquire-OOD `submitted=None` + masked `shadow_casters=None`; present-OOD `submitted=Some` + casters kept. `Swapchain::take` after `device_wait_idle`, per-image `finished` semaphores, `IDENTITY`/compositor rotation unchanged — no transform/shader change, lifetimes safe in single-threaded winit ordering.
 
@@ -24,5 +24,5 @@ Insights:
 
 Checks not-run (honest):
 - No execution: Renderer 18 tests/Clippy, host gallery 30 frames, app 45 tests not re-run here.
-- No SHA verification of `cc46873`/`6fac9a5`; no access to throwaway OnePlus13 worktree `eb045e5`, no phone comparison/lifecycle, no full native regression (lead-owned/pending per task).
+- No SHA verification of `cc46873`/`6fac9a5`; no access to throwaway OnePlus 13 worktree `eb045e5`, no phone comparison/lifecycle, no full native regression (lead-owned/pending per task).
 

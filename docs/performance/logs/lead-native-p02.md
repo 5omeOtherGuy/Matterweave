@@ -2,24 +2,24 @@
 
 ## Actions
 
-Integrated accepted flora source64661cf/evidence267c2c8 through PR7, mergedc71306d
+Integrated accepted flora source 64661cf/evidence 267c2c8 through PR7, merged c71306d
 after host/Android/docs CI. Checked frozen revision/path scope, not a duplicate
 source audit. Added SourceLOD native flora and CPU-cache/GPU-residency integration.
-180 Rust tests passed; real host gallery captures and90-frame normal Vulkan
-lifecycle smoke passed. Code checkpoint6fac9a5 is accepted for phone evaluation,
+180 Rust tests passed; real host gallery captures and 90-frame normal Vulkan
+lifecycle smoke passed. Code checkpoint 6fac9a5 is accepted for phone evaluation,
 not accepted as a measured optimization or full native showcase.
 
 ## Independent findings and corrections
 
 - Initial Muse found no cache/lifecycle regression. Its len-versus-capacity note
-  is retained:64MiB checks logical combined payload, not a strict allocation cap.
+  is retained: 64 MiB checks logical combined payload, not a strict allocation cap.
   Do not dismiss this by referring only to allocator metadata exclusions. Current
   two fixed built-in scenes are the supported scope; generic large-scene
   allocation safety/instancing needs a subsequent gate.
 - Gemini identified a real metric error: the gallery counted its static
-  compatibility upload as dynamic-body work. Actual native30-frame test produced
- 20 schema-valid rows and failed on dynamic uploads1.0155f3b/6fac9a5 preserve
-  the runtime RED/GREEN. Corrected dynamic counters0, dynamic timings absent:
+  compatibility upload as dynamic-body work. Actual native 30-frame test produced
+ 20 schema-valid rows and failed on dynamic uploads 1.0155f3b/6fac9a5 preserve
+  the runtime RED/GREEN. Corrected dynamic counters 0, dynamic timings absent:
   there is no dynamic pipeline, unlike supported-but-skipped normal-game work.
 - Multiline extra directives also reproduced as accepted and now fail closed.
 - Both independent final reviews found no new concrete correction/WSI defect.
@@ -28,16 +28,16 @@ not accepted as a measured optimization or full native showcase.
   proof for every driver. Existing documented exceptional WSI retirement limits
   are not magically resolved by queue-idle wording in a review.
 - The acceptance checker subsequently gained a two-line optional `--preset flora`
-  selector and passed against the real native85-instance scene. Production Rust
-  remained at the reviewed6fac9a5; this test-only extension is lead-verified, not
+  selector and passed against the real native 85-instance scene. Production Rust
+  remained at the reviewed 6fac9a5; this test-only extension is lead-verified, not
   misrepresented as part of that exact frozen commit.
 
 ## Evidence-led performance work
 
 Three recorder-overhead pairs completed, with explicit whole-process-rate and
-independent-clock limitations. A separate16-draw diagnostic established repeated
-successful-but-suboptimal presents and roughly16ms swapchain reconstruction.
-Khronos permits continuing with SUBOPTIMAL;57b6122/21c060c record runtime RED/GREEN
+independent-clock limitations. A separate 16-draw diagnostic established repeated
+successful-but-suboptimal presents and roughly 16ms swapchain reconstruction.
+Khronos permits continuing with SUBOPTIMAL; 57b6122/21c060c record runtime RED/GREEN
 for deferring advisory reconstruction while retaining resize/OUT_OF_DATE paths.
 Shader/quality/rotation policy is unchanged. Phone comparison remains pending.
 

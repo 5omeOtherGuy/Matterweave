@@ -11,7 +11,7 @@ The owner wants high-end Android visual fidelity, complex physics and effective 
 
 ## Decision
 
-Preserve those capabilities as architectural goals. Optimize useful delivered quality and simulation under sustained device limits. Interpret maximum hardware use as exploiting capabilities when beneficial, with evidence; it does not require consuming all memory or saturating every processor continuously.
+Preserve high-end fidelity, complex physics and effective hardware use as architectural goals. Optimize useful delivered quality and simulation under sustained device limits. Interpret maximum hardware use as exploiting capabilities when beneficial, with evidence; it does not require consuming all memory or saturating every processor continuously.
 
 Plan high-end device profiles first and measure actual capabilities. Exact frame-rate, resolution, memory and device-floor targets remain open engineering choices. Lighting/detail goals do not promise exact Unreal implementations or feature parity.
 

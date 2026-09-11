@@ -26,6 +26,6 @@ The documented layout includes a long loop, a **short waterside route**, and an 
 - **Insights:** Supplied traversal passes support the two tested routes, not every showcase obligation; independent runtime verification remains outstanding.
 
 Lead disposition: no new source correctness blocker. Astra waterside coverage
-finding addressed by `60abc39`/`f887d67`: a recorded21-point prefix with
-water-margin/endpoints checks, actual continuous traversal7.1166673simseconds.
+finding addressed by `60abc39`/`f887d67`: a recorded 21-point prefix with
+water-margin/endpoints checks, actual continuous traversal 7.1166673simseconds.
 Phone routes are a separate open gate.

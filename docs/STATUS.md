@@ -2,6 +2,14 @@
 
 Updated: 2026-09-10
 
+Latest published prerelease: **v0.5.0**. The engine objective (M2–M6) remains open.
+
+This file states what is implemented and verified now, the checks actually executed,
+known limitations and explicit non-claims, then the next concrete work. Per-slice
+commands, conditions and artifacts are in the linked `docs/performance/` and
+`docs/evidence/` records. Host results are never device results, and targets are
+never measurements.
+
 ## Production frame-loop scheduling — integrated and device-checked
 
 Branch `codex/engine-frame-pacing` closes the roadmap's open "production frame-loop
@@ -57,70 +65,186 @@ binary for this branch and untouched `origin/main` (`detail_cadence-dd12247ded27
 SHA-256 `302a3d16…`), and 100 interleaved runs of each showed zero failures, so the change
 cannot affect it. The test's timing assumption should be repaired separately.
 
-## Milestone M6 Advancement — Voxel Relay Puzzle Sample & Engine Reusability
+## Capability status
 
-On branch `eval/gemini-voxel-relay`, implemented "Voxel Relay", a playable orthographic
-Android puzzle sample proving Matterweave's engine framework supports another distinct
-game genre without duplicating or copying its engine implementation.
+| Capability | State | Evidence |
+| --- | --- | --- |
+| Production frame-loop scheduling | Integrated; host and OnePlus 13 device gates pass. No efficiency or thermal claim. | [Frame pacing](performance/frame-pacing.md) |
+| Shadow-depth reuse | v0.4.0 prerelease; host Vulkan and OnePlus 13 functional checks pass. | [Shadow reuse](performance/shadow-reuse.md) |
+| Automatic detail selection | v0.5.0; host and OnePlus 13 checks pass. | [Instance updates](performance/instance-updates.md) |
+| Background indirect-light preparation | v0.5.0; host and OnePlus 13 checks pass. | [Background lighting](performance/async-indirect.md) |
+| Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | [Collision log](performance/logs/engine-03-collision.md), [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
+| Bounded specular reflections | Unmerged evaluation branch; host only. Device gates NOT RUN. | [Reflections](performance/reflections-engine.md) |
+| Bounded audio service | Unmerged evaluation branch; host and cross-compile only. Device diagnostic NOT RUN. | [ADR-0016](adr/0016-audio-service.md) |
+| Voxel Relay second sample | Unmerged evaluation branch. Physical device gate NOT RUN. | — |
+| v0.3 slice: directional shadows, background preparation, destruction | Released (v0.3.0 development prerelease); device validated. | [v0.3 evidence](evidence/2026-09-08-v0.3.md) |
+| v0.2 slice: walking, objects, streamed terrain | Released (v0.2.0); device exercised. | [v0.2 evidence](evidence/2026-09-07-v0.2.md) |
 
-Key Accomplishments:
-- **Reusable Input Service (`matterweave_core::input::InputService`)**: Extracted a platform-independent
-  multi-touch pointer and keyboard tracker into `matterweave-core`. Reused across existing
-  explorer/wetland controls (`apps/explorer/src/controls.rs`) and Voxel Relay (`apps/explorer/src/voxel_relay.rs`)
-  with zero engine code duplication.
-- **Orthographic Camera & Touch Controls**: Rendered high-angle isometric chamber views via Vulkan
-  `Renderer` (`Mat4::orthographic_rh` and `Mat4::look_at_rh`). On-screen virtual joystick and touch action
-  buttons mapped via `Hud`.
-- **Dynamic Voxel Crate & Pressure Plate**: Authentic `[2, 2, 2]` rigid body pushed across stone floor
-  using physical kinematic character impulses in Rapier (`controller.solve_character_collision_impulses`).
-  No teleportation or artificial forces used.
-- **Authoritative Voxel Door**: Occupancy of pressure plate (`Z = 7.0`) triggers removal of door cells
-  (`Z = 10.0`) in `World`, synchronizing compound static colliders in `Physics` via `sync_world`.
-- **Player Voxel Removal**: Player triggers action button to remove destructible obstacle voxels (`Z = 15.0`)
-  in `World`, opening path to exit zone (`Z >= 19.5`).
-- **Atomic Persistence**: Game state atomically preserved alongside world chunks via `World::save_with_attachment`,
-  restoring player position, crate rigid body pose/velocity, door open state, voxel edits, and puzzle status.
-- **Comprehensive Verification**:
-  - Deterministic replay flow (`test_deterministic_replay_flow`): closed door physically stops player
-    (`9.5 < eye[2] < 9.75`), crate is pushed to plate, door opens, doorway traversed, obstacle cleared, exit reached.
-  - Save/reload invariance (`test_save_reload_intermediate_and_unrelated_invariance`): intermediate puzzle state
-    restored, pre-existing unrelated save verified 100% byte-identical.
-  - Repeatability (`test_ten_repeated_replays_deterministic_outcome`): 10 repeated replay trials produce identical
-    world revisions and spatial endpoints within float tolerance.
-  - Input edge cases (`test_input_service_comprehensive_edge_cases`): simultaneous touch/action, cancellation,
-    focus loss, and recovery.
-- **Verification Gates**:
-  - Workspace tests: All tests pass (`cargo test --workspace --locked`). Explorer suite has 86 passed tests.
-  - Format & Clippy: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean (0 warnings).
-  - Android APK: Debug APK built successfully with Gradle 8.11.1 (`:app:assembleDebug`).
-    SHA256: `aba3d489ad12d9e38573686e38fa8bd3f7646312029a1b78da9caf623e6e0165`.
-    Native library `libmatterweave_explorer.so` ELF 16 KiB page alignment verified (`0x4000`).
-  - Physical Device Gate: **NOT RUN** (no exclusive reservation held on the shared OnePlus 13 device; honest reporting per project rules).
-- **Independent Architecture & Verification Review**: Conducted by independent subagent; verified complete
-  engine/game separation, zero leakage into `crates/matterweave-*`, and rigorous physics-backed verification.
+## Verified engine capabilities
 
-## Active engine completion campaign
+### v0.5.0 — automatic detail and background indirect lighting
 
-The full engine objective remains open. Owner steering on 2026-09-08 reaffirms
-that the engine is the product. Advance rendering, physics, streaming, lighting
-and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) and
-[PERFORMANCE_TASKS](PERFORMANCE_TASKS.md). The [showcase](SHOWCASE.md) is a test
-workload; further showcase polish and old demo-save compatibility must not delay
-remaining M2–M6 engine requirements. The sole current integration checkout is
-`/mnt/bench/matterweave-dev/worktrees/performance-p00`, branch `codex/engine-completion-03`.
-The [board](performance/board.json) records ownership; the prior two-lead arrangement
-is retired. This continuation owns phone, integration and delivery.
+[v0.5.0](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.5.0) is published
+with APK, exact-source manifest and the retained lighting/detail/collision evidence
+([release manifest](evidence/v0.5-release.json)). Delivered through PR9
+(merged at `1cb468e` after host, Android and documentation checks passed at `4535b69`)
+and PR10 (merged at `3ad0d27` after final-revision host, Android and docs CI passed at
+`577dff8`).
 
-## Current M6 audio-service trial (eval/glm-audio)
+- **Automatic detail selection**, integrated at `a4d7ba0` after 100 worker host tests. The
+  renderer updates instance selection without recopying geometry; an 11-frame Vulkan check
+  guards it ([evidence](performance/instance-updates.md)). The native adapter at `1abe19b`
+  passes 9 Vulkan phases including perspective/orthographic zoom, edits and renderer
+  recreation; OnePlus 13 Android 16 also passes 1080 frames, all 9 phases and HOME/resume.
+  GLM numeric regressions and lead corrections pass 103 detail tests; an additional detail
+  snapshot test passes separately. The PR9 code at `1abe19b` passes 326 workspace tests
+  (3 existing ignored), strict Clippy, ARM64 APK inspection and a 1080-frame physical
+  Android automatic-detail check including HOME/resume.
+- **First bounded diffuse indirect reference**, integrated; its Vulkan shader passes host
+  plus OnePlus 13 off/on/sun/enclosure/HOME-resume checks. Complete phase
+  preparation/upload takes roughly 39–45 ms on that phone; scheduling and quality work
+  remain. See [lighting evidence](performance/indirect-light-engine.md).
+- **Bounded background indirect-light preparation** on branch
+  `codex/engine-light-scheduling`. GLM's partial controller was recovered by the lead and
+  Astra repaired its test assumptions. All 25 focused async tests pass at `2267ad5`; the
+  native Vulkan adapter at `da96b8e` presented 15 frames while lighting was pending, then
+  correctly published sun/edit/enclosure results. The combined 351-test suite and
+  corrected strict Clippy pass. Production-controller coverage is 92.31% of lines with all
+  27 functions exercised. The v0.5 ARM64 APK build/signature/alignment and physical
+  OnePlus 13 Android 16 checks pass; the final capture records all six phases, nine
+  presentations during preparation, HOME/resume and renderer recreation. The earlier
+  secure-keyguard timeout remains a separate failed attempt. The APK source is `9854723`;
+  the standalone ARM64 CPU check at `70a231a` matches every cell/face against synchronous
+  lighting for an open, closed and reopened enclosure. A fresh local APK rebuild was
+  byte-identical to the `9854723` artifact, passed signature/16 KiB checks, and passed
+  another six-phase OnePlus 13 run with HOME/resume and nine presentations during
+  preparation. See [background lighting](performance/async-indirect.md).
+- Paid Muse Contributor reviewed the controller, queue lifetime, Vulkan publication and the
+  standalone check without actionable findings; the lead owns the executed checks. Earlier
+  quota notes are historical; a transient Muse 429 was retried successfully.
 
-Branch `eval/glm-audio` (base `5b90975`) adds the reusable bounded audio
-service: crate `matterweave-audio` with a deterministic mixer core, a game-facing
-handle API (register/play/stop/gain/suspend/resume, 32 clips, 8 voices, 4 MiB
-PCM, 64 commands, explicit rejection instead of stealing/overwriting) and a real
-Android AAudio backend through the pinned `ndk 0.9.0` bindings plus `ringbuf
-0.5.1`. Decision record: [ADR-0016](adr/0016-audio-service.md) (Proposed).
+### v0.4.0 — shadow-depth reuse
 
-Verification actually executed for this trial:
+The reusable Vulkan renderer reuses unchanged directional shadow depth and invalidates it
+for geometry, light-matrix and resource changes, implemented at `78cba4a`. No sample
+gameplay or save behavior changed in this engine slice. 257 workspace tests pass
+(3 existing ignored gates), strict Clippy passes, and both 30-frame native Vulkan
+cache/app checks pass without validation errors. The ARM64 APK `e4f83255…` built and ran
+on OnePlus 13 Android 16: a 37-point continuous physics route passed, and 730 valid
+profile rows include 284 completed shadow-map reuses and 445 depth updates. No measured
+heat/energy improvement is claimed. See [implementation and evidence](performance/shadow-reuse.md).
+
+The P02 collector finished all 3 matched pairs across A3/A4 and exited cleanly. The phone
+is idle after the engine functional check; no collector or worker owns it. PR8 merged at
+`ba6c894` after all required checks passed, and the
+[v0.4.0 prerelease](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.4.0) is
+published with APK, manifests and both evidence archives.
+
+### Integration branch — collision, snapshots, streaming and renderer reference
+
+Branch `codex/engine-completion-03` (PR11 draft); the sole integration checkout is
+`/mnt/bench/matterweave-dev/worktrees/performance-p00`. The
+[board](performance/board.json) records ownership; the prior two-lead arrangement is
+retired and this continuation owns phone, integration and delivery. Owner steering on
+2026-09-08 reaffirms that the engine is the product: advance rendering, physics,
+streaming, lighting and measured efficiency under [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md)
+and [PERFORMANCE_TASKS](PERFORMANCE_TASKS.md), while the [showcase](SHOWCASE.md) remains a
+test workload whose further polish and old demo-save compatibility must not delay
+remaining M2–M6 engine requirements.
+
+- **Asynchronous collision.** At `70fc8bf`, fine collision can be prepared on a worker
+  thread and published only against the same authoritative detail scene. Opaque scene
+  versions distinguish unrelated/replaced scenes, forks and edits without hashing geometry
+  or copying voxel payloads. Stale publication preserves current physics. Two version
+  tests, 19 collision tests and strict detail/physics Clippy pass. At `6143e87`, the
+  bounded asynchronous controller and corrected reset/reversal logic pass its
+  queue/thread/contact tests. The direct ARM64 Android executable at `9cf26a1` passes
+  asynchronous floor creation, standing contact, removal and falling on OnePlus 13.
+  Frame-loop publication cadence is not yet integrated.
+- **Shared chunk snapshots.** At `94e51eb`, world clones and streaming overrides share
+  immutable chunk payloads. Changed chunks detach once; subsequent edits reuse their
+  allocation until another snapshot shares it. Four allocation/behavior regressions and
+  all core tests pass. See [chunk snapshot evidence](performance/chunk-snapshots.md). No
+  mobile speed or memory measurement is inferred from allocation identity tests.
+- **Streaming corrections.** Latest-request, reset and reversal corrections at `02fc5d3`
+  pass 48 core tests.
+- **Android packaging.** APK build/signature/alignment and indirect-light
+  functional/lifecycle checks pass at `7211b7d`; later changes still require their own
+  integration checks.
+- **Streaming stress.** The ten-minute native streaming gate passed 39,761 cycles, 219,832
+  meshes and 3,615 save/reloads within its declared limits
+  ([summary](performance/stream-stress.md)). The same run sampled RSS between 7,052 and
+  16,128 KiB and battery temperature rising 28.3 to 37.5 C with Android thermal status
+  reaching 3; these are headless CPU-fixture observations, not a graphics-efficiency
+  claim ([exact summary](evidence/2026-09-08-stream-stress.json)).
+- **Engine coverage.** The frozen `b1f6c67` instrumented tests and four Vulkan examples
+  passed. Per-object LCOV line union reports 94.62–97.01% across the four engine crates
+  with explicit scope/diagnostics ([coverage evidence](performance/engine-coverage.md)).
+  This is not Android/shader coverage or an engine-completion percentage. The stopped
+  temporary coverage build target was removed; profile/report evidence was retained.
+- **Ray reference.** The bounded authoritative ray-volume pack and Naga shader now execute
+  through a headless Vulkan probe harness. All 73 renderer tests and strict scoped Clippy
+  pass. The lead corrected 48 host synchronization hazards, then two Adreno precision
+  failures; the expanded 30-probe suite now passes host synchronization validation and
+  physical Android. The
+  [manifest](evidence/2026-09-08-ray-reference.json) retains source/binary checksum and the
+  complete phone report; see [ray reference](performance/ray-reference.md) for bounds and
+  numerical tolerances. This is shader correctness evidence only; the full-image
+  same-quality ray/raster/hybrid comparison and primary-path selection remain in progress.
+- **Detail topology guard.** The guard now evaluates coarse fills sequentially. Independent
+  fills had jointly closed a 2×2 tunnel; the reproduced regression and all-axis/negative
+  variants now pass. Opus records 122 detail tests passing, including safe stepped wedge
+  coarsening, preserved passages, aligned channels that safely reach Half, and per-instance
+  edit invalidation. See [guard limitations and costs](performance/detail-local-loss-guard.md).
+- **Collision cadence integration.** Production wetland edits queue collision preparation
+  and poll publication before each simulation step. Added-solid regions defer publication
+  while occupied; the workerless fallback applies the same gate. Rejection restores prior
+  journal entries, and current rigid-body poses protect teleports before physics stepping.
+  Eleven cadence tests and scoped strict Clippy pass. See
+  [collision log](performance/logs/engine-03-collision.md). Native/Android integration
+  validation of this revision remains pending.
+- **Renderer comparison.** The engine-03 full-image comparison's initial 12-run Android
+  gate passes at `bfb65ca`; the expanded 16-run host gate includes orthographic opening
+  removal. It permits at most 0.05% CPU-proven face-edge ambiguity and zero unexplained
+  mismatches. One/two edge pixels are recorded on the new fixture, not silently classified
+  away. The one-cell descriptor regression is corrected; matched CPU oracle acceptance
+  requires at least one non-excluded hit. Final Android repeat and combined workspace
+  checks are running. [Protocol](performance/renderer-comparison.md).
+
+### Unmerged evaluation branches
+
+**Bounded specular reflections** — `eval/hy4-reflections`, a separate worktree
+`/mnt/bench/matterweave-dev/worktrees/eval-hy4-reflections` from frozen base `5b90975`,
+adds an opt-in bounded specular reflection to the reusable Vulkan raster renderer. It is
+**not** merged and changes no gameplay, audio, input or world system.
+
+What exists: a `reflection` module (`ReflectionVolume`, `MaterialTable`, CPU oracle), two
+new group-0 descriptor bindings, a `world.wgsl` single-bounce path,
+`Renderer::upload_reflection/disable_reflection/reflection_enabled/reflection_state`, a
+headless host validator, a real-Renderer smoke example and an app validation mode. Limits:
+64³ source volume, configurable trace steps with a 512 hard maximum, one secondary ray, no
+recursion or temporal history.
+
+Host verification: 404 workspace tests pass (3 pre-existing ignored gates), strict Clippy
+and `cargo fmt --check` pass, `tools/check_docs.py` passes, and the existing ray-reference
+(30 checks), renderer-comparison (16 fixture runs), cache_smoke and indirect_smoke gates
+all pass with no Vulkan validation errors. 28 predetermined non-edge probes and 346 seeded
+randomized probes agree with an independent `World::raycast` oracle within 0.5/255
+(3/255 tolerance); the nonreflective baseline is preserved within 0.5/255 (1/255
+tolerance); recorded images show all seven required responses including an object outside
+the camera frustum visible only through reflection; the real Renderer passes
+enable/disable/edit/resize/recreation with an empty Vulkan validation stream. **Device
+gates are NOT RUN** — the shared phone is owner-reserved; the ready-to-run candidate is the
+`--reflection-cost` app gate. See [reflection evidence](performance/reflections-engine.md)
+and [draft PR 13](https://github.com/5omeOtherGuy/Matterweave/pull/13). This advances
+R09/M4 and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
+
+**Bounded audio service** — `eval/glm-audio` (base `5b90975`) adds crate
+`matterweave-audio` with a deterministic mixer core, a game-facing handle API
+(register/play/stop/gain/suspend/resume, 32 clips, 8 voices, 4 MiB PCM, 64 commands,
+explicit rejection instead of stealing/overwriting) and a real Android AAudio backend
+through the pinned `ndk 0.9.0` bindings plus `ringbuf 0.5.1`. Decision record:
+[ADR-0016](adr/0016-audio-service.md) (Proposed).
 
 | Check | Result |
 | --- | --- |
@@ -133,330 +257,198 @@ Verification actually executed for this trial:
 | Host diagnostic | PASS: negotiated properties, nonzero frames, suspend/resume continuation, controlled recreation, ten open/play/stop/close cycles (mock backend; silent by design). |
 | Reserved-device diagnostic | NOT RUN: no Android device was attached during the trial window (`adb devices` empty). Executable, checksum and exact procedure are delivered; final acceptance requires the coordinating reviewer to execute it. |
 
-Limitations: no resampling and no compressed formats (48 kHz f32 mono/stereo
-only; a device that cannot negotiate that fails open explicitly); a failed
-stream close aborts through the ndk wrapper's drop contract; the on-device
-recreation check is a controlled close/reopen, while true device-loss behavior
-is validated through shared-atomics fault injection on host and the AAudio
-error-callback wiring compiled on device. The earlier `engine-audio-service`
-worktree (Hy4 trial) was preserved untouched and not copied.
+Limitations: no resampling and no compressed formats (48 kHz f32 mono/stereo only; a
+device that cannot negotiate that fails open explicitly); a failed stream close aborts
+through the ndk wrapper's drop contract; the on-device recreation check is a controlled
+close/reopen, while true device-loss behavior is validated through shared-atomics fault
+injection on host and the AAudio error-callback wiring compiled on device. The earlier
+`engine-audio-service` worktree (Hy4 trial) was preserved untouched and not copied.
 
-## Current engine advancement — shadow reuse
+**Voxel Relay second sample** — `eval/gemini-voxel-relay`, a playable orthographic Android
+puzzle sample proving the framework supports another distinct game genre without
+duplicating the engine implementation.
 
-The reusable Vulkan renderer now reuses unchanged directional shadow depth and
-invalidates it for geometry, light-matrix and resource changes. Implemented at
-`78cba4a`; no sample gameplay or save behavior changed in this engine slice.
-257 workspace tests pass (3 existing ignored gates), strict Clippy passes, and
-both30-frame native Vulkan cache/app checks pass without validation errors.
-The ARM64 APK `e4f83255…` built and ran on OnePlus13 Android16:37-point continuous
-physics route passed;730 valid profile rows include284 completed shadow-map reuses
-and445 depth updates. No measured heat/energy improvement is claimed.
-See [implementation and evidence](performance/shadow-reuse.md).
+- `matterweave_core::input::InputService`: a platform-independent multi-touch pointer and
+  keyboard tracker in `matterweave-core`, reused by the explorer/wetland controls
+  (`apps/explorer/src/controls.rs`) and Voxel Relay (`apps/explorer/src/voxel_relay.rs`)
+  with zero engine code duplication.
+- High-angle isometric chamber views via Vulkan `Renderer` (`Mat4::orthographic_rh` and
+  `Mat4::look_at_rh`); on-screen virtual joystick and touch action buttons via `Hud`.
+- Authentic `[2, 2, 2]` rigid body pushed across the stone floor using physical kinematic
+  character impulses (`controller.solve_character_collision_impulses`); no teleportation or
+  artificial forces.
+- Occupancy of the pressure plate (`Z = 7.0`) removes door cells (`Z = 10.0`) in `World`,
+  synchronizing compound static colliders in `Physics` via `sync_world`. The action button
+  removes destructible obstacle voxels (`Z = 15.0`), opening the path to the exit zone
+  (`Z >= 19.5`).
+- Atomic persistence alongside world chunks via `World::save_with_attachment`, restoring
+  player position, crate rigid body pose/velocity, door state, voxel edits and puzzle
+  status.
+- Verification: deterministic replay (`test_deterministic_replay_flow`) closes the door
+  physically against the player (`9.5 < eye[2] < 9.75`), pushes the crate, opens the door,
+  traverses the doorway, clears the obstacle and reaches the exit; save/reload
+  (`test_save_reload_intermediate_and_unrelated_invariance`) restores intermediate state
+  and leaves a pre-existing unrelated save 100% byte-identical; ten repeated replays
+  (`test_ten_repeated_replays_deterministic_outcome`) produce identical world revisions and
+  spatial endpoints within float tolerance; `test_input_service_comprehensive_edge_cases`
+  covers simultaneous touch/action, cancellation, focus loss and recovery.
+- Workspace tests pass; the explorer suite has 86 passed tests. `cargo fmt --all --
+  --check` is clean and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  reports 0 warnings. The debug APK built with Gradle 8.11.1 (`:app:assembleDebug`),
+  SHA256 `aba3d489ad12d9e38573686e38fa8bd3f7646312029a1b78da9caf623e6e0165`, and
+  `libmatterweave_explorer.so` ELF 16 KiB page alignment verified (`0x4000`).
+- Physical device gate: **NOT RUN** (no exclusive reservation held on the shared OnePlus
+  13; honest reporting per project rules). An independent subagent verified engine/game
+  separation, zero leakage into `crates/matterweave-*`, and the physics-backed tests.
 
-The P02 collector finished all3 matched pairs across A3/A4 and exited cleanly.
-The phone is idle after the engine functional check; no collector or worker owns it.
-PR8 merged at `ba6c894` after all required checks passed;
-[v0.4.0 prerelease](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.4.0)
-is published with APK, manifests and both evidence archives. Next engine capabilities are automatic
-detail selection and indirect illumination/reflections, plus remaining streaming,
-renderer comparison and framework milestones. Do not resume demo-save/UI refinement.
+## Known limitations, non-claims and open gates
 
-## Reflection evaluation branch (eval/hy4-reflections, submitted for review)
+No efficiency or thermal claim:
 
-A separate evaluation worktree, `/mnt/bench/matterweave-dev/worktrees/eval-hy4-reflections`,
-branch `eval/hy4-reflections` from frozen base `5b90975`, adds an opt-in bounded
-specular reflection to the reusable Vulkan raster renderer. It is **not** merged
-and changes no gameplay, audio, input or world system.
+- Frame-loop scheduling is correctness only: no throughput, power, thermal or battery
+  result, and no comparison against the previous fixed-cadence loop.
+- Shadow reuse: no measured heat/energy improvement is claimed.
+- Background indirect lighting: the functional checks do not establish full
+  GI/reflections or sustained efficiency.
+- Streaming: RSS and battery-temperature observations are from a headless CPU fixture,
+  not a graphics-efficiency claim.
+- Engine coverage is not Android/shader coverage or an engine-completion percentage.
+- No sustained FPS, GPU-time, power or thermal superiority is claimed from the functional
+  device tests. Frame/main counters are wall times; voxel payload and mesh buffer counters
+  are not process RSS or free GPU memory.
 
-What exists: a `reflection` module (`ReflectionVolume`, `MaterialTable`, CPU
-oracle), two new group-0 descriptor bindings, a `world.wgsl` single-bounce path,
-`Renderer::upload_reflection/disable_reflection/reflection_enabled/reflection_state`,
-a headless host validator, a real-Renderer smoke example and an app validation
-mode. Limits: 64³ source volume, configurable trace steps with a 512 hard
-maximum, one secondary ray, no recursion or temporal history.
+Not implemented, not integrated or pending validation:
 
-Host verification: 404 workspace tests pass (3 pre-existing ignored gates), strict
-Clippy and `cargo fmt --check` pass, `tools/check_docs.py` passes, and the existing
-ray-reference (30 checks), renderer-comparison (16 fixture runs), cache_smoke and
-indirect_smoke gates all pass with no Vulkan validation errors. 28 predetermined
-non-edge probes and 346 seeded randomized probes
-agree with an independent `World::raycast` oracle within 0.5/255 (3/255
-tolerance); the nonreflective baseline is preserved within 0.5/255 (1/255
-tolerance); recorded images show all seven required responses including an
-object outside the camera frustum visible only through reflection; the real
-Renderer passes enable/disable/edit/resize/recreation with an empty Vulkan
-validation stream. **Device gates are NOT RUN** — the shared phone is
-owner-reserved; the ready-to-run candidate is the `--reflection-cost` app gate.
-See [reflection evidence](performance/reflections-engine.md) and
-[draft PR 13](https://github.com/5omeOtherGuy/Matterweave/pull/13). This advances
-R09/M4 and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
+- Ray reference is shader-correctness evidence only; the full-image same-quality
+  ray/raster/hybrid comparison and primary-path selection remain in progress.
+- Collision publication has no fixed time bound while an addition is occupied; rendering
+  may lead collision, and native/Android integration validation of the current revision
+  remains pending.
+- Detail: rough concavities remain conservative, and material-filled channels plus full
+  temporal/quality M4 acceptance remain open.
+- Reflections: 64³ source volume, configurable trace steps with a 512 hard maximum, one
+  secondary ray, no recursion or temporal history; device gates NOT RUN; ADR-0008 remains
+  Proposed; not complete Lumen-like lighting.
+- Audio: no resampling and no compressed formats (48 kHz f32 mono/stereo only, with
+  explicit fail-open on devices that cannot negotiate it); a failed stream close aborts
+  through the ndk wrapper's drop contract; the reserved-device diagnostic is NOT RUN.
+- Voxel Relay: physical device gate NOT RUN.
+- Full M2 equivalent-quality comparison, M3 stress gates, M4 indirect illumination,
+  reflection and multiresolution-transition acceptance, a second released sample and
+  broader device coverage remain open.
+- Presentation teardown retains the previously documented Vulkan 1.1 WSI idle fallback.
 
-## Current engine systems branch
+v0.2 slice limits (still current unless superseded):
 
-At `70fc8bf`, fine collision can be prepared on a worker thread and published only
-against the same authoritative detail scene. Opaque scene versions distinguish
-unrelated/replaced scenes, forks and edits without hashing geometry or copying
-voxel payloads. Stale publication preserves current physics. Two version tests,
-19 collision tests and strict detail/physics Clippy pass. At `6143e87`, the bounded asynchronous controller and corrected reset/reversal
-logic pass its queue/thread/contact tests. The direct ARM64 Android executable at `9cf26a1` passes asynchronous floor
-creation, standing contact, removal and falling on OnePlus13. Frame-loop
-publication cadence is not yet integrated.
+- Streaming and collision preparation are synchronous and can cause boundary-crossing
+  stalls; background preparation is implemented, while collision publication, uploads,
+  snapshot copying and saves remain synchronous. Cancellation is versioned and bounded.
+- Saves cap overrides at 512 and total bytes at 12 MiB; new edits are refused at the cap
+  while existing overridden chunks remain editable. Distant bodies freeze before collision
+  eviction. Body/camera restoration validates finite bounded values.
+- Frame/main counters are wall times; voxel payload and mesh buffer counters are not
+  process RSS or free GPU memory.
+- Real simultaneous multi-finger use, lock/unlock, process-memory pressure and additional
+  devices are untested. ADB gestures here are sequential; unit tests cover concurrent touch
+  roles, but that is not physical multi-finger validation. Phone Vulkan validation layers
+  were unavailable; host validation does not cover its driver.
 
-At `94e51eb`, world clones and streaming overrides share immutable chunk payloads.
-Changed chunks detach once; subsequent edits reuse their allocation until another
-snapshot shares it. Four allocation/behavior regressions and all core tests pass.
-See [chunk snapshot evidence](performance/chunk-snapshots.md). No mobile speed or
-memory measurement is inferred from allocation identity tests. Android APK build/signature/alignment and indirect-light functional/lifecycle
-checks pass at `7211b7d`; later changes still require their own integration checks.
+Owner decisions:
 
-Automatic detail selection is integrated at `a4d7ba0` after100 worker host tests.
-The renderer now updates instance selection without recopying geometry; its11-frame
-Vulkan check passes ([evidence](performance/instance-updates.md)). The native adapter at `1abe19b` passes9 Vulkan phases
-including perspective/orthographic zoom, edits and renderer recreation; OnePlus13 Android16 also passes1080 frames, all9 phases and HOME/resume. GLM numeric regressions and lead corrections
-pass103 detail tests; an additional detail snapshot test passes separately.
-Streaming latest-request/reset/reversal corrections at `02fc5d3` pass48 core tests. The first bounded diffuse indirect reference is integrated and its Vulkan
-shader passes host plus OnePlus13 off/on/sun/enclosure/HOME-resume checks. Complete
-phase preparation/upload takes roughly39–45ms on that phone; scheduling and
-quality work remain. See [lighting evidence](performance/indirect-light-engine.md). These features are not part of the already published v0.4.0 APK.
+- Project licensing, production signing ownership and store publication remain owner
+  decisions. v0.5.0 is a GitHub development prerelease, not a store build.
 
-## Current delivery and lighting follow-up
+## Next concrete work
 
-PR9 merged at `1cb468e` after all GitHub host, Android and documentation checks
-passed at `4535b69`. Its code at `1abe19b` passes326 workspace tests (3 existing
-ignored), strict Clippy, ARM64 APK inspection and a1080-frame physical Android
-automatic-detail check including HOME/resume. The currently published v0.4.0
-APK predates those systems; a v0.5 prerelease is being prepared.
+First priority: investigate stationary-scene heat. The current app still steps physics,
+rebuilds dynamic meshes and redraws shadows while stationary. Profile CPU busy time/waits,
+reuse unchanged work, and evaluate frame caps/idle cadence. The
+[benchmark protocol](BENCHMARKS.md) now requires unplugged, cooled, matched conditions for
+future efficiency comparisons; charging was a confounder in the v0.2 measurement.
 
-The follow-up branch `codex/engine-light-scheduling` adds bounded background
-indirect-light preparation. GLM's partial controller was recovered by the lead;
-Astra repaired its test assumptions. All25 focused async tests pass at `2267ad5`.
-The native Vulkan adapter at `da96b8e` presented15 frames while lighting was
-pending, then correctly published sun/edit/enclosure results. The combined351-test suite and corrected strict Clippy pass. Production-controller
-coverage is92.31% of lines with all27 functions exercised. The v0.5 ARM64 APK
-build/signature/alignment and physical OnePlus 13 Android 16 checks pass. The final
-capture records all six phases, nine presentations during preparation, HOME/resume
-and renderer recreation. The earlier secure-keyguard timeout remains a separate
-failed attempt. The APK source is `9854723`; the standalone ARM64 CPU check at
-`70a231a` additionally matches every cell/face against synchronous lighting for an
-open, closed and reopened enclosure. See [background lighting](performance/async-indirect.md).
-These functional checks do not establish full GI/reflections or sustained efficiency.
+1. Complete the equivalent-quality ray/mesh/hybrid mobile comparison. The retained
+   reference mesher and new greedy path provide a correctness baseline, not a final mobile
+   renderer selection or Nanite-like LOD implementation.
+2. Profile boundary-crossing stalls, collision preparation, uploads, residency, frame
+   distributions and sustained thermals under the benchmark protocol.
+3. Stress the expanded 64-piece destruction example and gameplay/editor changes.
+4. Continue from direct shadows into M4 indirect illumination/reflections/detail. Finite
+   map edge quality and nonresident casters remain limitations. No full GI, reflection,
+   multiresolution transitions, second sample or broader device coverage yet.
+5. Advance the unmerged evaluation branches (reflections, audio, Voxel Relay) to their
+   missing device gates.
+6. Do not make further showcase save recovery, authored route refinement or gameplay UI
+   polish a prerequisite for engine work. Automatic LOD, indirect
+   illumination/reflections, renderer comparison, streaming completion, second-sample
+   reuse and the remaining M2–M6 gates are the open work.
 
-PR10 merged at `3ad0d27` after all final-revision host, Android and docs CI
-passed at `577dff8`. Paid Muse Contributor reviewed the controller, queue lifetime,
-Vulkan publication and standalone check without actionable findings; lead owns
-executed checks. A fresh local APK rebuild was byte-identical to the `9854723`
-artifact, passed signature/16 KiB checks and another six-phase OnePlus 13 run with
-HOME/resume and nine presentations during preparation.
-[v0.5.0](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.5.0) is published
-with APK, exact-source manifest and retained lighting/detail/collision evidence.
-See [delivery manifest](evidence/v0.5-release.json). This is an intermediate engine
-delivery; M2–M6 remain open.
-
-The integration branch is `codex/engine-completion-03` (PR11 draft). Hy4's ray
-and comparison prototypes were recovered and corrected by lead; paid Muse repaired
-collision cadence; Opus refined the detail topology guard after counterexamples.
-Both paid Muse Contributor and Opus 5 are working now. Earlier quota notes are
-historical; a transient Muse429 was retried successfully. Lead owns integration
-and the connected OnePlus 13. The ten-minute native streaming gate passed
-39,761 cycles, 219,832 meshes and 3,615 save/reloads within its declared limits.
-See [streaming stress](performance/stream-stress.md).
-
-The frozen `b1f6c67` instrumented
-tests and four Vulkan examples passed. Per-object LCOV line union reports
-94.62–97.01% across the four engine crates with explicit scope/diagnostics; see
-[coverage evidence](performance/engine-coverage.md). This is not Android/shader
-coverage or an engine-completion percentage. The stopped temporary coverage
-build target was removed; profile/report evidence was retained.
-
-## Engine-03 renderer reference
-
-The bounded authoritative ray-volume pack and Naga shader now execute through
-a headless Vulkan probe harness. All 73 renderer tests and strict scoped Clippy
-pass. Lead corrected 48 host synchronization hazards, then two Adreno precision
-failures; the expanded 30-probe suite now passes host synchronization validation
-and physical Android. The [manifest](evidence/2026-09-08-ray-reference.json)
-retains source/binary checksum and the complete phone report. See
-[ray reference](performance/ray-reference.md) for bounds and numerical tolerances.
-This is shader correctness evidence only; the full-image same-quality ray/raster/
-hybrid comparison and primary-path selection remain in progress.
-
-The ten-minute streaming run sampled RSS between 7,052 and 16,128 KiB, and battery
-temperature rose 28.3 to 37.5 C with Android thermal status reaching 3. These are
-headless CPU-fixture observations, not a graphics-efficiency claim. See its
-[exact summary](evidence/2026-09-08-stream-stress.json).
-
-## Detail and collision integration — Android check pending
-
-The topology guard now evaluates coarse fills sequentially. Independent fills had
-jointly closed a 2×2 tunnel; the reproduced regression and all-axis/negative
-variants now pass. Opus records 122 detail tests passing, including safe stepped
-wedge coarsening, preserved passages, aligned channels that safely reach Half,
-and per-instance edit invalidation. Rough concavities remain conservative;
-material-filled channels and full temporal/quality M4 acceptance remain open.
-See [guard limitations and costs](performance/detail-local-loss-guard.md).
-
-Production wetland edits now queue collision preparation and poll publication
-before each simulation step. Added-solid regions defer publication while occupied;
-the workerless fallback applies the same gate. Rejection restores prior journal
-entries, and current rigid-body poses protect teleports before physics stepping.
-Eleven cadence tests and scoped strict Clippy pass. Publication has no fixed time
-bound while an addition is occupied; rendering may lead collision. Native/Android
-integration validation of this revision remains pending. See [collision log](performance/logs/engine-03-collision.md).
-
-## Earlier continuation evidence (historical pre-release checkpoints)
-
-Current verified progress (2026-09-08 continuation):
-
-- PR8 remains draft/open. All remote host, Android and docs checks pass at
-  `3fe93f1`, including generator3 routes and native replay integration.
-  Subsequent save restoration/analysis work is local; PR8 is not merged/released.
-- Generator3, seed20260908, composition `dfb9f40519a3c151`:34,716,467 expanded
-  occupied cells,8,899,364 unique stored cells,6,192flora/10species and5,721,300
-  expanded flora cells. Source meshes47,255,040bytes, within64MiB. These are host
-  generated-data results, not mobile residency or performance claims. See the
-  [manifest](evidence/full-wetland-generator3.json), including recorded routes.
-- Graded paths and source-derived connectivity now pass actual continuous Rapier
-  traversal: ground632points/197.46667simulation seconds; elevated37/11.35;
-  waterside21-point ground prefix/7.1166673. No jumps or intermediate teleports.
-  The accepted0.30m autostep is used. An earlier257-second trial silently missed
-  six anchors and was rejected; every retained authored anchor now resolves or
-  generation fails. All19 prior source tests and the new waterside gate pass.
-  Muse found no source blocker; Astra's waterside coverage finding was corrected.
-- Workspace257 normal Rust tests now pass with3 deliberately ignored gates. The
-  full-map Runtime gate was then explicitly run with the app suite after the
-  restored-respawn correction: all64 app tests pass. Strict workspace Clippy
-  and the later scoped app Clippy pass; vendored winit warning is unchanged.
-  All173 performance Python tests pass, including offline analysis and phone
-  route-report checks. Native0.4 Vulkan capture/replay cancellation also passes.
-- Entrance correction validates the actual capsule with a bounded vertical lift.
-  Generator3 prevents prior layout journals replaying against changed source.
-  Corrupt/old-generator sessions select separate recovery files. Invalid edit
-  references/body data now participate in actual recovery selection. Candidate
-  source is isolated until collision, player pose, bodies and meshes all load.
-  Full Runtime round-trip and rejection tests pass; see
-  [restoration evidence](performance/showcase/save-validation.md).
-- The generator3 native Vulkan/Xvfb/lavapipe capture passed25 frames,20 valid typed rows,
-  six physics bodies, isolated persistence and no validation errors. Menu rendering
-  is excluded from GPU completion joins. Source prototype geometry is shared on GPU;
-  source LOD remains fixed. No automatic LOD or optimization win is claimed.
-- The initial six-species full-map development APK (`fffb3844…`) was built, passed
-  ARM64/16KiB alignment and signature checks, and was installed on the OnePlus13.
-  Normal chooser/entry, movement, HOME/resume and persisted session were observed.
-  The corrected ten-species APK (`35cbd2e6…`, source `7e1143e`) was installed;
-  normal entry, movement, two source edits, process reload and HOME/resume rendering
-  passed. Captures1800/180rows validate but show only renderer epoch1.
-  [Device evidence](evidence/2026-09-08-full-wetland-development.md) retains exact
-  conditions and limits. Generator3 development APK `4e47b6d9…` (`0d8225b`)
-  installed and launched normally; touch move/jump and separate recovery2 save
-  observed. A separate owned clearing fixture passed touch fracture6→29 bodies,
-  settling and save. Full64-piece stress and verified grab/throw remain open.
-  The completed paired collector used frozen generator2 reference/candidate APKs. Per-trial manifests identify
-  the installed build. Full phone routes and shadow/temporal quality remain open.
-- Actual app route replay is implemented and independently reviewed. Native Vulkan
-  smoke advances it and records terminal cancellation correctly. The phone runner
-  verifies complete route endpoints and deliberate touch/HOME cancellation;
-  the elevated physical route now passes on the shadow-cache build. Ground and interruption checks remain pending.
-- The0.4.0 prerelease candidate at `8d8a3e8` built successfully in61s; APK
-  `6f22ba87f7a9e3fbaac1c6763c17dd05f59fda1c4b192de329f3c9efd073faee` passes
-  ARM64/16KiB and signature checks. Artifacts are under
-  `completion-02/release-candidate-04`. Not installed, merged or released.
-  Gradle debug uses Cargo dev/opt-level2/debug0; the earlier release-profile
-  label in development evidence was corrected against actual frozen source.
-- P02 has three completed pairs across A3/A4; the first two are summarized here. Source, fixture, camera, shadows and
-  entrance images match. Reference mean73.551/75.820ms; candidate supported mean
-  24.260/24.265ms. A4 has nine history gaps (1.7547% of selected span); its whole
-  selected-span mean is bounded above by24.653ms without inventing frame data.
-  Candidate CPU and PSS are lower, but skin reaches49.199/49.872C and thermal
-  status2 versus reference39.139/39.503C/status0. This is a throughput/thermal
-  tradeoff, not a blanket efficiency win. [Analysis](performance/p02-analysis.md).
-- A3 rejected trial3 after31 cooling observations, preserving its first pair.
-  A4 completed the remaining two pairs with unchanged1C battery/2C skin matching
-  and exited with successful cleanup. Profiling overhead, motion/temporal quality and
-  sustained final-build workload gates remain pending.
-- The separate30/60Hz pacing experiment is preserved on its worker branch,
-  unintegrated and unmeasured. Its worker has stopped. Reassess the engine pacing
-  portion before adoption; further demo UI/save work is paused following owner
-  steering. The lead discarded its own uncommitted grab/throw/break feedback UI
-  patch. No measured thermal benefit from a cap is claimed.
-
-Next: advance concrete engine capabilities and their native verification. The
-completed matched comparison retains its measured thermal tradeoff. Do not make
-more showcase save recovery, authored route refinement or gameplay UI polish a
-prerequisite for engine work. Automatic LOD, indirect illumination/reflections,
-renderer comparison, streaming completion, second-sample reuse and remaining
-M2–M6 gates remain open. PR8 was subsequently merged and the shadow-cache APK
-was device-checked and released, as recorded above; these open capabilities were
-not completed by that release.
+## Historical campaign records
 
 The [completion execution log](performance/logs/completion-execution.md) and
-[prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier
-accepted P00/P01/P02/P03 slices and unavailable measurement gates. Latest published
-prerelease is v0.5.0; subsequent engine development is reported separately.
+[prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier accepted
+P00/P01/P02/P03 slices and unavailable measurement gates.
 
-## v0.3 verified Android slice
+### v0.3 verified Android slice (2026-09-08)
 
-The [v0.3 plan](V0.3.md) has working implementations of directional shadows,
-bounded background terrain/mesh preparation and a six-body breakable arch that
-fully fractures to64 pieces. The first APK was installed over v0.2 on the OnePlus13;
-terrain/camera/old bodies survived. New touch shadow/sun/detail/reset controls work,
-and the beam was fractured on-device (6→29 bodies). Old saves receive default
-lighting preferences; changed preferences persist.
+The [v0.3 plan](V0.3.md) has working implementations of directional shadows, bounded
+background terrain/mesh preparation and a six-body breakable arch that fully fractures to
+64 pieces. The first APK was installed over v0.2 on the OnePlus 13; terrain, camera and old
+bodies survived. New touch shadow/sun/detail/reset controls work, and the beam was
+fractured on-device (6→29 bodies). Old saves receive default lighting preferences; changed
+preferences persist.
 
 The [execution log](../execution_log.md) records exact mixed-model assignments,
-submissions, review corrections, board behavior and failed diagnostic hypotheses.
-Astra, Opus5 and Muse produced isolated contributions; lead integrated them through
-[PR #4](https://github.com/5omeOtherGuy/Matterweave/pull/4). The [board](../tools/coordination/README.md)
-passed16 local recovery/ownership checks and its GitHub workflow. Submission is
-explicitly distinct from lead acceptance.
+submissions, review corrections, board behavior and failed diagnostic hypotheses. Astra,
+Opus 5 and Muse produced isolated contributions; the lead integrated them through
+[PR #4](https://github.com/5omeOtherGuy/Matterweave/pull/4). The
+[board](../tools/coordination/README.md) passed 16 local recovery/ownership checks and its
+GitHub workflow. Submission is explicitly distinct from lead acceptance.
 
-Current checks:77 Rust tests pass (29 core,17 explorer,17 physics,14 renderer),
-workspace Clippy passes, and a90-frame native app smoke passed edits, interaction,
-atomic save/reload, resize and renderer recreation with Vulkan synchronization
-validation. ARM64 APK build/signature/16KiB ZIP+ELF alignment pass. An exposed face
-in an isolated phone fixture is pixel-identical on/off, including low sun at2048;
-coarse terrace-shadow edges remain a quality limit of the finite map.
+Current checks: 77 Rust tests pass (29 core, 17 explorer, 17 physics, 14 renderer),
+workspace Clippy passes, and a 90-frame native app smoke passed edits, interaction, atomic
+save/reload, resize and renderer recreation with Vulkan synchronization validation. ARM64
+APK build/signature/16 KiB ZIP+ELF alignment pass. An exposed face in an isolated phone
+fixture is pixel-identical on/off, including low sun at 2048; coarse terrace-shadow edges
+remain a quality limit of the finite map.
 
-A controlled 120-second warmup plus 20-minute fixed-quality run completed.
-All 61,509 selected presentation intervals were co-observed; mean 19.515 ms,
-p95 24.878 ms. All 40 health samples reported severe throttling. The run was
-USB powered and entered hot: no causal speed/power comparison with v0.2 is valid.
-See the [complete evidence](evidence/2026-09-08-v0.3.md) for exact conditions,
-clock/coverage limits and CPU/GPU wall-time meanings. Final travel/reversal and
-two resume/relaunch cycles passed; the user's saved scene was restored.
-GitHub CI passes; final delivery uses PR #4 and the v0.3.0 development prerelease.
+A controlled 120-second warmup plus 20-minute fixed-quality run completed. All 61,509
+selected presentation intervals were co-observed; mean 19.515 ms, p95 24.878 ms. All 40
+health samples reported severe throttling. The run was USB powered and entered hot: no
+causal speed/power comparison with v0.2 is valid. See the
+[complete evidence](evidence/2026-09-08-v0.3.md) for exact conditions, clock/coverage
+limits and CPU/GPU wall-time meanings. Final travel/reversal and two resume/relaunch cycles
+passed; the user's saved scene was restored. GitHub CI passes; final delivery uses PR #4
+and the v0.3.0 development prerelease.
 
-The earlier v0.2 timestamp capture has99.8183% verified interval-duration coverage;
-its median/p95/p99 verified intervals were16.580834/16.584323/16.585886ms. Four gaps
-cross missing dump histories and are not confirmed stalls. Thermal status reached
-SEVERE; battery temperature30.1→40.8°C during its measurement window. These are
-recorded observations, not a v0.3 comparison or power/thermal superiority claim.
+The earlier v0.2 timestamp capture has 99.8183% verified interval-duration coverage; its
+median/p95/p99 verified intervals were 16.580834/16.584323/16.585886 ms. Four gaps cross
+missing dump histories and are not confirmed stalls. Thermal status reached SEVERE;
+battery temperature 30.1→40.8 °C during its measurement window. These are recorded
+observations, not a v0.3 comparison or power/thermal superiority claim.
 
-## v0.2 interactive Android slice
+### v0.2 interactive Android slice (2026-09-07)
 
-M0/M1 shipped in v0.1. The owner reported that version working on a OnePlus 13;
-v0.2 has now been directly exercised over USB on that phone with Android 16/API 36,
-LineageOS 23.2-20260818-NIGHTLY-dodge and Adreno 830 Vulkan 1.3.284.
-The [v0.2 scope](V0.2.md) advances M2/M3; the full M2–M6 gates are not claimed complete.
+M0/M1 shipped in v0.1; the owner reported that version working on a OnePlus 13. v0.2 was
+directly exercised over USB on that phone with Android 16/API 36, LineageOS
+23.2-20260818-NIGHTLY-dodge and Adreno 830 Vulkan 1.3.284. The [v0.2 scope](V0.2.md)
+advances M2/M3; the full M2–M6 gates are not claimed complete.
 
-Implemented changes:
-
-- Material-preserving greedy chunk meshes, local revision invalidation, cached
-  Vulkan buffers, conservative frustum culling and dynamic object draws.
-- Connected terrain beyond the original island, bounded 7×7×3 residency, persistent
-  edited chunk overrides and v0.1 migration that preserves removed chunks.
-- Rapier walking, gravity/jump, exact edited-terrain collision, voxel rigid bodies,
-  spring grabbing, throwing, bounded fracture and distant-body preservation.
+- Material-preserving greedy chunk meshes, local revision invalidation, cached Vulkan
+  buffers, conservative frustum culling and dynamic object draws.
+- Connected terrain beyond the original island, bounded 7×7×3 residency, persistent edited
+  chunk overrides and v0.1 migration that preserves removed chunks.
+- Rapier walking, gravity/jump, exact edited-terrain collision, voxel rigid bodies, spring
+  grabbing, throwing, bounded fracture and distant-body preservation.
 - Touch walk/flight, object aim indicator, HOME, resettable objects, camera/control
   persistence and atomic combined world/object saves with corrupt-session recovery.
-- Android repeat-launch protection, explicit Back handling and a narrow vendored
-  winit lifecycle patch for destruction and sequential event-loop recreation.
+- Android repeat-launch protection, explicit Back handling and a narrow vendored winit
+  lifecycle patch for destruction and sequential event-loop recreation.
 - Version 0.2.0/code 2 ARM64 APK, optimization level 2, same local debug signing
   certificate as the v0.1 release. Dependency provenance and CI are updated.
 
-## Verification actually executed
-
-See [the v0.2 evidence report](evidence/2026-09-07-v0.2.md). Historical v0.1 evidence
-remains in [the original report](evidence/2026-09-07-mvp.md).
+Verification actually executed for v0.2 (see the
+[v0.2 evidence report](evidence/2026-09-07-v0.2.md); historical v0.1 evidence remains in
+the [original report](evidence/2026-09-07-mvp.md)):
 
 | Check | Result |
 | --- | --- |
@@ -473,49 +465,87 @@ remains in [the original report](evidence/2026-09-07-mvp.md).
 | Documentation / dependency inventory | PASS; recorded source/licenses/checksums and exact winit patch. |
 
 The public APK and its source/build manifest are delivered via
-[GitHub Releases](https://github.com/5omeOtherGuy/Matterweave/releases).
-Remote PR host/Android/docs checks must pass before merge under the owner's standing
-workflow. The release tag identifies the final integrated source; its manifest
-records the exact build revision and APK checksum.
+[GitHub Releases](https://github.com/5omeOtherGuy/Matterweave/releases). Remote PR
+host/Android/docs checks must pass before merge under the owner's standing workflow. The
+release tag identifies the final integrated source; its manifest records the exact build
+revision and APK checksum.
 
-## Limits and next actions
+### P00–P03 continuation checkpoints (2026-09-08)
 
-First priority: investigate stationary-scene heat. The current app still steps
-physics, rebuilds dynamic meshes and redraws shadows while stationary. Profile
-CPU busy time/waits, reuse unchanged work, and evaluate frame caps/idle cadence.
-The [benchmark protocol](BENCHMARKS.md) now requires unplugged, cooled, matched
-conditions for future efficiency comparisons; charging was a confounder here.
-
-1. Complete the equivalent-quality ray/mesh/hybrid mobile comparison. The retained
-   reference mesher and new greedy path provide a correctness baseline, not a final
-   mobile renderer selection or Nanite-like LOD implementation.
-2. Profile boundary-crossing stalls, collision preparation, uploads, residency,
-   frame distributions and sustained thermals under the benchmark protocol.
-   Background preparation is implemented; collision publication, uploads, snapshot
-   copying and saves remain synchronous. Cancellation is versioned and bounded.
-3. Stress the expanded64-piece destruction example and gameplay/editor changes.
-   Distant bodies freeze before collision eviction. Saves cap overrides at 512 and
-   total bytes at 12 MiB; body/camera restoration validates finite bounded values.
-4. Continue from direct shadows into M4 indirect illumination/reflections/detail.
-   Finite-map edge quality and nonresident casters remain limitations. No full GI,
-   reflection, multiresolution transitions, second sample or broader device coverage.
-5. Test real simultaneous multi-finger use, lock/unlock, process-memory pressure and
-   additional devices. ADB gestures here are sequential; unit tests cover concurrent
-   touch roles, but that is not physical multi-finger validation. Phone Vulkan
-   validation layers were unavailable; host validation does not cover its driver.
-
-No sustained FPS, GPU-time, power or thermal superiority is claimed from these
-functional device tests. Frame/main counters are wall times; voxel payload and
-mesh buffer counters are not process RSS or free GPU memory. Presentation teardown
-retains the previously documented Vulkan 1.1 WSI idle fallback.
-
-Project licensing, production signing ownership and store publication remain owner
-decisions. This is a GitHub development prerelease, not a store build.
-
-Engine-03 full-image comparison: the initial 12-run Android gate passes at
-`bfb65ca`; the expanded 16-run host gate includes orthographic opening removal.
-It permits at most 0.05% CPU-proven face-edge ambiguity and zero unexplained
-mismatches. One/two edge pixels are recorded on the new fixture, not silently
-classified away. The one-cell descriptor regression is corrected; matched CPU
-oracle acceptance requires at least one non-excluded hit. Final Android repeat
-and combined workspace checks are running. [Protocol](performance/renderer-comparison.md).
+- PR8 was draft/open at this point. All remote host, Android and docs checks pass at
+  `3fe93f1`, including generator3 routes and native replay integration. Subsequent save
+  restoration/analysis work is local; PR8 was not yet merged or released. (PR8 was
+  subsequently merged and the shadow-cache APK device-checked and released, as recorded
+  above.)
+- Generator 3, seed 20260908, composition `dfb9f40519a3c151`: 34,716,467 expanded occupied
+  cells, 8,899,364 unique stored cells, 6,192 flora/10 species and 5,721,300 expanded flora
+  cells. Source meshes 47,255,040 bytes, within 64 MiB. These are host generated-data
+  results, not mobile residency or performance claims. See the
+  [manifest](evidence/full-wetland-generator3.json), including recorded routes.
+- Graded paths and source-derived connectivity now pass actual continuous Rapier traversal:
+  ground 632 points/197.46667 simulation seconds; elevated 37/11.35; waterside 21-point
+  ground prefix/7.1166673. No jumps or intermediate teleports. The accepted 0.30 m autostep
+  is used. An earlier 257-second trial silently missed six anchors and was rejected; every
+  retained authored anchor now resolves or generation fails. All 19 prior source tests and
+  the new waterside gate pass. Muse found no source blocker; Astra's waterside coverage
+  finding was corrected.
+- Workspace 257 normal Rust tests now pass with 3 deliberately ignored gates. The full-map
+  Runtime gate was then explicitly run with the app suite after the restored-respawn
+  correction: all 64 app tests pass. Strict workspace Clippy and the later scoped app
+  Clippy pass; the vendored winit warning is unchanged. All 173 performance Python tests
+  pass, including offline analysis and phone route-report checks. Native 0.4 Vulkan
+  capture/replay cancellation also passes.
+- Entrance correction validates the actual capsule with a bounded vertical lift. Generator 3
+  prevents prior layout journals replaying against changed source. Corrupt/old-generator
+  sessions select separate recovery files. Invalid edit references/body data now
+  participate in actual recovery selection. Candidate source is isolated until collision,
+  player pose, bodies and meshes all load. Full Runtime round-trip and rejection tests
+  pass; see [restoration evidence](performance/showcase/save-validation.md).
+- The generator3 native Vulkan/Xvfb/lavapipe capture passed 25 frames, 20 valid typed rows,
+  six physics bodies, isolated persistence and no validation errors. Menu rendering is
+  excluded from GPU completion joins. Source prototype geometry is shared on GPU; source
+  LOD remains fixed. No automatic LOD or optimization win is claimed.
+- The initial six-species full-map development APK (`fffb3844…`) was built, passed
+  ARM64/16 KiB alignment and signature checks, and was installed on the OnePlus 13. Normal
+  chooser/entry, movement, HOME/resume and persisted session were observed. The corrected
+  ten-species APK (`35cbd2e6…`, source `7e1143e`) was installed; normal entry, movement,
+  two source edits, process reload and HOME/resume rendering passed. Captures 1800/180 rows
+  validate but show only renderer epoch 1.
+  [Device evidence](evidence/2026-09-08-full-wetland-development.md) retains exact
+  conditions and limits. Generator 3 development APK `4e47b6d9…` (`0d8225b`) installed and
+  launched normally; touch move/jump and separate recovery 2 save observed. A separate
+  owned clearing fixture passed touch fracture 6→29 bodies, settling and save. Full 64-piece
+  stress and verified grab/throw remain open. The completed paired collector used frozen
+  generator2 reference/candidate APKs; per-trial manifests identify the installed build.
+  Full phone routes and shadow/temporal quality remain open.
+- Actual app route replay is implemented and independently reviewed. Native Vulkan smoke
+  advances it and records terminal cancellation correctly. The phone runner verifies
+  complete route endpoints and deliberate touch/HOME cancellation; the elevated physical
+  route now passes on the shadow-cache build. Ground and interruption checks remain
+  pending.
+- The 0.4.0 prerelease candidate at `8d8a3e8` built successfully in 61 s; APK
+  `6f22ba87f7a9e3fbaac1c6763c17dd05f59fda1c4b192de329f3c9efd073faee` passes ARM64/16 KiB
+  and signature checks. Artifacts are under `completion-02/release-candidate-04`. Not
+  installed, merged or released. Gradle debug uses Cargo dev/opt-level 2/debug 0; the
+  earlier release-profile label in development evidence was corrected against actual
+  frozen source.
+- P02 has three completed pairs across A3/A4; the first two are summarized here. Source,
+  fixture, camera, shadows and entrance images match. Reference mean 73.551/75.820 ms;
+  candidate supported mean 24.260/24.265 ms. A4 has nine history gaps (1.7547% of selected
+  span); its whole selected-span mean is bounded above by 24.653 ms without inventing frame
+  data. Candidate CPU and PSS are lower, but skin reaches 49.199/49.872 C and thermal
+  status 2 versus reference 39.139/39.503 C/status 0. This is a throughput/thermal
+  tradeoff, not a blanket efficiency win.
+  [Analysis](performance/p02-analysis.md).
+- A3 rejected trial 3 after 31 cooling observations, preserving its first pair. A4 completed
+  the remaining two pairs with unchanged 1 C battery/2 C skin matching and exited with
+  successful cleanup. Profiling overhead, motion/temporal quality and sustained
+  final-build workload gates remain pending.
+- The separate 30/60 Hz pacing experiment is preserved on its worker branch, unintegrated
+  and unmeasured. Its worker has stopped; the pacing portion was later reassessed and
+  closed as the integrated `matterweave-pacing` work recorded above. Further demo UI/save
+  work is paused following owner steering. The lead discarded its own uncommitted
+  grab/throw/break feedback UI patch. No measured thermal benefit from a cap is claimed.
+- The [benchmark protocol](BENCHMARKS.md) and [showcase](SHOWCASE.md) remain the working
+  scope; the numeric budgets in [PERFORMANCE_PLAN](PERFORMANCE_PLAN.md) are targets, not
+  achieved results.

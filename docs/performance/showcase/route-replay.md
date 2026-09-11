@@ -119,16 +119,16 @@ assigned source files and this log.
 
 ## Lead phone runner
 
-`tools/performance/check_phone_route.py` stages one exclusively owned recovery127
+`tools/performance/check_phone_route.py` stages one exclusively owned recovery 127
 fixture, requests normal capture/replay, enters through the ordinary chooser, and
 records actual reports, screenshots, health and saved state. It rejects existing
-fixture/control files, a valid primary journal, recovery128, or mismatched frozen
+fixture/control files, a valid primary journal, recovery 128, or mismatched frozen
 APK/scene hashes. It preserves existing saves; only its own three input files are
 cleaned. The final report must identify the requested route, every waypoint,
 positive physics work and the actual endpoint. Cancellation before a deliberately
 sent interruption cannot pass an interruption check.
 
-The runner is pinned to generator3 seed20260908 and the OnePlus13's3168×1440
+The runner is pinned to generator 3 seed20260908 and the OnePlus 13's 3168×1440
 landscape entry/control coordinates. It is a functional verifier, not a replacement
 for matched/sustained performance collection. The lead must own the idle phone;
 never run it concurrently with `collect_wetland_pair.py`.

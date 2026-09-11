@@ -65,7 +65,7 @@ have. Ash-ridge legs additionally hold sustained natural slopes above 1.0 m/m.
 | 1 | Hard shoulder-room rule: forbid cells with taller terrain within 2 cells | Every slope severed; A* failed from the first anchor for all 130 ground anchors. A 0.85 gradient already rises more than one cell across the capsule width. Replaced by a cost penalty. |
 | 2 | Dry-land-only nav | Creek split the map; 40 anchor pairs unreachable. Added wading ≤ 0.5 m at heavy cost (`NAV_WADE_PENALTY`). |
 | 3 | 1-cell (0.25 m) max step, ungraded terrain | Terraces impassable, elevated route unreachable. |
-| 4 | 2-cell (0.5 m) max step, ungraded terrain | Route generated (ground 1366 m / 228 s) but traversal stalled: `ground point=186 target=[42.375,20.5,46.625] eye=[42.5,21.894,47.263] sim_s=81.4`. Narrow treads trap the capsule. |
+| 4 | 2-cell (0.5 m) max step, ungraded terrain | Route generated (ground 1366 m / 228 s) but traversal stalled: `ground point=186 target=[42.375, 20.5, 46.625] eye=[42.5, 21.894, 47.263] sim_s=81.4`. Narrow treads trap the capsule. |
 | 5 | Corridor smoothing only (moving average, no gradient limit) | 15 anchor pairs still unreachable: smoothing shortens a riser but cannot bound a sustained slope. Added Lipschitz gradient limiting. |
 | 6 | Independent per-corridor grading | Multi-metre steps where corridors cross; spine columns measured at slope 1.5–7.0. Added the joint relaxation. |
 | 7 | `NAV_MAX_SLOPE` 0.45 with `TRAIL_MAX_GRADE` 0.40 | Elevated corridor isolated (10 unreachable pairs); lateral verge slope exceeds the along-track grade. |
@@ -127,28 +127,28 @@ cargo test -p matterweave-detail --test showcase
 Worker commit `039ad6f` was retained as a failed experiment, not integrated alone.
 The lead completed the source correction against the accepted 0.30m Rapier step:
 
-- Admit the source classifier's0.85 quantized slope; gentle diagonal25cm ramps can
-  report0.707. Require shoulder clearance rather than assigning an ineffective cost.
+- Admit the source classifier's 0.85 quantized slope; gentle diagonal 25cm ramps can
+  report 0.707. Require shoulder clearance rather than assigning an ineffective cost.
 - Flood-fill actual walking edges from the entrance before snapping anchors so an
   isolated terrace cannot be selected. Missing as well as disconnected anchors
   now contribute to a hard generation error.
 - Admit solid cave roofs as walking support. The previous overhang exclusion
   isolated six western anchors despite their real authoritative top cells.
 - Keep the first two authored circuits covering the landmarks; the four-circuit
-  trial took408.58 simulation seconds. A subsequent257.58-second trial silently
+  trial took 408.58 simulation seconds. A subsequent 257.58-second trial silently
   missed anchors and was rejected. With all retained anchors resolved, both final
-  routes pass: ground632waypoints/197.46667simulated seconds, elevated37/11.35.
+  routes pass: ground 632 waypoints/197.46667 simulated seconds, elevated 37/11.35.
 - Fix the authored corridor elevation profile to the canonical seed. Terrain and
   flora still vary with seed, while path grades behave like other authored
   landmarks. This also replaces a per-column locked seed cache with one immutable
   profile. Both canonical and adjacent-seed source gates pass.
 - Route tests now permit the declared <=0.5m wading while retaining physical
-  footing/clearance checks. Water coherence samples are denser (17/19cell strides
-  instead of29/31), retaining the same minimum sampled water count. No content or
+  footing/clearance checks. Water coherence samples are denser (17/19 cell strides
+  instead of 29/31), retaining the same minimum sampled water count. No content or
   mesh budget threshold was lowered. Removed dead experimental penalty branches.
 
-Executed: all19 showcase source tests PASS (`lead-authored-profile-gates.log`),
-actual two-route traversal PASS (`lead-final-walk.log`,29.15host seconds), and
+Executed: all 19 showcase source tests PASS (`lead-authored-profile-gates.log`),
+actual two-route traversal PASS (`lead-final-walk.log`,29.15 host seconds), and
 strict detail/all-target Clippy PASS (`lead-final-clippy.log`). An initial command
 used the nonexistent test target `showcase_walk`; it was corrected to the actual
 `showcase_traversal` target. Host timings are not phone performance evidence.

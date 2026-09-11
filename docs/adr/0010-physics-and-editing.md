@@ -33,20 +33,8 @@ M3 demonstrates constraints, dynamic voxel bodies and a breakable structure; tes
 
 ## v0.2 implementation evidence
 
-Rapier 0.32.0 is the selected solver for the bounded M3 slice under ADR-0014.
-See the [physics crate](../../crates/matterweave-physics/README.md) for component
-assessment, fixed-step/catch-up, interpolation, mass and inertia, spring grab,
-fracture caps, collision publication and snapshot validation contracts. The full
-ADR remains proposed until larger workloads and native stress gates are met.
-There is no camera-dependent collision LOD; evicted distant objects are frozen
-before their supporting terrain is unloaded. No Jolt integration was justified.
+Rapier 0.32.0 is the selected solver for the bounded M3 slice under ADR-0014. See the [physics crate](../../crates/matterweave-physics/README.md) for component assessment, fixed-step/catch-up, interpolation, mass and inertia, spring grab, fracture caps, collision publication and snapshot validation contracts. The full ADR remains Proposed until larger workloads and native stress gates are met. There is no camera-dependent collision LOD; evicted distant objects are frozen before their supporting terrain is unloaded. No Jolt integration was justified.
 
 ## Background detail preparation — 2026-09-08
 
-Immutable source snapshots now feed a bounded single worker; opaque scene tokens
-reject stale results before owner-thread publication changes any live collider.
-Reset and rapid source reversals have deterministic queue regressions. A direct
-ARM64 Android executable checks floor creation, standing contact, removal and
-falling on OnePlus13. This is real native physics execution, while APK frame-loop
-publication budgets and sustained stress remain open. See
-[controller and evidence](../performance/async-detail-collision.md). ADR remains Proposed.
+Immutable source snapshots feed a bounded single worker; opaque scene tokens reject stale results before owner-thread publication changes any live collider. Reset and rapid source reversals have deterministic queue regressions. A direct ARM64 Android executable checks floor creation, standing contact, removal and falling on OnePlus 13. This is real native physics execution, while APK frame-loop publication budgets and sustained stress remain open. See [controller and evidence](../performance/async-detail-collision.md). ADR remains Proposed.

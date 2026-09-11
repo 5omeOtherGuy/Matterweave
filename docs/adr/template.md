@@ -7,24 +7,24 @@
 
 ## Context
 
-What problem needs a decision? Include relevant constraints and evidence.
+What forced this decision. Constraints and evidence.
 
 ## Decision
 
-State the adopted decision or clearly label the proposal. Define boundaries and any provisional assumptions.
+What was chosen, in the active voice. State boundaries and provisional assumptions.
 
 ## Alternatives
 
-Record credible options and why they are deferred, rejected or still being compared.
+Credible options and why each was deferred, rejected or retained for comparison.
 
 ## Consequences
 
-Describe benefits, costs, limitations, dependencies and failure modes.
+Benefits, costs, limitations and failure modes.
 
 ## Validation
 
-Define a concrete decision gate, acceptance evidence and when to revisit. Link actual results when they exist. Targets are not results.
+The decision gate and the evidence that satisfies it; when to revisit. Targets are not results.
 
 ## References
 
-Link requirements, related ADRs and primary sources as needed. Record source/experiment dates where relevant.
+Requirements, related ADRs and primary sources, with dates where relevant.

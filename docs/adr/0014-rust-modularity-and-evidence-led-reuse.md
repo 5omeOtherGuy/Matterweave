@@ -7,9 +7,9 @@
 
 ## Context
 
-The owner now requires Rust wherever feasible without detriment to the project, modularity, maximum useful speed/efficiency and reuse of viable alternatives that meet strict criteria. Creating new technology, tools or Rust hardware interfaces is authorized when necessary or when it would provide a significant advantage. Jolt is eligible only if it provides major advantages.
+The owner requires Rust wherever feasible without detriment to the project, plus modularity, maximum useful speed/efficiency and reuse of viable alternatives that meet strict criteria. New technology, tools and Rust hardware interfaces are authorized when necessary or significantly advantageous; Jolt is eligible only with major advantages.
 
-This supersedes the C++ foundation proposal and the earlier general build/reuse recommendation in ADR-0003/0004. Android, voxel worlds, graphics ambition, complex physics and multi-genre reuse remain governing goals.
+This supersedes the C++ foundation proposal and the earlier build/reuse recommendation in ADR-0003/0004. Android, voxel worlds, graphics ambition, complex physics and multi-genre reuse remain governing goals.
 
 ## Decision
 
@@ -31,7 +31,7 @@ A C++ default no longer reflects owner intent. A Rust-only purity rule could was
 
 The project includes targeted systems/tooling research as needed, with responsibility for testing and maintaining any new interfaces. Safe Rust is preferred; unsafe GPU/FFI boundaries require explicit invariants, resource retirement and error-handling contracts. A safety wrapper must not claim that Rust proves GPU synchronization or foreign-library correctness.
 
-Use a small working baseline to identify actual gaps. A bounded prototype can test a credible advantage before production adoption; proof of a gain is not required before conducting the experiment. Avoid speculative infrastructure work or an unbounded survey that prevents implementation.
+Use a small working baseline to identify actual gaps. A bounded prototype tests a credible advantage before production adoption; proof of a gain is not required before running the experiment. Avoid speculative infrastructure work or an unbounded survey that prevents implementation.
 
 ## Validation
 

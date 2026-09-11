@@ -1,11 +1,19 @@
 # Stream/mesh cancellation correctness
 
 Scope: [`crates/matterweave-core/src/async_world.rs`](../../crates/matterweave-core/src/async_world.rs)
-and its unit tests, base `a4d7ba0`, branch `engine-stream-cancel`.
-Two correctness defects fixed; bounds, world copy-on-write storage and the
-single-worker scheduler are unchanged. No timing behaviour is claimed.
+and its unit tests, base `a4d7ba0`, branch `engine-stream-cancel`. Two correctness
+defects were fixed; bounds, world copy-on-write storage and the single-worker
+scheduler are unchanged. No timing behaviour is claimed.
 
-## Defect 1: a superseded pending window could overwrite the latest request
+## What problem this solves
+
+1. A superseded pending window could overwrite the latest request.
+2. `reset` reused the cancellation token at generation exhaustion, so a stale
+   in-flight result could be accepted after a reset.
+
+## How it works
+
+### Defect 1: superseded pending window
 
 `request_stream` records `requested_center` (the only publishable center) and
 keeps at most one pending window. When the caller returns to a center that is
@@ -26,7 +34,7 @@ wanted result nor be published for a center `poll_stream` will reject. One
 pending window and one in-flight job are preserved; the replace path now only
 ever fills an empty pending slot.
 
-## Defect 2: `reset` saturated the cancellation token at exhaustion
+### Defect 2: reset at generation exhaustion
 
 `reset` bumped the generation with `saturating_add(1)`. The generation is the
 cancellation token: the worker discards any result whose stamp differs from the
@@ -39,20 +47,19 @@ token remove a live `active` key inserted by a post-reset request.
 Fix: treat the generation as a never-reused opaque token. `checked_add` mints a
 fresh token; at exhaustion the controller **retires** the worker
 (`shutdown = true`) instead of reusing the token. `available()` then reports
-false and requests are refused, so the caller keeps the authoritative
-synchronous path and no stale background result can be published. Retirement at
-`u64::MAX` is unreachable in practice but makes the guarantee total. Clearing
-`active` on reset plus the strictly-increasing token also closes the stale-key
-removal.
+false and requests are refused, so the caller keeps the authoritative synchronous
+path and no stale background result can be published. Retirement at `u64::MAX`
+is unreachable in practice but makes the guarantee total. Clearing `active` on
+reset plus the strictly-increasing token also closes the stale-key removal.
 
-## Verification
+## What was verified
 
 Deterministic tests drive the state machine through a private `#[cfg(test)]`
 manual harness (no worker thread, no public test-only API): `take_job` /
 `run_job` are stepped explicitly, so ordering is fixed rather than raced.
 
-- `latest_request_matching_inflight_drops_a_superseded_pending_window`:
-  A in flight, B pending, return to A; asserts B is dropped and A publishes.
+- `latest_request_matching_inflight_drops_a_superseded_pending_window`: A in
+  flight, B pending, return to A; asserts B is dropped and A publishes.
 - `reset_at_generation_exhaustion_retires_instead_of_leaking_inflight_work`:
   generation set to `u64::MAX`, mesh in flight, `reset`; asserts retirement and
   that the stale in-flight mesh is discarded and new work refused.
@@ -71,17 +78,17 @@ cargo clippy -p matterweave-core --all-targets
 Results on this workstation (x86-64 Linux dev host; not a target-device claim):
 `cargo test -p matterweave-core` — 46 passed across 7 suites. Clippy — no issues.
 RED at commit `3e7b1e1` (both defect tests fail), GREEN at `d1fc54e`.
-</content>
-</invoke>
 
-## Lead integration corrections
+Lead integration corrections: two additional deterministic regressions exposed
+buffered-A/running-B/request-A loss and delayed fallback visibility during
+retirement. The first fix removed superseded pending work; the shared queue now
+also tracks the requested stream identity, so a superseded completion cannot
+overwrite the desired buffered result. `available()` checks retirement
+immediately, even while the bounded job finishes. Lead RED `8a913e6`, GREEN
+`02fc5d3`; all 48 core tests pass. Logs:
+`engine-02/stream-cancel-lead-{red,green}.log`. Source sharing and the existing
+queue/result caps are preserved.
 
-Two additional deterministic regressions exposed buffered-A/running-B/request-A
-loss and delayed fallback visibility during retirement. The worker's first fix
-removed superseded pending work; lead also tracks the requested stream identity
-inside the shared queue, so a superseded completion cannot overwrite the desired
-buffered result. `available()` checks retirement immediately, even while the
-bounded job finishes. Lead RED `8a913e6`, GREEN `02fc5d3`; all48 core tests pass.
-Logs: `engine-02/stream-cancel-lead-{red,green}.log`. Source sharing and the existing
-queue/result caps are preserved. These are correctness changes, not throughput
-measurements.
+## Limits and open work
+
+- These are correctness changes, not throughput measurements.
