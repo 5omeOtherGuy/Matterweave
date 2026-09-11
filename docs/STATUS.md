@@ -56,14 +56,39 @@ lifecycle and test reviewers returned ten, of which the lead verified nine and r
 one (a pre-existing, effectively unreachable busy-spin under frame-limited suspend, left
 unfixed and recorded here). All verified findings are fixed on the branch.
 
-**Known pre-existing flake, not caused by this branch.**
-`matterweave-physics::detail_cadence::reversed_addition_never_publishes_through_the_character`
-fails intermittently under full-workspace parallelism: it asserts a background worker has
-discarded a superseded preparation before a simulated walk completes, and a starved worker
-loses that race (observed `inflight: 1, discarded: 0`). Cargo builds a byte-identical test
-binary for this branch and untouched `origin/main` (`detail_cadence-dd12247ded27a4cf`,
-SHA-256 `302a3d16…`), and 100 interleaved runs of each showed zero failures, so the change
-cannot affect it. The test's timing assumption should be repaired separately.
+## Detail-cadence test flakes — two fixed, one open
+
+Three tests in `crates/matterweave-physics/tests/detail_cadence.rs` assert
+`discarded >= 1` on the async detail worker. Two asserted it at a moment when the
+discard had not necessarily happened yet and failed intermittently in CI, including
+on a pull request that changed only Markdown. The production code was never at
+fault; in both cases the behavioural guarantee under test held on every frame and
+only the worker's bookkeeping raced. Fixed on 2026-09-11 (PR #17) by waiting for the
+outcome under the existing `DEADLINE` instead of assuming the worker had already run.
+
+**Reproduction.** Pinning the process to one CPU starves the worker deterministically
+and turns the intermittent failure into a local one. Measured on the development
+host: unmodified, `taskset -c 0` gave 15 failures in 20 runs against 0 in 20
+unpinned; fixed, 0 failures in 150 pinned runs for each of the two tests.
+
+**Mutation check.** With both supersede counters in `async_detail_collision.rs`
+neutralised, three tests fail — the two repaired ones and
+`stale_completion_for_an_edited_scene_is_never_published`, which was examined and
+deliberately left unchanged because a publication has already been accepted by the
+time it asserts. The source was then restored exactly and all 11 pass. This
+establishes that none of the three assertions is vacuous; before the repair the
+first could pass without exercising the discard path at all.
+
+**Still open.**
+`detail_cadence::edit_during_active_movement_blocks_until_publication_then_frees_the_path`
+fails under the same pinning on unmodified `main` — 3 failures in 12 pinned runs, 0
+in 12 unpinned — with `the edit is pending: AsyncDetailStats { queued: 0, inflight:
+0, results: 1 }`. Its assertion treats a buffered but unpublished result as not
+pending, and its `pending_frames > 0` guard additionally requires the worker to be
+slower than the test, so there is no pending window to observe when the work
+completes immediately. Repairing it means restructuring how it observes that window,
+which was not folded into the flake fix. It has not failed in CI; single-CPU pinning
+is a harsher condition than CI applies.
 
 ## Capability status
 
