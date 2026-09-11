@@ -36,8 +36,8 @@ branch changes, detached processes, credentials, or phone involvement.
 
 ## Decisions & Rationale
 - Materials chosen to differ from probed pre-edit values so every `expect_applied`
-  is meaningful (e.g. `[0,2,0]`/`[-1,2,0]` legacy `2`→`7`; `[-17,2,-17]` air→`5`;
-  outer-terrain `[48,2,0]` gen `1`→`9`, `[-48,2,0]` gen `1`→`4`).
+  is meaningful (e.g. `[0, 2, 0]`/`[-1, 2, 0]` legacy `2`→`7`; `[-17, 2, -17]` air→`5`;
+  outer-terrain `[48, 2, 0]` gen `1`→`9`, `[-48, 2, 0]` gen `1`→`4`).
 - Pinned source-authoritative facts only: baseline `32` chunks / `42840` solid,
   final `98` / `131992` / `34` overrides; no FPS, capacity, or custom-hash claims
   (stdlib + `serde_json` already present; no new dependencies).

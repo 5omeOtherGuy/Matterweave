@@ -1,11 +1,11 @@
 # ADR-0003: Native language, platform and graphics foundation
 
+> **Superseded — do not follow.** Replaced by [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md) and the implementation proposal [ADR-0015](0015-rust-native-foundation.md) after the owner's explicit Rust direction. The original proposal below is retained as history only and must not guide new language selection.
+
 - Date: 2026-09-07
 - Status: Superseded
 - Basis: Prior technical recommendation and initial engineering hypothesis, not an owner language choice.
 - Requirements: R01, R03, R10, R13
-
-Superseded by [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md) and the implementation proposal [ADR-0015](0015-rust-native-foundation.md) after the owner's explicit Rust direction. The original proposal below is retained as history and must not guide new language selection.
 
 ## Context
 

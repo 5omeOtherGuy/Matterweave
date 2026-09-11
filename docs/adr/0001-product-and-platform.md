@@ -7,13 +7,13 @@
 
 ## Context
 
-The initial discussion concerned a small browser technology demo. The owner subsequently replaced those constraints with a bespoke, highly optimized native Android voxel engine/framework usable for many genres. This repository must contain enough context for a fresh session to orchestrate implementation independently.
+The owner replaced an earlier browser technology demo with a bespoke, highly optimized native Android voxel engine/framework usable for many genres, and required the repository to carry enough context for a fresh session to implement it independently.
 
 ## Decision
 
-Matterweave is the engine/framework product. Android is the required runtime platform. Voxels are meaningful world/object data, while presentation may vary by game. Support the architecture needs of exploration, roguelikes, creature-collecting RPGs, tiny worlds, 3D adventures and 2.5D games without implementing all genres immediately.
+Matterweave is the engine/framework product, Android the required runtime platform and voxels the meaningful world/object data; presentation may vary by game. The architecture must support exploration, roguelikes, creature-collecting RPGs, tiny worlds, 3D adventures and 2.5D games without implementing every genre immediately.
 
-Desktop tests/tools may aid development. The browser demo, hosting platform, its engine code, scene limits and art direction are not required inputs. Keep the complete development context and decision history in this repository.
+Desktop tests and tools may aid development. The browser demo, its hosting platform, engine code, scene limits and art direction are not required inputs. Keep the complete development context and decision history in this repository.
 
 ## Alternatives
 

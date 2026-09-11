@@ -1,6 +1,6 @@
 # App interaction/capture audit
 
-Frozen source9b7faa9; Pi Astra medium, read-only.
+Frozen source 9b7faa9; Pi Astra medium, read-only.
 
 ### Actions
 Read the three scoped files; cross-read detail edit/collision transactions, physics restore, and GPU diagnostics/completion handling. No modifications.
@@ -8,7 +8,7 @@ Read the three scoped files; cross-read detail edit/collision transactions, phys
 ### Issues
 1. **P2 — Placement can select a diagonal cell.**  
    `apps/explorer/src/wetland_state.rs:259–262` records the previous cell, then advances **every** tied crossing axis. `wetland.rs:210–212` uses that previous cell for placement without checking face adjacency.  
-   **Trigger/proof:** Within prototype bounds, a ray crossing an XY corner from empty `[0,0,0]` into solid `[1,1,0]` returns `[0,0,0]` as `previous`; Manhattan distance is two.  
+   **Trigger/proof:** Within prototype bounds, a ray crossing an XY corner from empty `[0, 0, 0]` into solid `[1, 1, 0]` returns `[0, 0, 0]` as `previous`; Manhattan distance is two.  
    **Consequence:** Place adds an edge-adjacent voxel rather than one on the aimed solid’s face.
 
 2. **P2 — Paused main menu still accepts world-edit keyboard shortcuts.**  
@@ -28,5 +28,5 @@ Collision replacement prepares before committing; rollback restores cell content
 
 **Checks not run:** Builds, tests, shell/Git revision verification, device interaction, and capture replay. Prior evidence was supplied, not independently rerun. Lead owns acceptance.
 
-Lead: both findings reproduced under tests atcecd895. Correction gates pass;
+Lead: both findings reproduced under tests at cecd895. Correction gates pass;
 no new GPU capture defect was identified.

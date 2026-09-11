@@ -52,9 +52,9 @@ a no-submission row must still reference a previously submitted pair.
 - Real captures, read-only (mtime/size asserted unchanged, sha256 of bytes
   matches `raw_sha256`): device `frame-profile-v2-1788829575868.csv` → VALID
   (1000 rows, epochs [1], missing 0, unmatched 1); device
-  `frame-profile-v2-1788829637134.csv` → VALID (581 rows, epochs [1,2,3],
+  `frame-profile-v2-1788829637134.csv` → VALID (581 rows, epochs [1, 2, 3],
   missing 0, unmatched 3 = one trailing submission per epoch); host
-  `frame-profile-v2-1788827612325.csv` → VALID (90 rows, epochs [1,2],
+  `frame-profile-v2-1788827612325.csv` → VALID (90 rows, epochs [1, 2],
   missing 0, unmatched 2).
 - Not run: Android device execution / any performance measurement (out of
   scope; this tool makes no performance claims).

@@ -208,7 +208,6 @@ A pre-launch gate was added: accepted readiness must be younger than 180 s and a
 fresh battery/skin reading taken before app launch must still satisfy
 the window invariants and the pair match.
 
-
 Lead follow-up after correction timeout: the worker misread the requested empty
 edit journal and required edits; corrected to the unchanged source fixture. Also
 removed a fabricated +30second timestamp in the pre-launch readiness check.
@@ -217,20 +216,18 @@ five accepted samples plus the new actual sample. No invented elapsed time is
 accepted as measurement evidence. Neither earlier script revision was run on a
 phone. Focused tests and an actual-time freshness regression follow.
 
-
 Initial device attempts were rejected before capture: A1 found Android's normal
 randomized APK directories include `~`; the conservative path allowlist now
-admits that character. A2 exposed `adb exec-out` returning local exit0 with a
-remote missing-file error in stdout. The alleged pre-existing recovery127 was
-absent in `ls` and `test -f` returned1. Private reads now use shell-v2 `-T`, which
+admits that character. A2 exposed `adb exec-out` returning local exit 0 with a
+remote missing-file error in stdout. The alleged pre-existing recovery 127 was
+absent in `ls` and `test -f` returned 1. Private reads now use shell-v2 `-T`, which
 preserves the remote status and separate stderr. Both failed attempts removed no
 files; neither produced a measurement. A3 starts again with new real observations.
 
-
-A3 completed the first reference/candidate pair, then rejected trial3 before
-launch: 31 observations (about15minutes) did not reach the original reference's
-battery temperature within1C. Cleanup stopped the app and removed only owned
-files. Increase the bounded cooling allowance to61 observations (about30minutes),
+A3 completed the first reference/candidate pair, then rejected trial 3 before
+launch: 31 observations (about 15 minutes) did not reach the original reference's
+battery temperature within 1 C. Cleanup stopped the app and removed only owned
+files. Increase the bounded cooling allowance to 61 observations (about 30 minutes),
 with unchanged readiness and thermal matching limits. A4 runs the remaining two
 pairs as a separate recorded batch with a freshly observed reference. Its local
 order is AB/BA; across completed batches the planned order becomes AB/AB/BA.

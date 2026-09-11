@@ -1,6 +1,6 @@
 # map-gemini-finish
 
-Frozen952d630; independent read-only candidate findings.
+Frozen 952d630; independent read-only candidate findings.
 
 ### Correctness Findings
 
@@ -57,4 +57,4 @@ Frozen952d630; independent read-only candidate findings.
 
 ## Lead verification
 
-Diagonal source radius and between-vertex route intrusion reproduced by actual-scene regressions; corrected without reducing density gates. Cavity overlap reproduced at [97.375,16.125,58.125] as parasol cap material21, not terrain: corrected terrain-only assertion passes610 lowered columns and2856 overhang columns. No product requirement forbids fungi on cavity floors; retaining them is intentional. Claims of measured counts in a read-only reviewer summary are not execution evidence.
+Diagonal source radius and between-vertex route intrusion reproduced by actual-scene regressions; corrected without reducing density gates. Cavity overlap reproduced at [97.375, 16.125, 58.125] as parasol cap material 21, not terrain: corrected terrain-only assertion passes 610 lowered columns and 2856 overhang columns. No product requirement forbids fungi on cavity floors; retaining them is intentional. Claims of measured counts in a read-only reviewer summary are not execution evidence.

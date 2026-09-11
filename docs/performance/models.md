@@ -15,13 +15,13 @@ quota, task qualification or image-input capability.
 | Hy4 OpenRouter / high | Exact route check only; read-only account balance check. | Not task-qualified. Owner authorized $9.99 existing credit; actual balance $9.985349664. No key-level cap; paid execution pending enforceable ceiling/no-top-up verification. |
 
 Raw sessions/results: `/mnt/bench/matterweave-dev/performance/run-01/`. Engineering
-logs and accepted findings are preserved in this directory's `logs` subdirectory;
-raw provider sessions must not be published. Cancelled attempts remain distinct
+logs and accepted findings are in [`logs/`](logs/); raw provider sessions must not be
+published. Cancelled attempts remain distinct
 from provider failures. Completion means a model turn finished, not code acceptance.
 
 Muse uses the exact Contributor Free SKU. Claude/Gemini zero cost fields are
 provider placeholders, not free usage. Go catalog prices differ from published
 rates; actual subscription depletion is unknown. No paid inference, purchases,
-automatic top-ups or paid fallback has been performed in this campaign so far.
+automatic top-ups or paid fallback has been performed in this campaign.
 All-model task qualification remains incomplete; no equal-spend or cross-task speed
 ranking is inferred from these unequal assignments.

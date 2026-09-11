@@ -1,11 +1,11 @@
 # ADR-0004: Own voxel systems and reuse mature infrastructure
 
+> **Superseded — do not follow.** Replaced by [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md), which establishes Rust preference, explicit modularity, stricter reuse/custom-development criteria and a major-advantage condition for Jolt. The original recommendation below is historical.
+
 - Date: 2026-09-07
 - Status: Superseded
 - Basis: Response to the owner's reuse-versus-ground-up question; recommendation awaits integration evidence.
 - Requirements: R02, R03, R11, R13
-
-Superseded by [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md), which establishes Rust preference, explicit modularity, stricter reuse/custom-development criteria and a major-advantage condition for Jolt. The original recommendation below is historical.
 
 ## Context
 

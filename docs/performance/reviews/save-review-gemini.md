@@ -1,8 +1,8 @@
 # Save restoration review and lead disposition
 
-Source reviewed: `221f720`, read-only Pi Gemini 3.8 Flash high. The first120-second
+Source reviewed: `221f720`, read-only Pi Gemini 3.8 Flash high. The first 120-second
 attempt timed out after source reads; an exact-session, tool-free continuation
-returned its findings in18.61s. Raw sessions remain in
+returned its findings in 18.61s. Raw sessions remain in
 `completion-02/save-review-gemini` and `save-review-gemini-finish`.
 
 ## Candidate findings
@@ -33,12 +33,12 @@ not execution or final approval. Lead inspected the actual branches/contracts.
 - Decisions: retain bounded collision clearance and saved orientation; use saved
   viewpoint as respawn only when the edited entrance has no clear bounded pose.
 - Solutions: regression covers lifted entrance and completely blocked entrance,
-  asserting saved eye preservation and actual teleport acceptance. All64 app
-  tests, including the normally ignored full-map Runtime test, passed in17.33s.
+  asserting saved eye preservation and actual teleport acceptance. All 64 app
+  tests, including the normally ignored full-map Runtime test, passed in 17.33s.
 - Insights: validating the current eye alone is insufficient when later actions
   also depend on a stored respawn pose. Source review can find consumers missed
   by the reviewer itself; lead verification remains necessary.
 
-Native Vulkan replay/capture at the preceding source passed25 frames/20 valid
+Native Vulkan replay/capture at the preceding source passed 25 frames/20 valid
 rows/six bodies/no validation errors. That is not phone route or final-build
 acceptance. Strict lint and final Android delivery remain lead-owned.

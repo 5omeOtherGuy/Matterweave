@@ -16,7 +16,7 @@ No concrete candidate meeting the bar for behavior / stale-attempt / CLI-validat
 - Digest `fullmatch [0-9a-f]{64}` rejects uppercase/short/long/non-str — correct.
 - Stale logic: `run` mismatch, unknown `task`, board `attempt != submission attempt`, `owner` mismatch, `state not in {running,submitted,review-needed}` all raise — replaced/closed correctly rejected.
 - Artifact: streaming `hashlib.file_digest` compare, `OSError → ValueError`, mismatch/missing/directory rejected.
-- CLI: `_load_json` `read(limit+1)` enforces board ≤8KiB / submission ≤2KiB, non-dict top-level / malformed JSON → `ValueError` → `exit 1` with `error: …`, no traceback path for covered cases.
+- CLI: `_load_json` `read(limit+1)` enforces board ≤8 KiB / submission ≤2 KiB, non-dict top-level / malformed JSON → `ValueError` → `exit 1` with `error: …`, no traceback path for covered cases.
 - Read-only: only `open(..., "rb")` + `read` + hash; tests assert bytes unchanged. Extra metadata ignored as specified.
 
 ### Considered but not raised (below bar)

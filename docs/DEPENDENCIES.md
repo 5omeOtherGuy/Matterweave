@@ -1,11 +1,13 @@
 # MVP component and toolchain selections
 
-Assessment date: 2026-09-07. These are implementation choices under ADR-0014,
-not mobile performance findings. The narrowly patched winit source is tracked in `vendor/winit`; its upstream provenance and exact lifecycle patch are documented there.
-Exact transitive revisions and checksums are in [Cargo.lock](../Cargo.lock);
-[the generated inventory](dependencies.json) records source, version, checksum,
-repository and upstream license for every locked Cargo package, including build
-and other-platform dependencies. Regenerate with `python3 tools/dependency_report.py`.
+Assessment date: 2026-09-07. These are implementation choices under ADR-0014, not
+mobile performance findings. The narrowly patched winit source is tracked in
+`vendor/winit`; its upstream provenance and exact lifecycle patch are documented there.
+Exact transitive revisions and checksums are in [Cargo.lock](../Cargo.lock).
+[The generated inventory](dependencies.json) records source, version, checksum,
+repository and upstream license for locked Cargo packages, including build and
+other-platform dependencies; regenerate it with `python3 tools/dependency_report.py`
+after dependency changes.
 
 ## Runtime and shader components
 
@@ -23,6 +25,9 @@ and other-platform dependencies. Regenerate with `python3 tools/dependency_repor
 | [font8x8](https://docs.rs/font8x8/0.3.1/font8x8/) | 0.3.1 | MIT | Reused compact diagnostic HUD glyphs. |
 | [pollster](https://docs.rs/pollster/0.4.0/pollster/) | 0.4.0 | Apache-2.0 / MIT | Small startup future executor; no frame-loop async runtime. |
 | [log](https://docs.rs/log/0.4.28/log/) / [android_logger](https://docs.rs/android_logger/0.15.1/android_logger/) | 0.4.28 / 0.15.1 | MIT OR Apache-2.0 | Diagnostics and Android logcat. |
+| [ringbuf](https://docs.rs/ringbuf/0.5.1/ringbuf/) | 0.5.1 | MIT OR Apache-2.0 | Bounded SPSC queue carrying audio control commands to the real-time render path; a full queue rejects new commands instead of overwriting them. |
+| [ndk](https://docs.rs/ndk/0.9.0/ndk/) | 0.9.0 | MIT OR Apache-2.0 | Pinned AAudio bindings for the Android-only audio output backend. |
+| [libc](https://docs.rs/libc/0.2.189/libc/) | 0.2.189 | MIT OR Apache-2.0 | Thread CPU clock for opt-in host/Android capture. |
 
 wgpu was assessed as a viable safe renderer abstraction; ash is the selected
 first backend. No measured speed advantage is asserted. The surface mesh is
@@ -36,7 +41,9 @@ and limits; no credible major Jolt advantage required a foreign integration.
 [block-mesh 0.2.0](https://docs.rs/block-mesh/0.2.0/block_mesh/) (MIT OR Apache-2.0)
 supplies v0.2 greedy quads after exact surface/material equivalence tests against
 our retained reference mesher. This is a geometry reduction finding, not a complete
-mobile rendering-path selection.
+mobile rendering-path selection. `matterweave-detail` adds no external dependency
+beyond the core/bytemuck/serde stack above; `matterweave-pacing` has no dependencies
+and no `unsafe` code; `matterweave-audio` adds `ringbuf` and, on Android, `ndk`.
 
 The world fixture and material colors are original procedural content. No imported
 game assets are used. Dependency licenses do not select a license for Matterweave.

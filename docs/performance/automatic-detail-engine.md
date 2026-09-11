@@ -1,12 +1,19 @@
 # Automatic view-dependent detail (LOD) selection
 
-Scope: `crates/matterweave-detail` engine-side automatic level-of-detail selection
-and derived-mesh preparation for `DetailScene`. Implements part of
-[R08](../REQUIREMENTS.md) under [ADR-0007](../adr/0007-virtualized-detail.md). Native
-renderer integration and on-device acceptance are lead-owned; this document and the
-crate provide the host-verified engine slice only.
+Scope: `crates/matterweave-detail` engine-side automatic level-of-detail
+selection and derived-mesh preparation for `DetailScene`. Implements part of
+[R08](../REQUIREMENTS.md) under [ADR-0007](../adr/0007-virtualized-detail.md).
+Native renderer integration and on-device acceptance are lead-owned; this
+document covers the host-verified engine slice only.
 
-## What the engine now provides
+## What problem this solves
+
+A `DetailScene` stores prototypes as coarse volumes at several levels, and a
+renderer adapter must pick a level per instance from the camera and obtain the
+derived geometry to draw. Nothing selected levels or produced uploaded-ready
+batches.
+
+## How it works
 
 `DetailScene` selects a per-instance LOD from the existing `Source`/`Half`/`Quarter`
 representations and prepares the derived meshes an adapter uploads directly:
@@ -25,13 +32,15 @@ Zoom is the FOV (perspective) or the view height (orthographic).
 
 `LodConfig` exposes `error_budget_px`, `hysteresis`, a `max_lod` quality cap
 (`Lod::Source` or `LodConfig::disabled()` turns LOD off), a `max_dilation_fraction`
-thin-feature bias and an optional `max_coarse_builds` work cap.
+thin-feature bias and an optional `max_coarse_builds` work cap. Numeric input
+validation is described in [LOD numeric input validation](detail-numeric.md), and
+the local interior-loss guard in [local interior-loss guard](detail-local-loss-guard.md).
 
-## Honest error model (reviewed correction)
+### Error model: estimates, not guarantees
 
 Any-occupied coarsening has no cheap tight geometric bound, so the engine reports
-**estimates**, never guarantees. This was corrected after lead review rejected an
-earlier "conservative bound" framing.
+**estimates**, never guarantees. An earlier "conservative bound" framing was
+rejected on review and does not describe this code.
 
 - `error_estimate_m = scale * factor` is the coarse cell size: a heuristic error
   magnitude, **not** a Hausdorff bound. Filling a long narrow cavity deletes
@@ -49,7 +58,9 @@ earlier "conservative bound" framing.
   `forward_m`** (clamped to `near_m`), not Euclidean eye distance, which overstates
   depth for off-axis instances.
 
-## Correctness properties (host-verified)
+## What was verified
+
+Host only; no mobile numbers exist.
 
 - Approach/retreat and FOV/orthographic zoom move between `Source`/`Half`/`Quarter`.
 - Orthographic selection is depth-invariant; perspective uses view-forward depth
@@ -77,12 +88,13 @@ dependencies; none selects among voxel coarse-volume LODs by projected error, an
 adopting one would not replace this glue. No dependency crossed the strict criteria,
 so no new dependency was added — avoiding unpinned dependency risk. The projection
 uses only `std` `f32` methods. This is recorded here rather than as a full ADR
-because it is a routine implementation detail under proposed ADR-0007 and accepted ADR-0014.
+because it is a routine implementation detail under proposed ADR-0007 and accepted
+ADR-0014.
 
-## Not done / lead-owned
+## Limits and open work
 
 - Native Vulkan batch upload, draw submission and on-device approach/retreat/zoom
-  capture review (R08 acceptance evidence). No mobile numbers exist.
+  capture review (R08 acceptance evidence).
 - Asynchronous versioned request/publication: the current API is synchronous
   bounded lazy preparation, as permitted for a first slice.
 - A genuinely tight geometric error bound and per-opening preservation guarantee.

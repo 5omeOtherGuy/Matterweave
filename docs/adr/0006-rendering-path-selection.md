@@ -33,36 +33,16 @@ M2 chooses the primary approach with equivalent-quality physical-device evidence
 
 ## M1 implementation evidence — 2026-09-07
 
-The first reference rasterizes exposed voxel surfaces directly through ash.
-Direct sun, ambient shading, fog and a HUD are implemented. The native host
-exercise and APK build establish integration evidence, not a measured mobile
-renderer selection. No ray/mesh/hybrid comparison has been performed; this ADR
-remains Proposed. See [renderer notes](../../crates/matterweave-render/README.md)
-and [STATUS](../STATUS.md).
-
+The first reference rasterizes exposed voxel surfaces directly through ash. Direct sun, ambient shading, fog and a HUD are implemented. The native host exercise and APK build establish integration evidence, not a measured mobile renderer selection. No ray/mesh/hybrid comparison has been performed; this ADR remains Proposed. See [renderer notes](../../crates/matterweave-render/README.md) and [STATUS](../STATUS.md).
 
 ## v0.3 engineering disposition — 2026-09-08
 
-**Retain provisionally:** ash surface rasterization with cached greedy meshes,
-independent shadow visibility, bounded async preparation and optional GPU intervals.
-The same physical phone supports functional off/on shadow and1024/2048 comparisons.
-Those quality/cost toggles do not compare ray/mesh/hybrid representations.
+**Retain provisionally:** ash surface rasterization with cached greedy meshes, independent shadow visibility, bounded async preparation and optional GPU intervals. The same physical phone supports functional off/on shadow and 1024/2048 comparisons. Those quality/cost toggles do not compare ray/mesh/hybrid representations.
 
-**Defer final primary-path selection:** no equivalent-quality compute traversal or
-hybrid prototype has yet been measured against the raster path. Expanding to three
-production renderers would delay this complete Android slice without answering a
-bounded experiment. The next M2 experiment remains shared-fixture traversal versus
-raster costs, including edits/preparation and orthographic views. This ADR remains
-Proposed; neither phone operation nor greedy triangle reduction accepts the final
-mobile rendering choice. See [STATUS](../STATUS.md) and the [execution log](../../execution_log.md).
+**Defer final primary-path selection:** no equivalent-quality compute traversal or hybrid prototype has been measured against the raster path, and expanding to three production renderers would delay this complete Android slice without answering a bounded experiment. The next M2 experiment remains shared-fixture traversal versus raster costs, including edits/preparation and orthographic views. This ADR remains Proposed; neither phone operation nor greedy triangle reduction accepts the final mobile rendering choice. See [STATUS](../STATUS.md) and the [execution log](../../execution_log.md).
 
 ## Bounded GPU ray reference — 2026-09-08
 
-The retained unit-voxel ray pack and shader now pass 30 color/depth probes on host
-Vulkan with synchronization validation and on Adreno 830 Android. Initial sync
-and mobile precision failures were reproduced and corrected; [evidence](../performance/ray-reference.md)
-records numerical tolerances and bounds. This resolves shader-execution feasibility
-for a bounded reference, not the equivalent-quality renderer comparison. The
-primary path remains unselected under this ADR's gate.
+The retained unit-voxel ray pack and shader pass 30 color/depth probes on host Vulkan with synchronization validation and on Adreno 830 Android. Initial sync and mobile precision failures were reproduced and corrected; [evidence](../performance/ray-reference.md) records numerical tolerances and bounds. This resolves shader-execution feasibility for a bounded reference, not the equivalent-quality renderer comparison; the primary path remains unselected under this ADR's gate.
 
-The [full-image comparison reference](../performance/renderer-comparison.md) now has 12 passing Android/host fixture runs, including six complete-world matched images and split shared-depth hybrid occlusion. It establishes bounded correctness at 128×128 with matched simple shading. Combined setup costs and single tiny-fixture draws cannot justify primary-path selection; representative quality, sustained total costs and residency comparisons remain required.
+The [full-image comparison reference](../performance/renderer-comparison.md) has 12 passing Android/host fixture runs, including six complete-world matched images and split shared-depth hybrid occlusion. It establishes bounded correctness at 128×128 with matched simple shading. Combined setup costs and single tiny-fixture draws cannot justify primary-path selection; representative quality, sustained total costs and residency comparisons remain required.

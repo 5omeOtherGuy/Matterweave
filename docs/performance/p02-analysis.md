@@ -61,7 +61,6 @@ and mutual temperature matching. GLM's earlier 300-second worker timed out witho
 producing code; the lead implemented and verified this tool. No trial-level
 optimization acceptance is inferred from that worker or these software tests.
 
-
 Build-profile correction: the original candidate build JSON incorrectly says
 “Rust Android release profile.” Both frozen sources map Gradle `assembleDebug`
 to Cargo `dev` (`opt-level = 2`, `debug = 0`), as verified directly at `0e5b3be`.
@@ -69,39 +68,37 @@ The original hashed manifests remain intact; this correction accompanies them.
 The paired APKs use the same actual profile. No release-LTO performance inference
 is made from them. New build manifests name the actual Cargo profile explicitly.
 
-
 The first A4 pair (second completed pair overall) also matches metadata and the
-lead-reviewed entrance images. Reference mean/median/p95:75.820/66.329/116.066ms;
-candidate supported intervals:24.265/16.583/33.165ms. Candidate history has nine
-unsupported gaps covering1.7547% of the selected120.012-second span. A conservative
-mean upper bound over that span is24.653ms: divide total span by the count of
+lead-reviewed entrance images. Reference mean/median/p95: 75.820/66.329/116.066 ms;
+candidate supported intervals: 24.265/16.583/33.165 ms. Candidate history has nine
+unsupported gaps covering 1.7547% of the selected 120.012-second span. A conservative
+mean upper bound over that span is 24.653 ms: divide total span by the count of
 known consecutive endpoint pairs, assigning at least one interval to every gap.
 Any hidden intermediate presentations increase that denominator. This bounds the
 mean without inventing a percentile distribution; it does not repair missing
 history. The analysis tool reports both supported statistics and this bound.
 
 A repeatable tradeoff is already visible in these two pairs. Reference late skin
-readings were39.139/39.503C, thermal status0; candidate49.199/49.872C, status2.
-Candidate mean process PSS was288523.25/288509.25kB, versus reference
-330632.5/326371.75kB (OS-reported units retained; no RSS/PSS addition). Candidate CPU
-core-equivalent usage0.465/0.466 versus0.599/0.615. Faster presentation and lower
+readings were 39.139/39.503 C, thermal status 0; candidate 49.199/49.872 C, status 2.
+Candidate mean process PSS was 288523.25/288509.25 kB, versus reference
+330632.5/326371.75 kB (OS-reported units retained; no RSS/PSS addition). Candidate CPU
+core-equivalent usage 0.465/0.466 versus 0.599/0.615. Faster presentation and lower
 CPU/memory therefore do not establish lower heat or energy. Thermal regression
-must accompany any acceptance decision. A visible30/60Hz target is being developed
+must accompany any acceptance decision. A visible 30/60 Hz target is being developed
 as a separate cap experiment; source density, resolution, effects and simulation
 remain fixed. No thermal benefit from that untested cap is claimed.
 
-
 ## Completed third pair
 
-A4 finished at2026-09-08T10:47:19Z and removed its owned fixture without errors.
+A4 finished at 2026-09-08T10:47:19Z and removed its owned fixture without errors.
 Its second pair (third overall, candidate then reference) has no metadata mismatch
-or unsupported history gaps. Candidate mean/median/p95:24.314/16.583/33.164ms;
-reference73.034/66.344/116.094ms. Whole-process CPU core equivalents:0.463 versus
-0.591. Late skin readings49.638C/status2 versus40.964C/status0 repeat the thermal
+or unsupported history gaps. Candidate mean/median/p95: 24.314/16.583/33.164 ms;
+reference 73.034/66.344/116.094 ms. Whole-process CPU core equivalents: 0.463 versus
+0.591. Late skin readings 49.638 C/status 2 versus 40.964 C/status 0 repeat the thermal
 tradeoff. Lead reviewed both entrance images: same visible composition/camera,
 with animated water phase differences. No full temporal-equivalence claim.
 
 The final A4 analysis is `engine-01/p02-a4-final` under the existing benchmark root;
-A3 remains a separate batch. All3 planned pairs are complete; frozen hashes and
+A3 remains a separate batch. All 3 planned pairs are complete; frozen hashes and
 measurement limits above still apply. These captures predate the new engine
-shadow-depth reuse at78cba4a and cannot establish its performance or thermal effect.
+shadow-depth reuse at 78cba4a and cannot establish its performance or thermal effect.

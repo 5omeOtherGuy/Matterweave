@@ -6,11 +6,11 @@ Frozen hashes provided, **match NOT independently verified** — no hash/shell t
 Real-dump check in worker log used explicitly **synthetic 0/30/60/90/120s schedule** — NOT proof of real two-minute readiness; lead rerun with actual timestamped samples required.
 No hardware calibration / energy / FPS / auth claim made or supported — module docstring and log correctly scope to `idle_readiness_only`.
 
-Contract checked: ≥5 samples, finite strictly-increasing nonneg `elapsed_s` (bool invalid), span ≥120s, gaps ≤35s; per-row raw `battery` (4× powered false required, status 3, level 0..100, temp −20..80°C, reject stopped/simulated) + `thermalservice` (`IsStatusOverride` false, `Thermal Status` 0, exactly one HAL skin −20..100°C only between the two required HAL boundaries, never cached); cross-sample battery ≤1°C, skin ≤2°C; duplicate/missing/malformed rejected; 1MiB/128KiB bounds; NaN/nonfinite rejected; extra nonconflicting metadata ignored; API `ValueError`, CLI concise nonzero, inputs unchanged.
+Contract checked: ≥5 samples, finite strictly-increasing nonneg `elapsed_s` (bool invalid), span ≥120s, gaps ≤35s; per-row raw `battery` (4× powered false required, status 3, level 0..100, temp −20..80°C, reject stopped/simulated) + `thermalservice` (`IsStatusOverride` false, `Thermal Status` 0, exactly one HAL skin −20..100°C only between the two required HAL boundaries, never cached); cross-sample battery ≤1°C, skin ≤2°C; duplicate/missing/malformed rejected; 1 MiB/128 KiB bounds; NaN/nonfinite rejected; extra nonconflicting metadata ignored; API `ValueError`, CLI concise nonzero, inputs unchanged.
 
 ### Candidate findings — none valid as contract blockers
 
-**C1 — Dead constants, no behavior effect — `validate_conditions.py:66,72`**
+**C1 — Dead constants, no behavior effect — `validate_conditions.py:66, 72`**
 Trigger: `BATTERY_REQUIRED_INT_KEYS` and `_DECIMAL_RE` defined, never referenced.
 Consequence: none — each battery field individually parsed/required; skin numeric path via `_TEMPERATURE_LINE_RE` + `float()` + `isfinite`.
 Evidence: definition present; all call sites use `_parse_scalar_field`/`_parse_int_field`/`_TEMPERATURE_LINE_RE`.
@@ -23,7 +23,7 @@ Trigger: `os.stat` size check, then unbounded `fh.read()`; total re-checked only
 Consequence: concurrent file growth between stat and read could over-read memory; no false-accept — oversize still rejected downstream (serialized total + per-line raw checks).
 Evidence: no `len(raw) > MAX_TOTAL_BYTES` after read in `load_jsonl`.
 Uncertainty: medium — requires racing writer; local-file validator threat low.
-Discriminating check (NOT RUN): concurrent-grow or directly constructed >1MiB file CLI test asserting concise reject without OOM.
+Discriminating check (NOT RUN): concurrent-grow or directly constructed >1 MiB file CLI test asserting concise reject without OOM.
 Verdict: **not valid** as acceptance blocker — hardening note only.
 
 **C3 — CLI duplicate-keys test weakly isolated — `test_validate_conditions.py:545`**

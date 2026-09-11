@@ -2,11 +2,18 @@
 
 ## Authority and lifecycle
 
-**Accepted** means a governing decision with an explicit basis. ADR-0001/0002 capture initial owner goals; ADR-0014 captures the subsequent Rust, modularity and reuse policy. ADR-0012 establishes the setup's engineering/evidence convention. **Proposed** means a concrete hypothesis or starting recommendation, permitted to prototype but not a proven selection. **Rejected** records a considered option not adopted. **Superseded** preserves history and links to a replacement.
+| Status | Meaning |
+| --- | --- |
+| Accepted | A governing decision with an explicit basis. |
+| Proposed | A concrete hypothesis or starting recommendation: permitted to prototype, not a proven selection. |
+| Rejected | A considered option not adopted. |
+| Superseded | Preserves history and links to its replacement. |
 
-The owner selected Rust as the default with qualified exceptions, but did not select specific libraries or a rendering algorithm. Jolt now requires major advantages. Do not silently convert remaining recommendations into owner mandates. The implementation session may accept, revise or reject engineering proposals after their decision gates, recording evidence and who/what informed the decision. No additional owner confirmation is required for routine choices within the accepted goals. Changing product intent requires owner direction.
+ADR-0001/0002 capture the initial owner goals, ADR-0012 the engineering/evidence convention, ADR-0014 the Rust, modularity and reuse policy.
 
-For an accepted ADR, append implementation/evidence notes without rewriting its historical rationale. Create a superseding ADR for a material reversal, and update this index, requirement mapping and affected documents. Use the [template](template.md); include date, status, basis, requirements, context, decision, alternatives, consequences and validation. An accepted design does not mean it has been implemented or benchmarked.
+The owner selected Rust as the default with qualified exceptions, but no specific library or rendering algorithm. Jolt requires major advantages. Do not convert remaining recommendations into owner mandates. The implementation session may accept, revise or reject engineering proposals after their decision gates, recording the evidence and what informed the decision; no further owner confirmation is required for routine choices within the accepted goals. Changing product intent requires owner direction.
+
+For an accepted ADR, append implementation/evidence notes without rewriting its historical rationale. Create a superseding ADR for a material reversal, and update this index, the requirement mapping and affected documents. Use the [template](template.md). An accepted design is not evidence that it was implemented or benchmarked.
 
 ## Index
 
@@ -31,4 +38,4 @@ For an accepted ADR, append implementation/evidence notes without rewriting its 
 
 ## Current decision order
 
-Apply accepted 0014/0015 and preserve the implemented M0/M1 baseline; complete its outstanding physical-device checks. Use 0006/0007 for focused M2 experiments and the [component-selection procedure](../COMPONENT_SELECTION.md) for meaningful reuse/custom-development decisions. Subsequent lighting/physics proposals should not delay the native baseline. If hardware is absent, record a provisional engineering choice without inventing mobile performance evidence; continue independent development.
+Apply accepted 0014/0015 and preserve the implemented M0/M1 baseline; complete its outstanding physical-device checks. Use 0006/0007 for focused M2 experiments and the [component-selection procedure](../COMPONENT_SELECTION.md) for substantial reuse/custom-development decisions. Lighting and physics proposals must not delay the native baseline. If hardware is absent, record a provisional engineering choice without inventing mobile performance evidence and continue independent development.

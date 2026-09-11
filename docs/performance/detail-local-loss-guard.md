@@ -5,7 +5,7 @@ Scope: `matterweave-detail` only. Companion log:
 device-performance claim is made here; on-device approach/retreat/zoom review
 remains lead-owned.
 
-## Problem
+## What problem this solves
 
 Any-occupied coarsening fills a narrow void whenever the surrounding solid
 occupies the same coarse cell. The global dilation bias
@@ -29,19 +29,21 @@ Default bias is 0.45: tunnels pass it, thin stock fails it. Neither heuristic
 alone resolves both measured cases; together they resolve the fixtures tested
 in this document — a claim scoped to those fixtures, not to untested shapes.
 
-## Algorithm
+## How it works
 
-Per prototype revision, per factor `f` in `{2, 4}`, the digest already
-censused coarse occupancy; it now counts occupied source cells per coarse cell
-(`BTreeMap`, entries bounded by the occupied-cell count) and records:
+### Per-coarse-cell loss
+
+Per prototype revision, per factor `f` in `{2, 4}`, the digest censuses coarse
+occupancy and counts occupied source cells per coarse cell (`BTreeMap`, entries
+bounded by the occupied-cell count). It records:
 
 - `local_loss_fraction = max((expected - count) / expected)` over occupied
   coarse cells, where `expected` is the footprint size *clipped to the
   occupied cell bounds*. Clipping keeps unaligned dense cuboids at exactly
   `0.0` (boundary partial cells are fully occupied in-bounds) while a notch
-  or tunnel mouth inside a boundary cell reads `> 0`. A first version that
+  or tunnel mouth inside a boundary cell reads `> 0`. An earlier version that
   skipped non-fully-inside footprints missed exactly that boundary case and
-  was replaced (see log round 2).
+  was replaced.
 
 `choose_lod` breaks out of the coarsening walk when
 `local_loss_fraction > max_local_loss_fraction`, exactly like the dilation
@@ -51,13 +53,13 @@ the walk breaks there, so loss being non-monotone in coarseness (a tunnel
 reads `0.25` at Half and `0.0625` at Quarter) means an intermediate threshold
 between those values reaches `Source`, not `Quarter`.
 
-## Local topology gate (round 4)
+### Local topology gate
 
 Clipping alone is a *global* clip against the prototype's occupied bounds, so
 it only neutralizes the outer box: every partially filled coarse cell on a
-sloped, stepped or curved surface still read `> 0` and the `0.0` default
-pinned essentially all non-cuboid content at `Source`. Partially filled cells
-are now gated by a bounded digital-topology test before they contribute loss.
+sloped, stepped or curved surface still read `> 0` and the `0.0` default pinned
+essentially all non-cuboid content at `Source`. Partially filled cells are now
+gated by a bounded digital-topology test before they contribute loss.
 
 Per partially filled occupied coarse cell, on a `(factor + 2)^3` window (the
 footprint plus a one-cell halo; 64 sites at factor 2, 216 at factor 4, fixed
@@ -82,7 +84,7 @@ meshing/skeletonization engine, so it is ~60 lines here rather than a
 dependency. It is a bounded per-window check, **not** a proof of global
 topology preservation, and none is claimed.
 
-### Sequential evaluation (round 5)
+### Sequential evaluation
 
 Per-cell independence against the source is not sufficient. A 2x2 channel
 whose cross-section straddles coarse boundaries survives every *single* fill
@@ -117,7 +119,26 @@ Known gaps, deliberately not papered over:
 Analysis is bounded by `LOCAL_TOPOLOGY_CELL_BUDGET = 8192` analyzed cells per
 (revision, factor). Past the budget a partial cell keeps the pre-topology
 conservative verdict, which can only hold a finer level, never select an
-unsafe one. Measured on representative prototypes (unit test
+unsafe one.
+
+### Cost and allocation (not device claims)
+
+- Digest work per source revision: one pass over occupied cells (unchanged
+  shape; counts replace presence sets, adding a 4-byte count payload per
+  coarse entry plus the map's node overhead and padding under the same
+  entry-count bound), plus one constant-time footprint/bounds check per
+  occupied coarse cell per factor. No per-frame census: `select_lods` reads
+  the cached table.
+- Allocation is entry-count bounded (occupied-cell count, within
+  `MAX_VOLUME_CELLS`); that bound covers entry payloads and node overhead
+  alike, but it is not a byte-exact budget — node layout and padding are the
+  allocator's.
+- `prepare_batches`, mesh cache behavior, and all collision/query paths are
+  unchanged: collision still reads the authoritative source, never the guard.
+
+## What was verified
+
+Host only. Measured on representative prototypes (unit test
 `scene::local_topology_cost`), no fixture reaches the budget:
 
 | prototype | occupied | partial cells @2 / @4 | window site samples @2 / @4 | fallback |
@@ -134,27 +155,22 @@ unsafe one. Measured on representative prototypes (unit test
 array accesses — the two labelling passes and the neighbour scan revisit the
 same window, so total array work is a small constant multiple of the figure.
 Sequential evaluation added no cells and no samples (identical counts before
-and after round 5); it only raised some loss values, e.g. `parasol_mushroom`
+and after); it only raised some loss values, e.g. `parasol_mushroom`
 from 0.375 to 0.625 at factor 2. Worst case is `8192 * 216` samples per
 factor, once per source revision; `select_lods` still reads only the cached
 digest, and the source is never modified.
 
-## Cost quantities (not device claims)
+Behavioral evidence: `crates/matterweave-detail/tests/local_loss.rs` (9 tests
+when recorded; the file has since grown to 17). Tunnel and boundary face-pit
+held at `Source` far away under perspective and orthographic zoom, each with a
+relaxed-guard control that recovers coarsening; unaligned odd-edge dense cuboids
+(positive and negative coordinates) still reach `Quarter` while the thin sheet
+next to them stays held; adjacent touching instances both reach `Quarter` with a
+collidable seam; dense block spans `Quarter`-far/`Source`-near across both
+projections; selection + preparation leave revision, snapshot and counts
+bit-identical. Full crate: 113 passed / 14 suites; strict Clippy clean.
 
-- Digest work per source revision: one pass over occupied cells (unchanged
-  shape; counts replace presence sets, adding a 4-byte count payload per
-  coarse entry plus the map's node overhead and padding under the same
-  entry-count bound), plus one constant-time footprint/bounds check per
-  occupied coarse cell per factor. No per-frame census: `select_lods` reads
-  the cached table.
-- Allocation is entry-count bounded (occupied-cell count, within
-  `MAX_VOLUME_CELLS`); that bound covers entry payloads and node overhead
-  alike, but it is not a byte-exact budget — node layout and padding are the
-  allocator's.
-- `prepare_batches`, mesh cache behavior, and all collision/query paths are
-  unchanged: collision still reads the authoritative source, never the guard.
-
-## Conservative limits
+## Limits and open work
 
 - Enclosed voids trip the guard exactly like through-tunnels; the guard holds
   the whole prototype one level finer (or at `Source`) rather than repairing
@@ -178,18 +194,6 @@ digest, and the source is never modified.
   measured `terrain_detail_tile` and the flora prototypes still read a high
   loss (their surfaces contain genuine 1-cell pits/crevices that trip the
   four-solid-neighbour rule), so they stay at `Source` under the default.
-  Smooth stepped/sloped surfaces are the class this round unblocked.
+  Smooth stepped/sloped surfaces are the class the topology gate unblocked.
 - Negative coordinates are handled (`div_euclid` footprints); the footprint
   products cannot overflow (`|cell| <= 2^16`, `factor <= 4`).
-
-## Behavioral evidence
-
-`crates/matterweave-detail/tests/local_loss.rs` (9 tests): tunnel and
-boundary face-pit held at `Source` far away under perspective and
-orthographic zoom, each with a relaxed-guard control that recovers
-coarsening; unaligned odd-edge dense cuboids (positive and negative
-coordinates) still reach `Quarter` while the thin sheet next to them stays
-held; adjacent touching instances both reach `Quarter` with a collidable
-seam; dense block spans `Quarter`-far/`Source`-near across both projections;
-selection + preparation leave revision, snapshot and counts bit-identical.
-Full crate: 113 passed / 14 suites; strict Clippy clean.

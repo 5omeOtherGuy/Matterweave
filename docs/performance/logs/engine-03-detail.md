@@ -188,8 +188,8 @@ no second pass, no source mutation, same fixed stack scratch, same
 - `python3 tools/check_docs.py` → PASS.
 
 New tests: `joint_closure_holds_source_on_every_axis_and_on_negative_coordinates`
-(channel along each axis, block origins `[0,0,0]`, `[-16,-16,-16]`,
-`[-7,3,-21]`, cross-section start forced onto an odd global coordinate so it
+(channel along each axis, block origins `[0, 0, 0]`, `[-16, -16, -16]`,
+`[-7, 3, -21]`, cross-section start forced onto an odd global coordinate so it
 always straddles) and `stepped_wedge_still_coarsens_on_negative_coordinates`.
 
 ### Corrections made during this round

@@ -1,11 +1,14 @@
 # First playable Android slice
 
-The current implementation targets M0 and M1: an ARM64 native Android application
-with a reusable Rust voxel core, direct Vulkan rendering through ash, and a small
-original procedural exploration sample. It establishes a baseline for the larger
-engine described in [the roadmap](ROADMAP.md).
+Status: shipped as v0.1 (M0/M1). This records the acceptance criteria for that
+slice; [STATUS](STATUS.md) holds the achieved evidence and the [roadmap](ROADMAP.md)
+tracks later milestones.
 
-## Acceptance
+The slice is an ARM64 native Android application with a reusable Rust voxel core,
+direct Vulkan rendering through ash, and a small original procedural exploration
+sample.
+
+## Acceptance (all met; see STATUS)
 
 - Explore seeded, queryable voxel terrain using simultaneous touch movement,
   look and edit controls. Use a free-flying camera for this first sample.
@@ -23,10 +26,12 @@ engine described in [the roadmap](ROADMAP.md).
 
 ## Scope boundary
 
-The initial camera is an exploration tool, without a collision/rigid-body claim.
-Direct sun, ambient shading and fog form the visual baseline. Lumen-like indirect
-lighting, fine-detail LOD, streaming, physics and the second game sample remain
-subsequent milestones. A built APK alone does not satisfy physical-device gates.
+The initial camera is an exploration tool; this slice makes no collision or
+rigid-body claim. Direct sun, ambient shading and fog are its visual baseline.
+Lumen-like indirect lighting, fine-detail LOD, streaming and physics were
+subsequent milestones and are now partially implemented; full M2–M6 acceptance,
+a second game sample and broader device coverage remain open. A built APK alone
+does not satisfy physical-device gates.
 
 ## Implementation ownership
 

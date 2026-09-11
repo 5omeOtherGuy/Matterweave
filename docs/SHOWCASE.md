@@ -1,9 +1,9 @@
 # Required showcase — alien fungal wetland
 
-Status: specification, not generated content. Owner requirement, 2026-09-08:
-a small but highly detailed, dense and lush explorable map, very high voxel count,
-dense vegetation, water, complex height map, a Morrowind-esque semi-alien atmosphere,
-and carefully modeled instantly recognizable mushrooms. This is a required output
+Status: specification, not generated content. Owner requirement, 2026-09-08: a
+small, highly detailed, dense, lush explorable map with a very high voxel count,
+dense vegetation, water, a complex height map, a Morrowind-esque semi-alien
+atmosphere and carefully modeled, instantly recognizable mushrooms. Required output
 of the [optimization campaign](PERFORMANCE_PLAN.md).
 
 ## Visual direction and exploration
@@ -16,14 +16,14 @@ permission to copy Bethesda maps, models, names, textures, interface or music.
 Lushness must come from overlapping plant layers and deliberate composition, not
 uniform random scattering or a few enormous objects hiding empty ground.
 
-Initial layout target: roughly128m×128m of traversable landscape with up to64m of
-vertical extent, a loop taking about3–5 minutes to walk, a short waterside route
-and an elevated alternate route. These dimensions are proposed implementation
+Initial layout target: roughly 128 m × 128 m of traversable landscape with up to
+64 m of vertical extent, a loop taking about 3–5 minutes to walk, a short waterside
+route and an elevated alternate route. These dimensions are proposed implementation
 budgets, not newly imposed owner constraints. Traversal time must be measured.
 Provide near, middle and distant detail: roots/ground cover; clustered small fungi
 and fronds; tall mushroom canopies and twisted woody vegetation; distinctive ridge
 silhouettes. Create sheltered interiors and open vistas that expose different
-occlusion, shadow and streaming costs. Retain a bounded64-piece destruction area
+occlusion, shadow and streaming costs. Retain a bounded 64-piece destruction area
 in a clearing as an engine demonstration, not the only interesting place to visit.
 
 The terrain must have coherent drainage, slopes, terraces, gullies and local relief;
@@ -43,15 +43,18 @@ replace the requirement with triangle-only decorative models.
 
 Initial content targets, subject to documented feasibility experiments:
 
-- At least20 million occupied voxel cells represented in the fully detailed authored
-  scene, including placed instances; separately report unique stored prototype cells,
-  instance-expanded occupied cells, resident cells, meshes/triangles and bytes.
-- At least2 million of those cells in above-ground flora/surface detail, with visible
-  close-range detail. Buried terrain alone must not satisfy the density objective.
-- At least4,000 placed vegetation instances across at least4 distinctive mushroom
-  archetypes and6 other flora archetypes, distributed in convincing habitat clusters.
-- Fine flora/detail voxel sizes around6.25–12.5cm; test25cm terrain/detail volumes
-  where useful. These are source-resolution candidates, not a global coordinate-scale
+- At least 20 million occupied voxel cells represented in the fully detailed
+  authored scene, including placed instances; separately report unique stored
+  prototype cells, instance-expanded occupied cells, resident cells, meshes/triangles
+  and bytes.
+- At least 2 million of those cells in above-ground flora/surface detail, with
+  visible close-range detail. Buried terrain alone must not satisfy the density
+  objective.
+- At least 4,000 placed vegetation instances across at least 4 distinctive mushroom
+  archetypes and 6 other flora archetypes, distributed in convincing habitat
+  clusters.
+- Fine flora/detail voxel sizes around 6.25–12.5 cm; test 25 cm terrain/detail
+  volumes where useful. These are source-resolution candidates, not a global coordinate-scale
   change to apply blindly to existing physics, saves and chunk math.
 
 Counts are engineering targets for 'very high', not achieved facts. Validate them
@@ -61,7 +64,7 @@ Shared prototypes and instance-expanded counts must never be conflated. If a tar
 proves infeasible, provide the measured bottleneck and proposed change; do not quietly
 lower density and declare the original showcase satisfied.
 
-Start with one representative16m×16m tile, then expand using measured allocation,
+Start with one representative 16 m × 16 m tile, then expand using measured allocation,
 load-time and render budgets. Choose sparse storage, prototype instancing, surface
 extraction and explicit LOD based on this tile. Keep finest source data/edits intact
 when showing coarser distant detail. Pin generation parameters and hash artifacts.
@@ -88,8 +91,8 @@ Before accepting each prototype, render front/side/underside views, a solid silh
 and close/medium/distant in-engine views at recorded distances. Check cap/stem/rim
 readability, underside structure, exposed holes/winding, LOD silhouette loss and
 shadow artifacts. Lead visual judgment is required: a voxel-count test cannot prove
-recognizability. Muse/Gemini may critique images only after their image input is
-verified; findings remain candidates. The mushroom gate precedes large-scale scatter.
+recognizability. Image critique requires verified image input; findings remain
+candidates. The mushroom gate precedes large-scale scatter.
 
 ## Water, vegetation and materials
 
