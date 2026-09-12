@@ -1,0 +1,8 @@
+I/Matterweave(31098): matterweave_explorer::wetland: Wetland graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(31098): matterweave_explorer::wetland: WETLAND LOADED: 34716467 cells / 8302 placed objects; collision DetailCollisionStats { prototypes: 893, collidable_prototypes: 886, instances: 8302, static_colliders: 6659, shared_shapes: 886, source_collision_cells: 8785876, expanded_collision_cells: 33823076, merged_boxes: 60336, woken_bodies: 0 }; 2.437s
+I/Matterweave(31098): matterweave_explorer::wetland: WETLAND EDIT 1852.334ms Move closer and aim at terrain or a mushroom
+I/Matterweave(31098): matterweave_explorer::wetland: WETLAND EDIT 1857.370ms Voxel removed
+I/Matterweave(31098): matterweave_explorer::wetland: Wetland detail geometry refreshed: source=8302 half=0 quarter=0 deferred=0 resident_meshes=893
+I/Matterweave(31098): matterweave_explorer::wetland: Wetland graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(31266): matterweave_explorer::wetland: Wetland graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(31266): matterweave_explorer::wetland: WETLAND LOADED: 34716466 cells / 8302 placed objects; collision DetailCollisionStats { prototypes: 893, collidable_prototypes: 886, instances: 8302, static_colliders: 6659, shared_shapes: 886, source_collision_cells: 8785875, expanded_collision_cells: 33823075, merged_boxes: 60338, woken_bodies: 0 }; 2.433s

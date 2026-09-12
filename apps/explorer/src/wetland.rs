@@ -2,6 +2,7 @@
 //! remain separate. Legacy sandbox files are never used by this mode.
 use crate::{
     controls::{contains, Action, Camera, Controls},
+    detail_runtime::DetailRuntime,
     metrics,
     wetland_metrics::Capture,
     wetland_replay::{Replay, Route},
@@ -9,7 +10,11 @@ use crate::{
 };
 use glam::{Vec2, Vec3};
 use matterweave_core::{Mesh, World};
-use matterweave_detail::{DetailScene, Lod, Yaw};
+#[cfg(test)]
+use matterweave_detail::Yaw;
+use matterweave_detail::{
+    Camera as LodCamera, DetailScene, Lod, LodConfig, Projection, SceneVersion,
+};
 use matterweave_pacing::{
     Config as PacingConfig, FrameSample, Pacer, Policy as PacingPolicy, DEFAULT_SETTLE_FRAMES,
     MAX_DIVISOR,
@@ -77,8 +82,9 @@ fn period_changed_materially(current_ns: u64, reported_ns: u64) -> bool {
 
 struct Runtime {
     scene: DetailScene,
-    meshes: Vec<Mesh>,
-    instances: Vec<StaticInstance>,
+    /// Resident derived geometry and the per-frame camera-driven selection;
+    /// the renderer indexes the mesh pool it owns.
+    detail: WetlandDetail,
     physics: Physics,
     empty_world: World,
     dynamic: DynamicMeshCache,
@@ -92,7 +98,6 @@ struct Runtime {
     camera: Camera,
     lighting: LightingSettings,
     dirty: bool,
-    graphics_dirty: bool,
     dynamic_dirty: bool,
     counts: String,
     /// Edit-to-collision cadence: preparation is queued per edit and
@@ -177,44 +182,226 @@ fn cell_world_aabb(
     Some((lo, hi))
 }
 
-fn graphics(scene: &mut DetailScene) -> Result<(Vec<Mesh>, Vec<StaticInstance>), String> {
-    let ids = scene.prototype_ids();
-    let mut meshes = Vec::with_capacity(ids.len());
-    for id in &ids {
-        let mesh = scene
-            .prototype_mesh(id, Lod::Source)
-            .map_err(|e| e.to_string())?;
-        meshes.push(Mesh {
-            vertices: mesh.vertices.clone(),
-            indices: mesh.indices.clone(),
-            revision: mesh.revision,
-        });
+/// Vertical field of view of the wetland render projection. It must describe
+/// the same perspective as `Camera::view_projection` in `controls.rs`; the
+/// `lod_camera_matches_the_render_projection` test fails if the two drift apart.
+const WETLAND_FOV_RAD: f32 = 65.0 * std::f32::consts::PI / 180.0;
+/// Near-plane distance of the wetland render projection (metres).
+const WETLAND_NEAR_M: f32 = 0.1;
+/// Per-prepare cap on newly realized coarse levels. An instance whose coarse
+/// level is capped resolves to its authoritative `Source` mesh instead, so a
+/// frame's coarsening work — and the full static-scene install a new resident
+/// level requires — stays bounded.
+const MAX_COARSE_BUILDS_PER_PREPARE: usize = 2;
+
+/// The LOD camera for one frame, built from the camera the render pass uses.
+/// The engine projects its error estimates through this view, so it must see
+/// the real viewport height in the same physical pixels the window reports and
+/// the same perspective `Camera::view_projection` draws with.
+fn lod_camera(camera: &Camera, viewport_height_px: f32) -> LodCamera {
+    LodCamera {
+        eye_m: camera.position.to_array(),
+        forward_m: camera.forward().to_array(),
+        viewport_height_px,
+        near_m: WETLAND_NEAR_M,
+        projection: Projection::Perspective {
+            vertical_fov_rad: WETLAND_FOV_RAD,
+        },
     }
-    let instances = scene
-        .draws()
-        .into_iter()
-        .map(|draw| StaticInstance {
-            prototype: ids
-                .binary_search(&draw.prototype)
-                .expect("scene prototype order"),
-            translation: draw.transform.translation_m,
-            yaw_quarters: match draw.transform.yaw {
-                Yaw::Deg0 => 0,
-                Yaw::Deg90 => 1,
-                Yaw::Deg180 => 2,
-                Yaw::Deg270 => 3,
+}
+
+/// Install work the current selection requires from the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticUpdate {
+    /// Resident geometry and packed instances already match the renderer.
+    Current,
+    /// Resident geometry was added or revised (or the surface is fresh): the
+    /// renderer must replace its whole static scene before it can draw the new
+    /// selection.
+    Replace,
+    /// Geometry is unchanged; only the packed placements moved.
+    Instances,
+}
+
+/// Production automatic-detail state for the wetland frame path.
+///
+/// [`DetailRuntime`] owns the resident derived geometry pool. This wrapper adds
+/// the bounded selection policy, remembers the exact camera and source version
+/// the current selection was prepared from (so an idle frame does not walk
+/// every instance again), and tracks what the renderer accepted so a frame with
+/// unchanged placements does no GPU work.
+struct WetlandDetail {
+    runtime: DetailRuntime,
+    config: LodConfig,
+    /// View the current `instances` were prepared for.
+    prepared_camera: Option<LodCamera>,
+    /// Source version the current `instances` were prepared from.
+    prepared_version: Option<SceneVersion>,
+    /// Selection to draw, referencing [`Self::runtime`]'s mesh pool.
+    instances: Vec<StaticInstance>,
+    /// Instances the renderer accepted at the last successful install.
+    installed: Vec<StaticInstance>,
+    /// The renderer needs a full static-scene replace before the next instance
+    /// update: set on surface (re)creation, when resident geometry changed, and
+    /// after a failed install; cleared only by a successful replace.
+    reinstall: bool,
+    /// Instances the last prepare degraded to `Source` because its cap or a
+    /// budget could not realize the requested level.
+    deferred: usize,
+    /// True while a stationary re-prepare is still expected to shrink
+    /// `deferred`; cleared when it makes no progress.
+    pending: bool,
+}
+
+impl WetlandDetail {
+    fn new() -> Self {
+        Self {
+            runtime: DetailRuntime::new(),
+            config: LodConfig {
+                max_coarse_builds: Some(MAX_COARSE_BUILDS_PER_PREPARE),
+                ..LodConfig::default()
             },
-        })
-        .collect();
-    Ok((meshes, instances))
+            prepared_camera: None,
+            prepared_version: None,
+            instances: Vec::new(),
+            installed: Vec::new(),
+            // No renderer has accepted geometry yet.
+            reinstall: true,
+            deferred: 0,
+            pending: false,
+        }
+    }
+
+    /// Realizes the authoritative `Source` geometry of the whole scene into the
+    /// resident pool once, off the frame path. This preserves the previous
+    /// wetland behavior (every Source mesh valid and ready before the first
+    /// world frame, and an unbuildable save rejected during recovery) and keeps
+    /// a capped coarse selection cheap: it falls back to pool-resident `Source`
+    /// instead of acquiring geometry during play. Coarse levels stay lazy.
+    fn warm_source(&mut self, scene: &mut DetailScene, camera: &Camera) -> Result<(), String> {
+        let source_only = LodConfig {
+            max_lod: Lod::Source,
+            ..self.config
+        };
+        self.runtime
+            .prepare(scene, &lod_camera(camera, 1.0), &source_only)?;
+        Ok(())
+    }
+
+    /// The surface was created or recreated: no renderer-resident geometry
+    /// survives, so the next frame must fully replace the static scene even
+    /// when the selection itself has not moved.
+    fn rearm(&mut self) {
+        self.reinstall = true;
+    }
+
+    /// Prepare this frame's camera-driven selection when the view or the
+    /// authoritative source moved, then report what the renderer needs. An
+    /// unchanged pair reuses the resident selection: no mesh is realized,
+    /// copied into the pool or re-uploaded while nothing moved.
+    ///
+    /// `max_coarse_builds` caps one prepare, so a stationary camera can still
+    /// have requested coarse levels outstanding; a repeat prepare runs while
+    /// the deferred set shrinks and stops once it is empty or stops making
+    /// progress (out-of-range scale or the mesh budget cannot be fixed by
+    /// waiting).
+    fn update(
+        &mut self,
+        scene: &mut DetailScene,
+        camera: &Camera,
+        viewport_height_px: f32,
+    ) -> Result<StaticUpdate, String> {
+        let view = lod_camera(camera, viewport_height_px);
+        let version = scene.source_version();
+        let repeated =
+            self.prepared_camera == Some(view) && self.prepared_version.as_ref() == Some(&version);
+        if !repeated || self.pending {
+            let frame = self.runtime.prepare(scene, &view, &self.config)?;
+            let deferred = frame
+                .frame
+                .selected
+                .iter()
+                .filter(|item| item.fallback)
+                .count();
+            // A capped prepare defers the coarse levels it could not realize.
+            // Keep preparing while a stationary repeat shrinks that deferred
+            // set; a repeat that does not shrink it proves those instances are
+            // held at `Source` by something the cap cannot fix, so stop
+            // repeating rather than preparing every idle frame forever.
+            self.pending = deferred > 0 && (!repeated || deferred < self.deferred);
+            self.deferred = deferred;
+            if frame.geometry_changed {
+                self.reinstall = true;
+                let counts = crate::detail_runtime::lod_histogram(&frame.frame);
+                log::info!(
+                    "Wetland detail geometry refreshed: source={} half={} quarter={} deferred={} resident_meshes={}",
+                    counts.get(&Lod::Source).copied().unwrap_or(0),
+                    counts.get(&Lod::Half).copied().unwrap_or(0),
+                    counts.get(&Lod::Quarter).copied().unwrap_or(0),
+                    deferred,
+                    self.runtime.meshes().len(),
+                );
+            }
+            self.instances = frame.instances;
+            self.prepared_camera = Some(view);
+            self.prepared_version = Some(version);
+        }
+        Ok(self.install_update())
+    }
+
+    /// What the renderer must do for the current selection.
+    fn install_update(&self) -> StaticUpdate {
+        if self.reinstall {
+            StaticUpdate::Replace
+        } else if self.instances != self.installed {
+            StaticUpdate::Instances
+        } else {
+            StaticUpdate::Current
+        }
+    }
+
+    /// Record that the renderer accepted the current selection.
+    fn mark_installed(&mut self) {
+        self.reinstall = false;
+        self.installed.clone_from(&self.instances);
+    }
+
+    /// A failed install leaves the renderer on its previous scene. The next
+    /// frame retries with a full replace so an instance-only update can never
+    /// reference geometry the renderer does not hold.
+    fn mark_install_failed(&mut self) {
+        self.reinstall = true;
+    }
+
+    /// Resident derived mesh pool; instance prototype indices address this.
+    fn meshes(&self) -> &[Mesh] {
+        self.runtime.meshes()
+    }
+
+    /// The current packed selection.
+    fn instances(&self) -> &[StaticInstance] {
+        &self.instances
+    }
+}
+
+/// Realizes the authoritative `Source` mesh of every prototype, preserving the
+/// load-time drawability validation the previous whole-scene graphics build
+/// performed. [`WetlandDetail`] owns the pool and realizes only the levels the
+/// camera selects; this validates a candidate source and warms the engine's
+/// derived-mesh cache without cloning any of it.
+fn validate_source(scene: &mut DetailScene) -> Result<(), String> {
+    for id in scene.prototype_ids() {
+        scene
+            .prototype_mesh(&id, Lod::Source)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 struct PreparedJournal {
     spawn: [f32; 3],
     physics: Physics,
     collision: DetailCollisionStats,
-    meshes: Vec<Mesh>,
-    instances: Vec<StaticInstance>,
 }
 
 /// Validates candidate source, collision, bodies, player pose and derived meshes
@@ -264,7 +451,7 @@ fn apply_journal(
         eye,
         ..save.physics.clone()
     })?;
-    let (meshes, instances) = graphics(&mut fork)?;
+    validate_source(&mut fork)?;
     if eye != desired {
         log::warn!("Wetland saved viewpoint {desired:?} was inside source; moved to {eye:?}");
         eprintln!("WETLAND POSE CORRECTED: {desired:?} -> {eye:?}");
@@ -276,8 +463,6 @@ fn apply_journal(
         spawn: entrance.unwrap_or(eye),
         physics,
         collision,
-        meshes,
-        instances,
     })
 }
 
@@ -334,20 +519,16 @@ impl Runtime {
             mut spawn,
             mut physics,
             collision,
-            meshes,
-            instances,
         } = match restored {
             Some(value) => value,
             None => {
                 let mut physics = Physics::new(&empty_world);
                 let collision = physics.replace_detail_scene(&scene)?;
-                let (meshes, instances) = graphics(&mut scene)?;
+                validate_source(&mut scene)?;
                 PreparedJournal {
                     spawn,
                     physics,
                     collision,
-                    meshes,
-                    instances,
                 }
             }
         };
@@ -373,6 +554,8 @@ impl Runtime {
             camera.position = Vec3::from_array(spawn);
             Vec::new()
         };
+        let mut detail = WetlandDetail::new();
+        detail.warm_source(&mut scene, &camera)?;
         let counts = scene.counts();
         if counts.expanded_occupied_cells < 20_000_000 || counts.instances < 4_000 {
             return Err("Showcase generator failed its full-world density gate".into());
@@ -391,8 +574,7 @@ impl Runtime {
         );
         let mut runtime = Self {
             scene,
-            meshes,
-            instances,
+            detail,
             physics,
             empty_world,
             dynamic: DynamicMeshCache::default(),
@@ -406,7 +588,6 @@ impl Runtime {
             camera,
             lighting,
             dirty: false,
-            graphics_dirty: true,
             dynamic_dirty: true,
             counts,
             collision: DetailCollisionCadence::new(),
@@ -478,15 +659,24 @@ impl Runtime {
         self.scene
             .edit_instance(&hit.instance, cell, value)
             .map_err(|e| e.to_string())?;
-        let (meshes, instances) = match graphics(&mut self.scene) {
-            Ok(graphics) => graphics,
-            Err(error) => {
-                self.scene
-                    .edit_instance(&hit.instance, cell, old)
-                    .map_err(|e| e.to_string())?;
-                return Err(error);
-            }
-        };
+        // Realize the edited prototype's authoritative Source before the edit
+        // is confirmed. This replaces the previous whole-scene graphics rebuild
+        // (which copied every prototype's Source vertices on every edit): only
+        // the edited prototype is realized here, and the frame path refreshes
+        // exactly the selected levels it draws. An edit whose source the
+        // derived-mesh budget cannot serve is rolled back as before.
+        let edited = self
+            .scene
+            .draws()
+            .into_iter()
+            .find(|draw| draw.instance == hit.instance)
+            .ok_or("Object is no longer present")?;
+        if let Err(error) = self.scene.prototype_mesh(&edited.prototype, Lod::Source) {
+            self.scene
+                .edit_instance(&hit.instance, cell, old)
+                .map_err(|e| e.to_string())?;
+            return Err(error.to_string());
+        }
         // The world-space box of the edited cell: the publication gate defers
         // the new collision while a body overlaps it. Only newly added solid
         // material gates; removals publish as soon as preparation completes.
@@ -550,9 +740,6 @@ impl Runtime {
                 return Err(error);
             }
         }
-        self.meshes = meshes;
-        self.instances = instances;
-        self.graphics_dirty = true;
         if let Some(edit) = self
             .edits
             .iter_mut()
@@ -603,14 +790,10 @@ impl Runtime {
                 for pending in self.pending_edits.drain(..).rev() {
                     pending.rollback(&mut self.scene, &mut self.edits);
                 }
-                // The reverted content is exactly what graphics accepted
-                // before, so this only fails if the scene is otherwise
-                // corrupt; the last meshes stay up rather than blanking.
-                if let Ok((meshes, instances)) = graphics(&mut self.scene) {
-                    self.meshes = meshes;
-                    self.instances = instances;
-                    self.graphics_dirty = true;
-                }
+                // The reverted source carries a new revision, so the next
+                // frame's detail update refreshes the selected levels and
+                // reinstalls them. Nothing is forced here: the previous derived
+                // geometry stays up rather than blanking.
                 self.dirty = true;
                 // Re-queue the reverted source; its publication restores the
                 // collision/scene match (it is usually already live). The
@@ -1229,14 +1412,38 @@ impl WetlandApp {
         }
         let (camera, lighting) = if let Some(r) = &mut self.runtime {
             let sync_start = Instant::now();
-            if r.graphics_dirty {
-                if let Err(e) = renderer.replace_static_scene(&r.meshes, &r.instances) {
-                    self.status = e;
-                    self.failed = true;
-                    event_loop.exit();
-                    return;
+            // Camera-driven detail: the merged runtime owns the resident derived
+            // geometry, selects a level per instance for this frame's view and
+            // reports whether the renderer needs new geometry or only new
+            // placements. An unchanged view reprepares nothing.
+            match r.detail.update(&mut r.scene, &r.camera, size.height as f32) {
+                Ok(StaticUpdate::Current) => {}
+                Ok(update) => {
+                    let installed = match update {
+                        StaticUpdate::Replace => renderer
+                            .replace_static_scene(r.detail.meshes(), r.detail.instances())
+                            .map(|_| ()),
+                        StaticUpdate::Instances => renderer
+                            .update_static_instances(r.detail.instances())
+                            .map(|_| ()),
+                        StaticUpdate::Current => Ok(()),
+                    };
+                    match installed {
+                        Ok(()) => r.detail.mark_installed(),
+                        Err(error) => {
+                            // Keep the last accepted static scene on screen and
+                            // retry a full replace next frame rather than
+                            // failing the session or drawing stale placements.
+                            r.detail.mark_install_failed();
+                            self.status = error;
+                            log::error!("Wetland detail install failed: {}", self.status);
+                        }
+                    }
                 }
-                r.graphics_dirty = false;
+                Err(error) => {
+                    self.status = format!("Detail update failed: {error}");
+                    log::error!("Wetland detail update failed: {error}");
+                }
             }
             row.mesh_sync_wall_ms = Some(sync_start.elapsed().as_secs_f64() * 1000.);
             row.chunk_mesh_uploads = Some(0);
@@ -1418,7 +1625,7 @@ impl ApplicationHandler for WetlandApp {
                 self.rearm_pacing(&window);
                 self.window = Some(window);
                 if let Some(r) = &mut self.runtime {
-                    r.graphics_dirty = true;
+                    r.detail.rearm();
                     r.dynamic_dirty = true;
                 }
             }
@@ -2248,5 +2455,384 @@ mod pacing_tests {
         // 60 Hz <-> 120 Hz, and 120 Hz -> 90 Hz, are genuine display changes.
         assert!(period_changed_materially(8_333_333, 16_666_667));
         assert!(period_changed_materially(16_666_667, 11_111_111));
+    }
+}
+
+/// Production detail path: the same [`WetlandDetail`] wrapper the frame path
+/// drives, backed by the real [`DetailRuntime`] and real source edits, on small
+/// fixtures (never the full showcase map).
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+    use matterweave_detail::{material, DetailVolume, Scale, Transform, SCALE_FINE_M};
+
+    const VIEWPORT_PX: f32 = 1080.0;
+
+    fn dense(id: &str, edge: i32) -> DetailVolume {
+        let mut volume = DetailVolume::new(id, Scale::new(SCALE_FINE_M).unwrap());
+        for x in 0..edge {
+            for y in 0..edge {
+                for z in 0..edge {
+                    volume.set([x, y, z], material::BANK_STONE).unwrap();
+                }
+            }
+        }
+        volume
+    }
+
+    fn boulder_scene() -> DetailScene {
+        let mut scene = DetailScene::new();
+        scene.add_prototype(dense("boulder", 8)).unwrap();
+        scene
+            .place("near", "boulder", Transform::identity())
+            .unwrap();
+        scene
+    }
+
+    fn boulder_and_keeper_scene() -> DetailScene {
+        let mut scene = boulder_scene();
+        scene.add_prototype(dense("keeper", 4)).unwrap();
+        scene
+            .place(
+                "keeper_placed",
+                "keeper",
+                Transform::new([6.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+            )
+            .unwrap();
+        scene
+    }
+
+    /// App camera at `position` looking along -Z (yaw pi), as the wetland route does.
+    fn looking_at_origin(position: Vec3) -> Camera {
+        Camera {
+            position,
+            yaw: std::f32::consts::PI,
+            pitch: 0.0,
+        }
+    }
+
+    fn selected_lod(detail: &WetlandDetail, prototype: &str, packed: &StaticInstance) -> Lod {
+        [Lod::Source, Lod::Half, Lod::Quarter]
+            .into_iter()
+            .find(|lod| detail.runtime.instance_index(prototype, *lod) == Some(packed.prototype))
+            .expect("published instance must reference a resident level")
+    }
+
+    #[test]
+    fn production_selection_tracks_the_view_without_mutating_source() {
+        let mut scene = boulder_scene();
+        let version = scene.source_version();
+        let revision = scene.prototype("boulder").unwrap().revision();
+        let counts = scene.counts();
+
+        let mut detail = WetlandDetail::new();
+        let near = detail
+            .update(
+                &mut scene,
+                &looking_at_origin(Vec3::new(0.2, 0.2, 2.0)),
+                VIEWPORT_PX,
+            )
+            .unwrap();
+        assert_eq!(near, StaticUpdate::Replace);
+        let near_lod = selected_lod(&detail, "boulder", &detail.instances()[0]);
+        assert_eq!(near_lod, Lod::Source);
+
+        let far = detail
+            .update(
+                &mut scene,
+                &looking_at_origin(Vec3::new(0.2, 0.2, 220.0)),
+                VIEWPORT_PX,
+            )
+            .unwrap();
+        assert_eq!(far, StaticUpdate::Replace, "a coarse level is new geometry");
+        let far_lod = selected_lod(&detail, "boulder", &detail.instances()[0]);
+        assert!(far_lod > near_lod, "far camera chose {far_lod:?}");
+        assert_eq!(
+            detail.runtime.revision("boulder", far_lod),
+            Some(revision),
+            "the coarse copy carries the live source revision"
+        );
+
+        // Selection is derived: authoritative source cells, version and bytes
+        // are untouched by any prepare. `counts` also reports engine-side
+        // derived-cache statistics, which a prepare is expected to grow.
+        let after = scene.counts();
+        assert_eq!(
+            after.expanded_occupied_cells,
+            counts.expanded_occupied_cells
+        );
+        assert_eq!(after.unique_stored_cells, counts.unique_stored_cells);
+        assert_eq!(after.source_bytes, counts.source_bytes);
+        assert_eq!(scene.source_version(), version);
+        assert_eq!(scene.prototype("boulder").unwrap().revision(), revision);
+    }
+
+    #[test]
+    fn edited_placement_refreshes_geometry_and_republishes_without_stale_revisions() {
+        let mut scene = boulder_and_keeper_scene();
+        let mut detail = WetlandDetail::new();
+        let camera = looking_at_origin(Vec3::new(0.2, 0.2, 2.0));
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace
+        );
+        detail.mark_installed();
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Current
+        );
+
+        let stale = scene.prototype("boulder").unwrap().revision();
+        let keeper_before = detail.runtime.revision("keeper", Lod::Source);
+        assert!(scene.edit_instance("near", [4, 4, 4], 0).unwrap());
+        assert_ne!(scene.prototype("boulder").unwrap().revision(), stale);
+
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace,
+            "a real placement edit must refresh derived geometry"
+        );
+        let edited_prototype = scene
+            .draws()
+            .into_iter()
+            .find(|draw| draw.instance == "near")
+            .unwrap()
+            .prototype;
+        let edited_revision = scene.prototype(&edited_prototype).unwrap().revision();
+        let near = detail
+            .instances()
+            .iter()
+            .find(|instance| instance.translation == [0.0, 0.0, 0.0])
+            .expect("the edited boulder is still published");
+        assert_eq!(detail.meshes()[near.prototype].revision, edited_revision);
+        assert_ne!(detail.meshes()[near.prototype].revision, stale);
+        assert_eq!(
+            detail.runtime.revision("keeper", Lod::Source),
+            keeper_before,
+            "an untouched prototype is not refreshed"
+        );
+
+        detail.mark_installed();
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Current,
+            "the edit is published once, not re-installed every frame"
+        );
+    }
+
+    #[test]
+    fn recreated_surface_reinstalls_the_current_selection() {
+        let mut scene = boulder_scene();
+        let mut detail = WetlandDetail::new();
+        let camera = looking_at_origin(Vec3::new(0.2, 0.2, 2.0));
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace
+        );
+        detail.mark_installed();
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Current
+        );
+        let selection = detail.instances().to_vec();
+
+        detail.rearm();
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace,
+            "a recreated surface lost its geometry and must be repopulated"
+        );
+        assert_eq!(
+            detail.instances(),
+            selection.as_slice(),
+            "reinstall republishes the current selection, not a new one"
+        );
+        detail.mark_installed();
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Current
+        );
+    }
+
+    #[test]
+    fn lod_camera_matches_the_render_projection() {
+        use glam::Mat4;
+
+        // Pitch stays zero so +Y is preserved in the view basis: the combined
+        // matrix's vertical scale then comes straight from the render
+        // projection `controls::Camera::view_projection` builds.
+        let camera = Camera {
+            position: Vec3::new(4.0, 6.0, 8.0),
+            yaw: 0.9,
+            pitch: 0.0,
+        };
+        let lod = lod_camera(&camera, 900.0);
+        assert_eq!(lod.eye_m, camera.position.to_array());
+        assert_eq!(lod.forward_m, camera.forward().to_array());
+        assert_eq!(lod.viewport_height_px, 900.0);
+
+        let view_projection = Mat4::from_cols_array_2d(&camera.view_projection(16.0 / 9.0));
+        // glam's `perspective_rh` stores 1/tan(fov_y/2) in m11. The engine's
+        // pixels-per-metre must use that same vertical scale, or production
+        // selection would run against a field of view the renderer never draws.
+        let render_y_scale = view_projection.y_axis.y;
+        let lod_y_scale = 2.0 * lod.pixels_per_metre(1.0) / 900.0;
+        assert!(
+            (lod_y_scale - render_y_scale).abs() < 1e-5,
+            "lod fov {} disagrees with the render projection",
+            WETLAND_FOV_RAD
+        );
+        // A point exactly `near_m` ahead of the render camera maps to ndc z 0,
+        // so the engine clamps depth at the same near plane the renderer uses.
+        let near_point = camera.position + camera.forward() * lod.near_m;
+        let clip = view_projection * near_point.extend(1.0);
+        assert!(
+            (clip.z / clip.w).abs() < 1e-4,
+            "lod near {} is not the render near plane",
+            lod.near_m
+        );
+    }
+
+    /// Three dense prototypes further apart than the production coarse cap, all
+    /// requesting a coarse level from one distant view.
+    fn far_triple_scene() -> DetailScene {
+        let mut scene = DetailScene::new();
+        for (index, name) in ["a", "b", "c"].into_iter().enumerate() {
+            scene.add_prototype(dense(name, 8)).unwrap();
+            scene
+                .place(
+                    name,
+                    name,
+                    Transform::new([index as f32 * 8.0, 0.0, 0.0], Yaw::Deg0).unwrap(),
+                )
+                .unwrap();
+        }
+        scene
+    }
+
+    /// Resident coarse levels of the [`far_triple_scene`] prototypes.
+    fn coarse_resident(detail: &WetlandDetail) -> usize {
+        ["a", "b", "c"]
+            .into_iter()
+            .map(|name| {
+                [Lod::Half, Lod::Quarter]
+                    .into_iter()
+                    .filter(|lod| detail.runtime.instance_index(name, *lod).is_some())
+                    .count()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn coarse_builds_per_prepare_are_capped_and_capped_instances_fall_back_to_source() {
+        let mut scene = far_triple_scene();
+        let mut detail = WetlandDetail::new();
+        let cap = detail
+            .config
+            .max_coarse_builds
+            .expect("production config is bounded");
+        assert!(cap > 0 && cap < 3, "the fixture must exceed the cap: {cap}");
+        let update = detail
+            .update(
+                &mut scene,
+                &looking_at_origin(Vec3::new(8.0, 0.2, 400.0)),
+                VIEWPORT_PX,
+            )
+            .unwrap();
+        assert_eq!(update, StaticUpdate::Replace);
+        assert_eq!(
+            coarse_resident(&detail),
+            cap,
+            "one prepare must realize at most its capped coarse levels"
+        );
+        assert_eq!(
+            detail.instances().len(),
+            3,
+            "capped instances still draw from Source"
+        );
+        for instance in detail.instances() {
+            assert!(!detail.meshes()[instance.prototype].vertices.is_empty());
+        }
+    }
+
+    #[test]
+    fn stationary_reprepares_converge_capped_coarse_levels_and_then_stop() {
+        let mut scene = far_triple_scene();
+        let mut detail = WetlandDetail::new();
+        let cap = detail
+            .config
+            .max_coarse_builds
+            .expect("production config is bounded");
+        assert!(cap > 0 && cap < 3, "the fixture must exceed the cap: {cap}");
+        let camera = looking_at_origin(Vec3::new(8.0, 0.2, 400.0));
+
+        // Frame one realizes only the capped number of new coarse levels.
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace
+        );
+        assert_eq!(coarse_resident(&detail), cap);
+        detail.mark_installed();
+
+        // A stationary camera must not strand the deferred level at Source:
+        // the next bounded prepare realizes it.
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace,
+            "the deferred coarse level is realized on the next stationary frame"
+        );
+        assert_eq!(
+            coarse_resident(&detail),
+            3,
+            "all requested coarse levels are resident"
+        );
+        detail.mark_installed();
+
+        // Converged: another stationary frame repeats no selection work and no
+        // GPU install.
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Current
+        );
+    }
+
+    #[test]
+    fn emptied_prototype_is_omitted_and_the_rest_still_publishes() {
+        let mut scene = boulder_and_keeper_scene();
+        let mut detail = WetlandDetail::new();
+        let camera = looking_at_origin(Vec3::new(0.2, 0.2, 2.0));
+        detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap();
+        detail.mark_installed();
+        assert_eq!(detail.instances().len(), 2);
+
+        // Clear every cell of one placed prototype: an ordinary destructive edit.
+        for x in 0..8 {
+            for y in 0..8 {
+                for z in 0..8 {
+                    scene
+                        .edit_prototype("boulder", [x, y, z], material::AIR)
+                        .unwrap();
+                }
+            }
+        }
+        assert_eq!(scene.prototype("boulder").unwrap().occupied_cells(), 0);
+        assert_eq!(
+            detail.update(&mut scene, &camera, VIEWPORT_PX).unwrap(),
+            StaticUpdate::Replace,
+            "an emptied prototype changes derived geometry"
+        );
+        assert_eq!(
+            detail.instances().len(),
+            1,
+            "the emptied prototype contributes no drawable instance"
+        );
+        assert_eq!(
+            detail.instances()[0].translation,
+            [6.0, 0.0, 0.0],
+            "the other instance still publishes"
+        );
+        assert!(!detail.meshes()[detail.instances()[0].prototype]
+            .vertices
+            .is_empty());
     }
 }
