@@ -1042,6 +1042,29 @@
     "streaming_progress_review": {
       "worker": "w_33e7ed68",
       "state": "completed-critical-finding-accepted"
+    },
+    "shared_controls": {
+      "state": "dispatching",
+      "profile": "muse-free",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/shared-controls",
+      "base": "495d9f97edd3c2e4886b3506de7d69fa60fe6445",
+      "ownership": "settings, controls, experience, wetland, Relay; lib module/settings setter only",
+      "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/shared-controls.md"
     }
+  },
+  "pr36_39_glm_review": {
+    "state": "running",
+    "profile": "glm-flash-openrouter",
+    "model": "z-ai/glm-5.3-flash",
+    "thinking": "high",
+    "reason": "Owner corrected model choice to Flash. Full GLM attempts preserved; maxTokens16384. Muse429, fullGLM concurrent-credit402. Opus repairs; GLMFlash final reviews.",
+    "lighting_review": "w_46c2ce3f",
+    "streaming_review_repair": "w_350b3d2e",
+    "lead_gate": "combined Android, verified findings, passing CI, merge both PRs",
+    "base_main": "495d9f97edd3c2e4886b3506de7d69fa60fe6445",
+    "streaming_repair": "w_ec3c1fcb",
+    "interaction_anr_repair": "w_c9034355",
+    "interaction_scope": "isolated interaction-anr branch: app wetland queries; real Android ANR recorded",
+    "android": "PR36 mesh-lighting300presentations PASS twice, second HOME/resume1/1; merged D1 detail gate FAIL phase0 deferral on Android, not closed"
   }
 }

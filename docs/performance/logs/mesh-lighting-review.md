@@ -47,3 +47,27 @@ occupied-cell label. The worker's 11 focused checks and native30-frame run passe
 GPU accounting retains42336 world bytes after removing static instances. This
 resolves both initial diagnostic findings at host level; combined Android visual
 acceptance remains pending. Original field defaults and proxy identity are unchanged.
+
+## Owner-requested GLM 5.3 Flash review
+
+Reviewer `w_46c2ce3f`, exact OpenRouter `z-ai/glm-5.3-flash`, high, completed
+review of45ab5de versus main495d9f9, resuming preserved source-reading context
+from the owner's initially specified full GLM5.3 route. Full-GLM attempts alone
+are not counted as completed reviews. No Astra worker was used.
+
+- F1 (proxy attached after rendered geometry removed): the methods validate
+  caller-supplied identity, not GPU-derived coverage. This was an explicit caller
+  responsibility, and a blanket rejection would also reject valid empty proxies.
+  Kept the API behavior; clarified both method contracts that obsolete cells must
+  be removed and an old digest cannot establish current-scene correspondence.
+  This remains a documented caller precondition, not automatic coverage proof.
+- F2 (report-write panic): confirmed. Replaced the report sink panic with a
+  platform error log and terminal failed state. Event-loop handling exits cleanly;
+  later PASS records are suppressed. Deterministic tests cover unavailable sink
+  at startup and failure after a successful initial report; no permission-based
+  test that would spuriously pass as root.
+
+The baseline candidate passed physical Android five-phase publication and
+HOME/resume before this report-error handling correction. Relevant corrective
+host checks and final APK checks are recorded in STATUS; no full-production GI,
+subcell identity or thermal acceptance is inferred.

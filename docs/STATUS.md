@@ -1,5 +1,38 @@
 # Current status
 
+## PR36/39 acceptance and interaction incident — 2026-09-12
+
+Main is `495d9f9` (PR37 streaming contract tests and PR38 detail diagnostic merged).
+PR36 (`45ab5de`) and PR39 (`343dc36` plus preserved corrective work) remain draft
+until their explicit reviews/checks pass. The owner corrected the requested review
+model to OpenRouter **GLM 5.3 Flash** (`z-ai/glm-5.3-flash`, high). Previous full
+GLM attempts and Muse quota failures are preserved, not counted as completed reviews.
+Opus subscription workers repair the streaming counter and the interaction incident;
+no Astra workers. The board records current identities.
+
+PR36 Android mesh-lighting functional gate PASS at `45ab5de`: five phases, 300
+presentations; second run also PASS with one real HOME/resume. Source/API rejection,
+matching proxy publication, move invalidation, recompute and removal are covered.
+[Manifest and exact reports](evidence/2026-09-12-pr36-lighting/manifest.json).
+This is not full-scene production GI, pixel-quality or performance acceptance.
+GLM Flash review found a caller-contract clarification and a report-write panic.
+The documentation is clarified and report failures now terminate as failed gates;
+13 focused mesh-lighting tests and scoped strict app Clippy pass after correction.
+Formatting and documentation checks pass.
+
+The separate merged detail diagnostic FAILS on this Android viewport in phase0:
+its cold bounded-convergence guard observes no deferred levels. Host tests had
+passed; the physical result supersedes any inferred Android completion. M2 remains
+open. Raw report is preserved in the healthy recovery orchestration/pr36-device directory.
+
+Owner reports Wetland/Amber Mine BREAK/THROW/PLACE/GRAB freezes and recovery.
+Android recorded a real input ANR at23:25:55 (waited5001ms for MotionEvent), with
+android_main CPU97% during the short sample. The shared action ray query repeatedly
+scans occupied cells for per-instance bounds; investigation and a narrow corrective
+branch are in progress. This is an existing installed-build incident, not evidence
+that either draft PR caused it. Fresh backups include all five current JSON saves.
+
+
 ## Post-reboot primary-plan development — 2026-09-12
 
 The owner prioritizes development batches over repeated intermediate live checks.

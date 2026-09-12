@@ -1528,6 +1528,10 @@ impl Renderer {
     /// resource replacement also disables it. Mesh-only geometry requires an
     /// attached proxy and its current caller-supplied digest. The digest identifies
     /// the occupied proxy grid, not sub-cell geometry or complete scene coverage.
+    /// The renderer rejects missing proxies when mesh geometry is resident, but
+    /// does not derive a proxy from GPU buffers or reject an attached empty proxy.
+    /// The caller must also remove obsolete proxy cells when geometry is removed;
+    /// resubmitting an old pack with its old digest is not a current-scene check.
     /// Pass `None` for a unit-voxel-only scene.
     pub fn upload_indirect(
         &mut self,
@@ -1566,6 +1570,10 @@ impl Renderer {
     /// Mesh-only geometry requires `pack_with_mesh` and the digest of the current
     /// caller-built proxy. This checks proxy grid identity, not sub-cell movement
     /// or complete coverage of resident geometry; the caller owns coverage.
+    /// The renderer rejects missing proxies when mesh geometry is resident, but
+    /// does not derive a proxy from GPU buffers or reject an attached empty proxy.
+    /// The caller must also remove obsolete proxy cells when geometry is removed;
+    /// resubmitting an old pack with its old digest is not a current-scene check.
     /// Pass `None` for a unit-voxel-only scene. Any later geometry
     /// upload or shadow-resource replacement disables reflection until republished.
     /// The sun is a live per-frame uniform rather than baked data, so a sun change

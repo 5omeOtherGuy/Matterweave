@@ -335,7 +335,7 @@ pub(crate) struct MeshLightingCheck {
 
 impl MeshLightingCheck {
     pub(crate) fn new(report_path: PathBuf) -> Self {
-        let check = Self {
+        let mut check = Self {
             report_path,
             report: vec![
                 "Matterweave mesh lighting check report (standalone; no user save is read or written)"
@@ -375,12 +375,21 @@ impl MeshLightingCheck {
         self.failed
     }
 
-    fn write_report(&self) {
-        std::fs::write(&self.report_path, self.report.join("\n") + "\n")
-            .expect("write mesh lighting check report");
+    fn write_report(&mut self) {
+        if let Err(error) = std::fs::write(&self.report_path, self.report.join("\n") + "\n") {
+            // The report sink itself is unavailable: log the failure through the
+            // platform logger and terminate with a failed gate, without panicking
+            // or recursively trying to write another report.
+            log::error!("FAIL mesh-lighting: report write failed: {error}");
+            self.failed = true;
+            self.finished = true;
+        }
     }
 
     fn record(&mut self, entry: String) {
+        if self.failed {
+            return;
+        }
         log::info!("{entry}");
         #[cfg(not(target_os = "android"))]
         eprintln!("{entry}");
@@ -942,6 +951,9 @@ impl MeshLightingCheck {
             phase_name(self.phase),
             evidence.join(" | ")
         ));
+        if self.failed {
+            return Err("report write failed".into());
+        }
         self.phase += 1;
         self.phase_presented = 0;
         self.prepared = None;
@@ -965,6 +977,10 @@ impl MeshLightingCheck {
 
 impl ApplicationHandler for MeshLightingCheck {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.failed {
+            event_loop.exit();
+            return;
+        }
         if self.finished || self.renderer.is_some() {
             return;
         }
@@ -1022,7 +1038,12 @@ impl ApplicationHandler for MeshLightingCheck {
         ));
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.failed {
+            self.release_renderer();
+            event_loop.exit();
+            return;
+        }
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -1043,6 +1064,32 @@ pub fn run(report_path: PathBuf) -> bool {
 mod tests {
     use super::*;
     use matterweave_core::Vertex;
+
+    #[test]
+    fn unavailable_report_sink_fails_without_panicking() {
+        // A directory is a deterministic write failure, even when tests run as root.
+        let mut check = MeshLightingCheck::new(std::env::temp_dir());
+        assert!(check.failed());
+        assert!(check.finished);
+        let entries = check.report.len();
+        check.record("PASS must never be appended after a sink failure".into());
+        assert_eq!(check.report.len(), entries);
+    }
+
+    #[test]
+    fn report_sink_failure_during_run_marks_gate_failed() {
+        let path = report("sink-failure");
+        let mut check = MeshLightingCheck::new(path.clone());
+        assert!(!check.failed());
+        check.report_path = std::env::temp_dir();
+        check.record("phase evidence".into());
+        assert!(check.failed());
+        assert!(check.finished);
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("PASS mesh-lighting"));
+        std::fs::remove_file(path).unwrap();
+    }
 
     fn report(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
