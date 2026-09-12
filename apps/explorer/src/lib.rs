@@ -2,6 +2,7 @@
 mod audio_service;
 mod controls;
 mod detail_check;
+mod detail_runtime;
 mod dynamic_upload;
 mod engine_check;
 mod experience;
