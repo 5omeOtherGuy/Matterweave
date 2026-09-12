@@ -31,7 +31,9 @@
 //! captured externally with adb by the device lead. This is a functional gate,
 //! never a performance claim.
 
-use crate::detail_runtime::{lod_histogram, DetailRuntime, RESIDENT_LODS};
+use crate::detail_runtime::{
+    lod_histogram, yaw_quarters, DetailRuntime, FrameUpdate, RESIDENT_LODS,
+};
 use glam::{Mat4, Vec3};
 use matterweave_detail::{
     material, showcase_prototype, Camera as LodCamera, DetailScene, DetailVolume, Lod, LodConfig,
@@ -690,6 +692,7 @@ fn converge_bounded(
     scene: &mut DetailScene,
     camera: &LodCamera,
     config: &LodConfig,
+    require_deferral: bool,
 ) -> Result<ConvergenceOutcome, String> {
     let cap = config
         .max_coarse_builds
@@ -697,6 +700,18 @@ fn converge_bounded(
     let first = runtime.prepare(scene, camera, config)?;
     let mut deferred = deferred_count(&first.frame);
     if deferred == 0 {
+        if !require_deferral {
+            // Re-entry (a surface event changed the viewport or the pool was
+            // re-warmed): the view is already fully resident, so there is
+            // nothing to converge and the one-shot lazy-path evidence is not
+            // required again.
+            return Ok(ConvergenceOutcome {
+                iterations: 1,
+                total_builds: first.frame.mesh_builds_this_call,
+                max_builds: first.frame.mesh_builds_this_call as usize,
+                update: first,
+            });
+        }
         return Err(format!(
             "bounded-convergence phase started fully resident; the lazy path was not exercised (selected: {})",
             first
@@ -753,6 +768,259 @@ fn converge_bounded(
     })
 }
 
+/// One-shot authoritative mutations and convergence-protocol state. A surface
+/// event (resize) or lifecycle recreate re-enters the same phase against the
+/// live viewport; it must re-prepare and re-upload but never replay a mutation
+/// the authoritative scene already records.
+#[derive(Default)]
+struct PhaseState {
+    /// The bounded lazy-convergence protocol has completed once.
+    converged: bool,
+    moved: bool,
+    edit_moved: bool,
+    edited: bool,
+    /// A declared source edit whose derived-geometry invalidation has not yet
+    /// been observed in a prepared frame.
+    edit_invalidation_pending: bool,
+}
+
+/// A prepared phase plus its bounded-convergence accounting.
+struct PhaseOutcome {
+    update: FrameUpdate,
+    iterations: usize,
+    total_builds: u64,
+    max_builds: usize,
+    /// True when several prepares realized geometry; the renderer must
+    /// re-install the pool rather than update instance data alone.
+    force_replace: bool,
+}
+
+/// Applies the phase's declared authoritative mutation exactly once and checks
+/// its declared source-probe delta. `probes` is updated in place so every later
+/// phase can assert camera/LOD independence of the authoritative answers.
+fn apply_phase_mutation(
+    scene: &mut DetailScene,
+    plan: &PhasePlan,
+    state: &mut PhaseState,
+    probes: &mut ProbeSnapshot,
+) -> Result<(), String> {
+    if plan.move_flora && !state.moved {
+        let before = capture_probes(scene)?;
+        let version = scene.source_version();
+        *scene = fixture_scene_with_shrub(FLORA_SHRUB_TARGET_M);
+        if scene.source_version() == version {
+            return Err("flora move did not advance the authoritative scene version".into());
+        }
+        let after = capture_probes(scene)?;
+        let delta = probe_delta(&before, &after);
+        if delta != ["shrub_home_root", "shrub_target_root"] {
+            return Err(format!(
+                "instance move changed unexpected source probes: {delta:?}"
+            ));
+        }
+        let target = after
+            .get("shrub_target_root")
+            .ok_or("moved shrub probe missing")?;
+        if after["shrub_home_root"].collidable
+            || !target.collidable
+            || target.sample.as_ref().map(|(id, _)| id.as_str()) != Some(FLORA_SHRUB_INSTANCE)
+        {
+            return Err("instance move did not move the authoritative source footprint".into());
+        }
+        state.moved = true;
+        *probes = after;
+    }
+
+    if plan.edit_moved_flora && !state.edit_moved {
+        let before = capture_probes(scene)?;
+        if !scene
+            .edit_instance(FLORA_SHRUB_INSTANCE, [0, 0, 0], material::AIR)
+            .map_err(|e| format!("edit_instance: {e}"))?
+        {
+            return Err("edit of the moved flora changed no source cell".into());
+        }
+        let after = capture_probes(scene)?;
+        let delta = probe_delta(&before, &after);
+        if delta != ["shrub_target_root"] {
+            return Err(format!(
+                "moved-flora edit changed unexpected source probes: {delta:?}"
+            ));
+        }
+        state.edit_moved = true;
+        state.edit_invalidation_pending = true;
+        *probes = after;
+    }
+
+    if plan.edit && !state.edited {
+        let before = capture_probes(scene)?;
+        let version = scene.source_version();
+        scene
+            .edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE)
+            .map_err(|e| format!("edit_prototype: {e}"))?;
+        if scene.source_version() == version {
+            return Err("edit did not advance the source version".into());
+        }
+        let after = capture_probes(scene)?;
+        let delta = probe_delta(&before, &after);
+        if delta != ["solid_edit_cell"] {
+            return Err(format!(
+                "boulder edit changed unexpected source probes: {delta:?}"
+            ));
+        }
+        state.edited = true;
+        state.edit_invalidation_pending = true;
+        *probes = after;
+    }
+    Ok(())
+}
+
+/// Prepares the phase's live selection for `viewport_height_px`. Idempotent
+/// across re-entry: a convergence phase re-runs the bounded protocol for the
+/// current viewport without re-requiring lazy-path evidence once it has been
+/// recorded, and a source edit whose invalidation was already observed does not
+/// demand `geometry_changed` again. The packed instances handed to the renderer
+/// are validated against the drawable part of the selection here.
+fn prepare_phase(
+    scene: &mut DetailScene,
+    runtime: &mut DetailRuntime,
+    plan: &PhasePlan,
+    viewport_height_px: f32,
+    probes: &ProbeSnapshot,
+    state: &mut PhaseState,
+) -> Result<PhaseOutcome, String> {
+    let camera = plan.lod_camera(viewport_height_px);
+    let (update, iterations, total_builds, max_builds, force_replace) = if plan.converge {
+        let outcome = converge_bounded(runtime, scene, &camera, &plan.config, !state.converged)?;
+        state.converged = true;
+        (
+            outcome.update,
+            outcome.iterations,
+            outcome.total_builds,
+            outcome.max_builds,
+            true,
+        )
+    } else {
+        let update = runtime.prepare(scene, &camera, &plan.config)?;
+        let builds = update.frame.mesh_builds_this_call;
+        (update, 1usize, builds, builds as usize, false)
+    };
+    if update.frame.source_version != scene.source_version() {
+        return Err("prepared frame source version disagrees with the scene".into());
+    }
+    validate_packed_instances(scene, runtime, &update)?;
+
+    if plan.move_flora {
+        if update.geometry_changed {
+            return Err(
+                "instance move rebuilt resident geometry; only placements should change".into(),
+            );
+        }
+        let moved = update
+            .frame
+            .selected
+            .iter()
+            .find(|s| s.instance == FLORA_SHRUB_INSTANCE)
+            .ok_or("moved flora instance missing from the prepared frame")?;
+        if moved.transform.translation_m != FLORA_SHRUB_TARGET_M {
+            return Err(format!(
+                "moved instance kept translation {:?}",
+                moved.transform.translation_m
+            ));
+        }
+        let index = runtime
+            .instance_index(&moved.prototype, moved.lod)
+            .ok_or("moved flora selected level not resident")?;
+        if !update
+            .instances
+            .iter()
+            .any(|packed| packed.prototype == index && packed.translation == FLORA_SHRUB_TARGET_M)
+        {
+            return Err(
+                "moved flora packed instance does not carry the target translation at the resident pool index"
+                    .into(),
+            );
+        }
+    }
+
+    if state.edit_invalidation_pending {
+        if !update.geometry_changed {
+            return Err("source edit did not invalidate derived resident geometry".into());
+        }
+        state.edit_invalidation_pending = false;
+    }
+
+    if capture_probes(scene)? != *probes {
+        return Err("authoritative probe answers changed during prepare".into());
+    }
+    Ok(PhaseOutcome {
+        update,
+        iterations,
+        total_builds,
+        max_builds,
+        force_replace,
+    })
+}
+
+/// Validates the packed instances a prepare handed to the renderer against the
+/// drawable part of the frame selection. Every selected instance whose
+/// prototype has occupied cells contributes exactly one packed record, in
+/// order, carrying the resident mesh-pool index, world translation and
+/// quarter-turn yaw of that selected `(prototype, Lod)`. Selections with no
+/// occupied cells draw nothing and are omitted, matching
+/// [`DetailRuntime::instances_for_frame`].
+fn validate_packed_instances(
+    scene: &DetailScene,
+    runtime: &DetailRuntime,
+    update: &FrameUpdate,
+) -> Result<(), String> {
+    let mut drawable = Vec::with_capacity(update.frame.selected.len());
+    for selected in &update.frame.selected {
+        let prototype = scene
+            .prototype(&selected.prototype)
+            .ok_or_else(|| format!("selected prototype {} vanished", selected.prototype))?;
+        if prototype.occupied_cells() > 0 {
+            drawable.push(selected);
+        }
+    }
+    if drawable.len() != update.instances.len() {
+        return Err(format!(
+            "prepared {} packed instances for {} drawable selections",
+            update.instances.len(),
+            drawable.len()
+        ));
+    }
+    for (selected, packed) in drawable.iter().zip(&update.instances) {
+        let expected_index = runtime
+            .instance_index(&selected.prototype, selected.lod)
+            .ok_or_else(|| {
+                format!(
+                    "{} {:?} selected without resident geometry",
+                    selected.prototype, selected.lod
+                )
+            })?;
+        if packed.prototype != expected_index {
+            return Err(format!(
+                "{} {:?} packed mesh-pool index {} != resident index {expected_index}",
+                selected.prototype, selected.lod, packed.prototype
+            ));
+        }
+        if packed.translation != selected.transform.translation_m {
+            return Err(format!(
+                "{} packed translation {:?} != selected {:?}",
+                selected.prototype, packed.translation, selected.transform.translation_m
+            ));
+        }
+        let expected_yaw = yaw_quarters(selected.transform.yaw);
+        if packed.yaw_quarters != expected_yaw {
+            return Err(format!(
+                "{} packed yaw quarters {} != selected {expected_yaw}",
+                selected.prototype, packed.yaw_quarters
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Fixture capability check on a disposable source fork: every nonempty
 /// prototype must realize all three derived levels eagerly, so the lazy run can
 /// never confuse an unbuildable fixture level with a retained quality guard.
@@ -793,9 +1061,9 @@ pub(crate) struct DetailCheck {
     flora_guard_decided: bool,
     /// An eligible dense instance realized a non-empty coarse level.
     coarse_realized_seen: bool,
-    moved: bool,
-    edit_moved: bool,
-    edited: bool,
+    /// One-shot mutation and convergence state, kept separate from viewport and
+    /// GPU re-preparation so surface/lifecycle events never replay a mutation.
+    phase_state: PhaseState,
     recreated: bool,
     frame: u32,
     prepared: Option<u32>,
@@ -830,9 +1098,7 @@ impl DetailCheck {
             near_coarsened_seen: false,
             flora_guard_decided: false,
             coarse_realized_seen: false,
-            moved: false,
-            edit_moved: false,
-            edited: false,
+            phase_state: PhaseState::default(),
             recreated: false,
             frame: 0,
             prepared: None,
@@ -881,17 +1147,6 @@ impl DetailCheck {
         Ok(())
     }
 
-    /// Prepares the current phase selection against the live source.
-    fn prepare(&mut self, plan: &PhasePlan) -> Result<crate::detail_runtime::FrameUpdate, String> {
-        let camera = plan.lod_camera(self.viewport_height());
-        let runtime = self.runtime.as_mut().ok_or("no runtime")?;
-        let update = runtime.prepare(&mut self.scene, &camera, &plan.config)?;
-        if update.frame.source_version != self.scene.source_version() {
-            return Err("prepared frame source version disagrees with the scene".into());
-        }
-        Ok(update)
-    }
-
     /// Installs one prepared selection in the renderer, replacing the static
     /// scene when resident geometry changed or the caller did several prepares.
     fn install(
@@ -917,117 +1172,31 @@ impl DetailCheck {
     fn apply_phase(&mut self, phase: usize) -> Result<String, String> {
         let plan = self.plans[phase];
 
-        if plan.move_flora && !self.moved {
-            let before = capture_probes(&self.scene)?;
-            let version = self.scene.source_version();
-            self.scene = fixture_scene_with_shrub(FLORA_SHRUB_TARGET_M);
-            if self.scene.source_version() == version {
-                return Err("flora move did not advance the authoritative scene version".into());
-            }
-            let after = capture_probes(&self.scene)?;
-            let delta = probe_delta(&before, &after);
-            if delta != ["shrub_home_root", "shrub_target_root"] {
-                return Err(format!(
-                    "instance move changed unexpected source probes: {delta:?}"
-                ));
-            }
-            let target = after
-                .get("shrub_target_root")
-                .ok_or("moved shrub probe missing")?;
-            if after["shrub_home_root"].collidable
-                || !target.collidable
-                || target.sample.as_ref().map(|(id, _)| id.as_str()) != Some(FLORA_SHRUB_INSTANCE)
-            {
-                return Err("instance move did not move the authoritative source footprint".into());
-            }
-            self.moved = true;
-            self.probes = after;
-        }
+        // One-shot authoritative mutations and their declared probe deltas.
+        // A surface event or renderer recreation re-enters this phase to
+        // re-prepare the live viewport, but must not replay these.
+        apply_phase_mutation(
+            &mut self.scene,
+            &plan,
+            &mut self.phase_state,
+            &mut self.probes,
+        )?;
 
-        if plan.edit_moved_flora && !self.edit_moved {
-            let before = capture_probes(&self.scene)?;
-            if !self
-                .scene
-                .edit_instance(FLORA_SHRUB_INSTANCE, [0, 0, 0], material::AIR)
-                .map_err(|e| format!("edit_instance: {e}"))?
-            {
-                return Err("edit of the moved flora changed no source cell".into());
-            }
-            let after = capture_probes(&self.scene)?;
-            let delta = probe_delta(&before, &after);
-            if delta != ["shrub_target_root"] {
-                return Err(format!(
-                    "moved-flora edit changed unexpected source probes: {delta:?}"
-                ));
-            }
-            self.edit_moved = true;
-            self.probes = after;
-        }
-
-        if plan.edit && !self.edited {
-            let before = capture_probes(&self.scene)?;
-            let version = self.scene.source_version();
-            self.scene
-                .edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE)
-                .map_err(|e| format!("edit_prototype: {e}"))?;
-            if self.scene.source_version() == version {
-                return Err("edit did not advance the source version".into());
-            }
-            let after = capture_probes(&self.scene)?;
-            let delta = probe_delta(&before, &after);
-            if delta != ["solid_edit_cell"] {
-                return Err(format!(
-                    "boulder edit changed unexpected source probes: {delta:?}"
-                ));
-            }
-            self.edited = true;
-            self.probes = after;
-        }
-
-        // Prepare this phase's selection. A convergence phase repeats the
-        // identical stationary prepare under the declared coarse build bound
-        // before any final install.
-        let (iterations, total_builds, max_builds, update) = if plan.converge {
-            let camera = plan.lod_camera(self.viewport_height());
-            let runtime = self.runtime.as_mut().ok_or("no runtime")?;
-            let outcome = converge_bounded(runtime, &mut self.scene, &camera, &plan.config)?;
-            // Several prepares may have realized geometry; upload the pool once.
-            self.install(&outcome.update, true)?;
-            (
-                outcome.iterations,
-                outcome.total_builds,
-                outcome.max_builds,
-                outcome.update,
-            )
-        } else {
-            let update = self.prepare(&plan)?;
-            let builds = update.frame.mesh_builds_this_call;
-            self.install(&update, false)?;
-            (1usize, builds, builds as usize, update)
-        };
-
-        if plan.move_flora {
-            if update.geometry_changed {
-                return Err(
-                    "instance move rebuilt resident geometry; only placements should change".into(),
-                );
-            }
-            let moved = update
-                .frame
-                .selected
-                .iter()
-                .find(|s| s.instance == FLORA_SHRUB_INSTANCE)
-                .ok_or("moved flora instance missing from the prepared frame")?;
-            if moved.transform.translation_m != FLORA_SHRUB_TARGET_M {
-                return Err(format!(
-                    "moved instance kept translation {:?}",
-                    moved.transform.translation_m
-                ));
-            }
-        }
-        if (plan.edit || plan.edit_moved_flora) && !update.geometry_changed {
-            return Err("source edit did not invalidate derived resident geometry".into());
-        }
+        let viewport = self.viewport_height();
+        let runtime = self.runtime.as_mut().ok_or("no runtime")?;
+        let outcome = prepare_phase(
+            &mut self.scene,
+            runtime,
+            &plan,
+            viewport,
+            &self.probes,
+            &mut self.phase_state,
+        )?;
+        let update = outcome.update;
+        let iterations = outcome.iterations;
+        let total_builds = outcome.total_builds;
+        let max_builds = outcome.max_builds;
+        self.install(&update, outcome.force_replace)?;
 
         let check = self.check_frame(&plan, &update)?;
         let histogram = lod_histogram(&update.frame);
@@ -1065,8 +1234,8 @@ impl DetailCheck {
                 FLORA_INSTANCES.len(),
                 FLORA_INSTANCES.len(),
                 check.flora_pixel_eligible,
-                self.moved,
-                self.edited || self.edit_moved,
+                self.phase_state.moved,
+                self.phase_state.edited || self.phase_state.edit_moved,
             ),
         ];
         let counts = self.scene.counts();
@@ -1302,13 +1471,13 @@ impl DetailCheck {
                 self.lods_seen
             ));
         }
-        if !self.edited {
+        if !self.phase_state.edited {
             return Err("prototype edit invalidation phase never ran".into());
         }
-        if !self.moved {
+        if !self.phase_state.moved {
             return Err("instance move phase never ran".into());
         }
-        if !self.edit_moved {
+        if !self.phase_state.edit_moved {
             return Err("moved-instance edit phase never ran".into());
         }
         if !self.coarse_realized_seen {
@@ -1514,6 +1683,11 @@ impl ApplicationHandler for DetailCheck {
         // Resident GPU geometry is renderer-owned; a fresh renderer re-warms.
         self.runtime = None;
         self.prepared = None;
+        // Derived-geometry evidence belongs to the discarded pool: a fresh pool
+        // must re-converge and re-realize invalidated levels rather than trust a
+        // flag from the retired runtime. Authoritative mutation state is kept.
+        self.phase_state.converged = false;
+        self.phase_state.edit_invalidation_pending = false;
     }
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
@@ -2042,7 +2216,8 @@ mod tests {
         runtime
             .prepare(&mut scene, &camera, &source_only(&plan.config))
             .unwrap();
-        let outcome = converge_bounded(&mut runtime, &mut scene, &camera, &plan.config).unwrap();
+        let outcome =
+            converge_bounded(&mut runtime, &mut scene, &camera, &plan.config, true).unwrap();
 
         assert!(
             outcome.iterations >= 2,
@@ -2078,5 +2253,248 @@ mod tests {
         assert_eq!(steady.frame.mesh_builds_this_call, 0);
         assert!(!steady.geometry_changed);
         assert_eq!(deferred_count(&steady.frame), 0);
+
+        // The warm-pool re-entry a surface event takes for this phase: the view
+        // is fully resident, so the bounded protocol reports a zero-build
+        // stationary outcome instead of re-requiring lazy-path deferral (the
+        // latter is still a hard failure).
+        let reentry = converge_bounded(&mut runtime, &mut scene, &camera, &plan.config, false)
+            .expect("warm re-entry must not require lazy-path deferral");
+        assert_eq!(reentry.total_builds, 0);
+        assert_eq!(reentry.update.frame.mesh_builds_this_call, 0);
+        assert!(
+            converge_bounded(&mut runtime, &mut scene, &camera, &plan.config, true).is_err(),
+            "a fully resident view must fail the lazy-path-deferral guard"
+        );
+    }
+
+    /// A surface event (resize) or lifecycle recreate re-enters the current
+    /// phase. It must re-prepare the live viewport but never replay a one-shot
+    /// authoritative mutation, re-require lazy-path deferral from a warm pool,
+    /// or demand `geometry_changed` for an edit whose invalidation was already
+    /// observed. This drives the same control functions `apply_phase` uses.
+    #[test]
+    fn phase_reentry_for_a_new_viewport_does_not_replay_one_shot_evidence() {
+        // Phase indices whose first application records one-shot evidence:
+        // 0 cold bounded convergence, 10 move, 11 moved-flora edit, 12 edit.
+        for target in [0usize, 10, 11, 12] {
+            let plans = phases();
+            let mut scene = fixture_scene();
+            let mut runtime = DetailRuntime::new();
+            let mut state = PhaseState::default();
+            let mut probes = capture_probes(&scene).unwrap();
+
+            // Mirror the renderer install: warm the authoritative Source once
+            // before any selection, so the first prepare realizes coarse levels
+            // lazily under the phase's declared bound.
+            runtime
+                .prepare(
+                    &mut scene,
+                    &plans[0].lod_camera(480.0),
+                    &source_only(&plans[0].config),
+                )
+                .unwrap();
+
+            // Run the ordered script through the target phase, as production
+            // does, so a moved-instance edit sees the moved placement.
+            for (index, plan) in plans.iter().enumerate().take(target + 1) {
+                apply_phase_mutation(&mut scene, plan, &mut state, &mut probes).unwrap();
+                prepare_phase(&mut scene, &mut runtime, plan, 480.0, &probes, &mut state)
+                    .unwrap_or_else(|e| panic!("phase {index} ({}) first prepare: {e}", plan.name));
+            }
+
+            // Re-enter the target phase for the Android viewport against the
+            // same warm runtime and mutated scene.
+            let plan = plans[target];
+            let name = plan.name;
+
+            // A second prepare at the *same* viewport is the exact replay the
+            // bug produced (warm pool, nothing changed): the converge guard and
+            // the edit-invalidation requirement must not fire again.
+            prepare_phase(&mut scene, &mut runtime, &plan, 480.0, &probes, &mut state)
+                .unwrap_or_else(|e| panic!("{name} same-viewport re-entry must succeed: {e}"));
+
+            let source_before = scene.source_version();
+            let second =
+                prepare_phase(&mut scene, &mut runtime, &plan, 1080.0, &probes, &mut state)
+                    .unwrap_or_else(|e| panic!("{name} re-entry must succeed: {e}"));
+            assert_eq!(
+                scene.source_version(),
+                source_before,
+                "{name} re-entry replayed its one-shot mutation"
+            );
+
+            // The re-entry selected for the live 1080 px viewport, not a cached
+            // 480 px selection.
+            let direct = scene
+                .prepare_batches(&plan.lod_camera(1080.0), &plan.config)
+                .unwrap();
+            let live: Vec<(&str, Lod)> = second
+                .update
+                .frame
+                .selected
+                .iter()
+                .map(|s| (s.instance.as_str(), s.lod))
+                .collect();
+            let expected: Vec<(&str, Lod)> = direct
+                .selected
+                .iter()
+                .map(|s| (s.instance.as_str(), s.lod))
+                .collect();
+            assert_eq!(
+                live, expected,
+                "{name} did not re-select for the live viewport"
+            );
+        }
+    }
+
+    /// The packed records handed to the renderer, not only the CPU selection,
+    /// must carry the selected translation, yaw and resident mesh-pool index.
+    /// Corrupted records are the negative controls.
+    #[test]
+    fn packed_instances_are_validated_and_corrupted_records_are_rejected() {
+        let plan = phase("retreat-far-perspective");
+        let mut scene = fixture_scene();
+        let mut runtime = DetailRuntime::new();
+        let update = runtime
+            .prepare(&mut scene, &camera(&plan), &plan.config)
+            .unwrap();
+        validate_packed_instances(&scene, &runtime, &update).unwrap();
+        assert!(
+            update.instances.len() > 1,
+            "negative controls need several packed records"
+        );
+
+        let mut corrupted = update.clone();
+        corrupted.instances[0].translation[0] += 1.0;
+        assert!(
+            validate_packed_instances(&scene, &runtime, &corrupted).is_err(),
+            "a wrong packed translation must be rejected"
+        );
+
+        let mut corrupted = update.clone();
+        corrupted.instances[0].yaw_quarters = (corrupted.instances[0].yaw_quarters + 1) % 4;
+        assert!(
+            validate_packed_instances(&scene, &runtime, &corrupted).is_err(),
+            "a wrong packed yaw must be rejected"
+        );
+
+        // A valid but wrong mesh-pool index is rejected. The confusion case is
+        // another resident pool index, not the `frame.selected` position.
+        let expected = update.instances[0].prototype;
+        let other = update
+            .instances
+            .iter()
+            .map(|packed| packed.prototype)
+            .find(|&index| index != expected)
+            .expect("a second distinct resident pool index");
+        assert!(other < runtime.meshes().len());
+        let mut corrupted = update.clone();
+        corrupted.instances[0].prototype = other;
+        assert!(
+            validate_packed_instances(&scene, &runtime, &corrupted).is_err(),
+            "a wrong mesh-pool index must be rejected"
+        );
+
+        let mut corrupted = update.clone();
+        corrupted.instances.pop();
+        assert!(
+            validate_packed_instances(&scene, &runtime, &corrupted).is_err(),
+            "a missing packed record must be rejected"
+        );
+    }
+
+    /// The named dense controls are eligible positive coarsening controls: with
+    /// the default quality guards untouched, both realize a non-empty coarse
+    /// level at the host render window's 480 px viewport. (The tile-scale control
+    /// clears the pixel budget at 480 px but not at the 1080 px focus viewport,
+    /// where it stays `Source` by projected size, not by a relaxed guard.)
+    #[test]
+    fn named_dense_controls_coarsen_under_default_guards() {
+        let plan = phase("retreat-far-perspective");
+        let mut scene = fixture_scene();
+        let frame = scene
+            .prepare_batches(&plan.lod_camera(480.0), &plan.config)
+            .unwrap();
+        for instance in [CONTROL_INSTANCE, TILE_CONTROL_INSTANCE, NEAR_INSTANCE] {
+            let selected = item(&frame, instance);
+            assert!(
+                selected.lod > Lod::Source && !selected.fallback,
+                "{instance} must coarsen under the default guards, chose {:?} fallback={}",
+                selected.lod,
+                selected.fallback
+            );
+            let mesh = scene
+                .cached_prototype_mesh(&selected.prototype, selected.lod)
+                .expect("positive control coarse mesh is resident");
+            assert!(
+                !mesh.vertices.is_empty(),
+                "{instance} realized empty geometry"
+            );
+            assert_eq!(
+                mesh.revision,
+                scene.prototype(&selected.prototype).unwrap().revision(),
+                "{instance} coarse revision is stale"
+            );
+        }
+    }
+
+    /// An edit made while a coarse level is selected leaves the `Source` slot
+    /// stale and unselected. Approaching `Source` must refresh that slot before
+    /// handing it to the renderer, without recreating the runtime or eagerly
+    /// rebuilding every level.
+    #[test]
+    fn edit_at_coarse_then_approach_refreshes_the_stale_source_slot_without_recreating_the_runtime()
+    {
+        let far_plan = phase("retreat-far-perspective");
+        let near_plan = phase("approach-near-perspective");
+        let mut scene = fixture_scene();
+        let mut runtime = DetailRuntime::new();
+
+        // Warm the authoritative Source, then let the far camera realize and
+        // select a coarse level. Source is now resident at the pre-edit
+        // revision but unselected.
+        runtime
+            .prepare(
+                &mut scene,
+                &camera(&far_plan),
+                &source_only(&far_plan.config),
+            )
+            .unwrap();
+        let far = runtime
+            .prepare(&mut scene, &camera(&far_plan), &far_plan.config)
+            .unwrap();
+        assert!(item(&far.frame, NEAR_INSTANCE).lod > Lod::Source);
+        let stale_revision = runtime.revision(BOULDER, Lod::Source).unwrap();
+        assert_eq!(stale_revision, scene.prototype(BOULDER).unwrap().revision());
+
+        scene
+            .edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE)
+            .unwrap();
+        let fresh_revision = scene.prototype(BOULDER).unwrap().revision();
+        assert_ne!(fresh_revision, stale_revision);
+
+        // Approaching Source re-selects the stale slot; the same runtime must
+        // refresh it before it is handed out.
+        let near = runtime
+            .prepare(&mut scene, &camera(&near_plan), &near_plan.config)
+            .unwrap();
+        let selected = item(&near.frame, NEAR_INSTANCE);
+        assert_eq!(selected.lod, Lod::Source);
+        assert!(
+            near.geometry_changed,
+            "the stale Source slot must be refreshed before selection"
+        );
+        assert_eq!(runtime.revision(BOULDER, Lod::Source), Some(fresh_revision));
+        let index = runtime.instance_index(BOULDER, Lod::Source).unwrap();
+        assert!(!runtime.meshes()[index].vertices.is_empty());
+        assert_eq!(runtime.meshes()[index].revision, fresh_revision);
+        assert!(
+            near.instances
+                .iter()
+                .any(|packed| packed.prototype == index),
+            "the packed record must reference the refreshed Source slot"
+        );
+        validate_packed_instances(&scene, &runtime, &near).unwrap();
     }
 }

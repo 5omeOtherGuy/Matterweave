@@ -1,11 +1,25 @@
-# detail-production-fixtures — engineering log `w_18ada142`
+# detail-production-fixtures — engineering log `w_18ada142` / recovery `w_f38feb0e`
 
 Slice D1.2 (M2-A): representative production vegetation and occlusion/movement
-coverage in the native automatic-detail diagnostic. Workspace
+coverage in the native automatic-detail diagnostic.
+
+Original session: workspace
 `/mnt/bench/matterweave-dev/worktrees/detail-production-fixtures`, branch
-`engine/detail-production-fixtures`, base `39666a8`. Owned paths only:
+`engine/detail-production-fixtures`, base `39666a8`; it stopped on a weekly
+quota. Recovery session (`w_f38feb0e`, `detail-repair-openrouter`): clean
+checkout of committed source at `d8a5cde`, branch `engine/recovered-detail`,
+workspace
+`/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/detail`.
+The bench drive failed with hardware I/O errors, so every recovery build/test
+ran against the local target
+`/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/detail-target`
+with `CARGO_BUILD_JOBS=1`; raw operational logs live in
+`.../orchestration/detail-repair-openrouter/logs/`. The recovery repaired and
+finished the diagnostic; it did not redesign the fixture. Owned paths only:
 `apps/explorer/src/detail_check.rs` and this log. No device access, no push, no
-PR, no lead-owned integration or acceptance. No performance claim.
+PR, no lead-owned integration/acceptance, no `matterweave-render` or
+`detail_runtime` change. No performance claim. Paths and hashes recorded under
+`/mnt/bench` below are the original session's historical evidence.
 
 Read first: [D1.1 detail runtime](d1-1-detail-runtime.md),
 [native detail check](../detail-native-check.md),
@@ -20,6 +34,71 @@ Read first: [D1.1 detail runtime](d1-1-detail-runtime.md),
 | Existing cases and zero-extent/lifecycle safety retained | 16 focused tests, 154 app tests, 578 workspace tests, scoped strict Clippy, fmt | worker | PASS |
 | Actual rendered host run | `--detail-check` under llvmpipe with validation; report and run log hashed below | worker | PASS (host software Vulkan only) |
 | Android visual/functional acceptance and independent review | Lead after handoff; no quality claim from CPU checks | lead | NOT RUN |
+
+## Repair session at d8a5cde
+
+Independent review found three real defects and rejected one runtime concern.
+All fixes are in `apps/explorer/src/detail_check.rs`; the fixture, scales and
+default quality guards are unchanged.
+
+1. **One-shot mutation vs viewport/GPU re-preparation.** `Resized` cleared
+   `prepared`, so the next redraw re-entered `apply_phase`. For
+   `cold-far-bounded-convergence` this replayed `converge_bounded` against a warm
+   pool and hit the "started fully resident" guard; for the edit phases it
+   re-required `geometry_changed` after the edit had already refreshed. A real
+   suspend/recreate could arrive on those phases too. The one-shot decisions now
+   live in `PhaseState` (`converged`, `moved`, `edit_moved`, `edited`,
+   `edit_invalidation_pending`), and the renderer-free control path is
+   `apply_phase_mutation` + `prepare_phase`, called by `apply_phase`. Re-entry at
+   a new viewport re-prepares and re-selects for the live camera; the convergence
+   protocol only requires lazy-path deferral on its first run, and invalidation
+   evidence is required only on the first prepare after the edit. `suspended`
+   resets the derived-pool evidence while keeping the authoritative mutation
+   state, so a fresh pool re-converges rather than trusting a retired runtime.
+   Regression `phase_reentry_for_a_new_viewport_does_not_replay_one_shot_evidence`
+   drives those two control functions through phases 0/10/11/12 and re-enters
+   each at 1080 px, asserting the source version is unchanged and the selection
+   matches a direct prepare for the new viewport.
+2. **Packed renderer records.** The move check inspected `frame.selected` but
+   never the `update.instances` actually handed to `replace_static_scene`/
+   `update_static_instances`. `validate_packed_instances` now runs on every
+   prepare: each drawable selection (occupied prototype) must have exactly one
+   packed record, in order, whose mesh-pool index equals
+   `runtime.instance_index(prototype, lod)` and whose translation/yaw equal the
+   selection; empty prototypes are omitted, matching `instances_for_frame`. The
+   move phase additionally requires the moved shrub's packed record to carry the
+   target translation at its resident pool index. Negative control
+   `packed_instances_are_validated_and_corrupted_records_are_rejected` rejects a
+   wrong translation, a wrong yaw, a missing record, and a *valid but wrong*
+   resident pool index (another level's index, never a `frame.selected`
+   position).
+3. **Named dense positive controls.**
+   `named_dense_controls_coarsen_under_default_guards` asserts
+   `dense_control_far`, `dense_tile_far` and `solid_near` each realize a
+   non-empty coarse mesh at the host 640x480 viewport under the unmodified
+   default config (no relaxed guard, no relaxed pixel budget). The tile-scale
+   control clears the pixel budget at 480 px but stays `Source` at the 1080 px
+   focus viewport by projected size; the test documents that so it is not
+   mistaken for a guard retention. The host run exercises both named controls
+   (`dense_tile_far:dense_tile_control:Half` at phases 0/2/5/9).
+4. **Rejected as a runtime bug (no change).** Stale *unselected* mesh slots are
+   safe because `refresh_selected` refreshes a stale level before it is handed
+   out. `edit_at_coarse_then_approach_refreshes_the_stale_source_slot_without_recreating_the_runtime`
+   proves it: warm `Source`, select a coarse level far away, edit the boulder,
+   then approach with the *same* runtime. The `Source` slot is stale and
+   unselected, and approach refreshes it (`geometry_changed == true`) to the new
+   revision before packing. No eager full rebuild and no `DetailRuntime` change.
+
+## Repair criteria and results
+
+| Criterion | Verification | Owner | Result |
+| --- | --- | --- | --- |
+| One-shot phase correctness across surface events, renewed viewport selection | `phase_reentry_...` on the renderer-free control path (phases 0/10/11/12, 480 -> 1080 px) | worker | PASS |
+| Packed renderer transforms/indices validated, stale slot refreshed on approach | `validate_packed_instances` on every prepare; corrupted-record negative controls; `edit_at_coarse_then_approach_...` | worker | PASS |
+| Named dense positive controls under default guards | `named_dense_controls_coarsen_under_default_guards` (host 480 px) | worker | PASS |
+| Default quality guards and production flora retained | 20 focused tests, 158 app tests, scoped strict Clippy, fmt | worker | PASS |
+| Actual rendered host run | one `--detail-check` under llvmpipe with validation; report byte-identical to the pre-repair run | worker | PASS (host software Vulkan only) |
+| Android visual/functional acceptance and final independent review | Lead after handoff | lead | NOT RUN |
 
 ## What changed
 
@@ -87,7 +166,9 @@ updating in the lead-owned docs.
 
 ## Host behavioral tests
 
-`cargo test -p matterweave-explorer --lib detail_check` — 16 passed:
+Original session: `cargo test -p matterweave-explorer --lib detail_check` — 16 passed.
+Recovery session: `cargo test -p matterweave-explorer --lib detail_check` — 20
+passed (the original 16 plus the four repair regressions below):
 
 - `fixture_realizes_every_prototype_at_every_level`
 - `stale_runtime_is_rejected_after_source_edit`
@@ -105,6 +186,10 @@ updating in the lead-owned docs.
 - `moving_a_flora_placement_updates_instances_without_rebuilding_geometry`
 - `editing_the_moved_instance_invalidates_and_refreshes_its_geometry`
 - `cold_lazy_convergence_is_bounded_and_reaches_a_zero_build_steady_state`
+- `phase_reentry_for_a_new_viewport_does_not_replay_one_shot_evidence`
+- `packed_instances_are_validated_and_corrupted_records_are_rejected`
+- `named_dense_controls_coarsen_under_default_guards`
+- `edit_at_coarse_then_approach_refreshes_the_stale_source_slot_without_recreating_the_runtime`
 
 Guard attribution probe (part of the second test, diagnostic only — the relaxed
 configs are never rendered; every species stays `Source` under the default
@@ -148,6 +233,30 @@ CARGO_BUILD_JOBS=2 cargo clippy -p matterweave-explorer --all-targets --locked -
 # exit 0 (one pre-existing vendored winit warning; no explorer warnings)
 ```
 
+## Recovery verification commands (local target, no bench drive)
+
+```sh
+cd /home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/detail
+export CARGO_TARGET_DIR=/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/detail-target
+export CARGO_BUILD_JOBS=1
+
+cargo test -p matterweave-explorer --locked --lib detail_check
+# exit 0: 20 passed, 0 failed
+
+cargo test -p matterweave-explorer --locked
+# exit 0: 158 passed, 0 failed, 1 ignored (pre-existing ignored wetland full-map test)
+
+cargo fmt -p matterweave-explorer -- --check
+# exit 0
+
+cargo clippy -p matterweave-explorer --all-targets --locked -- -D warnings
+# exit 0 (one pre-existing vendored winit warning; no explorer warnings)
+```
+
+The full workspace suite (578 tests in the original session) was not re-run in
+recovery, per the recovery brief: focused tests + app tests + scoped Clippy/fmt +
+one host `--detail-check` are the required gate.
+
 ## Actual rendered host run
 
 ```sh
@@ -189,6 +298,27 @@ Observed phase evidence (host `detail-check-report.txt`):
 
 `MATTERWEAVE_VALIDATION=1` reported no validation errors. This is software
 Vulkan functional evidence only; it is not an Android or performance result.
+
+### Recovery host run
+
+```sh
+MATTERWEAVE_VALIDATION=1 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  xvfb-run -a cargo run --locked -p matterweave-explorer -- --detail-check \
+  --save .../orchestration/detail-repair-openrouter/logs/detail-host/unused.json
+# exit 0; report ends "PASS detail ..."
+```
+
+Report `.../logs/detail-host/detail-check-report.txt` sha256
+`d279d1b6608a30bf36c602849ca2195543b5b16cf7d15bd4fb34adf9d6c5e098` —
+**byte-identical to the original run**, so the control-logic repair did not
+change observable diagnostic behavior. Run log
+`.../logs/detail-host/detail-check-run.log` sha256
+`a681a3c9dce1941e534d29f46e8964e79a58c28be15f3e77638c78e85c88868a`.
+Device: llvmpipe (LLVM 20.1.2, 256 bits), Vulkan 1.4.318, validation on, zero
+`validation error` matches in the run log. The recovery report additionally shows
+`dense_tile_far:dense_tile_control:Half` and `dense_control_far:dense_control:Quarter`
+at the far phases, confirming the named positive controls coarsen in the rendered
+host path.
 
 ## Decisions and rationale
 
@@ -234,13 +364,25 @@ Vulkan functional evidence only; it is not an Android or performance result.
   capability check described above.
 - Pre-existing vendored `winit` warning `function_casts_as_integer` remains; it
   is not part of this slice and does not fail the scoped gate.
+- **Repair re-entry finding.** The first repair attempt re-ran the phase script
+  from a cold `DetailRuntime` without the renderer's `Source` warm-up, so
+  `mesh_builds_this_call` counted the 11 `Source` builds and the cap-2
+  convergence guard fired. The regression now mirrors `install_static_scene`
+  (warm `Source` once) and runs the ordered script through the target phase, as
+  production does.
+- **Tile-scale control pixel budget.** The 0.25 m tile-scale dense control is a
+  positive coarsening control at the host 480 px viewport (`Half`), but its
+  projected error exceeds the default pixel budget at 1080 px, so it stays
+  `Source` there by size, not by a relaxed guard. The focused test pins the host
+  viewport and documents both cases rather than adding a viewport-dependent
+  in-run `finalize` requirement that would fail the Android build.
 
 ## Not verified / remaining gates
 
 - **Android OnePlus 13 (lead-owned, NOT RUN):** install and run
   `engine-check.txt = detail`, confirm all 14 phases, view the occlusion, move
-  and edit phase screenshots, and independent review. Phase count and capture
-  schedule changed; lead updates the device procedure.
+  and edit phase screenshots, and independent review. The repair changed the
+  control path but not the fixture or report; the phase count is still 14.
 - **Visual quality (lead-owned, NOT RUN):** the occlusion claim in this slice is
   per-instance LOD plus projected-AABB overlap and depth order, not a pixel
   readback or human quality judgement. No coarse-transition/zoom visual
