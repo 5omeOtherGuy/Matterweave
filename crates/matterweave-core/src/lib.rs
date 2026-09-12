@@ -1,6 +1,7 @@
 //! Authoritative voxel data, reference queries and derived surface geometry.
 
 mod async_world;
+pub mod coarse;
 pub mod input;
 mod mesh;
 mod persistence;
@@ -10,6 +11,7 @@ mod streaming;
 pub use async_world::{
     AsyncStats, AsyncWorld, MAX_MESH_RESULTS, MAX_MESH_RESULT_BYTES, MAX_QUEUED_MESH_JOBS,
 };
+pub use coarse::{CoarseError, CoarseTile};
 pub use input::{InputService, VirtualKey};
 pub use mesh::{Mesh, Vertex};
 pub use ray::{RayHit, MAX_RAY_DISTANCE};

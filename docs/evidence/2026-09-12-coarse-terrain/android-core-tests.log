@@ -1,0 +1,32 @@
+
+running 27 tests
+test async_world::tests::latest_request_matching_inflight_drops_a_superseded_pending_window ... ok
+test async_world::tests::reset_at_generation_exhaustion_retires_instead_of_leaking_inflight_work ... ok
+test async_world::tests::reset_below_exhaustion_bumps_generation_and_keeps_running ... ok
+test async_world::tests::retirement_reports_unavailable_before_the_worker_exits ... ok
+test async_world::tests::returning_to_buffered_window_retains_it_after_other_work_finishes ... ok
+test coarse::tests::derivation_is_deterministic_and_does_not_mutate ... ok
+test coarse::tests::edits_survive_eviction_save_and_reload ... ok
+test coarse::tests::enabling_streaming_changes_source_mode_without_a_revision_increment ... ok
+test coarse::tests::every_generated_solid_cell_maps_into_an_occupied_coarse_cell ... ok
+test coarse::tests::level_two_tile_classifies_each_fine_chunk_for_legacy_air ... ok
+test coarse::tests::levels_keys_and_overflow_are_rejected_explicitly ... ok
+test coarse::tests::material_choice_is_topmost_then_scan_order ... ok
+test coarse::tests::negative_keys_partition_euclidean_tile_boundaries ... ok
+test coarse::tests::nonstreaming_uses_stored_data_at_arbitrary_coordinates ... ok
+test coarse::tests::occupancy_is_conservative_and_fills_thin_holes ... ok
+test coarse::tests::partial_level_two_tiles_treat_outside_domain_as_air ... ok
+test coarse::tests::streaming_legacy_air_and_tombstones_survive_eviction_and_reload ... ok
+test coarse::tests::world_cell_maps_local_coarse_steps_by_level ... ok
+test input::tests::custom_look_zone_constrains_touch ... ok
+test input::tests::focus_loss_and_cancellation_clears_all_state ... ok
+test input::tests::keyboard_motion_and_diagonal_clamping ... ok
+test input::tests::quick_jump_tap_is_not_lost_between_frames ... ok
+test input::tests::simultaneous_move_look_action_and_release ... ok
+test snapshot_tests::deletion_and_reentry_preserve_snapshot_and_empty_override ... ok
+test snapshot_tests::rejected_and_unchanged_edits_keep_shared_payloads ... ok
+test snapshot_tests::snapshots_share_payloads_and_detach_only_changed_chunks ... ok
+test snapshot_tests::streaming_overrides_share_and_repeated_edits_do_not_copy_again ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+

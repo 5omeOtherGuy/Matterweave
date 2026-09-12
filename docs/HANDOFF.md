@@ -42,6 +42,14 @@ branch. M2–M6 remain open.
 
 ## Next authorized work
 
+Owner transferred development and the phone to this lead after the other session
+merged PRs25/26/27 at `a91f7a0`. Continue the current S2 scaled-terrain consumer and
+Terrain Lab workers, integrate the merged detail/audio runtime modules, and verify
+Android. The coarse derivation core now passes 27 tests on physical ARM64; see
+[coarse terrain evidence](performance/coarse-terrain.md). Do not stop at this core
+slice or describe it as a new playable APK.
+
+
 The follow-up delivered opt-in landscape comparison fixtures and a
 [reference reuse assessment](performance/virtual-matter-and-lay-of-the-land.md).
 Host default/landscape runs pass (16/24); Android execution is still unrun and

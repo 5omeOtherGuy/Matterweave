@@ -2,6 +2,26 @@
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
+## Development takeover and coarse terrain — 2026-09-12
+
+Owner transferred ongoing development and device integration to this lead. The other
+session merged PRs #25/#26/#27 at `a91f7a0` (collision publication, shared audio adapter,
+automatic-detail runtime). Their production wiring/device gates remain open where
+recorded in the worker logs; no completion is inferred from module delivery.
+
+The S2 coarse derivation slice is implemented: read-only bounded levels 1/2 tiles,
+negative-coordinate mapping, deterministic materials, persistent deletion semantics
+and explicit source revision/mode provenance. **27 core tests pass on the host and
+physical OnePlus13 ARM64**, plus five independent public-API checks after correcting
+a tester fixture. [Design, review and evidence](performance/coarse-terrain.md).
+This is actual device CPU correctness evidence, not an APK visual/LOD acceptance.
+
+Current workers: real scaled-mesh renderer example and interactive Terrain Lab module.
+The lead owns chooser wiring, Android deployment and acceptance. Core async coarse
+publication, seamless LOD transitions and production landscape scale remain open.
+Read the board before dispatch; no other session's implementation assignments remain
+reserved after the owner transfer, but preserve its merged results.
+
 ## Autonomous microvoxel follow-up — implementation and reference assessment
 
 [PR #23](https://github.com/5omeOtherGuy/Matterweave/pull/23) merged the

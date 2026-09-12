@@ -82,3 +82,18 @@ features. The network-disabled gate is owner-directed and **NOT RUN**. The other
 session retains the phone lease. Preserve its D1/D2/D4 assignments; no new overlapping
 code dispatch is created by this assessment. Development and functional completion
 remain first; large performance/thermal campaigns remain afterwards.
+
+## Additional reference: John Lin / Voxely
+
+The owner also suggested [Voxely](https://voxely.net/blog/). John Lin's
+[The Perfect Voxel Engine](https://voxely.net/blog/the-perfect-voxel-engine/)
+(2021-09-18) argues for task-specific volume formats, optional attributes and explicit
+allocation/conversion boundaries. It sketches format-specific Vulkan intersection
+shaders rather than supplying a complete renderer.
+
+Matterweave interpretation: retain authoritative state and derive bounded render,
+lighting and collision forms; avoid forcing one compressed layout on every consumer.
+Use narrow typed conversions for current requirements. This supports the existing
+modular design, not a generic plugin system or a format rewrite. The article's broad
+judgments about octrees are the author's perspective, not our measured conclusion.
+Its ray-tracing sketch establishes no Android hardware support or speed guarantee.
