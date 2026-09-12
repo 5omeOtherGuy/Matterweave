@@ -1,4 +1,12 @@
 //! Fixed-step voxel physics. Backend handles never cross the public boundary.
+//!
+//! Destruction bounds are explicit: a fracture is synchronous with no queue or
+//! staging buffer, one call creates at most [`MAX_FRACTURE_PIECES`] bodies, at
+//! most [`MAX_BODIES`] voxel bodies and [`MAX_CONSTRAINTS`] persistent welds are
+//! retained, and bodies outside the resident window or the activity range are
+//! disabled with their state intact rather than deleted. The radial separation
+//! impulse [`FRACTURE_RADIAL_RATE`] is intentional extra energy, documented on
+//! [`Physics::break_body`].
 mod async_detail_collision;
 mod detail_cadence;
 mod detail_collision;
@@ -26,6 +34,34 @@ pub const MAX_VOXEL_DIM: u8 = 6;
 /// Largest voxel count per body. Earlier [1, 2]-only snapshots satisfy this,
 /// so persisted saves restore without a format bump.
 pub const MAX_VOXELS_PER_BODY: usize = 32;
+/// Largest number of pieces one fracture can create: a body is replaced by at
+/// most one body per voxel. A split adds at most `MAX_FRACTURE_PIECES - 1`
+/// bodies in one synchronous call, and the `MAX_BODIES` cap is checked against
+/// that exact count before any mutation, so destruction has no queue or staging
+/// buffer to drain and a refused split is atomic.
+pub const MAX_FRACTURE_PIECES: usize = MAX_VOXELS_PER_BODY;
+/// Persistent constraints retained per world. A 64-body spanning tree needs 63
+/// edges; 128 admits loops while keeping solver work and save validation bounded.
+pub const MAX_CONSTRAINTS: usize = 2 * MAX_BODIES;
+/// Outward separation speed added per metre of offset from the fracture centre,
+/// in s^-1. The radial term is the only energy a fracture adds; see `break_body`.
+pub const FRACTURE_RADIAL_RATE: f32 = 1.5;
+/// Linear speed clamp applied to voxel bodies, in m/s. Fracture, impacts and
+/// throws stay inside this bound so live state remains restorable.
+pub const MAX_BODY_LINEAR_SPEED: f32 = 128.0;
+/// Angular speed clamp applied to voxel bodies, in rad/s.
+pub const MAX_BODY_ANGULAR_SPEED: f32 = 64.0;
+/// Voxel body density in kg/m³. Every body shares this value, so splitting a
+/// volume conserves total mass exactly and each piece derives its own mass and
+/// inertia from its own shape.
+const BODY_DENSITY: f32 = 3.0;
+/// X/Z distance beyond which a voxel body is disabled with its state intact, in
+/// metres. Destructed and fractured pieces far from the player stop consuming
+/// solver work without being deleted or losing their poses.
+const BODY_ACTIVITY_RANGE: f32 = 40.0;
+/// Y below which a fallen body is retained inactive with zero velocity instead
+/// of accelerating without bound. Bodies are never deleted for falling.
+const BELOW_WORLD_FLOOR: f32 = -32.0;
 const EYE_OFFSET: f32 = 0.65;
 const HALF_SEGMENT: f32 = 0.55;
 const RADIUS: f32 = 0.30;
@@ -52,6 +88,29 @@ pub struct PhysicsSnapshot {
     pub eye: [f32; 3],
     pub bodies: Vec<BodySnapshot>,
 }
+/// Complete persisted physics state: the body/character snapshot plus the
+/// persistent constraint topology. Constraint endpoints are indices into
+/// `snapshot.bodies`, so a loaded save rebuilds the same graph at the saved
+/// poses. Held grab joints are transient and never saved.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PhysicsSave {
+    pub version: u32,
+    pub snapshot: PhysicsSnapshot,
+    pub constraints: Vec<ConstraintSnapshot>,
+}
+/// One persistent fixed weld between two saved bodies. A weld is created at the
+/// current relative pose of its two bodies and has no tunable parameters, so
+/// the index pair is the whole topology; the relative frame is rebuilt from the
+/// saved poses on load.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ConstraintSnapshot {
+    /// Index into `PhysicsSave::snapshot.bodies`.
+    pub first: u32,
+    /// Index into `PhysicsSave::snapshot.bodies`.
+    pub second: u32,
+}
 /// Voxel-body counts at one instant. `total == active + sleeping + not_simulated`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BodyActivity {
@@ -72,6 +131,14 @@ struct VoxelBody {
 struct Held {
     handle: RigidBodyHandle,
     joint: ImpulseJointHandle,
+}
+/// One persistent fixed weld between two voxel bodies. The registry exists so
+/// saves can persist topology and so fracture retires joints whose endpoint no
+/// longer exists; Rapier already removes the underlying joint with the body.
+struct Constraint {
+    joint: ImpulseJointHandle,
+    first: RigidBodyHandle,
+    second: RigidBodyHandle,
 }
 
 pub struct Physics {
@@ -94,6 +161,7 @@ pub struct Physics {
     character_collider: ColliderHandle,
     anchor: RigidBodyHandle,
     held: Option<Held>,
+    constraints: Vec<Constraint>,
     center: Vector,
     vertical_velocity: f32,
     grounded: bool,
@@ -134,6 +202,7 @@ impl Physics {
             character_collider,
             anchor,
             held: None,
+            constraints: Vec::new(),
             center,
             vertical_velocity: 0.0,
             grounded: false,
@@ -195,6 +264,34 @@ impl Physics {
     }
     pub fn body_count(&self) -> usize {
         self.objects.len()
+    }
+    /// Mass in kilograms of the voxel body at `snapshot().bodies` index, derived
+    /// by the engine from that body's own shape and density. `None` when out of range.
+    pub fn body_mass(&self, index: usize) -> Option<f32> {
+        self.objects
+            .get(index)
+            .map(|object| self.bodies[object.handle].mass())
+    }
+    /// Principal moments of inertia in kg·m² of the voxel body at
+    /// `snapshot().bodies` index, from that body's own shape and mass. `None` when
+    /// out of range.
+    pub fn body_inertia(&self, index: usize) -> Option<[f32; 3]> {
+        self.objects.get(index).map(|object| {
+            let inertia = self.bodies[object.handle]
+                .mass_properties()
+                .local_mprops
+                .principal_inertia();
+            [inertia.x, inertia.y, inertia.z]
+        })
+    }
+    /// Live collider count: character, terrain window, detail walls and voxel
+    /// bodies. Residency and lifecycle regressions compare this against a baseline.
+    pub fn collider_count(&self) -> usize {
+        self.colliders.len()
+    }
+    /// Persistent constraints currently held. Grab joints are transient and excluded.
+    pub fn constraint_count(&self) -> usize {
+        self.constraints.len()
     }
     /// Simulation work counters for the voxel bodies only; the kinematic
     /// character is never counted. `not_simulated` covers every body the
@@ -324,7 +421,7 @@ impl Physics {
                 .map(|&d| (f32::from(d) * 0.25).powi(2))
                 .sum::<f32>()
                 .sqrt();
-            let margin = radius + 128.0 * FIXED_DT + 0.05;
+            let margin = radius + MAX_BODY_LINEAR_SPEED * FIXED_DT + 0.05;
             let supported = self.resident_columns.as_ref().is_none_or(|columns| {
                 let p = body.translation();
                 let low = [(p.x - margin).floor() as i32, (p.z - margin).floor() as i32]
@@ -333,19 +430,19 @@ impl Physics {
                     .map(|c| c.div_euclid(16));
                 (low[0]..=high[0]).all(|x| (low[1]..=high[1]).all(|z| columns.contains(&[x, z])))
             });
-            if body.translation().y < -32.0 {
+            if body.translation().y < BELOW_WORLD_FLOOR {
                 // Retain fallen voxel data without unbounded acceleration below the world.
                 let mut position = body.translation();
-                position.y = -32.0;
+                position.y = BELOW_WORLD_FLOOR;
                 body.set_translation(position, true);
                 body.set_linvel(Vector::ZERO, true);
                 body.set_angvel(Vector::ZERO, true);
             }
             body.set_enabled(
                 supported
-                    && delta.x.abs() < 40.0
-                    && delta.z.abs() < 40.0
-                    && body.translation().y > -32.0,
+                    && delta.x.abs() < BODY_ACTIVITY_RANGE
+                    && delta.z.abs() < BODY_ACTIVITY_RANGE
+                    && body.translation().y > BELOW_WORLD_FLOOR,
             );
             release_unloaded |= !supported
                 && self
@@ -379,11 +476,11 @@ impl Physics {
             let body = &mut self.bodies[object.handle];
             let velocity = body.linvel();
             let angular = body.angvel();
-            if velocity.length_squared() > 128.0 * 128.0 {
-                body.set_linvel(velocity.clamp_length_max(128.0), true);
+            if velocity.length_squared() > MAX_BODY_LINEAR_SPEED * MAX_BODY_LINEAR_SPEED {
+                body.set_linvel(velocity.clamp_length_max(MAX_BODY_LINEAR_SPEED), true);
             }
-            if angular.length_squared() > 64.0 * 64.0 {
-                body.set_angvel(angular.clamp_length_max(64.0), true);
+            if angular.length_squared() > MAX_BODY_ANGULAR_SPEED * MAX_BODY_ANGULAR_SPEED {
+                body.set_angvel(angular.clamp_length_max(MAX_BODY_ANGULAR_SPEED), true);
             }
         }
         if self.flying {
@@ -584,7 +681,7 @@ impl Physics {
         let size = snapshot.dimensions.map(|n| n as f32 * VOXEL_SIZE * 0.5);
         self.colliders.insert_with_parent(
             ColliderBuilder::cuboid(size[0], size[1], size[2])
-                .density(3.0)
+                .density(BODY_DENSITY)
                 .friction(0.7)
                 .restitution(0.1),
             handle,
@@ -688,8 +785,58 @@ impl Physics {
         self.joints.remove(held.joint, true);
         let body = &mut self.bodies[held.handle];
         body.apply_impulse(direction * body.mass() * 13.0, true);
-        body.set_linvel(body.linvel().clamp_length_max(128.0), true);
+        body.set_linvel(body.linvel().clamp_length_max(MAX_BODY_LINEAR_SPEED), true);
         true
+    }
+    /// Welds two voxel bodies at their current relative pose with a fixed joint and
+    /// returns whether the join was created. `first` and `second` index
+    /// `snapshot().bodies` (the same order `restore`/`load` accept). A join is refused
+    /// for out-of-range indices, a body with itself, a pair that is already joined, or
+    /// a world already at `MAX_CONSTRAINTS`; refusal leaves live state unchanged. The
+    /// weld is persistent topology: `save`/`load` round-trip it, `restore` drops it,
+    /// and fracturing either body retires it because child pieces never inherit the
+    /// parent's constraints.
+    pub fn constrain(&mut self, first: usize, second: usize) -> bool {
+        let (Some(first_object), Some(second_object)) =
+            (self.objects.get(first), self.objects.get(second))
+        else {
+            return false;
+        };
+        if first == second || self.constraints.len() >= MAX_CONSTRAINTS {
+            return false;
+        }
+        let (first_handle, second_handle) = (first_object.handle, second_object.handle);
+        if self.constraints.iter().any(|constraint| {
+            (constraint.first == first_handle && constraint.second == second_handle)
+                || (constraint.first == second_handle && constraint.second == first_handle)
+        }) {
+            return false;
+        }
+        self.weld(first_handle, second_handle);
+        true
+    }
+    fn weld(&mut self, first: RigidBodyHandle, second: RigidBodyHandle) {
+        // A fixed joint constrains `pose1 * frame1 == pose2 * frame2`. Frame 1 stays
+        // identity and frame 2 captures the current relative pose, so the weld holds
+        // the bodies where they are instead of snapping their origins together.
+        // Contact between welded bodies is disabled: the joint is the connection and
+        // internal contacts would only fight it.
+        let relative = self.bodies[second]
+            .position()
+            .inv_mul(self.bodies[first].position());
+        let joint = self.joints.insert(
+            first,
+            second,
+            FixedJointBuilder::new()
+                .local_frame2(relative)
+                .contacts_enabled(false),
+            true,
+        );
+        self.constraints.push(Constraint {
+            joint,
+            first,
+            second,
+        });
     }
     /// Splits a solid voxel volume into physical half-meter voxels, preserving mass and
     /// each voxel's center/rotation. Refuses the operation if the body cap would be exceeded.
@@ -697,6 +844,20 @@ impl Physics {
     /// collision (insert_body) and rendering (append_box) agree for any validated size.
     /// Voxel counts are bounded by MAX_VOXELS_PER_BODY, far below overflow, and the cap
     /// check runs before any mutation, so refusal is atomic.
+    ///
+    /// Energy: each child receives the parent rigid-body point velocity
+    /// `v + omega x offset` (rigid decomposition preserves angular velocity; that is a
+    /// kinematic fact, not a conservation claim) plus an intentional outward radial
+    /// velocity of `FRACTURE_RADIAL_RATE` times the offset. That radial term is the only
+    /// energy a fracture adds: half the piece mass times the squared radial speed, which
+    /// is at most 1.95 m/s of extra speed for a unit voxel and about 8.6 J in total for
+    /// the largest supported body ([6, 2, 2]). It deliberately separates the pieces;
+    /// deleting it would silently change fracture behaviour, not fix a bug.
+    ///
+    /// Bounds: one call creates at most MAX_FRACTURE_PIECES bodies, and fracture is
+    /// synchronous with no queue or staging buffer. The MAX_BODIES cap is checked
+    /// against the exact piece count before any state changes. Constraints attached to
+    /// the fractured body are retired with it; surviving constraints are untouched.
     pub fn break_body(
         &mut self,
         world: &World,
@@ -738,6 +899,10 @@ impl Physics {
             &mut self.multibody,
             true,
         );
+        // The body set removed joints attached to the fractured body; drop those
+        // registry entries so a retired weld cannot be re-adopted by a reused handle.
+        self.constraints
+            .retain(|constraint| self.joints.get(constraint.joint).is_some());
         for x in 0..dimensions[0] {
             for y in 0..dimensions[1] {
                 for z in 0..dimensions[2] {
@@ -750,8 +915,10 @@ impl Physics {
                     self.insert_body(&BodySnapshot {
                         position: (pose.translation + offset).to_array(),
                         rotation: pose.rotation.to_array(),
-                        velocity: (velocity + angular.cross(offset) + offset * 1.5)
-                            .clamp_length_max(128.0)
+                        velocity: (velocity
+                            + angular.cross(offset)
+                            + offset * FRACTURE_RADIAL_RATE)
+                            .clamp_length_max(MAX_BODY_LINEAR_SPEED)
                             .to_array(),
                         angular_velocity: angular.to_array(),
                         dimensions: [1; 3],
@@ -783,7 +950,8 @@ impl Physics {
                 .collect(),
         }
     }
-    /// Validates everything before changing any live body. Held constraints are transient.
+    /// Validates everything before changing any live body. Held constraints are transient,
+    /// and persistent constraints are dropped with the bodies they connect.
     pub fn restore(&mut self, snapshot: &PhysicsSnapshot) -> Result<(), String> {
         if snapshot.version != 1
             || !valid_vector(snapshot.eye, 16384.0)
@@ -805,6 +973,7 @@ impl Physics {
             }
         }
         self.release();
+        self.constraints.clear();
         for object in self.objects.drain(..) {
             self.bodies.remove(
                 object.handle,
@@ -827,6 +996,68 @@ impl Physics {
         self.grounded = false;
         self.accumulator = 0.0;
         self.jump_pending = false;
+        Ok(())
+    }
+    /// Complete save: body/character state plus persistent constraint topology.
+    /// Constraint endpoints become indices into `snapshot.bodies`, so a loaded save
+    /// rebuilds the same graph. Held grab joints are transient and never saved. Use
+    /// this instead of `snapshot` whenever the world can contain constraints;
+    /// `PhysicsSnapshot` remains the body-only compatibility format.
+    pub fn save(&self) -> PhysicsSave {
+        let snapshot = self.snapshot();
+        let index = |handle: RigidBodyHandle| {
+            self.objects
+                .iter()
+                .position(|object| object.handle == handle)
+                .map(|index| index as u32)
+        };
+        let constraints = self
+            .constraints
+            .iter()
+            .filter_map(|constraint| {
+                Some(ConstraintSnapshot {
+                    first: index(constraint.first)?,
+                    second: index(constraint.second)?,
+                })
+            })
+            .collect();
+        PhysicsSave {
+            version: 1,
+            snapshot,
+            constraints,
+        }
+    }
+    /// Validates a complete save and then rebuilds its bodies and constraints; a
+    /// rejected save leaves live state unchanged. Endpoints must reference saved
+    /// bodies, pairs must be unique and unordered, and at most `MAX_CONSTRAINTS`
+    /// are accepted. `load` is the only path that restores constraint topology.
+    pub fn load(&mut self, save: &PhysicsSave) -> Result<(), String> {
+        if save.version != 1 || save.constraints.len() > MAX_CONSTRAINTS {
+            return Err("invalid physics save header".into());
+        }
+        let bodies = save.snapshot.bodies.len() as u32;
+        let mut pairs = BTreeSet::new();
+        for constraint in &save.constraints {
+            if constraint.first >= bodies
+                || constraint.second >= bodies
+                || constraint.first == constraint.second
+            {
+                return Err("invalid constraint snapshot endpoints".into());
+            }
+            let pair = (
+                constraint.first.min(constraint.second),
+                constraint.first.max(constraint.second),
+            );
+            if !pairs.insert(pair) {
+                return Err("duplicate constraint snapshot".into());
+            }
+        }
+        self.restore(&save.snapshot)?;
+        for constraint in &save.constraints {
+            let first = self.objects[constraint.first as usize].handle;
+            let second = self.objects[constraint.second as usize].handle;
+            self.weld(first, second);
+        }
         Ok(())
     }
     /// Interpolated, world-space mesh for bounded dynamic voxel objects. Box extents
