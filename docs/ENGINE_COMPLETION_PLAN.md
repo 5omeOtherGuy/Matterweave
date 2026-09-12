@@ -129,11 +129,16 @@ R16 is optional and never blocks Phase A or the measured closure.
 | E6/M5 | Sustained thermal/efficiency and optimization | E2, E3-M, E5-M | Yes | Original M5 report; P02 thermal retest on final profile |
 | E8-F | Final measured delivery closure | E2, E3-M, E5-M, E6/M5 | Yes | Original M0–M6 evidence, limits table, final APK/CI/merged PRs |
 
-Phase A device rule: the lead runs Android functional tests on each integrated slice as
-it lands, not only at E8-T. Workers never access the phone, build the APK or capture
-device artifacts. E2 and cost/thermal work never block Phase A dispatch, review or
-acceptance. Fixtures change only to support a Phase A capability claim; no prolonged
-harness-only detour before implementation.
+Phase A device cadence (owner steering, 2026-09-12 after reboot): prioritize
+coherent implementation batches and reduce repeated intermediate live checks.
+Workers implement, host-test and repair reviewed changes; the lead runs Android
+functional acceptance on the combined affected features before accepting their
+behavioral gates. Reviewed host-only contract tests and opt-in diagnostic groundwork
+may land with Android rows explicitly NOT RUN; that does not close a capability.
+Immediate device investigation remains appropriate for Android-specific defects,
+lifecycle behavior or uncertain GPU contracts. Workers never access the phone,
+build the APK or capture device artifacts. E2 and cost/thermal work never block
+Phase A. No prolonged harness-only detour before implementation.
 
 ## First dispatch — first vertical slices (planned; board owns dispatch)
 
@@ -208,9 +213,10 @@ the path after each accepted slice; do not start Phase B work to fill idle time.
 - No mixed-package PRs, no drive-by refactors outside the brief, no generated binaries
   in Git. Large evidence lives in durable workflow/release artifacts with checksums;
   small manifests and summaries stay in Git.
-- The lead reviews the diff, runs the integration and Android functional slice, then
-  merges under the existing delivery authorization after CI and required reviews pass.
-  Preserve branch protections and history; no force-push.
+- The lead reviews the diff and merges under existing delivery authorization after
+  CI and required reviews pass. Behavioral changes receive the relevant combined
+  Android acceptance; host-only groundwork carries explicit unrun device gates as
+  described above. Preserve branch protections and history; no force-push.
 
 ## Independent review and correction gates
 
