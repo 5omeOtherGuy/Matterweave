@@ -1,0 +1,10 @@
+{
+  "source": "a0d3220daa2554d767ef51204cb2ae63eb2802ea",
+  "device": "OnePlus13 CPH2653 Android16",
+  "build": "cargo test --locked -p matterweave-core --lib --target aarch64-linux-android --no-run; default dev optimized profile; NDK28.2.13676358 API28 linker",
+  "binary_sha256": "79cdfce9c5fb4cdb96ecfc28f58da1e16da25974ae2762120f56f179c35fb321",
+  "run": "adb shell /data/local/tmp/matterweave-core-pr39 --test-threads=1",
+  "result": "PASS 36/36 including actual request-before-completion regression and stale identity controls",
+  "report_sha256": "dd4437c822bdcc98ac4aae318b737852c0df1931441b9db238d2fb686aae9607",
+  "limits": "Native ARM64 CPU correctness; no graphics-integrated sustained-edit route, latency, energy or M3 milestone closure claimed."
+}

@@ -338,3 +338,16 @@ The earlier PR39 verdict rows above this section are superseded: "Sustained-edit
 progress" and "Destination/reset/cancellation and mesh churn safe" were claimed
 PASS while the upstream rejection path left the fallback unreachable on the real
 frame schedule. Treat them as **FAILED at `343dc36`**, resolved here.
+
+## Lead acceptance of corrective slice
+
+GLM5.3 Flash (`z-ai/glm-5.3-flash`, high), worker `w_8b9d64dd`, independently
+reviewed a0d3220 and the real app tick; no blockers. Lead inspected classification,
+request/poll/fallback order and deterministic controls. The 36 core library tests
+also PASS on physical OnePlus13 ARM64, including request-before-completion,
+identity/cancellation controls and edit eviction/re-entry equivalence.
+[Exact Android manifest](../../evidence/2026-09-12-pr39-streaming/manifest.json).
+This accepts the corrected code slice. Full graphics-integrated sustained-edit
+route, synchronous fallback latency and complete M3 stress remain open; no mobile
+performance claim. Host suites total78 tests passed; CI supplies broad integration
+build/check coverage. No app source change in a0d3220.
