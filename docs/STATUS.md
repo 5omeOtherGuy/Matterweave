@@ -1,5 +1,7 @@
 # Current status
 
+**Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
+
 ## Recovery and continued development — 2026-09-12
 
 PR #35 merged at `ac1ce444`: reviewed, host/device-verified destruction diagnostic,

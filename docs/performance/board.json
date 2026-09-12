@@ -806,7 +806,7 @@
     },
     "D1.2-production-fixtures": {
       "owner": "current Codex lead / w_18ada142",
-      "state": "running",
+      "state": "completed-awaiting-lead-acceptance",
       "profile": "deepseek-flash-openrouter",
       "thinking": "high",
       "base": "39666a82a5c4686a88a3e82d103881bb1a0c8e04",
@@ -825,7 +825,8 @@
       "repair_brief": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-repair.md",
       "repair_worker": "w_761c1314",
       "repair_run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-repair",
-      "worker": "w_f38feb0e"
+      "worker": "w_f38feb0e",
+      "restart_checkpoint": "docs/performance/restart-20260912.md"
     },
     "D1.1-detail-runtime": {
       "attempt": 1,
@@ -893,7 +894,7 @@
     },
     "D2.3-preserved": {
       "owner": "current Codex coordination / w_5484fb7e (exact session resumed)",
-      "state": "repair-running",
+      "state": "completed-awaiting-lead-acceptance",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/streaming",
       "session": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1/session.jsonl",
       "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/streaming-publication-resume",
@@ -902,7 +903,8 @@
       "review_worker": "w_3287036b",
       "worker": "w_b5255700",
       "profile": "deepseek-flash-openrouter",
-      "thinking": "high"
+      "thinking": "high",
+      "restart_checkpoint": "docs/performance/restart-20260912.md"
     },
     "D3.2-live-reconciliation": {
       "owner": "Claude contributor / w_7ea6fc6d",
@@ -912,12 +914,16 @@
     },
     "D3.2-recovery": {
       "owner": "current Codex lead / Muse Free recovery",
-      "state": "running",
+      "state": "completed-awaiting-lead-acceptance",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/lighting-response",
       "profile": "muse-free",
       "thinking": "high",
       "preserved": "Recovered modified indirect_tests.rs; original uncommitted indirect.rs/reflection.rs unreadable on failed drive. Reconstruct against committed D3.1; do not overwrite failed-drive originals.",
-      "worker": "w_a0a724e3"
+      "worker": "w_a0a724e3",
+      "artifact": "c452f8129d1ddd26641e68642e0c25bf2a3af3d3",
+      "acceptance": "Muse reconstructed completion-gated publication and response tests;107 render tests, scoped Clippy/fmt pass. Lead repaired omitted commit/log structure. Independent final review and Android remain pending.",
+      "review_run_dir": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/lighting-response-review",
+      "restart_checkpoint": "docs/performance/restart-20260912.md"
     },
     "D3.1-app-integration": {
       "owner": "current Codex lead",

@@ -1,5 +1,7 @@
 # Implementation handoff
 
+**Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
+
 **Recovery update, 2026-09-12:** PR #35 merged at `ac1ce444` with all six checks
 passing. `/mnt/bench` now has hardware I/O failures in its backing device `sdb`;
 do not resume writes or builds there until the drive is repaired and verified.
