@@ -1,0 +1,51 @@
+{
+  "source_commit": "d22954cdb8ae8e1094029f429c4b2bbec9e28da0",
+  "apk_sha256": "5f5512e38b0e8fb3b480295a6c2765d92623162e7f9d708d4ef0be47f22853fe",
+  "build": "debug, ARM64, Rust 1.96.0, Android NDK 28.2.13676358",
+  "device": "OnePlus 13 CPH2653, Android 16, Adreno 830",
+  "vulkan": "1.3.284",
+  "driver": 2150760522,
+  "validation_enabled": false,
+  "scene": "standalone destruction fixture; six source bodies, 64 half-metre voxels, two welds; no random seed",
+  "conditions": "Functional run; no thermal/performance qualification. One real HOME/resume during phase 2; 20 internal reset/load cycles.",
+  "observed": {
+    "presented": 1501,
+    "uploads": 1520,
+    "rebuilds": 1519,
+    "pieces": 64,
+    "mass_kg": 24,
+    "internal_recreations": 1,
+    "platform_suspends": 1,
+    "platform_resumes": 1,
+    "retained_dynamic_mesh_bytes": 92160,
+    "retained_bound_bytes": 137216
+  },
+  "acceptance": "D2.2 rendered functional diagnostic accepted after repair at 5347e91; does not close M3 streaming or thermal/performance gates.",
+  "save_preservation": "Diagnostic has no user-save access. Old audio-backup hashes cannot serve as paired baseline: owner played in the grove between runs; newer saves preserved.",
+  "artifacts": {
+    "repaired-saves-after.json": "a012ad618581a79f15aa5d8a061cd0221418f347665cda5ec7ac78db053a1d13",
+    "repaired-observe.py": "93430b45023c232b4b9f5fbba8ab330448f991f3e2293993f5995d1d93d9a935",
+    "phase-1.png": "d83b8d8a109f678ba035b012e48f5d4b914f7d04b11b3f13904613b822a4669f",
+    "initial-runtime.log": "d26f93b3ccc9084d0a03dce21679d230ebcada70765fad4c95bcd911117f3f6b",
+    "phase-16.png": "629f1d5e5cd16d13d60be65222b7371839bb0ee118d12acd51c2520b6f2f16da",
+    "initial-report.txt": "e732720ae43384f1996bbcf5048a705838e4c53c16f70b9ec608de9a85778632",
+    "repaired-saves-before.json": "a012ad618581a79f15aa5d8a061cd0221418f347665cda5ec7ac78db053a1d13",
+    "repaired-report.txt": "7d3cb9596746e80b9e03dd94c60b7b9142a19b45866c34e166f79d6fc4b30d87",
+    "repaired-runtime.log": "4b0ad2d67879d780cf9704836096d8a275c1f199f9bb2184bcb71cbf7b07447f",
+    "phase-2.png": "34f950b996e328c99f247c025c47c9deff2c6c85dab248aac506e4153a92934e"
+  },
+  "raw_screenshots": "/mnt/bench/matterweave-dev/coarse-terrain/android-destruction",
+  "limitations": [
+    "No general memory-leak or GPU-residency bound proven",
+    "No performance or thermal claim",
+    "No process-death test"
+  ],
+  "corrected_run": {
+    "source_commit": "5347e91",
+    "apk_sha256": "a0228c8434f5feaeced1bde2cd1e8a8efa9db99b075f6b0aee80a30562aa2ed8",
+    "result": "PASS: 1501 presentations; 25 unique phase summaries with 60 frames each; 20 reset/load cycles; 64 pieces; 24kg; one internal renderer recreation; HOME/resume during phase4 with one platform pair; all four current user-save hashes unchanged",
+    "host": "157 app tests passed, 1 ignored; 10 focused destruction tests included; scoped Clippy and fmt pass; actual llvmpipe Vulkan 151 presentations, 20 cycles",
+    "images": "Unmodified device screencaps; filenames use visible HUD phase. Screenshot acquisition lagged report polling, so original raw source.png is actually phase1 and reset-10.png is phase16.",
+    "review": "Gemini w_004fc6f2: no findings; lead accepted with source inspection and corrected host/Android evidence"
+  }
+}

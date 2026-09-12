@@ -8,12 +8,13 @@
   "relay_fixture": "Dedicated test save copied from reset chamber; character eye set [6,2.55,13.8] before launch, actual ACTION after HOME/resume clears obstacle",
   "relay_result": "AAudio requestStart -899 followed by replacement start0 and actual block-edit Started callbacks9342 frames896832 process32154",
   "baseline_other_events": "source23112d6 same event wiring: plate preposition [10,1.55,7] led real objective event; legacy completed save imported into dedicated file",
-  "audibility": "NOT VERIFIED; human question pending",
+  "audibility": "Confirmed by owner on 2026-09-12: Audio works 100% it is all yours. Earlier partial-hearing report is superseded; phone released for tests.",
   "original_saves": "Three pre-existing files SHA256 unchanged after restore; completed imported Relay restored",
   "raw_evidence_root": "/mnt/bench/matterweave-dev/coarse-terrain/android-audio",
   "files": {
     "runtime.log": "11c3054f444ec9568166c8896664f972d8bea177dc11d6732d1d7f94e0fa0848",
     "restored-saves.sha256": "3e8c3d9951234accff380f809f4ec820c410da3932300fbdfa648a7ef30e0b4e"
   },
-  "relay_seed": 20260909
+  "relay_seed": 20260909,
+  "owner_audibility_confirmation": "Audio works 100% it is all yours. (2026-09-12; phone released for lead tests)"
 }

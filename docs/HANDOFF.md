@@ -1,6 +1,6 @@
 # Implementation handoff
 
-Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 now passes the repaired Android resume checks; review/CI delivery is in progress and human hearing remains open.
+Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
 
 The entry point for a fresh session: what is true now and what is authorized next.
 [STATUS](STATUS.md) owns the dated evidence; where the two differ, STATUS is
@@ -46,11 +46,13 @@ branch. M2–M6 remain open.
 
 Owner transferred ongoing development, integration and the phone to this lead.
 PRs #28/#29/#31 delivered coarse derivation, Terrain Lab and production wetland
-selection. Deliver PR #32 after its repaired Android resume checks and final CI,
-then integrate the preserved destruction and lighting deliveries. D2.2 PR #33
-belongs to the other session's merge workflow; its graphics-integrated Android
-64-piece/20-cycle gate remains this lead's follow-up. Preserve active worker
-`w_9d03d127` and its D3.1 renderer scope. Reconcile Pi and Git before dispatch.
+selection. PR #32 is merged with repaired Android resume checks. Continue integrating the preserved destruction and lighting deliveries. D2.2 PR #33
+is merged at `c86980b`; its graphics-integrated Android
+64-piece/20-cycle diagnostic passed its first physical run, but independent review
+found lifecycle/reporting boundary defects. Lead repair `5347e91` passes the corrected-device rerun,
+including HOME/resume during phase 4; corrective independent review passed. The owner confirmed audio works and released the phone; Android verification
+may proceed, preserving current saves. PR #34 D3.1 is merged at `16ad342`; preserve the contributor's live D3.2
+worker `w_7ea6fc6d`. Reconcile Pi and Git before dispatch.
 Do not start duplicate implementation or treat host checks as device completion.
 
 

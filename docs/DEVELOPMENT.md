@@ -502,3 +502,21 @@ restoring its save. Use `adb shell -T run-as ...` with the shell exit-status pro
 for synchronous writes; verify original bytes afterwards. Stream app-scoped logcat
 before launch for startup diagnostics; a late dump can lose early lines. Do not weaken
 Android security properties to obtain simpleperf access.
+
+
+### Rendered destruction diagnostic
+
+Run:
+
+```sh
+cargo run --locked -p matterweave-explorer -- --destruction-check --save /absolute/disposable-directory/unused.json
+```
+
+The parent directory must exist. The diagnostic writes
+`destruction-check-report.txt` there and does not load that save. On Android, the
+existing one-shot `files/engine-check.txt` request accepts `destruction`; launch
+`dev.matterweave.explorer/android.app.NativeActivity` and read
+`files/destruction-check-report.txt` through `run-as`. Remove only a stale diagnostic
+report before a fresh run. Preserve gameplay saves. A complete run reports 25
+phase summaries, six presented frames per phase on host or 60 on Android, followed
+by one final restored frame. See [evidence and limitations](performance/destruction-android.md).

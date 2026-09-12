@@ -744,7 +744,7 @@
       "acceptance": "PR31 merged04d3964; production Android render/edit/load/lifecycle pass; actual views Source-only, D1.2 transition acceptance open."
     },
     "D4-production-audio": {
-      "state": "delivery",
+      "state": "accepted",
       "owner": "w_14dde4de",
       "profile": "deepseek-flash-go",
       "thinking": "max",
@@ -753,16 +753,17 @@
       "device_access": "none; lead owns Android",
       "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
       "artifact": "1c16b810",
-      "acceptance": "Source b2ffd5b:147app+49audio tests, independent Gemini repair review,3wetland+1Relay Android failed-start recoveries pass; PR32 CI pending, hearing unverified.",
+      "acceptance": "PR32 mergedf370990, all6checks pass; sourceb2ffd5b 147app+49audio tests and physical3wetland+1Relay failure recoveries; human hearing unverified, M6open.",
       "repair_worker": "w_adc05f59",
       "review_worker": "w_3e710340"
     },
     "D2.2-preserved": {
-      "state": "running",
+      "state": "merged",
       "owner": "w_80029347",
       "dispatcher": "other lead; preserve existing assignment",
       "worktree": "/mnt/bench/matterweave-dev/worktrees/d2-2-destruction",
-      "device_access": "none; this integration lead currently operates phone"
+      "device_access": "none; this integration lead currently operates phone",
+      "acceptance": "PR33 mergedc86980b after existing independent review, all6CI checks pass; rendered Android gate moves to D2.2-Android-rendered."
     },
     "D3.1-preserved": {
       "state": "running",
@@ -773,7 +774,7 @@
     },
     "D2.2-Android-rendered": {
       "owner": "current Codex lead / w_3f998c46",
-      "state": "running",
+      "state": "accepted-pending-delivery",
       "profile": "deepseek-flash-go",
       "thinking": "max",
       "base": "bf532eef15154936db730aa31544c53435601f57",
@@ -786,14 +787,24 @@
         "docs/performance/logs/destruction-android-check.md"
       ],
       "dependencies": [
-        "PR33 physics implementation; other lead owns merge"
+        "PR33 merged c86980b"
       ],
-      "acceptance": "NOT RUN; actual rendered64-piece and20reset/load checks then lead-owned Android",
-      "routing": "Owner explicitly requests DeepSeek primary; current Terrain Lab/detail deliveries demonstrate useful implementation after lead repair. Router Muse recommendation bypassed for owner preference; no Astra worker."
+      "acceptance": "157 app tests, scoped strict Clippy, 151 host Vulkan frames and repaired Android 1501 presentations pass; HOME/resume during internal-recreation phase, 25 unique 60-frame summaries, four save hashes unchanged. Corrective Gemini w_004fc6f2 no findings.",
+      "routing": "Owner explicitly requests DeepSeek primary; current Terrain Lab/detail deliveries demonstrate useful implementation after lead repair. Router Muse recommendation bypassed for owner preference; no Astra worker.",
+      "artifact": "5347e91",
+      "review_worker": "w_d4d2607a",
+      "repair_review": {
+        "state": "accepted",
+        "source": "5347e91",
+        "profile": "gemini-restricted",
+        "scope": "repair diff only",
+        "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/destruction-repair-review",
+        "worker": "w_004fc6f2"
+      }
     },
     "D1.2-production-fixtures": {
       "owner": "current Codex lead / w_18ada142",
-      "state": "running",
+      "state": "repair-running",
       "profile": "deepseek-flash-go",
       "thinking": "max",
       "base": "39666a82a5c4686a88a3e82d103881bb1a0c8e04",
@@ -804,8 +815,14 @@
         "apps/explorer/src/detail_check.rs",
         "docs/performance/logs/detail-production-fixtures.md"
       ],
-      "acceptance": "NOT RUN; real production flora + occlusion/movement/edit fixtures with quality guards retained; lead Android after review",
-      "routing": "DeepSeek primary per owner; existing D1 implementation useful after lead repair; Gemini review follows frozen source."
+      "acceptance": "Gemini found real resize one-shot false failures and missing packed-instance assertions; DeepSeek exact-session repair queued. Unselected stale mesh slot is not a runtime defect when refresh precedes reselection; add reselection coverage. Android remains NOT RUN.",
+      "routing": "DeepSeek primary per owner; existing D1 implementation useful after lead repair; Gemini review follows frozen source.",
+      "artifact": "d8a5cde1d2a772f4ab9dbb33e0a63f05f2faa801",
+      "review_worker": "w_1f749699",
+      "review_run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-review",
+      "repair_brief": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-repair.md",
+      "repair_worker": "w_761c1314",
+      "repair_run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-repair"
     },
     "D1.1-detail-runtime": {
       "attempt": 1,
@@ -872,12 +889,18 @@
       "open": "experience.rs lifecycle wiring and both samples' event call sites are lead-owned and not done; human audibility confirmation NOT RUN and cannot be replaced by counters."
     },
     "D2.3-preserved": {
-      "owner": "other-session production worker w_3046451b; resume coordinated by Codex",
-      "state": "paused-for-global-cap",
+      "owner": "current Codex coordination / w_5484fb7e (exact session resumed)",
+      "state": "running",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/d2-3-streaming",
       "session": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1/session.jsonl",
-      "run_dir": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1",
-      "acceptance": "NOT RUN. New fourth worker stopped after brief/read progress to honor global3-worker cap; partial source and exact session preserved. Resume same session when slot frees; never launch duplicate."
+      "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/streaming-publication-resume",
+      "acceptance": "NOT RUN. Original w_3046451b paused for global cap; same session resumed after D3 correction completed. Scope async_world.rs/core tests only; physical support and Android remain lead-owned."
+    },
+    "D3.2-live-reconciliation": {
+      "owner": "Claude contributor / w_7ea6fc6d",
+      "state": "running",
+      "scope": "D3.2 dynamic lighting response, preserved contributor assignment",
+      "acceptance": "NOT RUN; observed live after out-of-order coordination messages. PR34 D3.1 merged 16ad342. Do not duplicate render lighting work."
     }
   },
   "capacity": {
