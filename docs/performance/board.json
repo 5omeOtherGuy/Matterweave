@@ -1004,6 +1004,12 @@
       "worker": "w_8783a4d7"
     },
     "device_policy": "Owner requests coherent development batches and fewer live tests. Relevant host tests/review before one integrated Android acceptance; immediate device checks only for actual Android/GPU/lifecycle uncertainty.",
-    "streaming_contract_pr": 37
+    "streaming_contract_pr": 37,
+    "mesh_api_review": {
+      "state": "dispatching",
+      "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-api-review.md",
+      "source": "80a89c5 renderer only",
+      "profile": "gemini-restricted"
+    }
   }
 }
