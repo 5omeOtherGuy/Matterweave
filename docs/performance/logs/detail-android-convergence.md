@@ -108,13 +108,51 @@ All commands used
 | Formatting | `rustfmt --check --edition 2021 apps/explorer/src/detail_check.rs` | clean |
 | Docs | `python3 tools/check_docs.py` | PASS |
 
+## Device gate — 2026-09-13 (delegated delivery worker, OnePlus 13)
+
+Source tested: combined acceptance checkout `pr36-39-acceptance` at
+`bbf7d1d` = `engine/interaction-delivery` `f5fc91f` + cherry-pick of `648dda2`
+(full PR scopes stay separate; this merge was for one device batch only).
+APK `sha256 0531c7d115fb1d3af425d87fa4404e4aefa3048dbbcef2f41ad5b890e8a88a7e`
+(ARM64 16K-aligned, debug-signed, `tools/verify_apk.py` PASS, installed
+`-r` 00:25:16). One-shot marker `files/engine-check.txt = detail`, fresh
+Vulkan1.3.284 Adreno830 surface at 1440 px.
+
+Result: **phase 0 now passes at the physical viewport and phases 1–6 pass; the
+run stops at phase 7 (pre-existing, unrelated to this repair).**
+
+| Step | Evidence |
+| --- | --- |
+| Phase 0 `cold-far-bounded-convergence` | `lods[Source=10 Half=0 Quarter=5] builds_this_call=1 geometry_changed=true coarse_realized=5 converge_iters=2 max_prepare_builds=1 total_converge_builds=2` — the deferral proof now runs at 1440 px |
+| Phases 1–6 | recorded and passing (approach, retreat, mid, FOV zoom, orthographic out/in) |
+| Phase 7 `occlusion-foreground-fungus-over-solid` | `FAIL detail: phase 7: occlusion foreground flora was not a pixel-eligible guard retention` |
+
+Phase 7 is **not** caused by the cold-phase cap: the occlusion phase keeps the
+default config and cap, and its in-run check requires
+`coarse_would_pass_pixels(...)` for the foreground fungus. A disposable host
+probe (temporary test in the acceptance checkout, reverted; not committed) over
+the same fixture measured:
+
+| viewport | projected error px | budget `2/(1+0.4)` px | eligible |
+| --- | --- | --- | --- |
+| 480 | 0.563 | 1.429 | yes |
+| 720 | 0.844 | 1.429 | yes |
+| 1080 | 1.266 | 1.429 | yes (existing pinned case) |
+| 1440 | 1.688 | 1.429 | **no** |
+
+So the occlusion fixture's guard-retention demonstration is viewport-coupled
+above ~1216 px, the same class of assumption the cold phase had. It needs its
+own fixture repair (viewport-robust occlusion camera/geometry) before this
+diagnostic can pass at the real 1440 px surface; the delegated delivery
+reported that to Codex for an isolated writer rather than expanding the fix
+scope silently. HOME/resume was not reached because the run aborts at phase 7;
+it must be exercised in the repaired rerun.
+
 ## Not verified / remaining gates
 
-- **Android phase run (lead-owned, NOT RUN):** no phone, ADB, APK or
-  `/mnt/bench` use in this session. The repair is derived from the lead's failed
-  1440 px report; the lead must re-run `engine-check.txt = detail` and confirm
-  phase 0 now reports `converge_iters>=2`, `max_prepare_builds<=1`, a zero-build
-  steady state, and that the remaining 13 phases and screenshots are unaffected.
+- **Android phase run:** PARTIAL 2026-09-13 — phase 0 fixed and verified at
+  1440 px, phase 7 viewport coupling blocks the full 14-phase PASS. No phone,
+  ADB, APK or `/mnt/bench` use in the authoring session.
 - **Performance (NOT RUN):** no timing, memory or thermal claim; host software
   Vulkan is not device evidence.
 - **Envelope bound:** the cold phase needs at least two distinct coarse pairs.
