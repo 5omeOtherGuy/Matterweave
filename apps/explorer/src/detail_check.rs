@@ -797,7 +797,7 @@ mod tests {
         let frame = scene
             .prepare_batches(&plan.lod_camera(480.0), &plan.config)
             .unwrap();
-        assert!(runtime.instances_for_frame(&frame).is_err());
+        assert!(runtime.instances_for_frame(&scene, &frame).is_err());
     }
 
     #[test]
@@ -960,7 +960,7 @@ mod tests {
             .prepare_batches(&far.lod_camera(1080.0), &far.config)
             .unwrap();
         assert_eq!(again.mesh_builds_this_call, 0);
-        let instances = runtime.instances_for_frame(&again).unwrap();
+        let instances = runtime.instances_for_frame(&scene, &again).unwrap();
         for (instance, selected) in instances.iter().zip(&again.selected) {
             assert_eq!(
                 instance.prototype,
@@ -979,7 +979,7 @@ mod tests {
         let frame = scene
             .prepare_batches(&plan.lod_camera(1080.0), &plan.config)
             .unwrap();
-        let instances = runtime.instances_for_frame(&frame).unwrap();
+        let instances = runtime.instances_for_frame(&scene, &frame).unwrap();
         assert_eq!(instances.len(), frame.selected.len());
         for (instance, selected) in instances.iter().zip(&frame.selected) {
             assert_eq!(

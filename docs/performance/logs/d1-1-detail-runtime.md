@@ -160,3 +160,91 @@ python3 tools/check_docs.py
 - A `DetailRuntime::new()` caller that never calls `prepare` cannot map frames
   (`source_version` differs); that is the documented misuse error, not a
   supported flow.
+
+## Correction pass (same day, follow-up commit)
+
+Four defects were reported against `f56eaf1` and fixed in
+`apps/explorer/src/detail_runtime.rs` plus three `detail_check` test call sites.
+TDD order: all four regression tests were written first and run against
+`f56eaf1` with `--no-fail-fast`; all four failed for the intended reason, then
+the fixes made them pass.
+
+### 1. Emptying a prototype no longer breaks `prepare`
+
+- `refresh_selected` no longer drops the resident entry. A selected level whose
+  revision moved on is always refreshed through `refresh_entry`, including the
+  empty derived mesh of an emptied prototype, which reuses the pool slot.
+- `instances_for_frame` treats a prototype with `occupied_cells() == 0` as
+  undrawable and omits its instance; the frame continues. No zero-vertex mesh
+  reaches the renderer.
+- RED evidence: `emptied_prototype_contributes_no_instance_and_refill_restores_geometry`
+  panicked at the emptied `prepare(...).unwrap()` because mapping returned the
+  old `"has no resident geometry"` error.
+- The test now proves: the emptied boulder is still in `frame.selected` but
+  contributes no instance; the independent keeper instance is still returned
+  with a current revision; refilling one cell restores a non-empty mesh and the
+  boulder's instance.
+
+### 2. No public path maps a superseded revision
+
+- `instances_for_frame` now takes `scene: &DetailScene` and validates each
+  selected `(prototype, lod)`'s resident revision against the prototype's live
+  source revision before mapping. The whole-scene `source_version` guard alone
+  cannot catch the partial-refresh case, and the old public signature made the
+  contract unenforceable.
+- RED evidence: `partially_refreshed_runtime_rejects_a_foreign_frame` failed
+  `assert!(runtime.instances_for_frame(&far).is_err())` — after an edit and a
+  near `prepare` (Source refreshed), a directly prepared far frame selected the
+  still-stale Quarter copy and the old guard mapped it.
+- With the fix the same frame is rejected; adding `&scene` was the only change
+  the test needed.
+
+### 3. `preload` degrades like `ensure_mesh`
+
+- `refresh_entry` now returns `Ok(false)` for `DetailError::InvalidScale` and
+  `DetailError::BudgetExceeded` instead of propagating them; `preload` and
+  `refresh_selected` leave that level non-resident and selection falls back to
+  `Source`, exactly as `DetailScene::ensure_mesh` does.
+- Verified fact for the record: wetland terrain is `TERRAIN_CELL_M =
+  SCALE_TILE_M = 0.25 m` (not 0.05 m), and `Lod::Quarter` coarsens by 4 giving
+  exactly 1.0 m = `MAX_SCALE_M`, accepted only because the bound is inclusive.
+  Any coarser prototype, or a scene near the 64 MiB derived-mesh cache budget,
+  would have failed `preload` outright before this fix.
+- Two tests: `preload_degrades_when_a_coarse_level_is_out_of_scale_range`
+  (0.3 m cells, Quarter = 1.2 m; preload succeeds with Source+Half resident and
+  Quarter absent, and a very far camera still selects and draws Half) and
+  `preload_degrades_when_a_level_exceeds_the_mesh_budget` (33^3 cells cross the
+  32 MiB derived-mesh output upper bound before allocation; every level stays
+  non-resident and preload succeeds). The BudgetExceeded arm was already RED on
+  `f56eaf1` through the scale test; the mesh-budget test adds direct coverage of
+  the second error variant.
+
+### 4. Empty/refill cycles reuse pool slots
+
+- The emptied prototype keeps its `ResidentPrototype` entry and stores the empty
+  mesh at the existing index, so refilling replaces that slot in place.
+- `empty_and_refill_cycles_reuse_pool_slots` runs three clear/refill cycles and
+  asserts `runtime.meshes().len()` stays at the 3 slots preloaded for the
+  boulder. On `f56eaf1` the emptied entry was removed and refill pushed a new
+  slot per cycle; the cycle test never reached that assertion because the
+  emptied `prepare` returned `Err` first, so the growth was inferred from the
+  removal/append code rather than measured on the old revision.
+
+### Correction definition of done
+
+| Criterion | Result |
+| --- | --- |
+| Emptying leaves `prepare` succeeding; no instance for the emptied prototype; others correct; refill restores | PASS |
+| No public path maps a superseded revision; partial-refresh test fails on `f56eaf1` | PASS (RED captured) |
+| `preload` degrades on InvalidScale/BudgetExceeded; out-of-scale Quarter still preloads | PASS (two tests) |
+| Empty/refill does not grow the pool | PASS |
+| `cargo test --workspace --locked` | PASS (505 passed, 0 failed, 3 ignored) |
+| `cargo fmt --all -- --check`, clippy `-D warnings` | PASS |
+| Correction accepted against the source | NOT RUN (lead) |
+| Android OnePlus 13 approach/retreat and edit | NOT RUN (lead) |
+
+Supplementary: the host `--detail-check` gate rerun after the correction still
+prints `PASS detail` (exit 0, validation on, llvmpipe LLVM 20.1.2). Evidence:
+`/mnt/bench/matterweave-dev/performance/run-d11/detail-check-correction/`
+(report sha256 `cbddca73c5776781b59e1e63bf4c1e6734c195a9f0bc19f70de21e427b17f2f6`,
+run log sha256 `c1cf9185650997ddc1762bb22dae602cc3aa77224394c7127ef60095e0f52927`).

@@ -10,9 +10,11 @@
 //! Invariants:
 //! - Source voxels stay authoritative. This module never mutates the scene and
 //!   never derives collision; physics keeps the existing path.
-//! - No stale derived geometry is handed out. An instance is only returned when
-//!   its resident mesh carries the prototype's live source revision; a stale
-//!   entry is refreshed from the freshly built scene-cache mesh first.
+//! - No stale derived geometry is handed out. Every selected `(prototype, lod)`
+//!   yielded by a frame is validated against the prototype's live source
+//!   revision before it is mapped, so a level that has not been refreshed is
+//!   rejected rather than drawn. A prototype with no occupied cells has no
+//!   drawable geometry and simply contributes no instance.
 //! - No panics on the frame path. Every fallible step returns
 //!   `Result<_, String>`, matching the existing adapter.
 //!
@@ -26,7 +28,9 @@
 //! static-scene re-install rather than an instance-only update.
 
 use matterweave_core::Mesh;
-use matterweave_detail::{Camera, DetailScene, Lod, LodConfig, PreparedFrame, SceneVersion, Yaw};
+use matterweave_detail::{
+    Camera, DetailError, DetailScene, Lod, LodConfig, PreparedFrame, SceneVersion, Yaw,
+};
 use matterweave_render::StaticInstance;
 use std::collections::BTreeMap;
 
@@ -57,7 +61,9 @@ pub fn lod_histogram(frame: &PreparedFrame) -> BTreeMap<Lod, usize> {
 pub struct FrameUpdate {
     /// The engine's selection and budget outcome for this frame.
     pub frame: PreparedFrame,
-    /// Packed instances referencing resident mesh-pool indices.
+    /// Packed instances referencing resident mesh-pool indices. An instance
+    /// whose prototype has no occupied cells contributes no drawable geometry
+    /// and is omitted, so this may be shorter than `frame.selected`.
     pub instances: Vec<StaticInstance>,
     /// True when a resident mesh was added or replaced during this prepare, so
     /// the renderer must re-install the static scene (geometry changed, not
@@ -92,8 +98,12 @@ impl DetailRuntime {
 
     /// Realizes `Source`/`Half`/`Quarter` for every nonempty prototype exactly
     /// once, verifying each derived mesh carries the authoritative source
-    /// revision, and records each `(prototype, lod)` -> pool-index map. An
-    /// empty scene produces an empty runtime, not an error.
+    /// revision, and records each `(prototype, lod)` -> pool-index map. A level
+    /// the engine cannot build within the scale or derived-mesh cache budget
+    /// (`DetailError::InvalidScale` or `DetailError::BudgetExceeded`) is simply
+    /// left non-resident, matching how `DetailScene::ensure_mesh` degrades to
+    /// `Lod::Source` instead of failing. An empty scene produces an empty
+    /// runtime, not an error.
     pub fn preload(scene: &mut DetailScene) -> Result<Self, String> {
         let mut runtime = Self::new();
         let mut ids = scene.prototype_ids();
@@ -114,6 +124,8 @@ impl DetailRuntime {
                 if runtime.revision(&id, lod) == Some(revision) {
                     continue;
                 }
+                // An unbuildable level stays non-resident; selection falls
+                // back to `Source` exactly as the engine's own path does.
                 runtime.refresh_entry(scene, &id, lod, revision)?;
             }
         }
@@ -140,7 +152,7 @@ impl DetailRuntime {
         }
         let geometry_changed = self.refresh_selected(scene, &frame)?;
         self.source_version = frame.source_version.clone();
-        let instances = self.instances_for_frame(&frame)?;
+        let instances = self.instances_for_frame(scene, &frame)?;
         Ok(FrameUpdate {
             frame,
             instances,
@@ -149,12 +161,16 @@ impl DetailRuntime {
     }
 
     /// Maps a prepared frame's per-instance LOD selection to packed instances
-    /// that reference resident geometry. Only the instance list changes between
-    /// frames; geometry is never rebuilt here. A frame prepared from a
-    /// different source state than this runtime's resident geometry is
+    /// that reference resident geometry, validating each selected level against
+    /// `scene`'s live source revision. Only the instance list changes between
+    /// frames; geometry is never rebuilt here. An instance whose prototype has
+    /// no occupied cells contributes no drawable geometry and is omitted. A
+    /// frame prepared from a different source state than this runtime's
+    /// resident geometry, or one whose selected level is superseded, is
     /// rejected, never mis-mapped.
     pub fn instances_for_frame(
         &self,
+        scene: &DetailScene,
         frame: &PreparedFrame,
     ) -> Result<Vec<StaticInstance>, String> {
         if frame.source_version != self.source_version {
@@ -162,6 +178,13 @@ impl DetailRuntime {
         }
         let mut out = Vec::with_capacity(frame.selected.len());
         for item in &frame.selected {
+            let source = scene
+                .prototype(&item.prototype)
+                .ok_or_else(|| format!("selected prototype {} vanished", item.prototype))?;
+            if source.occupied_cells() == 0 {
+                // No drawable geometry; the instance contributes nothing.
+                continue;
+            }
             let prototype = self
                 .instance_index(&item.prototype, item.lod)
                 .ok_or_else(|| {
@@ -170,6 +193,14 @@ impl DetailRuntime {
                         item.prototype, item.lod
                     )
                 })?;
+            let source_revision = source.revision();
+            let resident_revision = self.revision(&item.prototype, item.lod);
+            if resident_revision != Some(source_revision) {
+                return Err(format!(
+                    "selected {} {:?} resident revision {resident_revision:?} is superseded by {source_revision}",
+                    item.prototype, item.lod
+                ));
+            }
             out.push(StaticInstance {
                 prototype,
                 translation: item.transform.translation_m,
@@ -196,10 +227,9 @@ impl DetailRuntime {
 
     /// Refreshes the selected `(prototype, lod)` pairs whose resident copy is
     /// missing or built from an older source revision. Returns whether the
-    /// resident pool changed. A selected prototype with no occupied cells has
-    /// no drawable geometry: any resident copy is dropped, so
-    /// [`Self::instances_for_frame`] reports it rather than handing out stale
-    /// or vertexless geometry.
+    /// resident pool changed. A selected prototype with no occupied cells is
+    /// refreshed to its empty derived mesh, reusing its pool slot, and
+    /// [`Self::instances_for_frame`] omits it as undrawable.
     fn refresh_selected(
         &mut self,
         scene: &mut DetailScene,
@@ -214,35 +244,35 @@ impl DetailRuntime {
             if self.revision(&item.prototype, item.lod) == Some(source_revision) {
                 continue;
             }
-            if source.occupied_cells() == 0 {
-                // No drawable geometry. Drop any resident copy so an instance of
-                // an emptied prototype is reported rather than drawn from the
-                // stale mesh this entry referred to.
-                if self.prototypes.remove(&item.prototype).is_some() {
-                    changed = true;
-                }
-                continue;
+            if self.refresh_entry(scene, &item.prototype, item.lod, source_revision)? {
+                changed = true;
             }
-            self.refresh_entry(scene, &item.prototype, item.lod, source_revision)?;
-            changed = true;
         }
         Ok(changed)
     }
 
     /// Copies one freshly realized derived mesh out of the scene cache into the
-    /// resident pool, after verifying it carries `source_revision`.
+    /// resident pool, after verifying it carries `source_revision`. Returns
+    /// `false` when the engine reports the level as unbuildable within the
+    /// scale or derived-mesh cache budget; the level then stays non-resident
+    /// and selection falls back to `Source`, matching
+    /// `DetailScene::ensure_mesh`.
     fn refresh_entry(
         &mut self,
         scene: &mut DetailScene,
         prototype: &str,
         lod: Lod,
         source_revision: u64,
-    ) -> Result<(), String> {
-        // Realize (or reuse) the mesh in the engine cache first; drops the
-        // `&mut` borrow at the semicolon.
-        scene
-            .prototype_mesh(prototype, lod)
-            .map_err(|e| format!("build {prototype} {lod:?}: {e}"))?;
+    ) -> Result<bool, String> {
+        // Realize (or reuse) the mesh in the engine cache first; the borrow is
+        // dropped before the cache is read back.
+        match scene.prototype_mesh(prototype, lod) {
+            Ok(_) => {}
+            Err(DetailError::BudgetExceeded(_)) | Err(DetailError::InvalidScale) => {
+                return Ok(false)
+            }
+            Err(other) => return Err(format!("build {prototype} {lod:?}: {other}")),
+        }
         let cached = scene
             .cached_prototype_mesh(prototype, lod)
             .ok_or_else(|| format!("{prototype} {lod:?} not resident after build"))?;
@@ -253,7 +283,7 @@ impl DetailRuntime {
             ));
         }
         self.store(prototype, lod, cached);
-        Ok(())
+        Ok(true)
     }
 
     /// Copies one mesh into the pool, reusing an existing index so previously
@@ -279,7 +309,9 @@ impl DetailRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use matterweave_detail::{material, DetailVolume, Projection, Scale, Transform, SCALE_FINE_M};
+    use matterweave_detail::{
+        material, DetailVolume, Projection, Scale, Transform, Yaw, SCALE_FINE_M,
+    };
 
     /// Look target shared by both cameras, inside the boulder's footprint.
     const TARGET_M: [f32; 3] = [0.2, 0.2, 0.0];
@@ -310,27 +342,63 @@ mod tests {
         camera([0.2, 0.2, 220.0])
     }
 
-    /// One dense 8^3 boulder at the origin. Dense solids carry no coarsening
-    /// guard, so the engine's distance rule decides between `Source` and
-    /// `Quarter` without a hand-written selection rule in this test.
-    fn boulder_scene() -> DetailScene {
-        let mut volume =
-            DetailVolume::new("boulder", Scale::new(SCALE_FINE_M).expect("fine scale"));
-        for x in 0..8 {
-            for y in 0..8 {
-                for z in 0..8 {
+    fn very_far_camera() -> Camera {
+        camera([0.2, 0.2, 1000.0])
+    }
+
+    fn dense_volume(id: &str, edge: i32, scale_m: f32) -> DetailVolume {
+        let mut volume = DetailVolume::new(id, Scale::new(scale_m).expect("cell scale"));
+        for x in 0..edge {
+            for y in 0..edge {
+                for z in 0..edge {
                     volume
                         .set([x, y, z], material::BANK_STONE)
                         .expect("solid cell");
                 }
             }
         }
+        volume
+    }
+
+    /// One dense 8^3 boulder at the origin. Dense solids carry no coarsening
+    /// guard, so the engine's distance rule decides between `Source` and
+    /// `Quarter` without a hand-written selection rule in this test.
+    fn boulder_scene() -> DetailScene {
         let mut scene = DetailScene::new();
-        scene.add_prototype(volume).expect("add boulder");
+        scene
+            .add_prototype(dense_volume("boulder", 8, SCALE_FINE_M))
+            .expect("add boulder");
         scene
             .place("near", "boulder", Transform::identity())
             .expect("place boulder");
         scene
+    }
+
+    /// The boulder plus a second, independent dense prototype so a frame can
+    /// prove other instances survive a destructive edit to one object.
+    fn boulder_and_keeper_scene() -> DetailScene {
+        let mut scene = boulder_scene();
+        scene
+            .add_prototype(dense_volume("keeper", 4, SCALE_FINE_M))
+            .expect("add keeper");
+        scene
+            .place(
+                "keeper_placed",
+                "keeper",
+                Transform::new([3.0, 0.0, 0.0], Yaw::Deg0).expect("keeper transform"),
+            )
+            .expect("place keeper");
+        scene
+    }
+
+    fn clear_prototype(scene: &mut DetailScene, id: &str, edge: i32) {
+        for x in 0..edge {
+            for y in 0..edge {
+                for z in 0..edge {
+                    scene.edit_prototype(id, [x, y, z], material::AIR).unwrap();
+                }
+            }
+        }
     }
 
     #[test]
@@ -461,29 +529,208 @@ mod tests {
     }
 
     #[test]
-    fn emptied_prototype_is_reported_instead_of_drawn_from_stale_geometry() {
-        let mut scene = boulder_scene();
+    fn emptied_prototype_contributes_no_instance_and_refill_restores_geometry() {
+        let mut scene = boulder_and_keeper_scene();
         let mut runtime = DetailRuntime::preload(&mut scene).unwrap();
-        assert!(runtime.instance_index("boulder", Lod::Source).is_some());
+        let before = runtime
+            .prepare(&mut scene, &near_camera(), &LodConfig::default())
+            .unwrap();
+        assert_eq!(
+            before.instances.len(),
+            2,
+            "both objects draw before the edit"
+        );
 
-        // Remove every occupied cell; the instance still references the prototype.
-        for x in 0..8 {
-            for y in 0..8 {
-                for z in 0..8 {
-                    assert!(scene
-                        .edit_prototype("boulder", [x, y, z], material::AIR)
-                        .unwrap());
-                }
-            }
-        }
+        // Clearing every cell of a placed object is an ordinary destructive edit.
+        clear_prototype(&mut scene, "boulder", 8);
         assert_eq!(scene.prototype("boulder").unwrap().occupied_cells(), 0);
 
-        let result = runtime.prepare(&mut scene, &near_camera(), &LodConfig::default());
-        assert!(
-            result.is_err(),
-            "an emptied prototype must not be drawn from stale geometry"
+        let emptied = runtime
+            .prepare(&mut scene, &near_camera(), &LodConfig::default())
+            .unwrap();
+        assert!(emptied.geometry_changed);
+        // The engine still selects the emptied instance, but it draws nothing.
+        assert!(emptied.frame.selected.iter().any(|s| s.instance == "near"));
+        assert_eq!(emptied.instances.len(), emptied.frame.selected.len() - 1);
+        let boulder_index = runtime.instance_index("boulder", Lod::Source).unwrap();
+        assert!(emptied
+            .instances
+            .iter()
+            .all(|instance| instance.prototype != boulder_index));
+        // Other instances in the same frame are still returned correctly.
+        let keeper = emptied
+            .frame
+            .selected
+            .iter()
+            .find(|s| s.instance == "keeper_placed")
+            .expect("keeper must still be selected");
+        let keeper_index = runtime.instance_index("keeper", keeper.lod).unwrap();
+        assert_eq!(
+            emptied
+                .instances
+                .iter()
+                .filter(|instance| instance.prototype == keeper_index)
+                .count(),
+            1
         );
-        assert!(runtime.instance_index("boulder", Lod::Source).is_none());
+        assert_eq!(
+            runtime.revision("keeper", keeper.lod),
+            Some(scene.prototype("keeper").unwrap().revision())
+        );
+
+        // Refilling restores the boulder's geometry and its instance.
+        assert!(scene
+            .edit_prototype("boulder", [0, 0, 0], material::BANK_STONE)
+            .unwrap());
+        let refilled = runtime
+            .prepare(&mut scene, &near_camera(), &LodConfig::default())
+            .unwrap();
+        assert_eq!(refilled.instances.len(), refilled.frame.selected.len());
+        let near = refilled
+            .frame
+            .selected
+            .iter()
+            .find(|s| s.instance == "near")
+            .expect("refilled boulder must be selected");
+        let near_index = runtime.instance_index("boulder", near.lod).unwrap();
+        assert_eq!(
+            runtime.revision("boulder", near.lod),
+            Some(scene.prototype("boulder").unwrap().revision())
+        );
+        assert!(!runtime.meshes()[near_index].vertices.is_empty());
+        assert_eq!(
+            refilled
+                .instances
+                .iter()
+                .filter(|instance| instance.prototype == near_index)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn partially_refreshed_runtime_rejects_a_foreign_frame() {
+        let mut scene = boulder_scene();
+        let mut runtime = DetailRuntime::preload(&mut scene).unwrap();
+        scene
+            .edit_prototype("boulder", [12, 12, 12], material::BANK_STONE)
+            .unwrap();
+
+        // The near prepare refreshes only the level it selected (`Source`).
+        let near = runtime
+            .prepare(&mut scene, &near_camera(), &LodConfig::default())
+            .unwrap();
+        assert_eq!(near.frame.selected[0].lod, Lod::Source);
+
+        // A frame prepared directly from the scene for a far camera selects a
+        // level this runtime has not refreshed. Mapping it must not hand out
+        // the superseded copy.
+        let far = scene
+            .prepare_batches(&far_camera(), &LodConfig::default())
+            .unwrap();
+        let far_lod = far.selected[0].lod;
+        assert!(far_lod > Lod::Source, "far camera chose {far_lod:?}");
+        assert_ne!(
+            runtime.revision("boulder", far_lod),
+            Some(scene.prototype("boulder").unwrap().revision())
+        );
+        assert!(runtime.instances_for_frame(&scene, &far).is_err());
+    }
+
+    #[test]
+    fn preload_degrades_when_a_coarse_level_is_out_of_scale_range() {
+        // `Quarter` of 0.3 m cells is 1.2 m, past `MAX_SCALE_M` (1.0 m).
+        let mut scene = DetailScene::new();
+        scene
+            .add_prototype(dense_volume("coarse_boulder", 4, 0.3))
+            .expect("add coarse boulder");
+        scene
+            .place("far", "coarse_boulder", Transform::identity())
+            .expect("place coarse boulder");
+
+        let mut runtime =
+            DetailRuntime::preload(&mut scene).expect("preload must degrade, not fail");
+        assert!(runtime
+            .instance_index("coarse_boulder", Lod::Source)
+            .is_some());
+        assert!(runtime
+            .instance_index("coarse_boulder", Lod::Half)
+            .is_some());
+        assert!(runtime
+            .instance_index("coarse_boulder", Lod::Quarter)
+            .is_none());
+
+        // The in-range coarse level still renders; the out-of-range one is
+        // never selected, so nothing falls back into an unbuildable state.
+        let update = runtime
+            .prepare(&mut scene, &very_far_camera(), &LodConfig::default())
+            .unwrap();
+        assert_eq!(update.frame.selected[0].lod, Lod::Half);
+        assert_eq!(update.instances.len(), 1);
+        assert_eq!(
+            update.instances[0].prototype,
+            runtime.instance_index("coarse_boulder", Lod::Half).unwrap()
+        );
+    }
+
+    #[test]
+    fn preload_degrades_when_a_level_exceeds_the_mesh_budget() {
+        // 33^3 cells cross the 32 MiB derived-mesh output upper bound before any
+        // allocation: the same condition `ensure_mesh` degrades on. The scene is
+        // still cheap in source bytes (9 chunks), so this stays a fast test.
+        let mut scene = DetailScene::new();
+        scene
+            .add_prototype(dense_volume("huge_boulder", 33, SCALE_FINE_M))
+            .expect("add huge boulder");
+        scene
+            .place("huge", "huge_boulder", Transform::identity())
+            .expect("place huge boulder");
+
+        let runtime = DetailRuntime::preload(&mut scene).expect("preload must degrade, not fail");
+        for lod in RESIDENT_LODS {
+            assert!(
+                runtime.instance_index("huge_boulder", lod).is_none(),
+                "{lod:?} must stay non-resident"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_and_refill_cycles_reuse_pool_slots() {
+        let mut scene = boulder_scene();
+        let mut runtime = DetailRuntime::preload(&mut scene).unwrap();
+        let baseline = runtime.meshes().len();
+        assert_eq!(baseline, 3, "three resident levels for one prototype");
+
+        for cycle in 0..3 {
+            clear_prototype(&mut scene, "boulder", 8);
+            let emptied = runtime
+                .prepare(&mut scene, &near_camera(), &LodConfig::default())
+                .unwrap();
+            assert!(emptied.geometry_changed, "cycle {cycle}");
+            assert_eq!(
+                runtime.meshes().len(),
+                baseline,
+                "emptying grew the pool in cycle {cycle}"
+            );
+
+            assert!(scene
+                .edit_prototype("boulder", [0, 0, 0], material::BANK_STONE)
+                .unwrap());
+            let refilled = runtime
+                .prepare(&mut scene, &near_camera(), &LodConfig::default())
+                .unwrap();
+            assert_eq!(
+                refilled.instances.len(),
+                refilled.frame.selected.len(),
+                "cycle {cycle}"
+            );
+            assert_eq!(
+                runtime.meshes().len(),
+                baseline,
+                "refilling grew the pool in cycle {cycle}"
+            );
+        }
     }
 
     #[test]
