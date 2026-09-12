@@ -99,9 +99,9 @@ is a harsher condition than CI applies.
 | Automatic detail selection | v0.5.0; host and OnePlus 13 checks pass. | [Instance updates](performance/instance-updates.md) |
 | Background indirect-light preparation | v0.5.0; host and OnePlus 13 checks pass. | [Background lighting](performance/async-indirect.md) |
 | Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | [Collision log](performance/logs/engine-03-collision.md), [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
-| Bounded specular reflections | Unmerged evaluation branch; host only. Device gates NOT RUN. | [Reflections](performance/reflections-engine.md) |
-| Bounded audio service | Unmerged evaluation branch; host and cross-compile only. Device diagnostic NOT RUN. | [ADR-0016](adr/0016-audio-service.md) |
-| Voxel Relay second sample | Unmerged evaluation branch. Physical device gate NOT RUN. | — |
+| Bounded specular reflections | Merged (PR #13); host only. Device gates NOT RUN. | [Reflections](performance/reflections-engine.md) |
+| Bounded audio service | Merged (PR #12); host and cross-compile only. Device diagnostic NOT RUN. | [ADR-0016](adr/0016-audio-service.md) |
+| Voxel Relay second sample | Merged (PR #14). Physical device gate NOT RUN. | — |
 | v0.3 slice: directional shadows, background preparation, destruction | Released (v0.3.0 development prerelease); device validated. | [v0.3 evidence](evidence/2026-09-08-v0.3.md) |
 | v0.2 slice: walking, objects, streamed terrain | Released (v0.2.0); device exercised. | [v0.2 evidence](evidence/2026-09-07-v0.2.md) |
 
@@ -236,12 +236,16 @@ remaining M2–M6 engine requirements.
   requires at least one non-excluded hit. Final Android repeat and combined workspace
   checks are running. [Protocol](performance/renderer-comparison.md).
 
-### Unmerged evaluation branches
+### Merged, but not device-validated
+
+All three landed on `main` through pull requests #12, #13 and #14. Their code is in
+the tree; what remains outstanding is device validation, not integration. The host
+evidence below is unchanged.
 
 **Bounded specular reflections** — `eval/hy4-reflections`, a separate worktree
 `/mnt/bench/matterweave-dev/worktrees/eval-hy4-reflections` from frozen base `5b90975`,
-adds an opt-in bounded specular reflection to the reusable Vulkan raster renderer. It is
-**not** merged and changes no gameplay, audio, input or world system.
+adds an opt-in bounded specular reflection to the reusable Vulkan raster renderer. Merged
+through PR #13; it changes no gameplay, audio, input or world system.
 
 What exists: a `reflection` module (`ReflectionVolume`, `MaterialTable`, CPU oracle), two
 new group-0 descriptor bindings, a `world.wgsl` single-bounce path,
@@ -400,8 +404,9 @@ future efficiency comparisons; charging was a confounder in the v0.2 measurement
 4. Continue from direct shadows into M4 indirect illumination/reflections/detail. Finite
    map edge quality and nonresident casters remain limitations. No full GI, reflection,
    multiresolution transitions, second sample or broader device coverage yet.
-5. Advance the unmerged evaluation branches (reflections, audio, Voxel Relay) to their
-   missing device gates.
+5. Run the outstanding device gates for the merged-but-unvalidated systems: the
+   `--reflection-cost` app gate for reflections, the reserved-device diagnostic for
+   audio, and the physical device gate for the Voxel Relay sample.
 6. Do not make further showcase save recovery, authored route refinement or gameplay UI
    polish a prerequisite for engine work. Automatic LOD, indirect
    illumination/reflections, renderer comparison, streaming completion, second-sample
