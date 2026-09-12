@@ -68,6 +68,10 @@ const CRATE_WALL_BOX: ([f32; 3], [f32; 3]) = ([3.0, 0.25, 4.0], [3.25, 0.5, 4.25
 const CRATE_START: [f32; 3] = [3.0, 0.60, 4.0];
 /// The same crate parked in clear air, off every prepared collider AABB.
 const CRATE_CLEAR: [f32; 3] = [3.0, 5.0, 4.0];
+/// Sparse two-cell frame instance on the floor: outer AABB x 0..3.25 m.
+const FRAME_ARM_BOX: ([f32; 3], [f32; 3]) = ([0.0, 0.25, 0.3], [0.25, 0.5, 0.55]);
+/// The filled replacement's extra cell, inside the resting crate.
+const FILL_CELL_BOX: ([f32; 3], [f32; 3]) = ([1.5, 0.25, 0.3], [1.75, 0.5, 0.55]);
 
 fn volume(id: &str, extent: [i32; 3], material: u8) -> DetailVolume {
     let mut volume = DetailVolume::new(id, Scale::new(TILE).expect("valid scale"));
@@ -293,7 +297,11 @@ fn structural_edit_clear_of_a_resting_body(worker: bool) {
         "the added wall is live"
     );
     if worker {
-        assert_eq!(cadence.stats().results, 0, "the buffered result was consumed");
+        assert_eq!(
+            cadence.stats().results,
+            0,
+            "the buffered result was consumed"
+        );
     }
 }
 
@@ -356,8 +364,7 @@ fn structural_edit_inside_a_resting_body(worker: bool) {
         settle(&mut physics, 1);
     }
     assert!(
-        physics.detail_collision_stats().source_collision_cells
-            == load.source_collision_cells,
+        physics.detail_collision_stats().source_collision_cells == load.source_collision_cells,
         "the withheld wall never reached live collision"
     );
 
@@ -394,7 +401,116 @@ fn structural_edit_inside_a_resting_body(worker: bool) {
         "the added wall is live"
     );
     if worker {
-        assert_eq!(cadence.stats().results, 0, "the buffered result was consumed");
+        assert_eq!(
+            cadence.stats().results,
+            0,
+            "the buffered result was consumed"
+        );
+    }
+}
+
+/// INVARIANT GUARD for the live-vs-prepared diff: a structural *added*
+/// instance whose outer AABB is byte-identical to a live sparse instance but
+/// which fills a hole inside the resting crate. An ignored-AABB diff would
+/// mistake the replacement for the unchanged frame and publish new solid
+/// material through the body; pose+shape comparison must keep it gated until
+/// the body clears, then publish it.
+fn structural_same_aabb_replacement_inside_a_resting_body(worker: bool) {
+    let mut scene = scene_with_floor();
+    let mut frame = DetailVolume::new("frame", Scale::new(TILE).expect("valid scale"));
+    frame.set([0, 0, 0], material::BANK_STONE).expect("cell");
+    frame.set([12, 0, 0], material::BANK_STONE).expect("cell");
+    scene.add_prototype(frame).expect("prototype");
+    let frame_transform = Transform::new([0.0, TILE, 0.3], Yaw::Deg0).expect("transform");
+    scene
+        .place("frame.0", "frame", frame_transform)
+        .expect("placement");
+
+    let mut physics = empty_physics();
+    let load = physics.replace_detail_scene(&scene).expect("load");
+    assert_eq!(load.static_colliders, 2, "floor plus sparse frame");
+
+    physics
+        .restore(&crate_snapshot([1.65, 0.60, 0.30]))
+        .expect("valid crate snapshot");
+    settle(&mut physics, 600);
+    assert!(
+        any_body_overlaps(&physics, FILL_CELL_BOX),
+        "the resting crate occupies the cell the replacement fills: {}",
+        body_boxes(&physics)
+    );
+    assert!(
+        !any_body_overlaps(&physics, FRAME_ARM_BOX),
+        "the crate is in the frame gap, clear of the live arms: {}",
+        body_boxes(&physics)
+    );
+
+    // The filled prototype has the same outer AABB as the live frame but adds
+    // a middle cell inside the crate.
+    let mut filled = DetailVolume::new("filled", Scale::new(TILE).expect("valid scale"));
+    for x in [0, 6, 12] {
+        filled.set([x, 0, 0], material::BANK_STONE).expect("cell");
+    }
+    scene.add_prototype(filled).expect("prototype");
+    scene
+        .place("filled.0", "filled", frame_transform)
+        .expect("placement");
+
+    let mut cadence = cadence(worker);
+    assert!(
+        cadence
+            .on_edit(&scene, &mut physics, None)
+            .expect("valid scene"),
+        "the structural replacement stays pending while it would enter the body"
+    );
+    if worker {
+        wait_completed(&cadence);
+    }
+
+    for frame_index in 0..64 {
+        assert!(
+            cadence
+                .step(&scene, &mut physics)
+                .expect("valid scene")
+                .is_none(),
+            "frame {frame_index}: a same-outer-AABB replacement must not publish through a body"
+        );
+        assert_eq!(
+            physics.detail_collision_stats().static_colliders,
+            load.static_colliders,
+            "frame {frame_index}: live collision stays untouched while withheld"
+        );
+        if worker {
+            assert_eq!(
+                cadence.stats().results,
+                1,
+                "frame {frame_index}: the completed result is retained, not dropped"
+            );
+        }
+        settle(&mut physics, 1);
+    }
+
+    // Control: the body genuinely clears the replacement's added cell.
+    physics
+        .restore(&crate_snapshot(CRATE_CLEAR))
+        .expect("valid crate snapshot");
+    assert!(!any_body_overlaps(&physics, FILL_CELL_BOX));
+    let mut published = None;
+    for _ in 0..STALL_FRAMES {
+        if let Some(stats) = cadence.step(&scene, &mut physics).expect("valid scene") {
+            published = Some(stats);
+            break;
+        }
+        settle(&mut physics, 1);
+    }
+    let stats = published.expect("the retained replacement publishes once the body clears");
+    assert_eq!(stats.static_colliders, load.static_colliders + 1);
+    if worker {
+        assert_eq!(
+            cadence.stats().results,
+            0,
+            "the buffered result was consumed"
+        );
     }
 }
 
@@ -416,4 +532,14 @@ fn worker_structural_new_material_inside_a_resting_body_defers_until_it_clears()
 #[test]
 fn workerless_structural_new_material_inside_a_resting_body_defers_until_it_clears() {
     structural_edit_inside_a_resting_body(false);
+}
+
+#[test]
+fn worker_structural_same_aabb_replacement_inside_a_resting_body_still_defers() {
+    structural_same_aabb_replacement_inside_a_resting_body(true);
+}
+
+#[test]
+fn workerless_structural_same_aabb_replacement_inside_a_resting_body_still_defers() {
+    structural_same_aabb_replacement_inside_a_resting_body(false);
 }

@@ -46,7 +46,7 @@ use matterweave_detail::{
     material_policy, DetailScene, DetailVolume, MaterialPolicy, SceneVersion, Yaw,
 };
 use rapier3d::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Largest number of static detail colliders accepted. This counts *collidable*
 /// instances only: instances of liquid/decorative prototypes produce no collider
@@ -314,10 +314,10 @@ impl PreparedDetailCollision {
     }
 
     /// World-space AABB of every collider this preparation would install.
-    /// Used only for the conservative structural gate (unknown scene change):
-    /// publication defers while any dynamic body overlaps any of these, which
-    /// is over-conservative but can never miss new material the way a
-    /// whole-collider "unchanged" comparison would.
+    /// Diagnostic surface for hosts; the structural publication gate compares
+    /// live and prepared colliders by pose and shape instead, so a collider an
+    /// unchanged scene rebuilt identically matches its live counterpart and
+    /// cannot block publication.
     pub fn collider_aabbs(&self) -> Vec<Aabb> {
         self.pending
             .iter()
@@ -395,6 +395,46 @@ impl PreparedDetailCollision {
             pending,
             stats,
         })
+    }
+}
+
+/// Exact world-pose equality. A scene that did not change its instances rebuilds
+/// bit-identical poses, and live static detail colliders never move, so exact
+/// comparison is the correct test here rather than an epsilon.
+fn same_pose(a: &Pose, b: &Pose) -> bool {
+    a.translation == b.translation && a.rotation == b.rotation
+}
+
+/// Bit key of a pose translation for the live-vs-prepared structural diff.
+/// `+ 0.0` folds `-0.0` into `+ 0.0`, matching float `==`; rotations are
+/// compared in `same_pose` among the (typically single) same-translation
+/// candidates, so they need no key.
+fn translation_key(pose: &Pose) -> [u32; 3] {
+    let t = pose.translation;
+    [
+        (t.x + 0.0).to_bits(),
+        (t.y + 0.0).to_bits(),
+        (t.z + 0.0).to_bits(),
+    ]
+}
+
+/// Structural equality of the shape families this module builds: compounds of
+/// cuboids. Anything else compares unequal, which keeps the publication gate
+/// conservative.
+fn same_shape(a: &dyn Shape, b: &dyn Shape) -> bool {
+    if let (Some(ca), Some(cb)) = (a.as_compound(), b.as_compound()) {
+        let (parts_a, parts_b) = (ca.shapes(), cb.shapes());
+        parts_a.len() == parts_b.len()
+            && parts_a
+                .iter()
+                .zip(parts_b)
+                .all(|((pose_a, shape_a), (pose_b, shape_b))| {
+                    same_pose(pose_a, pose_b) && same_shape(shape_a.as_ref(), shape_b.as_ref())
+                })
+    } else if let (Some(ca), Some(cb)) = (a.as_cuboid(), b.as_cuboid()) {
+        ca.half_extents == cb.half_extents
+    } else {
+        false
     }
 }
 
@@ -486,8 +526,8 @@ impl Physics {
     /// cannot trap a body. The [`DetailCollisionCadence`] accumulates this set
     /// from the owner's edit journal, so no collider-geometry comparison is
     /// needed here: coarse whole-collider AABBs can never establish unchanged
-    /// shape (filling an interior hole leaves the outer AABB identical), and
-    /// are therefore used only for the conservative structural fallback below.
+    /// shape (filling an interior hole leaves the outer AABB identical). The
+    /// structural fallback below therefore compares poses and shapes instead.
     pub fn detail_added_blocked(&self, added: &[Aabb]) -> bool {
         if added.is_empty() {
             return false;
@@ -495,6 +535,46 @@ impl Physics {
         self.dynamic_body_aabbs()
             .iter()
             .any(|body| added.iter().any(|region| region.intersects(body)))
+    }
+
+    /// Conservative structural-fallback gate: whether any dynamic body AABB
+    /// overlaps a prepared collider that publication would *add* — one the live
+    /// world does not already hold at the same pose with the same shape.
+    ///
+    /// The pose/shape comparison (not an AABB comparison) is what keeps this
+    /// sound: a collider an unchanged scene rebuilt identically matches its
+    /// live counterpart and cannot introduce material, while a replacement
+    /// whose outer AABB happens to be identical (interior fill, same-position
+    /// prototype swap, 180-degree yaw) compares unequal and still gates.
+    /// Shapes outside the compound-of-cuboids family this module builds also
+    /// compare unequal, the conservative direction.
+    ///
+    /// Live colliders are indexed by exact translation so the proof is linear
+    /// in collider count per frame instead of quadratic; a full-map scene can
+    /// hold [`MAX_DETAIL_COLLIDERS`] of them while a structural latch defers.
+    pub(crate) fn detail_structural_blocked(&self, prepared: &PreparedDetailCollision) -> bool {
+        let mut live_at: HashMap<[u32; 3], Vec<&Collider>> = HashMap::new();
+        for handle in &self.detail {
+            if let Some(live) = self.colliders.get(*handle) {
+                live_at
+                    .entry(translation_key(live.position()))
+                    .or_default()
+                    .push(live);
+            }
+        }
+        let bodies = self.dynamic_body_aabbs();
+        prepared.pending.iter().any(|(pose, shape)| {
+            let aabb = shape.compute_local_aabb().transform_by(pose);
+            bodies.iter().any(|body| aabb.intersects(body))
+                && !live_at
+                    .get(&translation_key(pose))
+                    .is_some_and(|candidates| {
+                        candidates.iter().any(|live| {
+                            same_pose(live.position(), pose)
+                                && same_shape(live.shape(), shape.as_ref())
+                        })
+                    })
+        })
     }
 
     /// Counters of the last accepted detail replacement. A rejected replacement
