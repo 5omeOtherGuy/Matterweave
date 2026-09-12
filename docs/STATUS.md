@@ -23,6 +23,11 @@ M5 acceptance explicitly deferred. No new battery reading or device test is clai
 Current routing: DeepSeek V4.1 Flash primary workers, independent Gemini initial
 review waves, Opus only for justified escalation, no delegated Astra at any effort.
 The [board](performance/board.json) owns current assignments.
+Plan delivery: [PR #22](https://github.com/5omeOtherGuy/Matterweave/pull/22).
+DeepSeek authored the plan; six initial Gemini code reviews were lead-triaged and
+one independent final plan review passed. Documentation and diff checks pass;
+[review dispositions](performance/reviews/completion-plan-v2-initial.md) record
+verified gaps and rejected speculation. No new engine/device result is claimed.
 
 ## Completion execution — wave 1
 

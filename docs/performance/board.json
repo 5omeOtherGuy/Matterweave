@@ -645,6 +645,14 @@
       "base": "01ab450",
       "scope": "read-only destruction/persistence",
       "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-final-review": {
+      "attempt": 1,
+      "owner": "w_87aba455",
+      "state": "accepted",
+      "base": "0c025d8",
+      "scope": "ENGINE_COMPLETION_PLAN.md only",
+      "acceptance": "PASS no blocking contradictions. Plan only; no future code acceptance."
     }
   },
   "capacity": {

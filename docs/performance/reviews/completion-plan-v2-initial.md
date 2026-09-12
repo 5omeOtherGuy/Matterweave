@@ -45,3 +45,17 @@ this initial review does not approve future code.
 
 No speculative physics change is authorized by reviewer agreement. D2 closes
 functional stress and concrete reproduced failures, preserving existing protections.
+
+## Independent final plan review
+
+Gemini `w_87aba455` reviewed only `docs/ENGINE_COMPLETION_PLAN.md` after the
+lead corrections (plan content at `0c025d8`, unchanged by compacting worker evidence
+in `9f6f75c`). One tool read; PASS, no blocking contradictions. Verified phase
+separation, D1/D2/D4 immediate dispatch, D3 seam dependency, M0–M6 scope, sole board
+authority, non-Astra routing and Android/review/CI/merge gates. This reviews the plan,
+not future implementation. Reviewer's baseline label `01ab450` names the code base;
+the reviewed plan is the new PR content, not the old plan at that commit.
+
+Lead checks: `python3 tools/check_docs.py` PASS (183 Markdown, 580 local links,
+16 ADRs, 20 requirements), `git diff --check` PASS. No engine code changed, no new
+Android or thermal measurement performed. PR #22 owns final CI and merge state.
