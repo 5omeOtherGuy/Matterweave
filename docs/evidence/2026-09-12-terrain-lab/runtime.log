@@ -1,0 +1,24 @@
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab controls: WASD move, Space/Shift up/down, right-drag look; F fine, M mixed, G dig, B build, F5 save, R reload, Esc back
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab lifecycle resumed
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab Fine mesh: 23904 triangles in 8.3 ms
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab Mixed mesh: 6488 triangles in 5.8 ms
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab Mixed mesh: 6492 triangles in 6.5 ms
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab saved /data/user/0/dev.matterweave.explorer/files/terrain-lab.json (revision 19300)
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab Mixed mesh: 6488 triangles in 5.5 ms
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab reloaded /data/user/0/dev.matterweave.explorer/files/terrain-lab.json
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab Mixed mesh: 6492 triangles in 3.8 ms
+I/Matterweave(30800): matterweave_explorer::terrain_lab: Terrain Lab lifecycle suspended
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab controls: WASD move, Space/Shift up/down, right-drag look; F fine, M mixed, G dig, B build, F5 save, R reload, Esc back
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab lifecycle resumed
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab Fine mesh: 23920 triangles in 7.3 ms
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab lifecycle suspended
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab controls: WASD move, Space/Shift up/down, right-drag look; F fine, M mixed, G dig, B build, F5 save, R reload, Esc back
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab lifecycle resumed
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab Fine mesh: 23920 triangles in 8.2 ms
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab lifecycle suspended
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab lifecycle resumed
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab graphics: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(30940): matterweave_explorer::terrain_lab: Terrain Lab Fine mesh: 23920 triangles in 7.2 ms

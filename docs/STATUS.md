@@ -1,5 +1,7 @@
 # Current status
 
+Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
 ## Development takeover and coarse terrain — 2026-09-12

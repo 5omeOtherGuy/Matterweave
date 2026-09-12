@@ -1,5 +1,7 @@
 # Implementation handoff
 
+Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+
 The entry point for a fresh session: what is true now and what is authorized next.
 [STATUS](STATUS.md) owns the dated evidence; where the two differ, STATUS is
 authoritative.

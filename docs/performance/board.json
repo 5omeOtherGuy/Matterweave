@@ -719,7 +719,7 @@
       "acceptance": "Six tests, strict Clippy and four software Vulkan frames pass; Gemini independent review no findings. Lead integrates into Terrain Lab PR."
     },
     "S1-terrain-lab": {
-      "state": "review",
+      "state": "delivery",
       "owner": "lead",
       "base": "a91f7a0",
       "owned_paths": [
@@ -728,28 +728,32 @@
         "docs/performance/logs/terrain-lab.md"
       ],
       "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-terrain-lab",
-      "acceptance": "13 module tests and125 full app tests pass,1ignored; strict app Clippy pass. Android APK building; device NOT RUN.",
+      "acceptance": "Android fine/mixed/edit/save/reload/restart/elevation/suspend-resume/back pass; existing saves unchanged.14 lab tests and Gemini reviews pass; PR29 CI pending.",
       "review_worker": "w_292b5501"
     },
     "D1-production-detail": {
-      "state": "running",
-      "owner": "w_43c2a7a3",
+      "state": "integration",
+      "owner": "lead",
       "profile": "deepseek-flash-go",
       "thinking": "max",
       "worktree": "/mnt/bench/matterweave-dev/worktrees/wetland-auto-detail",
       "scope": "wetland.rs graphics/detail frame integration; excludes menu and audio",
       "device_access": "none; lead owns Android",
-      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain"
+      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
+      "artifact": "61f5bd0",
+      "acceptance": "7 detail tests,19 wetland tests and explicit full-map integration pass; Clippy repaired unused test import; Gemini no findings."
     },
     "D4-production-audio": {
-      "state": "running",
-      "owner": "w_78819ec8",
+      "state": "review",
+      "owner": "w_14dde4de",
       "profile": "deepseek-flash-go",
       "thinking": "max",
       "worktree": "/mnt/bench/matterweave-dev/worktrees/shared-audio-integration",
       "scope": "audio_service.rs, experience.rs audio owner, wetland/relay event emission; preserve lead menu and D1 graphics",
       "device_access": "none; lead owns Android",
-      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain"
+      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
+      "artifact": "1c16b810",
+      "acceptance": "Source completed; tests delegated to lead warm integration build."
     }
   },
   "capacity": {
