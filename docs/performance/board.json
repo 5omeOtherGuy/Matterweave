@@ -983,9 +983,9 @@
       "base": "80a89c5",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-native.md",
       "ownership": "mesh_lighting_check.rs, minimal explorer lib.rs registration, dedicated log",
-      "worker": "w_e35c5717",
-      "state": "completed-awaiting-review-and-Android",
-      "artifact": "c043ed5"
+      "worker": "w_1c518c32",
+      "state": "repaired-host-passed-awaiting-combined-Android",
+      "artifact": "b7b39bf"
     },
     "repair_review": {
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/repair-review.md",
@@ -1000,10 +1000,13 @@
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/streaming-progress",
       "base": "d95c63ef8268fae2f3efeb535105548d54c865e4",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/streaming-progress.md",
-      "state": "running",
+      "state": "corrective-worker-running",
       "profile": "muse-free",
       "ownership": "core async streaming; explorer tick streaming block only; dedicated log",
-      "worker": "w_8783a4d7"
+      "worker": "w_cf45df18",
+      "artifact": "343dc36",
+      "pr": 39,
+      "blocker": "Upstream completed-job rejection was not counted; exact multi-frame interleaving must pass before acceptance."
     },
     "device_policy": "Owner requests coherent development batches and fewer live tests. Relevant host tests/review before one integrated Android acceptance; immediate device checks only for actual Android/GPU/lifecycle uncertainty.",
     "streaming_contract_pr": 37,
@@ -1021,6 +1024,24 @@
       "scope": "app diagnostic lifecycle/validity"
     },
     "streaming_contract_pr_state": "merged fc8c1ab",
-    "detail_pr": 38
+    "detail_pr": 38,
+    "authoring": {
+      "state": "completed-awaiting-review",
+      "profile": "muse-free",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/authoring",
+      "base": "495d9f97edd3c2e4886b3506de7d69fa60fe6445",
+      "ownership": "docs/AUTHORING.md and dedicated log only",
+      "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/authoring.md",
+      "worker": "w_1f62c1ed",
+      "artifact": "a98553f"
+    },
+    "authoring_review": {
+      "worker": "w_c6f0d2d0",
+      "state": "running"
+    },
+    "streaming_progress_review": {
+      "worker": "w_33e7ed68",
+      "state": "completed-critical-finding-accepted"
+    }
   }
 }

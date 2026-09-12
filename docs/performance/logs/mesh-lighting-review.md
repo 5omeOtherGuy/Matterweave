@@ -37,3 +37,13 @@ all stages. Raw logs are in the healthy recovery orchestration directory as
 reflection-rewrite-red.log and reflection-rewrite-green.log. No device/performance
 claim is made by this host check. Corrective diagnostic review, combined native
 Android acceptance and passing PR36 CI remain required.
+
+## Native corrective result
+
+Muse b7b39bf uploads the authoritative world on every renderer creation and
+recolors it with the fixture palette. Lead inspected the upload/recreation path,
+boundary-cell lookup (fixture-local, not a general authoring API) and corrected
+occupied-cell label. The worker's 11 focused checks and native30-frame run passed;
+GPU accounting retains42336 world bytes after removing static instances. This
+resolves both initial diagnostic findings at host level; combined Android visual
+acceptance remains pending. Original field defaults and proxy identity are unchanged.
