@@ -66,6 +66,27 @@ fn scene_with_floor_and_wall() -> DetailScene {
     scene
 }
 
+/// Floor plus a two-cell column at instance `wall.0` (`[2.0, TILE, 4.0]`):
+/// world x in [2.0, 2.25], solid y in [0.25, 0.75]. The 0.5 m rise exceeds
+/// the 0.30 m character-autostep limit, so the column is impassable while
+/// solid: a sustained 600-frame press rests at x ~= 1.683 with no climb.
+/// Local to the movement-blocking test below; the shared single-cell `wall`
+/// fixture (and `WALL_BOX`) is untouched for the other tests.
+fn scene_with_floor_and_tall_wall() -> DetailScene {
+    let mut scene = scene_with_floor();
+    scene
+        .add_prototype(volume("wall", [1, 2, 1], material::BANK_STONE))
+        .expect("prototype");
+    scene
+        .place(
+            "wall.0",
+            "wall",
+            Transform::new([2.0, TILE, 4.0], Yaw::Deg0).expect("transform"),
+        )
+        .expect("placement");
+    scene
+}
+
 fn settle(physics: &mut Physics, steps: usize) {
     for _ in 0..steps {
         physics.step(FIXED_DT, [0.0; 3], false);
@@ -131,54 +152,156 @@ fn checkerboard(id: &str, chunk_keys: usize) -> DetailVolume {
 
 #[test]
 fn edit_during_active_movement_blocks_until_publication_then_frees_the_path() {
-    let mut scene = scene_with_floor_and_wall();
+    // Uses the tall (two-cell, 0.5 m) column fixture: impassable while
+    // solid, so "blocked" holds for arbitrarily long presses. The former
+    // single-cell wall was only 0.25 m tall — below the 0.30 m autostep
+    // limit — so the character autostepped onto it around pressed frame 95
+    // and walked over the still-solid wall by frame ~116. The old test only
+    // walked while the edit was pending (publication usually landed within
+    // tens of frames), so the short pending window masked the climbable
+    // fixture and the test could never press long enough to notice.
+    let mut scene = scene_with_floor_and_tall_wall();
     let mut physics = empty_physics();
     physics.replace_detail_scene(&scene).expect("load");
+    let load_stats = physics.detail_collision_stats();
     spawn_on_floor(&mut physics);
     let mut cadence = DetailCollisionCadence::new();
 
-    // The player removes the blocking cell and keeps walking toward it.
+    // The player removes the full blocking column and keeps walking at it.
+    // One coalesced queue call for the two-cell burst: the queued source is
+    // the current scene either way, and a single source version keeps the
+    // buffered-completion wait below exact (supersession has its own test).
     scene.edit_instance("wall.0", [0, 0, 0], 0).expect("edit");
+    scene.edit_instance("wall.0", [0, 1, 0], 0).expect("edit");
     assert!(cadence
         .on_edit(&scene, &mut physics, Some(&[]))
         .expect("queued"));
-    assert!(
-        cadence.stats().queued + cadence.stats().inflight >= 1,
-        "the edit is pending: {:?}",
-        cadence.stats()
+    // Queueing alone never touches live collision, whatever the worker did.
+    assert_eq!(
+        physics.detail_collision_stats(),
+        load_stats,
+        "queueing the removal must not publish"
     );
 
-    // While the work is pending, the live (old) collision keeps blocking and
-    // the floor keeps carrying the character: no hole, no silent wall change.
-    let started = Instant::now();
-    let mut pending_frames = 0usize;
-    loop {
-        assert!(started.elapsed() < DEADLINE, "deadline blown");
-        match cadence.step(&scene, &mut physics).expect("valid scene") {
-            None => {
-                physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
-                pending_frames += 1;
-                let eye = physics.character_eye();
-                assert!(
-                    eye[0] < BLOCK_LIMIT_X,
-                    "a pending edit must not free the path early: eye {eye:?} \
-                     after {pending_frames} pending frames"
-                );
-                assert!(
-                    physics.grounded() && eye[1] > 1.5,
-                    "a pending edit must not disturb the floor: eye {eye:?}"
-                );
-            }
-            Some(_) => break,
-        }
+    // Phase 1: publication withheld by the caller. No `cadence.step` call
+    // happens here, so nothing can publish even if the worker has already
+    // finished and buffered the removal. The live (old) collision keeps
+    // blocking and the floor keeps carrying the character: no hole, no
+    // silent wall change. Each frame records whether preparation was still
+    // in flight (pending) or already done (buffered); the blocking
+    // invariant must hold in both, and one of them must have been observed
+    // — no worker timing is assumed, but the walk provably covers a real
+    // scheduler state instead of assuming one.
+    let mut saw_pending = false;
+    let mut saw_buffered = false;
+    for _ in 0..120 {
+        let tracked = cadence.stats();
+        assert!(
+            tracked.queued + tracked.inflight + tracked.results >= 1,
+            "the edit stays tracked while withheld: {tracked:?}"
+        );
+        saw_pending |= tracked.results == 0;
+        saw_buffered |= tracked.results == 1;
+        physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
+        let eye = physics.character_eye();
+        assert!(
+            eye[0] < BLOCK_LIMIT_X,
+            "a withheld removal must not free the path early: eye {eye:?}"
+        );
+        assert!(
+            physics.grounded() && eye[1] > 1.5,
+            "a withheld removal must not disturb the floor: eye {eye:?}"
+        );
     }
     assert!(
-        pending_frames > 0,
-        "the scenario must actually observe pending frames"
+        saw_pending || saw_buffered,
+        "the withheld walk must observe a real scheduler state"
+    );
+    assert!(
+        physics.character_eye()[0] > 1.5,
+        "the withheld walk must actually press against the wall: eye {:?}",
+        physics.character_eye()
+    );
+    assert_eq!(
+        physics.detail_collision_stats(),
+        load_stats,
+        "withheld publication leaves live collision untouched"
     );
 
-    // After publication the same walk passes the removed cell; the floor
-    // still carries the character the whole way.
+    // Phase 1b: completed-but-unpublished. Wait boundedly for the buffered
+    // result WITHOUT calling `cadence.step` — this wait terminates in every
+    // scheduler interleaving (the worker always finishes a queued build),
+    // so it proves the completed case actually ran instead of merely
+    // permitting it. Completion alone must publish nothing.
+    let started = Instant::now();
+    while cadence.stats().results == 0 {
+        assert!(
+            started.elapsed() < DEADLINE,
+            "removal never completed; stats {:?}",
+            cadence.stats()
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        physics.detail_collision_stats(),
+        load_stats,
+        "a completed but unpublished removal stays out of live collision"
+    );
+    // Still withheld: attempt the crossing against the buffered removal.
+    for _ in 0..60 {
+        physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
+        let eye = physics.character_eye();
+        assert!(
+            eye[0] < BLOCK_LIMIT_X,
+            "a buffered-but-unpublished removal must not free the path: eye {eye:?}"
+        );
+        assert!(
+            physics.grounded() && eye[1] > 1.5,
+            "the floor must still carry the character: eye {eye:?}"
+        );
+    }
+    assert_eq!(
+        cadence.stats().results,
+        1,
+        "the completed removal is still buffered, never auto-published"
+    );
+    assert_eq!(
+        physics.detail_collision_stats(),
+        load_stats,
+        "live collision untouched through the buffered crossing attempt"
+    );
+
+    // Phase 2: explicit publication. The caller now pumps the cadence until
+    // the removal publishes; how long that takes depends on the worker, but
+    // the outcome does not.
+    let started = Instant::now();
+    loop {
+        assert!(
+            started.elapsed() < DEADLINE,
+            "removal never published; stats {:?}",
+            cadence.stats()
+        );
+        if cadence
+            .step(&scene, &mut physics)
+            .expect("valid scene")
+            .is_some()
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        cadence.stats().results,
+        0,
+        "nothing left buffered after publication"
+    );
+
+    // After publication the same walk passes through the removed column at
+    // floor level; the floor still carries the character the whole way.
+    // The eye-height band check is what proves the path is actually free:
+    // stepping over a still-solid obstacle would lift the eye toward 2.0
+    // (as the old climbable single-cell fixture demonstrated), so passage
+    // through x in [1.9, 2.6] below 1.9 admits only the removed column.
     let started = Instant::now();
     let mut published_frames = 0usize;
     while physics.character_eye()[0] <= PAST_WALL_X {
@@ -190,6 +313,12 @@ fn edit_during_active_movement_blocks_until_publication_then_frees_the_path() {
             physics.grounded() && eye[1] > 1.5,
             "the floor must still carry the character: eye {eye:?}"
         );
+        if eye[0] > 1.9 && eye[0] < 2.6 {
+            assert!(
+                eye[1] < 1.9,
+                "the crossing must go through the removed column, not over it: eye {eye:?}"
+            );
+        }
     }
     assert!(published_frames > 0, "the character actually moved out");
 }
