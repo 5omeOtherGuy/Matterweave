@@ -43,14 +43,19 @@ fn ten_thousand_callback_invocations_allocate_nothing() {
     let stereo = service
         .register_clip(ClipSpec::stereo(&[0.4, -0.4, 0.2, 0.2, 0.6, -0.6]))
         .unwrap();
+    let retired = service.register_clip(ClipSpec::mono(&[0.125; 4])).unwrap();
     // Drain registration commands so the measured stretch is steady state.
     let mut buf = vec![0.0f32; 1920];
     service.mock_render(&mut buf).unwrap();
+    service.play(retired, PlayOptions::default()).unwrap();
 
     // Zero the counters AFTER setup: everything below must allocate/deallocate
     // nothing at all.
     ALLOCS.store(0, Ordering::SeqCst);
     DEALLOCS.store(0, Ordering::SeqCst);
+    // First measured callback applies Play then Unload and publishes its command
+    // acknowledgment, including silencing without callback allocation/deallocation.
+    service.unregister_clip(retired).unwrap();
 
     let mut invocations = 0usize;
     let mut rng_state = 0x12345678u32;
@@ -116,6 +121,8 @@ fn ten_thousand_callback_invocations_allocate_nothing() {
         health.voices_completed > 0,
         "loop must include voice completions"
     );
+    assert_eq!(health.voices_silenced, 1);
+    assert_eq!(health.rt_rejected_commands, 0);
     assert!(
         health.commands_applied > 0,
         "loop must include command applications"

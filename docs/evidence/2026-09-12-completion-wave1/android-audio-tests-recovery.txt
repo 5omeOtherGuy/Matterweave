@@ -1,0 +1,9 @@
+
+running 4 tests
+test device_loss_with_applied_suspend ... ok
+test device_loss_with_buffered_suspend ... ok
+test diagnostic_recreation_with_applied_suspend ... ok
+test diagnostic_recreation_with_buffered_suspend ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

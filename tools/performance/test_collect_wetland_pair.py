@@ -12,22 +12,39 @@ import unittest
 from pathlib import Path
 
 from collect_wetland_pair import (
-    EXPECTED_SCENE,
+    CURRENT_GENERATOR,
+    KNOWN_COMPOSITIONS,
+    SUPPORTED_GENERATORS,
     FIXTURE_REMOTE_NAME,
     PROFILE_REQUEST_NAME,
+    SAME_BUILD_LABEL,
     Ownership,
     TrialError,
     base_save_is_invalid_for,
+    build_parser,
+    capture_state_plan,
     check_args,
     check_fixture,
+    check_identical_build,
+    finish_and_pull,
     check_scene_counts,
     check_thermal_match,
     final_cleanup,
+    main,
+    sha256_file,
     parse_wetland_loaded,
     preflight_files,
     resolve_expected_scene,
+    resolve_generator,
     trial_plan,
 )
+
+# The frozen full-world composition of the app's current showcase generator.
+CURRENT_COMPOSITION = next(
+    composition for composition, known in KNOWN_COMPOSITIONS.items()
+    if known["generator"] == CURRENT_GENERATOR)
+CURRENT_SCENE = {key: KNOWN_COMPOSITIONS[CURRENT_COMPOSITION][key]
+                 for key in ("cells", "instances")}
 
 BATTERY = """Current Battery Service state:
   AC powered: false
@@ -55,7 +72,7 @@ def row(battery_tenths, skin_c):
 
 def fixture(**overrides):
     save = {
-        "version": 1, "generator": 2, "seed": 20260908,
+        "version": 1, "generator": CURRENT_GENERATOR, "seed": 20260908,
         "edits": [],
         "physics": {"version": 1, "eye": [46.0, 15.6, 66.0], "bodies": [
             {"position": [90.5, 18.52, 58.0]} for _ in range(6)]},
@@ -81,27 +98,35 @@ class TrialPlanTest(unittest.TestCase):
 
 
 class FixtureTest(unittest.TestCase):
-    def test_accepts_expected_benchmark_session(self):
-        info = check_fixture(fixture())
-        self.assertEqual(info["generator"], 2)
-        self.assertEqual(info["body_count"], 6)
-        self.assertEqual(info["eye"], [46.0, 15.6, 66.0])
-        self.assertTrue(info["shadows"])
-        self.assertEqual(len(info["sha256"]), 64)
+    def test_accepts_expected_benchmark_session_for_every_supported_generator(self):
+        self.assertIn(CURRENT_GENERATOR, SUPPORTED_GENERATORS)
+        for generator in SUPPORTED_GENERATORS:
+            info = check_fixture(fixture(generator=generator), generator)
+            self.assertEqual(info["generator"], generator)
+            self.assertEqual(info["body_count"], 6)
+            self.assertEqual(info["eye"], [46.0, 15.6, 66.0])
+            self.assertTrue(info["shadows"])
+            self.assertEqual(len(info["sha256"]), 64)
 
-    def test_rejects_wrong_generator_and_body_count(self):
-        with self.assertRaises(ValueError):
-            check_fixture(fixture(generator=1))
+    def test_rejects_generator_the_build_manifests_do_not_declare(self):
+        # A fixture for another generator would never be restored by the build
+        # under test; it is rejected before anything reaches the device.
+        for fixture_generator, declared in ((1, CURRENT_GENERATOR), (2, 3), (3, 2),
+                                            (True, 1)):
+            with self.assertRaises(ValueError, msg=(fixture_generator, declared)):
+                check_fixture(fixture(generator=fixture_generator), declared)
+
+    def test_rejects_wrong_body_count(self):
         five = json.loads(fixture())
         five["physics"]["bodies"].pop()
         with self.assertRaises(ValueError):
-            check_fixture(json.dumps(five).encode())
+            check_fixture(json.dumps(five).encode(), CURRENT_GENERATOR)
 
     def test_rejects_malformed_input(self):
         for bad in (b"", b"not json", b"[]", fixture(version=2), fixture(shadows="yes"),
                     fixture(pitch="x")):
             with self.assertRaises(ValueError):
-                check_fixture(bad)
+                check_fixture(bad, CURRENT_GENERATOR)
 
 
 class BaseSaveTest(unittest.TestCase):
@@ -118,11 +143,18 @@ class BaseSaveTest(unittest.TestCase):
         self.assertTrue(base_save_is_invalid_for(b"\xff\xfe", 2))
 
     def test_matching_generator_blocks_the_run(self):
-        self.assertFalse(base_save_is_invalid_for(fixture(), 2))
+        self.assertFalse(base_save_is_invalid_for(fixture(generator=2), 2))
+
+    def test_current_generator_base_is_valid_and_older_ones_are_not(self):
+        # A user's current-generator session loads, so the fixture would never
+        # be selected; a stale generation-2 session does not.
+        self.assertFalse(base_save_is_invalid_for(fixture(), CURRENT_GENERATOR))
+        self.assertTrue(base_save_is_invalid_for(fixture(generator=2), CURRENT_GENERATOR))
 
 
 class StrictFixtureTest(unittest.TestCase):
     def test_rejects_non_finite_numbers(self):
+        # Historical generator-2 byte literals, validated against generator 2.
         for bad in (b'{"version":1,"generator":2,"seed":20260908,"edits":[1],'
                     b'"physics":{"version":1,"eye":[NaN,1,1],"bodies":[1,2,3,4,5,6]},'
                     b'"yaw":0.0,"pitch":-0.08,"shadows":true}',
@@ -130,70 +162,156 @@ class StrictFixtureTest(unittest.TestCase):
                     b'"physics":{"version":1,"eye":[1,1,1],"bodies":[1,2,3,4,5,6]},'
                     b'"yaw":Infinity,"pitch":-0.08,"shadows":true}'):
             with self.assertRaises(ValueError):
-                check_fixture(bad)
+                check_fixture(bad, 2)
 
     def test_rejects_out_of_range_pitch_and_eye(self):
         with self.assertRaises(ValueError):
-            check_fixture(fixture(pitch=2.0))
+            check_fixture(fixture(pitch=2.0), CURRENT_GENERATOR)
         far = json.loads(fixture())
         far["physics"]["eye"] = [1e9, 0.0, 0.0]
         with self.assertRaises(ValueError):
-            check_fixture(json.dumps(far).encode())
+            check_fixture(json.dumps(far).encode(), CURRENT_GENERATOR)
 
     def test_rejects_wrong_seed_and_nonempty_edits(self):
         with self.assertRaises(ValueError):
-            check_fixture(fixture(seed=7))
+            check_fixture(fixture(seed=7), CURRENT_GENERATOR)
         with self.assertRaises(ValueError):
-            check_fixture(fixture(edits=[{"instance": "i_shell_5_8_3", "cell": [24, 3, 13], "material": 0}]))
+            check_fixture(fixture(edits=[{"instance": "i_shell_5_8_3", "cell": [24, 3, 13], "material": 0}]),
+                          CURRENT_GENERATOR)
 
 
 class ExpectedSceneTest(unittest.TestCase):
     def test_small_map_is_rejected(self):
         with self.assertRaises(TrialError):
-            check_scene_counts({"cells": 10, "instances": 2}, EXPECTED_SCENE)
+            check_scene_counts({"cells": 10, "instances": 2}, CURRENT_SCENE)
         with self.assertRaises(TrialError):
-            check_scene_counts(None, EXPECTED_SCENE)
+            check_scene_counts(None, CURRENT_SCENE)
 
     def test_exact_frozen_counts_accepted(self):
-        self.assertEqual(check_scene_counts(dict(EXPECTED_SCENE), EXPECTED_SCENE),
-                         EXPECTED_SCENE)
+        self.assertEqual(check_scene_counts(dict(CURRENT_SCENE), CURRENT_SCENE),
+                         CURRENT_SCENE)
+
+    def test_every_known_composition_resolves_for_its_own_generator(self):
+        for composition, known in KNOWN_COMPOSITIONS.items():
+            manifests = {"candidate": {"composition_hash": composition},
+                         "reference": {"composition_hash": composition}}
+            self.assertEqual(
+                resolve_expected_scene(manifests, known["generator"]),
+                {"cells": known["cells"], "instances": known["instances"]})
+            other = next(g for g in SUPPORTED_GENERATORS if g != known["generator"])
+            with self.assertRaises(SystemExit, msg=composition):
+                resolve_expected_scene(manifests, other)
 
     def test_manifest_override_and_unknown_composition(self):
-        known = {"composition_hash": "f458591e7b345546"}
-        self.assertEqual(resolve_expected_scene({"candidate": dict(known),
-                                                 "reference": dict(known)}),
-                         EXPECTED_SCENE)
         with self.assertRaises(SystemExit):
             resolve_expected_scene({"candidate": {"composition_hash": "deadbeef"},
-                                    "reference": {"composition_hash": "deadbeef"}})
+                                    "reference": {"composition_hash": "deadbeef"}},
+                                   CURRENT_GENERATOR)
         scene = {"cells": 5, "instances": 2}
         self.assertEqual(resolve_expected_scene(
             {"candidate": {"composition_hash": "x", "expected_scene": dict(scene)},
-             "reference": {"composition_hash": "x", "expected_scene": dict(scene)}}), scene)
+             "reference": {"composition_hash": "x", "expected_scene": dict(scene)}},
+            CURRENT_GENERATOR), scene)
+        with self.assertRaises(SystemExit):
+            resolve_expected_scene(
+                {"candidate": {"composition_hash": "x", "expected_scene": dict(scene)},
+                 "reference": {"composition_hash": "x"}}, CURRENT_GENERATOR)
+
+
+class ResolveGeneratorTest(unittest.TestCase):
+    def manifests(self, candidate, reference):
+        return {"candidate": {"generator": candidate}, "reference": {"generator": reference}}
+
+    def test_uses_the_generator_both_manifests_declare(self):
+        for generator in SUPPORTED_GENERATORS:
+            self.assertEqual(resolve_generator(self.manifests(generator, generator)),
+                             generator)
+
+    def test_rejects_mixed_or_unsupported_generators(self):
+        for manifests in (self.manifests(2, 3), self.manifests(3, 2),
+                          self.manifests(1, 1), self.manifests("3", "3"),
+                          self.manifests(True, True), self.manifests(None, None),
+                          {"candidate": {}, "reference": {}}):
+            with self.assertRaises(SystemExit, msg=manifests):
+                resolve_generator(manifests)
+
+
+COMMON_ARGS = ["--adb", "/bin/true", "--serial", "phone:1",
+               "--fixture", "/tmp/fixture.json", "--out", "/tmp/out"]
+PAIRED_ARGS = COMMON_ARGS + ["--candidate-apk", "/tmp/c.apk", "--reference-apk", "/tmp/r.apk"]
+ONOFF_ARGS = COMMON_ARGS + ["--mode", "capture-on-off", "--apk", "/tmp/one.apk"]
+
+
+def parse(argv):
+    return check_args(build_parser().parse_args(argv))
 
 
 class ArgumentBoundsTest(unittest.TestCase):
-    class Args:
-        def __init__(self, **kw):
-            self.pairs = 3
-            self.warmup = self.measure = 120.0
-            self.chooser_delay = self.settle_delay = 5.0
-            self.launch_timeout = self.load_timeout = self.install_timeout = 60.0
-            self.sample_interval = 30.05
-            self.max_observations = 61
-            self.__dict__.update(kw)
-
     def test_accepts_defaults(self):
-        self.assertIsNotNone(check_args(self.Args()))
+        args = parse(PAIRED_ARGS)
+        self.assertEqual(args.mode, "paired")
+        self.assertIsNone(args.apk)
 
     def test_rejects_bad_timing_and_windows(self):
-        for kw in ({"warmup": 0}, {"measure": float("nan")},
-                   {"load_timeout": float("inf")}, {"measure": -1},
-                   {"max_observations": 62}, {"max_observations": 0},
-                   {"sample_interval": 5.0}, {"sample_interval": 40.0},
-                   {"pairs": 0}):
-            with self.assertRaises(SystemExit, msg=kw):
-                check_args(self.Args(**kw))
+        for extra in (["--warmup", "0"], ["--measure", "nan"],
+                      ["--load-timeout", "inf"], ["--measure", "-1"],
+                      ["--max-observations", "62"], ["--max-observations", "0"],
+                      ["--sample-interval", "5"], ["--sample-interval", "40"],
+                      ["--pairs", "0"]):
+            with self.assertRaises(SystemExit, msg=extra):
+                parse(PAIRED_ARGS + extra)
+
+
+class CaptureModeArgumentTest(unittest.TestCase):
+    def test_capture_on_off_takes_a_single_build(self):
+        args = parse(ONOFF_ARGS)
+        self.assertEqual(args.mode, "capture-on-off")
+        self.assertEqual(str(args.apk), "/tmp/one.apk")
+        self.assertIsNone(args.candidate_apk)
+
+    def test_rejects_mixed_or_missing_build_arguments(self):
+        for argv in (COMMON_ARGS + ["--mode", "capture-on-off"],
+                     ONOFF_ARGS + ["--candidate-apk", "/tmp/c.apk"],
+                     ONOFF_ARGS + ["--reference-apk", "/tmp/r.apk"],
+                     PAIRED_ARGS + ["--apk", "/tmp/one.apk"],
+                     COMMON_ARGS + ["--candidate-apk", "/tmp/c.apk"],
+                     COMMON_ARGS):
+            with self.assertRaises(SystemExit, msg=argv):
+                parse(argv)
+
+
+class CaptureStatePlanTest(unittest.TestCase):
+    def test_states_alternate_within_pairs_and_share_one_build(self):
+        plan = capture_state_plan(3)
+        self.assertEqual([t["capture_state"] for t in plan],
+                         ["off", "on", "on", "off", "off", "on"])
+        self.assertEqual({t["variant"] for t in plan}, {SAME_BUILD_LABEL})
+        self.assertEqual([t["trial"] for t in plan], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(len({t["name"] for t in plan}), 6)
+        self.assertEqual(plan[0]["name"], "pair1-1-capture-off")
+
+    def test_paired_plan_states_capture_on_explicitly(self):
+        self.assertEqual({t["capture_state"] for t in trial_plan(2)}, {"on"})
+
+    def test_rejects_nonpositive(self):
+        for bad in (0, -1, True, 2.0):
+            with self.assertRaises(ValueError):
+                capture_state_plan(bad)
+
+
+class IdenticalBuildTest(unittest.TestCase):
+    def install(self, installed, expected=None):
+        return {"installed_sha256": installed, "expected_sha256": expected or installed}
+
+    def test_same_installed_bytes_accepted(self):
+        self.assertEqual(check_identical_build([self.install("a" * 64)] * 2), "a" * 64)
+
+    def test_rejects_differing_or_mislabeled_builds(self):
+        for installs in ([],
+                         [self.install("a" * 64), self.install("b" * 64)],
+                         [self.install("a" * 64, "b" * 64)]):
+            with self.assertRaises(TrialError, msg=installs):
+                check_identical_build(installs)
 
 
 class FakeDevice:
@@ -236,6 +354,11 @@ USER_BASE = fixture(generator=1)          # the user's old generation-1 session
 USER_RECOVERY = b'{"user recovery 1 experiment"}'
 
 
+def preflight(device, out, data=None, ownership=None, generator=CURRENT_GENERATOR):
+    return preflight_files(device, out, data if data is not None else fixture(),
+                           ownership if ownership is not None else Ownership(), generator)
+
+
 class OwnershipCleanupTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -245,12 +368,33 @@ class OwnershipCleanupTest(unittest.TestCase):
     def cleanup(self, device, ownership):
         return final_cleanup(device, self.out, ownership, log=lambda _m: None)
 
+    def test_valid_current_generator_base_save_is_never_touched(self):
+        # The user's session loads under the generator being measured, so the
+        # recovery fixture would be ignored: reject instead of overwriting it.
+        user_base = fixture(yaw=1.25)
+        device = FakeDevice({"wetland-session.json": user_base, "world.json": b"user world"})
+        ownership = Ownership()
+        with self.assertRaises(TrialError):
+            preflight(device, self.out, ownership=ownership)
+        self.assertEqual(ownership.owned, [])
+        self.assertNotIn(FIXTURE_REMOTE_NAME, device.files)
+        self.assertEqual(self.cleanup(device, ownership)["removed"], [])
+        self.assertEqual(device.files["wetland-session.json"], user_base)
+        self.assertEqual(device.files["world.json"], b"user world")
+
+    def test_stale_generator_two_base_still_reaches_the_recovery_slot(self):
+        device = FakeDevice({"wetland-session.json": fixture(generator=2)})
+        ownership = Ownership()
+        _before, state = preflight(device, self.out, ownership=ownership)
+        self.assertEqual(state["base_save_invalid_for_generator"], CURRENT_GENERATOR)
+        self.assertEqual(device.files[FIXTURE_REMOTE_NAME], fixture())
+
     def test_preexisting_fixture_rejected_and_preserved(self):
         device = FakeDevice({"wetland-session.json": USER_BASE,
                              FIXTURE_REMOTE_NAME: b"someone else's slot 127"})
         ownership = Ownership()
         with self.assertRaises(TrialError):
-            preflight_files(device, self.out, fixture(), ownership)
+            preflight(device, self.out, ownership=ownership)
         self.assertEqual(ownership.owned, [])
         status = self.cleanup(device, ownership)
         self.assertEqual(status["removed"], [])
@@ -262,7 +406,7 @@ class OwnershipCleanupTest(unittest.TestCase):
                              PROFILE_REQUEST_NAME: b"500\n"})
         ownership = Ownership()
         with self.assertRaises(TrialError):
-            preflight_files(device, self.out, fixture(), ownership)
+            preflight(device, self.out, ownership=ownership)
         self.cleanup(device, ownership)
         self.assertEqual(device.files[PROFILE_REQUEST_NAME], b"500\n")
 
@@ -272,7 +416,7 @@ class OwnershipCleanupTest(unittest.TestCase):
                              "wetland-session.json.recovery-1.json": USER_RECOVERY})
         ownership = Ownership()
         with self.assertRaises(TrialError):
-            preflight_files(device, self.out, fixture(), ownership)
+            preflight(device, self.out, ownership=ownership)
         status = self.cleanup(device, ownership)
         self.assertEqual(status["removed"], [])
         self.assertEqual(sorted(device.files), sorted(
@@ -286,7 +430,7 @@ class OwnershipCleanupTest(unittest.TestCase):
                             fail_on_push=True)
         ownership = Ownership()
         with self.assertRaises(TrialError):
-            preflight_files(device, self.out, fixture(), ownership)
+            preflight(device, self.out, ownership=ownership)
         self.assertEqual(ownership.owned, [FIXTURE_REMOTE_NAME])
         self.assertIn(FIXTURE_REMOTE_NAME, device.files)  # half written
         status = self.cleanup(device, ownership)
@@ -299,7 +443,7 @@ class OwnershipCleanupTest(unittest.TestCase):
     def test_cleanup_force_stops_app_before_deleting(self):
         device = FakeDevice({"wetland-session.json": USER_BASE})
         ownership = Ownership()
-        preflight_files(device, self.out, fixture(), ownership)
+        preflight(device, self.out, ownership=ownership)
         status = self.cleanup(device, ownership)
         self.assertEqual(device.force_stopped, 1)
         order = [c for c in device.calls if c[0] == "shell" or c[1][:2] == ("rm", "-f")]
@@ -312,17 +456,91 @@ class OwnershipCleanupTest(unittest.TestCase):
             device = FakeDevice(files)
             ownership = Ownership()
             with self.assertRaises(TrialError):
-                preflight_files(device, self.out, fixture(), ownership)
+                preflight(device, self.out, ownership=ownership)
             self.assertEqual(ownership.owned, [])
 
     def test_second_trial_may_rewrite_its_own_fixture(self):
         device = FakeDevice({"wetland-session.json": USER_BASE})
         ownership = Ownership()
-        preflight_files(device, self.out, fixture(), ownership)
+        preflight(device, self.out, ownership=ownership)
         device.files[FIXTURE_REMOTE_NAME] = b"stale pose from trial 1"
-        preflight_files(device, self.out, fixture(), ownership)
+        preflight(device, self.out, ownership=ownership)
         self.assertEqual(device.files[FIXTURE_REMOTE_NAME], fixture())
         self.assertEqual(ownership.owned, [FIXTURE_REMOTE_NAME])
+
+
+class CaptureOffFinishTest(unittest.TestCase):
+    """An OFF trial must expect no capture and must never touch foreign files."""
+
+    def setUp(self):
+        from unittest.mock import patch
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        sleep = patch("collect_wetland_pair.time.sleep", lambda _s: None)
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def device(self, extra=None):
+        files = {"wetland-session.json": USER_BASE, FIXTURE_REMOTE_NAME: fixture()}
+        files.update(extra or {})
+        return FakeDevice(files), set(files)
+
+    def finish(self, device, before, ownership, state="off", generator=CURRENT_GENERATOR):
+        return finish_and_pull(device, self.out, before, fixture(), ownership, generator,
+                               state)
+
+    def test_recovered_session_is_validated_against_the_declared_generator(self):
+        # The pulled session is the generator-3 fixture; validating it as
+        # generator 2 must fail rather than accept a foreign world.
+        device, before = self.device()
+        with self.assertRaises(ValueError):
+            self.finish(device, before, Ownership(), generator=2)
+        result = self.finish(device, before, Ownership())
+        self.assertEqual(result["session_after"]["generator"], CURRENT_GENERATOR)
+        self.assertTrue(result["session_unchanged_from_fixture"])
+
+    def test_off_trial_expects_no_capture_and_no_request(self):
+        device, before = self.device()
+        result = self.finish(device, before, Ownership())
+        self.assertEqual(result["capture_state"], "off")
+        self.assertEqual(result["captures"], [])
+        self.assertEqual(result["capture_count"], 0)
+        self.assertFalse(result["profile_request_created"])
+        self.assertFalse(result["profile_request_present_after"])
+        # Absence of a capture is never reported as a consumed request.
+        self.assertIsNone(result["profile_request_consumed"])
+
+    def test_unexpected_capture_rejects_the_trial_and_is_left_on_device(self):
+        device, before = self.device()
+        device.files["frame-profile-v2-20260912.csv"] = b"header\n"
+        ownership = Ownership()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, ownership)
+        self.assertEqual(ownership.owned, [])
+        self.assertIn("frame-profile-v2-20260912.csv", device.files)
+        self.assertIn("unexpected_captures", json.loads(
+            (self.out / "unexpected-captures.json").read_text()))
+
+    def test_foreign_profile_request_is_rejected_never_consumed_or_deleted(self):
+        device, before = self.device()
+        device.files[PROFILE_REQUEST_NAME] = b"500\n"   # written by someone else
+        ownership = Ownership()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, ownership)
+        final_cleanup(device, self.out, ownership, log=lambda _m: None)
+        self.assertEqual(device.files[PROFILE_REQUEST_NAME], b"500\n")
+        self.assertEqual(device.files["wetland-session.json"], USER_BASE)
+
+    def test_on_trial_still_requires_exactly_one_capture(self):
+        device, before = self.device()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, Ownership(), state="on")
+
+    def test_unknown_capture_state_rejected(self):
+        device, before = self.device()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, Ownership(), state="maybe")
 
 
 class LoadLineTest(unittest.TestCase):
@@ -335,6 +553,53 @@ class LoadLineTest(unittest.TestCase):
 
     def test_absent_line_returns_none(self):
         self.assertIsNone(parse_wetland_loaded("I Matterweave: Wetland graphics: ...\n"))
+
+
+class StartupRejectionTest(unittest.TestCase):
+    """Manifest/fixture disagreement is decided before any device access."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def build(self, name, variant, generator, composition=CURRENT_COMPOSITION):
+        apk = self.root / (name + ".apk")
+        apk.write_bytes(b"not a real apk: " + name.encode())
+        manifest = self.root / (name + "-build.json")
+        manifest.write_text(json.dumps({
+            "variant": variant, "generator": generator, "composition_hash": composition,
+            "source_commit": "da2e4fc", "apk_sha256": sha256_file(apk)}) + "\n")
+        return apk
+
+    def run_main(self, fixture_generator, candidate_generator, reference_generator):
+        from unittest.mock import patch
+        fixture_path = self.root / "fixture.json"
+        fixture_path.write_bytes(fixture(generator=fixture_generator))
+        candidate = self.build("candidate", "candidate", candidate_generator)
+        reference = self.build("reference", "reference", reference_generator)
+        out = self.root / f"out-{fixture_generator}-{candidate_generator}-{reference_generator}"
+        argv = ["--adb", "/bin/true", "--serial", "phone:1",
+                "--candidate-apk", str(candidate), "--reference-apk", str(reference),
+                "--fixture", str(fixture_path), "--out", str(out)]
+
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("the device was contacted before the gates passed")
+
+        with patch("collect_wetland_pair.Device", forbidden):
+            main(argv)
+
+    def test_fixture_from_another_generator_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.run_main(2, CURRENT_GENERATOR, CURRENT_GENERATOR)
+
+    def test_mixed_generator_manifests_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.run_main(CURRENT_GENERATOR, CURRENT_GENERATOR, 2)
+
+    def test_unsupported_generator_manifest_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.run_main(1, 1, 1)
 
 
 class ThermalMatchTest(unittest.TestCase):

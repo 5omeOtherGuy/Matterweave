@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "run": "performance-01",
+  "run": "engine-completion-20260912",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
-  "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; final integrated Android validation next.",
+  "base": "704bb4a",
+  "phone_owner": "Current Codex orchestrator; OnePlus 13 192.168.178.93:5555. No worker device access; serialize builds and captures.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -517,10 +517,75 @@
     },
     "E03-audio": {
       "owner": "Hy4",
-      "state": "running",
+      "state": "historical-unaccepted-preserved",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-audio-service",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/audio-hy4-01",
-      "acceptance": "Unaccepted bounded reusable Android AAudio service for M6; actual device validation lead-owned."
+      "acceptance": "Unaccepted bounded reusable Android AAudio service for M6; actual device validation lead-owned.",
+      "remaining": "Separate old Hy4 worktree retained; audio baseline merged PR12. Current fix under E1-audio-recovery."
+    },
+    "E1-cadence": {
+      "attempt": 1,
+      "owner": "w_2cd6ca40",
+      "state": "accepted",
+      "base": "704bb4a",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/e1-cadence-20260912",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e1-muse",
+      "paths": [
+        "crates/matterweave-physics/tests/detail_cadence.rs"
+      ],
+      "acceptance": "Independent Muse/Gemini review resolved; lead removed redundant assertion. Final ARM64 11tests x3PASS on OnePlus13. Regression blocks on tall wall until caller publishes buffered collision result; no scheduler-speed requirement.",
+      "artifact": "2d024f0"
+    },
+    "E2-measurement": {
+      "attempt": 1,
+      "owner": "w_0040ee0c",
+      "state": "source-accepted-device-qualification-open",
+      "base": "704bb4a",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-measurement-20260912",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e2-opus",
+      "paths": [
+        "tools/performance/qualify_measurements.py",
+        "tools/performance/test_qualify_measurements.py"
+      ],
+      "acceptance": "Zero-noise and counterbalanced chronological pair regressions repaired; independent corrective reviews no findings; full251Python testsPASS. No current-build overhead or same-build noise result yet.",
+      "artifact": "e436634"
+    },
+    "E1-audio-recovery": {
+      "attempt": 2,
+      "owner": "codex-orchestrator",
+      "state": "accepted",
+      "base": "704bb4a",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/audio-suspend-fix",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-pcm-boundary-retry",
+      "paths": [
+        "crates/matterweave-audio/**"
+      ],
+      "acceptance": "Independent Muse/Gemini full ownership/lifetime and final pause-intent reviews resolved. Lead494workspace tests,49ARM64 audio tests and4x20AAudio lifecycle cyclesPASS. E1 functional gate accepted; audibility,Miri,actual headset disconnect and E7sample integration NOT RUN.",
+      "history": [
+        {
+          "worker": "w_8b5fb3bc",
+          "state": "failed-before-inference",
+          "reason": "HTTP400 prompt_cache_retention unsupported; no source edits"
+        }
+      ],
+      "artifact": "a999fd0"
+    },
+    "E2-collector": {
+      "attempt": 1,
+      "owner": "codex-orchestrator",
+      "state": "source-accepted-device-qualification-open",
+      "base": "d91058b",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-collector-20260912",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/collector-generator3-opus",
+      "paths": [
+        "tools/performance/collect_wetland_pair.py",
+        "tools/performance/test_collect_wetland_pair.py",
+        "tools/performance/analyze_wetland_pairs.py",
+        "tools/performance/test_analyze_wetland_pairs.py",
+        "docs/performance/measurement-qualification.md"
+      ],
+      "acceptance": "Independent Muse/Gemini final reviews at e436634: no findings. Lead251Python testsPASS. Source accepted; current-build ON/OFF physical collection NOT RUN; phone keyguard requires unlock.",
+      "artifact": "e436634"
     }
   },
   "capacity": {
@@ -528,7 +593,18 @@
   },
   "provider_blockers": {
     "muse": "Paid Contributor works after owner opt-in; transient429 retried successfully. Historical free-model quota is not current.",
-    "opus": "Opus5 works after reset; detail/review tasks completed."
+    "opus": "Opus5 works after reset; detail/review tasks completed.",
+    "glm": "2026-09-12 HTTP400 before inference: prompt_cache_retention unsupported; stopped and rerouted.",
+    "hy4": "Narrow review240s timeout, final-only exact-session continuation120s timeout; no completed review accepted."
   },
-  "orchestration": "Lead integration with paid Muse Contributor, Opus5, Hy4 and GLM5.3 Flash. Bounded Pi leaf workers; live availability overrides historical quota notes."
+  "orchestration": "One Astra lead; supervised Pi leaves: Muse Free/high, Opus/medium, Astra/medium implementation; independent Muse Free/high and Gemini/high reviews; narrow Astra/xhigh ownership consultation. GLM failed before inference; Hy4 timed out. No active workers after final reviews; no acceptance inferred from completion alone.",
+  "reconciliation": {
+    "date": "2026-09-12",
+    "remote_main": "065ff6edd89eaaf0715978b2d9f30e41527f12bb",
+    "local_base": "704bb4a",
+    "open_prs": [],
+    "active_workers_before_dispatch": 0,
+    "preserved": "Existing completion-plan/handoff changes and completed audio-suspend-fix diff retained. Historical entries below are historical evidence, not live reservations.",
+    "routing": "Router consulted; no category has two supported arms. Preferred free Muse for bounded test; Opus medium for measurement contract; GLM high for bounded audio recovery. Collect independent acceptance evidence; do not interpret cross-category DeepSeek ranking as established superiority."
+  }
 }

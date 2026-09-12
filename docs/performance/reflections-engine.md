@@ -165,13 +165,55 @@ evidence only and are never presented as device performance.
 
 ## Limits and what is open
 
+### Device measurement, 12 September 2026
+
+Both app gates ran on the reserved OnePlus 13 (`CPH2653`, Android 16 / SDK 36, build
+`BP4A.251205.006`, Adreno 830, Vulkan 1.3.284, driver 2150760522) from installed
+`dev.matterweave.explorer` 0.5.0 versionCode 5. Device unplugged, battery 55%, 24.0 °C,
+thermal status 0 before and after both runs. Wall-clock frame interval is display-bound
+at ~16.6 ms (60 Hz) in every phase, so cost appears in the GPU timestamp, not the
+interval.
+
+Cost mode, 120 warmup + 1000 measured frames per mode:
+
+| Mode | GPU ms | Interval p50 / p95 / p99 ms | Owned bytes | Publications |
+| --- | --- | --- | --- | --- |
+| off | 4.501 | 16.588 / 17.202 / 17.624 | 0 | 0 |
+| on | 11.953 | 16.597 / 17.153 / 17.836 | 50176 | 1 |
+
+Enabling reflections costs **+7.45 ms of GPU time per frame, a 2.66x increase**, and
+owns 50176 bytes (46080 material + 4096 palette). It fits a 16.667 ms period with about
+4.7 ms to spare; it does not fit an 8.333 ms period, so this configuration cannot hold
+120 Hz on this device. No energy or thermal claim is made: these runs are far too short
+to reach equilibrium, and the battery sensor did not move.
+
+Quality mode, 8 phases, 30 measured frames each, all phases completed:
+
+| Phase | GPU ms | Publications | Publication cost |
+| --- | --- | --- | --- |
+| off | 4.485 | 0 | — |
+| on | 10.690 | 1 | upload 1.427 ms, fence 0.002 ms |
+| camera-moved | 10.487 | 0 | — |
+| occluder-added | 11.449 | 1 | upload 0.028 ms, fence 0.002 ms |
+| object-removed | 11.571 | 1 | upload 0.023 ms, fence 0.001 ms |
+| sun-moved | 10.969 | 0 | — |
+| scene-replaced | 11.542 | 1 | upload 0.026 ms, fence 7.974 ms |
+| disabled | 3.050 | 0 | — |
+
+Camera motion and sun motion republish nothing; edits, removals and scene replacement
+each republish exactly once, which is the documented invalidation contract observed on
+hardware. One publication blocked **7.974 ms on its fence** — roughly half a frame, and
+three orders of magnitude above the other four. It is a single observation and its cause
+is not established. The `disabled` phase measures the replaced scene, not the opening
+one, so its 3.050 ms is not comparable with the 4.485 ms `off` baseline.
+
+Reports: `/mnt/bench/matterweave-dev/device-gates/2026-09-12/`.
+
 ### Not run
 
-- Reserved Android device: all device gates (item 10/11 of the acceptance list) are **NOT
-  RUN**. The coordinator owns the reservation; the ready-to-run candidate is the
-  `--reflection-cost` / `reflection-check.txt` gate described in
-  [DEVELOPMENT.md](../DEVELOPMENT.md).
-- Thermal conditions, GPU timings on mobile and sustained behaviour are unmeasured.
+- Thermal conditions under sustained load, energy per frame and behaviour past thermal
+  equilibrium are unmeasured. The runs above are seconds long and prove cost per frame
+  only.
 
 ### Deferred explicitly
 

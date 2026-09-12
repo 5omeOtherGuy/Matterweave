@@ -17,18 +17,49 @@ pub mod mock;
 ///
 /// # Safety (implementation contract)
 ///
-/// `MixerCore` is boxed once and its address never changes. The backend closes its
-/// stream before the core is dropped, and the platform contract (AAudio:
+/// `CoreOwner` converts the mixer Box into a raw-owned allocation before any
+/// callback pointer escapes. No owning Box/reference is retained while callbacks
+/// can render; moving the service/owner never retags or moves the pointee. The
+/// backend closes its stream before the core is dropped, and the platform contract (AAudio:
 /// `AAudioStream_close` joins all callback threads before returning; the boxed
 /// closures that capture this pointer live inside the `AudioStream` object) means no
-/// callback can run after close returns. The pointer is only ever dereferenced on
-/// the single render-callback thread, never on the control thread.
+/// callback can run after close returns. Only the single render role (including
+/// synchronous mock renders) may dereference it, for that invocation alone, with
+/// no concurrent core references. Ordinary control operations must not dereference
+/// it. Raw copies do not extend the allocation lifetime; no use after owner drop.
 #[derive(Clone, Copy)]
 pub(crate) struct CorePtr(pub(crate) *mut MixerCore);
 
-// SAFETY: see the type contract above — single-callback-thread use, target outlives
-// every callback.
+// SAFETY: transfer only the raw pointer, never a reference to the pointee. Its
+// dereferencer must enforce single-callback-thread exclusive access and the owner
+// must outlive all callbacks. Moving this wrapper does not access mixer memory.
 unsafe impl Send for CorePtr {}
+
+/// Sole owner of the mixer allocation; intentionally has no Deref/core accessor.
+/// Raw aliases may only be used under CorePtr's callback contract. AudioService
+/// drops its backend (joining callbacks) before this field is dropped.
+pub(crate) struct CoreOwner(CorePtr);
+
+impl CoreOwner {
+    pub(crate) fn new(core: Box<MixerCore>) -> Self {
+        Self(CorePtr(Box::into_raw(core)))
+    }
+
+    /// Copy allocation provenance without borrowing/dereferencing its contents.
+    pub(crate) fn ptr(&self) -> CorePtr {
+        self.0
+    }
+}
+
+impl Drop for CoreOwner {
+    fn drop(&mut self) {
+        // SAFETY: this is exactly the pointer from Box::into_raw, reconstructed
+        // once by its sole owner. AudioService's backend-first drop order has
+        // joined every callback; no raw alias may be used after this point.
+        let CorePtr(ptr) = self.0;
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+}
 
 /// What a backend reports when its stream dies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +96,7 @@ pub(crate) fn verify_negotiated(props: StreamProperties) -> Result<(), AudioServ
 }
 
 /// A control-thread handle to an output stream.
-pub(crate) trait OutputBackend {
+pub(crate) trait OutputBackend: Send {
     /// Last negotiated stream properties, if a stream is open.
     fn properties(&self) -> Option<StreamProperties>;
 

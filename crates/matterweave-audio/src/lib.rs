@@ -46,10 +46,13 @@
 //!   or reusing a voice slot invalidates all older handles to it.
 //! * Unregistering a clip silences (does not merely detach) all voices still playing
 //!   it, and the freed PCM range is reused only after the audio thread has
-//!   acknowledged the unload with its epoch counter.
+//!   acknowledged the Unload command's FIFO sequence after completing PCM reads.
 //! * While the output is suspended the mixer clock freezes mid-sample: nothing is
 //!   dropped, nothing restarts, and commands queued during suspension are applied in
-//!   FIFO order on resume.
+//!   FIFO order on resume. [`AudioService::health`] reports suspension in `suspended`
+//!   as soon as [`AudioService::suspend`] returns, without waiting for a render
+//!   invocation; `rt_suspended` is the render thread's own view, which cannot advance
+//!   while a paused backend delivers no callbacks (AAudio).
 //! * Device loss is reported by the AAudio error callback into shared atomics;
 //!   [`AudioService::poll_device`] then closes and reopens the stream on the control
 //!   thread with the same mixer core, so voices continue where they stopped.
@@ -64,6 +67,7 @@ pub mod config;
 pub mod error;
 pub mod handle;
 pub(crate) mod mixer;
+pub(crate) mod pcm;
 pub mod service;
 
 pub use clip::ClipSpec;

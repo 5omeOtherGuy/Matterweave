@@ -1,0 +1,33 @@
+{
+  "source_commit": "a999fd0",
+  "binary_sha256": "b0b8cce87f2f3634d299f2c4d9e18f66e06caadaed5235dfa9ea2e2b30e346ed",
+  "device": "OnePlus13 CPH2653 Android16 ARM64 192.168.178.93:5555",
+  "build": "Rust1.96.0 release; NDK28.2.13676358 API28; locked backend-android,diagnostic no defaults",
+  "results": [
+    {
+      "run": 1,
+      "exit": 0,
+      "shutdown_cycles": 20,
+      "pass": true
+    },
+    {
+      "run": 2,
+      "exit": 0,
+      "shutdown_cycles": 20,
+      "pass": true
+    },
+    {
+      "run": 3,
+      "exit": 0,
+      "shutdown_cycles": 20,
+      "pass": true
+    },
+    {
+      "run": 4,
+      "exit": 0,
+      "shutdown_cycles": 20,
+      "pass": true
+    }
+  ],
+  "scope": "AAudio lifecycle only; no human audibility, actual headset-disconnect, graphics, Miri or performance claim"
+}

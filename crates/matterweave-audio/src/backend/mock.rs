@@ -110,7 +110,13 @@ impl MockOutput {
 
 impl OutputBackend for MockOutput {
     fn properties(&self) -> Option<StreamProperties> {
-        if self.closed.get() || self.lost.get() {
+        if self.closed.get()
+            || self.lost.get()
+            || self
+                .shared
+                .disconnected
+                .load(core::sync::atomic::Ordering::Acquire)
+        {
             None
         } else {
             Some(self.props)

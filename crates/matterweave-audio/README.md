@@ -24,7 +24,7 @@ through the backend's data callback. Backend and real-time types never cross the
 | `ClipHandle`, `VoiceHandle` | `slot`, `generation`, `Display`; copyable and generational. |
 | `PlayOptions` | `gain`, `with_gain`, default gain 1.0. |
 | `StreamProperties` | Negotiated rate, channels, float format, burst/buffer sizes, device/session ids, low-latency and exclusive flags. |
-| `HealthSnapshot` | Callback/frame/command counters, rejection and silence/completion counters, xruns, device errors, recreations, ack epoch, suspended. |
+| `HealthSnapshot` | Callback/frame/command counters, rejection and silence/completion counters, xruns, device errors, recreations, ack epoch, service suspension (`suspended`) and the render-thread mirror (`rt_suspended`). |
 | `AudioServiceError`, `InvalidClipReason`, `DeviceError` | Plain data; no backend types. |
 | `AudioLimits` | `pcm_pool_samples()`; plus `MAX_CLIPS`, `MAX_VOICES`, `MAX_PCM_BYTES`, `MAX_COMMANDS`. |
 | `config` module | `SAMPLE_RATE` (48 000) and `MAX_GAIN` (8.0) alongside the limit constants. |
@@ -72,19 +72,33 @@ queued commands are never overwritten. A full command queue returns `CommandQueu
 - One render invocation performs no heap allocation or deallocation, no file or network I/O,
   no logging, no blocking locks and no stream shutdown. Control commands travel through a
   bounded `ringbuf` SPSC queue and are applied in FIFO order at the start of an invocation.
-- Clip payloads live in the service-owned pool for the service lifetime, so a render read can
-  never touch freed memory.
+- Clip payloads live in a separate fixed `PcmPool`, shared by service and mixer through
+  `Arc`. Its per-sample `UnsafeCell<f32>` storage is accessed only through private unsafe
+  value reads/range writes; no mutable whole-pool or inner-sample reference is created.
+  Registration writes exclusively owned ranges before FIFO publication. Completed Unload
+  acknowledgment, not `UnsafeCell` itself, excludes readers before range reuse.
+- The mixer Box is converted to raw ownership before callback wiring; the control thread
+  never dereferences it while live. The raw owner reconstructs the Box only after backend
+  shutdown joins callbacks. The service's separate pool Arc remains alive through that drop.
 - `ClipHandle` and `VoiceHandle` are generational. Unregistering a clip or reusing a voice slot
   invalidates older handles; a stale handle is rejected and cannot affect the slot's new owner.
 - Unregistering a clip silences every voice still playing it (rather than detaching it). The
   freed PCM range is reused only after the render thread has acknowledged the unload with its
-  ack epoch.
+  completed-command sequence (a callback epoch alone does not acknowledge a command).
 - Suspend freezes the mixer clock mid-sample: nothing is dropped or restarted, and commands
   queued during suspension are applied in FIFO order on resume. Resume queues the command
-  before restarting the stream so there is no silent gap.
+  before restarting the stream so there is no silent gap. Suspend requires two vacant
+  FIFO slots: one for Suspend and one reserved for Resume if device pause fails. With
+  fewer slots it returns `CommandQueueFull` without pausing. `health().suspended` reports the
+  service state as soon as `suspend()`/`resume()` returns, without waiting for a render
+  callback. `health().rt_suspended` is the render thread's own view; on a backend that
+  delivers no callbacks while paused it may remain false. AAudio pause is asynchronous;
+  service suspension is not proof that in-flight callbacks have finished.
 - Device loss is recorded by the AAudio error callback into shared atomics. `poll_device`
   closes and reopens the stream around the same mixer core, so voices continue where they
-  stopped.
+  stopped. Suspended replacements remain unstarted until `resume()`, including diagnostic
+  recreation. Failed open/start leaves recovery retryable by `poll_device()`; failed resume
+  retains suspension until `resume()` succeeds, without queuing duplicate Resume commands.
 - `Drop` closes the stream before dropping the mixer core. AAudio's `AAudioStream_close` joins
   all callback threads before returning, so no callback can observe freed state.
 
@@ -121,20 +135,32 @@ From the repository root:
 cargo test -p matterweave-audio --features backend-mock
 ```
 
-- `tests/acceptance.rs` (20 tests) covers the two-voice fixture against an independent
+- `tests/acceptance.rs` (21 tests) covers the two-voice fixture against an independent
   reference within 1e-6, clipping and finiteness, stereo order, mono upmix, gain, completion,
   stop, silence, limit enforcement at the limit and limit+1 and after reuse, atomic clip
   rejection, stale handles, command-queue saturation and recovery, the suspend/resume
-  continuation policy and fault-injected device loss with recreation.
+  continuation policy (service truth observable without a render callback, render mirror
+  separate) and fault-injected device loss with recreation.
+- `tests/recovery.rs` (4 tests) covers device-loss and diagnostic recreation with applied
+  and buffered Suspend, no callbacks while paused, and exact PCM continuation.
+- `src/service/tests.rs` and its submodules (18 tests) check paused replacements,
+  open/start/pause failures, bounded queue recovery, stale/new device errors, and
+  deterministic enqueue-after-drain races for PCM reclamation and voice generations,
+  registration while a mutable render borrow is live, concurrent disjoint PCM access,
+  2,000 real-thread callbacks during registration, and shared-pool teardown lifetime.
+- `tests/lifetime.rs` (2 tests) verifies selective unregister silencing, full-pool reuse
+  only after Unload acknowledgment, and stale clip/voice handle isolation.
 - `tests/rt_allocations.rs` (1 test) is a dedicated allocation detector that reports zero
-  allocations and deallocations across 10 000 callback invocations, including completion and
-  stop handling.
+  allocations and deallocations across 10 000 callback invocations, including completion,
+  stop, Unload silencing and command acknowledgment.
 - One inline mixer unit test interleaves a real render thread with a full control-command
   push stream and asserts no panic or deadlock, full command application and sane
   diagnostics.
 
 The host diagnostic example (`examples/audio_diagnostic.rs`) exercises the mock backend:
-negotiated properties, nonzero frames, suspend/resume, controlled recreation and ten
-open/play/stop/close cycles. It is silent by design and is not device evidence. The executed
+negotiated properties, frame progress, suspend/resume, controlled recreation and ten
+open/play/suspend/recreate-while-suspended/resume/stop/close cycles. Each progress check has
+an asserted two-second deadline. Paused counters are checked only after recreation has
+closed the old stream, not immediately after the asynchronous pause request. It is silent by design and is not device evidence. The executed
 host and cross-compilation results are recorded in [STATUS](../../docs/STATUS.md) and
 [ADR-0016](../../docs/adr/0016-audio-service.md).

@@ -15,7 +15,7 @@ Acceptance limits (task limits, not owner-approved product guarantees): at most 
 
 Add crate `matterweave-audio` with three layers.
 
-**Mixer core** (render-thread state): fixed 32 clip slots, 8 voice slots, one preallocated 4 MiB PCM pool that is never resized or freed while the service lives, and a bounded SPSC command queue. Each render invocation applies the queued commands, then publishes an ack epoch so the control thread can prove application before reusing memory. Mixing is deterministic: voices in slot order; mono clips upmixed to both channels without attenuation; stereo clips passed through; mono devices take the mean of both contributions; samples clamped to [-1, 1] with a finite guard.
+**Mixer core** (render-thread state): fixed 32 clip slots, 8 voice slots, a separately shared, preallocated 4 MiB PCM pool that is never resized or freed while callbacks can access it, and a bounded SPSC command queue. Each render invocation applies the queued commands, finishes PCM reads, then publishes a completed-command sequence with release ordering so the control thread can prove application before reusing memory. Mixing is deterministic: voices in slot order; mono clips upmixed to both channels without attenuation; stereo clips passed through; mono devices take the mean of both contributions; samples clamped to [-1, 1] with a finite guard.
 
 **Service** (game thread, `&mut self` API): generational `ClipHandle`/`VoiceHandle`, validate-then-mutate operations, explicit rejection errors (`ClipLimit`, `VoiceLimit`, `PcmBudgetExceeded`, `CommandQueueFull`, `RangeNotYetAcknowledged`, `StaleClipHandle`, `StaleVoiceHandle`, `InvalidGain`, format errors), negotiated stream properties and a health snapshot (callback/frame/command counts, rejection counters, silenced/completed voice counts, device xruns/errors, recreation count).
 
@@ -23,11 +23,11 @@ Add crate `matterweave-audio` with three layers.
 
 Lifecycle and ownership policies (documented and tested):
 
-- Clip payloads live only in the service-owned pool, so render reads cannot hit freed memory. A freed range is reused only after the ack epoch proves the unload was applied (voices silenced); while suspended no invocations occur, so registration can return `RangeNotYetAcknowledged` until resume.
+- Clip payloads live in a private fixed `Arc<PcmPool>` of per-sample `UnsafeCell<f32>` shared by service and mixer. Registration writes only free ranges without accessing the live mixer; callbacks read only published ranges. A freed range is reused only after an acquire observes the completed unload command (voices silenced and final reads complete); while suspended no invocations occur, so registration can return `RangeNotYetAcknowledged` until resume.
 - Unregistering a clip silences its voices; their handles become no-op targets for `stop_voice`.
 - Suspend/resume are FIFO commands around device pause/start: the mixer clock freezes mid-sample, nothing is dropped or restarted, commands queued during suspension apply in order at resume, and a queued play that had not started begins after resume.
-- Capacity decisions reflect render-thread applied state (play command ack epoch + live mask), never a queued promise, so the voice limit cannot be oversold and a stop-then-play may need a retry after the next callback.
-- Drop order closes the stream (joining all callbacks) before freeing the mixer core; the callback closures own the core pointer and drop with the stream object.
+- Capacity decisions reflect render-thread applied state (completed play-command sequence + live mask), never a queued promise, so the voice limit cannot be oversold and a stop-then-play may need a retry after the next callback.
+- Drop order closes the stream (joining all callbacks) before freeing the mixer core; the callback closures hold a raw pointer and drop with the stream object. `CoreOwner` owns the allocation without retaining a Box reference while callbacks run; it reconstructs the Box only after backend destruction.
 
 Adopted dependencies: `ringbuf = 0.5.1` (MIT OR Apache-2.0, no unsafe user code, push/pop fail without overwriting/blocking) for the command queue, and the existing `ndk 0.9.0` (MIT OR Apache-2.0) for AAudio. No other new dependencies.
 
@@ -49,10 +49,29 @@ Games get sound effects through a small handle-based API with explicit backpress
 - [Component selection](../COMPONENT_SELECTION.md) procedure.
 - ndk 0.9.0 source (`src/audio.rs`) callback and stream lifetime contracts; AAudio developer documentation for `AAudioStream_close` callback joining and error-callback threading rules.
 - ringbuf 0.5.1 source (`try_push`/`try_pop` fetch-before-fail semantics).
-- Trial report and acceptance matrix in the `eval/glm-audio` pull request; device run pending (see [STATUS](../STATUS.md)).
+- Initial trial report in `eval/glm-audio`; subsequent corrective reviews and device evidence are linked from [STATUS](../STATUS.md).
 
 ## Validation
+
+The following initial-trial results are historical; the corrective checkpoint below supersedes their pending device status.
 
 - Host: 22 tests cover the two-voice reference fixture within 1e-6, clipping, stereo order, completion, gain, stop, silence, limit enforcement at limit/limit+1 and after reuse, atomic rejection, stale handles, command saturation and recovery, the suspend/resume policy, fault-injected device loss with recreation, and a threaded mixer interleaving test. A dedicated allocation-detector binary reports zero allocations and deallocations across 10,000 callback invocations including completion and stop handling.
 - Cross-compilation: the diagnostic example builds for `aarch64-linux-android` with the repository's pinned NDK 28.2.13676358 API-28 linker and links `libaaudio`; scoped strict Clippy passes for both host and Android targets.
 - Pending device gate: run the diagnostic on a reserved phone (open output, negotiated format/rate, nonzero frames, suspend/resume, controlled recreation, ten open/play/stop/close cycles, callback/xrun counts). Not run in this trial because no device was attached; the executable, SHA-256 and procedure are delivered with the trial report, and final acceptance requires the coordinating reviewer to execute it.
+
+### 2026-09-12 corrective checkpoint
+
+Source `a999fd0` repairs suspension observation, paused output recovery, failed-pause
+compensation, unload generation, completed-command lifetime acknowledgment, and
+live-core PCM aliasing. Package tests: 49 PASS on host and as native ARM64 phone binaries; allocation detector covers
+10,000 callback invocations. On OnePlus 13 / Android 16, the real AAudio diagnostic
+passes four runs of 20 suspend/recreate/resume/shutdown cycles at that source
+([manifest](../evidence/2026-09-12-completion-wave1/android-audio-final-manifest.json)).
+Independent Muse/Gemini corrective reviews pass at this checkpoint. No human audibility,
+actual headset-disconnect or Miri result is claimed. Proposed status remains: M6
+both-sample service integration/reuse and broader acceptance are still open.
+
+The ownership proof relies on narrow per-cell access and FIFO publication/retirement
+ordering; `UnsafeCell` alone supplies neither synchronization nor permission for
+conflicting mutable references. See the [Rust contract](https://doc.rust-lang.org/std/cell/struct.UnsafeCell.html)
+and [AAudio thread-safety contract](https://developer.android.com/ndk/guides/audio/aaudio/aaudio).

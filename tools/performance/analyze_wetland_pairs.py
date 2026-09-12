@@ -226,24 +226,64 @@ def analyze_trial(directory):
         if not any('topResumedActivity=' in line and 'dev.matterweave.explorer/' in line
                    for line in row['data']['activity'].splitlines()):
             raise ValueError('foreground state not established')
-    capture = trial['result']['captures'][0]
-    if digest(directory/capture['name']) != capture['sha256']:
-        raise ValueError('app capture hash mismatch')
+    # Capture state is read, never inferred: an OFF trial writes no CSV, and a
+    # missing CSV is not evidence of anything on its own.
+    capture_state = trial.get('capture_state')
+    captures = trial['result']['captures']
+    if capture_state not in (None, 'on', 'off'):
+        raise ValueError(f'{directory.name}: unknown capture_state {capture_state!r}')
+    if capture_state == 'off':
+        if captures:
+            raise ValueError(f'{directory.name}: capture-off trial carries a frame profile')
+    elif len(captures) != 1:
+        raise ValueError(f'{directory.name}: expected exactly one frame profile')
+    for capture in captures:
+        if digest(directory/capture['name']) != capture['sha256']:
+            raise ValueError('app capture hash mismatch')
     session = json.loads((directory/'session-after.json').read_text())
     if digest(directory/'session-after.json') != trial['result']['session_after_sha256']:
         raise ValueError('saved session hash mismatch')
     points = [health_point(row) for row in health]
+    surface = read_jsonl(directory/'surface-samples.jsonl')
     return {'name': directory.name, 'pair': trial['pair'], 'variant': trial['variant'],
+            'capture_state': capture_state,
             'input_trial_sha256': digest(directory/'trial.json'),
             'apk': trial['apk'], 'fixture': trial['fixture'], 'scene': trial['scene_loaded'],
             'environment': trial['environment'], 'pre_launch_gate': trial['pre_launch_gate'],
             'end_camera': {key: session[key] for key in ['yaw','pitch','shadows']},
             'end_eye': session['physics']['eye'],
-            'presentation': presentation_intervals(read_jsonl(directory/'surface-samples.jsonl'), warm, warm+measure),
+            'presentation': presentation_intervals(surface, warm, warm+measure),
             'process_cpu': process_cpu(json.loads((directory/'process-stat.json').read_text())),
-            'app_whole_capture': app_profile(directory/capture['name']),
+            'sampling': {
+                'compositor_dumps_recorded': len(surface),
+                'compositor_dumps_discarded': 0,
+                'health_samples_recorded': len(health),
+                'note': 'The collector polls best effort and schedules no fixed observation '
+                        'count, so there is no scheduled-minus-obtained difference to report. '
+                        'Analysis rejects any dump with a nonzero exit or non-monotonic '
+                        'elapsed time, so a trial that analysed at all discarded none; a '
+                        'rejected trial produces no row here at all.'},
+            'app_whole_capture': app_profile(directory/captures[0]['name']) if captures else None,
             'health_all': summarize_health(points),
             'health_measurement': summarize_health([p for p in points if warm <= p['elapsed_s'] < warm+measure])}
+
+
+def pair_members(members):
+    """Return (delta label, baseline, contrast) for a pair, or None.
+
+    Paired build batches compare `variant`; same-build capture batches compare
+    `capture_state` and must hold one build. The compared factor is taken from
+    the recorded trials, never assumed.
+    """
+    if len(members) != 2:
+        return None
+    by_variant = {t['variant']: t for t in members}
+    if set(by_variant) == {'reference', 'candidate'}:
+        return ('candidate_minus_reference', by_variant['reference'], by_variant['candidate'])
+    by_state = {t['capture_state']: t for t in members}
+    if set(by_state) == {'on', 'off'} and len(by_variant) == 1:
+        return ('capture_on_minus_off', by_state['off'], by_state['on'])
+    return None
 
 
 def pair_mismatches(a, b):
@@ -253,14 +293,21 @@ def pair_mismatches(a, b):
     if a['fixture']['sha256'] != b['fixture']['sha256']: issues.append('fixture differs')
     for key in ['generator','composition_hash']:
         if a['apk'][key] != b['apk'][key]: issues.append(f'{key} differs')
+    if a['capture_state'] != b['capture_state'] and a['apk']['apk_sha256'] != b['apk']['apk_sha256']:
+        issues.append('capture on/off pair does not share one build')
     eye_delta = math.dist(a['end_eye'], b['end_eye'])
     if eye_delta > .01: issues.append(f'end-eye difference {eye_delta}m exceeds0.01m')
     for field, bound in [('battery_c',1.0), ('skin_c',2.0)]:
         if abs(a['pre_launch_gate'][field]-b['pre_launch_gate'][field]) > bound:
             issues.append(f'paired {field} difference exceeds {bound}')
-    for field in ['gpu_prev_shadows','gpu_prev_shadow_map_size','voxel_bodies_total']:
-        sets = [set(row['app_whole_capture']['value_counts'][field]) - {''} for row in [a,b]]
-        if sets[0] != sets[1] or len(sets[0]) != 1: issues.append(f'{field} differs or changed during capture')
+    # Every available capture must be internally stable, including the ON
+    # member of an ON/OFF pair. Compare across captures only when both exist.
+    captures = [row['app_whole_capture'] for row in (a, b)
+                if row['app_whole_capture'] is not None]
+    for field in ['gpu_prev_shadows', 'gpu_prev_shadow_map_size', 'voxel_bodies_total']:
+        sets = [set(capture['value_counts'][field]) - {''} for capture in captures]
+        if any(len(values) != 1 for values in sets) or (len(sets) == 2 and sets[0] != sets[1]):
+            issues.append(f'{field} differs or changed during capture')
     return issues
 
 
@@ -279,13 +326,14 @@ def main():
         trials.append(analyze_trial(directory))
     pairs = []
     for number in sorted({t['pair'] for t in trials}):
-        members = {t['variant']: t for t in trials if t['pair'] == number}
-        if set(members) != {'reference','candidate'}: continue
-        a, b = members['reference'], members['candidate']
+        resolved = pair_members([t for t in trials if t['pair'] == number])
+        if resolved is None: continue
+        label, a, b = resolved
         issues = pair_mismatches(a,b)
-        result = {'pair':number, 'mismatches':issues, 'image_review':'lead-owned, not established by metadata'}
+        result = {'pair':number, 'comparison':label, 'mismatches':issues,
+                  'image_review':'lead-owned, not established by metadata'}
         if not issues:
-            result['candidate_minus_reference'] = {
+            result[label] = {
                 key: b['presentation']['supported'][key]-a['presentation']['supported'][key]
                 for key in ['mean_ms','median_ms','p95_ms','p99_ms']}
             result['cpu_core_equivalent_delta'] = (b['process_cpu']['logical_core_equivalent_utilization']-
@@ -298,11 +346,11 @@ def main():
                          'Visual equivalence requires separate lead review; metadata matching alone is insufficient.']}
     (args.out/'summary.json').write_text(json.dumps(summary,indent=2,allow_nan=False)+'\n')
     lines=['# Wetland paired capture summaries','', 'Descriptive evidence only; no optimization verdict.','',
-           '| Trial | Mean ms | Median ms | p95 ms | Unsupported gaps | CPU core equivalent |',
-           '| --- | ---: | ---: | ---: | ---: | ---: |']
+           '| Trial | Capture | Mean ms | Median ms | p95 ms | Unsupported gaps | CPU core equivalent |',
+           '| --- | --- | ---: | ---: | ---: | ---: | ---: |']
     for t in trials:
         p=t['presentation']; s=p['supported']; lines.append(
-            f"| {t['name']} | {s['mean_ms']:.3f} | {s['median_ms']:.3f} | {s['p95_ms']:.3f} | {len(p['unsupported_gaps'])} | {t['process_cpu']['logical_core_equivalent_utilization']:.3f} |")
+            f"| {t['name']} | {t['capture_state'] or 'unrecorded'} | {s['mean_ms']:.3f} | {s['median_ms']:.3f} | {s['p95_ms']:.3f} | {len(p['unsupported_gaps'])} | {t['process_cpu']['logical_core_equivalent_utilization']:.3f} |")
     lines += ['',f'Completed trials: {len(trials)}. Pending: {len(pending)}.', '',
               'Paired differences and all matching checks are recorded in summary.json.', '', *summary['limits']]
     (args.out/'summary.md').write_text('\n'.join(lines)+'\n')

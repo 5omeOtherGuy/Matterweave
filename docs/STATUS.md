@@ -1,14 +1,56 @@
 # Current status
 
-Updated: 2026-09-10
+Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
-Latest published prerelease: **v0.5.0**. The engine objective (M2–M6) remains open.
+## Completion execution — wave 1
 
-This file states what is implemented and verified now, the checks actually executed,
-known limitations and explicit non-claims, then the next concrete work. Per-slice
-commands, conditions and artifacts are in the linked `docs/performance/` and
-`docs/evidence/` records. Host results are never device results, and targets are
-never measurements.
+Current integration branch: `codex/engine-completion-wave1-20260912`, [PR #19](https://github.com/5omeOtherGuy/Matterweave/pull/19).
+Reconciliation preserved existing device evidence (`704bb4a`), completion-plan edits,
+and the recovered audio worktree. Remote main was `065ff6e`; no supervised workers
+or open PRs existed at dispatch. Historical assignments below are not live ownership.
+The [board](performance/board.json) is the live authority; the lead owns the connected
+OnePlus 13 and Android builds. GLM failed before inference on a provider parameter;
+Hy4 timed out without a usable review. Neither is counted as completed participation.
+
+Implemented:
+
+- Audio separates service suspension from callback observation, preserves pause
+  during recreation and failed recovery, reserves failed-pause compensation capacity,
+  and retries output failures. PCM/voice reuse follows completed FIFO commands;
+  unload targets the live generation. A separate fixed shared PCM allocation and
+  raw mixer owner prevent control access through a live mutable mixer. Final source
+  is `a999fd0`; both independent corrective reviews are resolved and the E1
+  functional gate is accepted.
+- E1 collision regression is accepted: caller-controlled publication, a wall above
+  the autostep height, actual blocking before publication and movement afterward.
+  Independent review findings are resolved; 11 native ARM64 tests pass in each of
+  three final OnePlus 13 runs at `2d024f0`.
+- Measurement tooling source is accepted after independent Muse/Gemini corrective
+  reviews at `e436634`. Same-build ON/OFF collection preserves independent timing
+  sources, validates generator/fixture/full-scene consistency, protects user files,
+  rejects ambiguous or unstable pairs, and handles zero-noise/counterbalanced pairs.
+  Current-build phone overhead and same-build noise remain **NOT RUN**.
+
+Verification is recorded in the [final manifest](evidence/2026-09-12-completion-wave1/final-verification.json)
+and [review triage](performance/completion-wave1-review-triage.md). At final source
+`a999fd0`, 494 workspace tests pass (3 existing ignored gates), as do 49 native
+ARM64 audio correctness checks and 4 × 20 real AAudio lifecycle cycles. Strict
+workspace Clippy and formatting pass. Tool suites pass 251 performance tests and
+16 coordination tests. Documentation checks pass. Muse/Gemini independently
+reviewed the full ownership/lifetime correction and the final pause-intent fix;
+all findings are resolved. PR #19 tracks the delivery revision and CI results.
+
+The frozen debug APK (app runtime unchanged by this wave) built, passed native
+16-KiB alignment/signature checks, and installed successfully. Source `f07c87c`,
+SHA-256 `52a115b4a05e208c5d4c30629bb7e11d66202c856d8518a096457d2c13313506`.
+Android reports keyguard covering the app; graphics qualification requires physical
+unlock. Installation is not graphics execution. No human audibility, actual headset
+disconnect, Miri, broader-device or sustained-efficiency claim is made.
+
+Next: qualified ON/OFF phone collection after unlock and E3–E8 under the
+[completion plan](ENGINE_COMPLETION_PLAN.md) and [gate ledger](performance/completion-gates-20260912.md).
+Audio is not yet wired into the samples; M6 shared-service integration remains open.
+The sections below retain earlier per-slice evidence and limitations.
 
 ## Production frame-loop scheduling — integrated and device-checked
 
@@ -99,9 +141,9 @@ is a harsher condition than CI applies.
 | Automatic detail selection | v0.5.0; host and OnePlus 13 checks pass. | [Instance updates](performance/instance-updates.md) |
 | Background indirect-light preparation | v0.5.0; host and OnePlus 13 checks pass. | [Background lighting](performance/async-indirect.md) |
 | Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | [Collision log](performance/logs/engine-03-collision.md), [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
-| Bounded specular reflections | Merged (PR #13); host only. Device gates NOT RUN. | [Reflections](performance/reflections-engine.md) |
-| Bounded audio service | Merged (PR #12); host and cross-compile only. Device diagnostic NOT RUN. | [ADR-0016](adr/0016-audio-service.md) |
-| Voxel Relay second sample | Merged (PR #14). Physical device gate NOT RUN. | — |
+| Bounded specular reflections | Merged (PR #13). Both OnePlus 13 app gates ran 2026-09-12: all phases completed; +7.45 ms GPU per frame when enabled. | [Reflections](performance/reflections-engine.md) |
+| Bounded audio service | Merged (PR #12). OnePlus 13 diagnostic ran 2026-09-12 and **FAILS** at the suspend assertion, 4 of 4 runs. | [ADR-0016](adr/0016-audio-service.md) |
+| Voxel Relay second sample | Merged (PR #14). Physical device gate ran 2026-09-12: puzzle solved end to end on the OnePlus 13. | — |
 | v0.3 slice: directional shadows, background preparation, destruction | Released (v0.3.0 development prerelease); device validated. | [v0.3 evidence](evidence/2026-09-08-v0.3.md) |
 | v0.2 slice: walking, objects, streamed terrain | Released (v0.2.0); device exercised. | [v0.2 evidence](evidence/2026-09-07-v0.2.md) |
 
@@ -236,7 +278,7 @@ remaining M2–M6 engine requirements.
   requires at least one non-excluded hit. Final Android repeat and combined workspace
   checks are running. [Protocol](performance/renderer-comparison.md).
 
-### Merged, but not device-validated
+### Merged slices and subsequent device validation
 
 All three landed on `main` through pull requests #12, #13 and #14. Their code is in
 the tree; what remains outstanding is device validation, not integration. The host
@@ -262,9 +304,13 @@ randomized probes agree with an independent `World::raycast` oracle within 0.5/2
 (3/255 tolerance); the nonreflective baseline is preserved within 0.5/255 (1/255
 tolerance); recorded images show all seven required responses including an object outside
 the camera frustum visible only through reflection; the real Renderer passes
-enable/disable/edit/resize/recreation with an empty Vulkan validation stream. **Device
-gates are NOT RUN** — the shared phone is owner-reserved; the ready-to-run candidate is the
-`--reflection-cost` app gate. See [reflection evidence](performance/reflections-engine.md)
+enable/disable/edit/resize/recreation with an empty Vulkan validation stream. **Both device
+app gates ran on 2026-09-12** and completed every phase: enabling reflections costs
++7.45 ms of GPU time per frame (4.501 -> 11.953 ms) and 50176 owned bytes, and the
+invalidation contract holds on hardware — camera and sun motion republish nothing, while
+each edit, removal and scene replacement republishes exactly once. Frame interval stayed
+display-bound at ~16.6 ms throughout, so no frame-rate cost is visible at 60 Hz and none
+is claimed at 120 Hz. See [reflection evidence](performance/reflections-engine.md)
 and [draft PR 13](https://github.com/5omeOtherGuy/Matterweave/pull/13). This advances
 R09/M4 and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
 
@@ -284,7 +330,7 @@ through the pinned `ndk 0.9.0` bindings plus `ringbuf 0.5.1`. Decision record:
 | Workspace tests / docs | PASS: `cargo test --workspace --locked` exit 0 after changes; `python3 tools/check_docs.py` PASS. |
 | Android cross-compilation | PASS: diagnostic example builds for `aarch64-linux-android` (debug and release) with the pinned NDK 28.2.13676358 API-28 linker, links `libaaudio`; release artifact SHA-256 `5b2a66036e6b94d1dacecaea013bef4344df603de29a0b23b75db3efce221c2b`. |
 | Host diagnostic | PASS: negotiated properties, nonzero frames, suspend/resume continuation, controlled recreation, ten open/play/stop/close cycles (mock backend; silent by design). |
-| Reserved-device diagnostic | NOT RUN: no Android device was attached during the trial window (`adb devices` empty). Executable, checksum and exact procedure are delivered; final acceptance requires the coordinating reviewer to execute it. |
+| Reserved-device diagnostic | **FAIL** (OnePlus 13, 2026-09-12, 4 of 4 runs, release build SHA-256 `578241740e71b724d9f9a6eeeeadcce9d23b9aaf1af861b5296bf2a68ec2210e`). Everything before the suspend phase passes on real AAudio: negotiated 48000 Hz stereo f32, burst 96, capacity 1536, low-latency, exclusive false; ~55 callbacks render 5088+ frames with 0 xruns and 0 device errors. The run then panics at `audio_diagnostic.rs:133`, `render thread reports suspended`: after `suspend()` the health snapshot still reports `suspended false`. Deterministic, not a flake. |
 
 Limitations: no resampling and no compressed formats (48 kHz f32 mono/stereo only; a
 device that cannot negotiate that fails open explicitly); a failed stream close aborts
@@ -326,9 +372,17 @@ duplicating the engine implementation.
   reports 0 warnings. The debug APK built with Gradle 8.11.1 (`:app:assembleDebug`),
   SHA256 `aba3d489ad12d9e38573686e38fa8bd3f7646312029a1b78da9caf623e6e0165`, and
   `libmatterweave_explorer.so` ELF 16 KiB page alignment verified (`0x4000`).
-- Physical device gate: **NOT RUN** (no exclusive reservation held on the shared OnePlus
-  13; honest reporting per project rules). An independent subagent verified engine/game
-  separation, zero leakage into `crates/matterweave-*`, and the physics-backed tests.
+- Physical device gate: **PASS** (OnePlus 13, 2026-09-12). Played end to end over
+  wireless adb with injected touch events: the virtual joystick drove the kinematic
+  character, the character pushed the crate onto the plate by impulse (crate settled at
+  `[9.99, 1.50, 8.47]`), the door cells were removed and their colliders resynchronized so
+  the character walked through the doorway (eye Z 9.68 -> 13.60 at X 6.52), the ACTION
+  button cleared the destructible obstacle, and the character reached the exit at
+  Z 20.83. Final saved state: `door_open true, obstacle_cleared true, solved true`, HUD
+  `PUZZLE SOLVED`. Save attachment and screenshot in
+  `/mnt/bench/matterweave-dev/device-gates/2026-09-12/`. An independent subagent verified
+  engine/game separation, zero leakage into `crates/matterweave-*`, and the physics-backed
+  tests.
 
 ## Known limitations, non-claims and open gates
 
@@ -356,12 +410,17 @@ Not implemented, not integrated or pending validation:
 - Detail: rough concavities remain conservative, and material-filled channels plus full
   temporal/quality M4 acceptance remain open.
 - Reflections: 64³ source volume, configurable trace steps with a 512 hard maximum, one
-  secondary ray, no recursion or temporal history; device gates NOT RUN; ADR-0008 remains
-  Proposed; not complete Lumen-like lighting.
+  secondary ray, no recursion or temporal history; ADR-0008 remains Proposed; not complete
+  Lumen-like lighting. Device cost is now measured per frame but not per joule: the
+  2026-09-12 runs are seconds long and make no energy or thermal claim.
 - Audio: no resampling and no compressed formats (48 kHz f32 mono/stereo only, with
   explicit fail-open on devices that cannot negotiate it); a failed stream close aborts
-  through the ndk wrapper's drop contract; the reserved-device diagnostic is NOT RUN.
-- Voxel Relay: physical device gate NOT RUN.
+  through the ndk wrapper's drop contract. **The reserved-device diagnostic fails**: after
+  `suspend()` the health snapshot never reports `suspended` on the real AAudio backend,
+  deterministically across 4 runs. Suspension is therefore unverified on hardware, and the
+  host suite cannot see the gap because the mock backend renders from the control thread.
+- Voxel Relay: physical device gate passes; the sample is playable and completable on the
+  OnePlus 13.
 - Full M2 equivalent-quality comparison, M3 stress gates, M4 indirect illumination,
   reflection and multiresolution-transition acceptance, a second released sample and
   broader device coverage remain open.
@@ -389,28 +448,33 @@ Owner decisions:
 
 ## Next concrete work
 
-First priority: investigate stationary-scene heat. The current app still steps physics,
-rebuilds dynamic meshes and redraws shadows while stationary. Profile CPU busy time/waits,
-reuse unchanged work, and evaluate frame caps/idle cadence. The
-[benchmark protocol](BENCHMARKS.md) now requires unplugged, cooled, matched conditions for
-future efficiency comparisons; charging was a confounder in the v0.2 measurement.
+Follow the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md),
+written 2026-09-12 from the current repository evidence. It defines E0–E8,
+dependencies, bounded parallel ownership and explicit M2–M6 acceptance gates.
+Planning and documentation reconciliation do not close any engine gate.
 
-1. Complete the equivalent-quality ray/mesh/hybrid mobile comparison. The retained
-   reference mesher and new greedy path provide a correctness baseline, not a final mobile
-   renderer selection or Nanite-like LOD implementation.
-2. Profile boundary-crossing stalls, collision preparation, uploads, residency, frame
-   distributions and sustained thermals under the benchmark protocol.
-3. Stress the expanded 64-piece destruction example and gameplay/editor changes.
-4. Continue from direct shadows into M4 indirect illumination/reflections/detail. Finite
-   map edge quality and nonresident casters remain limitations. No full GI, reflection,
-   multiresolution transitions, second sample or broader device coverage yet.
-5. Run the outstanding device gates for the merged-but-unvalidated systems: the
-   `--reflection-cost` app gate for reflections, the reserved-device diagnostic for
-   audio, and the physical device gate for the Voxel Relay sample.
-6. Do not make further showcase save recovery, authored route refinement or gameplay UI
-   polish a prerequisite for engine work. Automatic LOD, indirect
-   illumination/reflections, renderer comparison, streaming completion, second-sample
-   reuse and the remaining M2–M6 gates are the open work.
+1. Reconcile the current source, integration branches, PR state and historical board
+   before dispatch; older branch assignments above are not a live ownership claim.
+2. Fix the reproducible real-AAudio suspend diagnostic failure and the remaining
+   detail-cadence observation race. Qualify mobile capture overhead and repeatability
+   in parallel with correctness work.
+3. Complete equivalent-quality ray/mesh/hybrid device comparison and primary-path
+   selection; close production streaming/collision/destruction stress and bounds.
+4. Complete GI/reflection quality, publication scheduling and stable detail
+   transitions, measuring their combined costs. Reflections already pass the short
+   device functional gates; that does not close M4 or sustained acceptance.
+5. Finish reusable-service integration and acceptance for the existing wetland and
+   Voxel Relay samples. Voxel Relay already passes end-to-end device play; audio,
+   physical simultaneous touch, authoring/reuse and release acceptance remain.
+6. Run matched, unplugged sustained tests on the final quality profiles and deliver
+   the reviewed, merged Android demonstrator with durable evidence. Pacing and shadow
+   reuse are implemented; measure their current behavior instead of assuming the
+   historical unconditional-work baseline still applies.
+
+Documentation-only planning validation: `python3 tools/check_docs.py` PASS (160
+Markdown files, 539 local links, 16 ADRs, 20 requirements); `git diff --check` PASS.
+No new engine,
+APK or physical-device tests were run for the plan. M2–M6 remain open.
 
 ## Historical campaign records
 

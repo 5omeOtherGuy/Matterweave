@@ -479,13 +479,32 @@ fn suspend_freezes_clock_and_resume_continues_exactly() {
     assert!(h.frames_rendered >= 2);
 
     service.suspend().unwrap();
+    // Control-side truth is observable before any further render callback: AAudio
+    // delivers none while paused (2026-09-12 OnePlus 13 defect).
+    assert!(
+        service.health().suspended,
+        "service reports suspended immediately after suspend()"
+    );
     // Extra renders while suspended produce silence and do not advance the voice.
     let out = render_stereo(&mut service, 4);
     assert!(silence(&out), "suspended output is silent");
-    assert!(service.health().suspended, "render truth: suspended");
+    let h = service.health();
+    assert!(h.suspended, "service truth: suspended");
+    assert!(
+        h.rt_suspended,
+        "render truth: the mock driver ran a render pass, so the mirror is set"
+    );
 
     service.resume().unwrap();
+    assert!(
+        !service.health().suspended,
+        "service truth: resume clears suspension before the first callback"
+    );
     let out = render_stereo(&mut service, 3);
+    assert!(
+        !service.health().rt_suspended,
+        "render truth: the render pass applied Resume"
+    );
     // Continues exactly where it stopped: frames 2,3,4 of the clip.
     assert_eq!(&out[..6], &[0.3, 0.3, 0.4, 0.4, 0.5, 0.5]);
     assert!(
@@ -508,13 +527,25 @@ fn suspend_does_not_restart_or_replay_stale_sounds() {
     let voice1 = service.play(clip, PlayOptions::default()).unwrap();
     render_stereo(&mut service, 10); // voice1 consumed frames 0..9
     service.suspend().unwrap();
+    assert!(
+        service.health().suspended,
+        "service truth: suspended immediately"
+    );
     let out_silent = render_stereo(&mut service, 4);
     assert!(silence(&out_silent), "suspended output is silent");
+    assert!(
+        service.health().rt_suspended,
+        "render truth: mock render applied Suspend"
+    );
     let voice2 = service
         .play(clip, PlayOptions::default())
         .expect("play queued while suspended is not dropped");
     render_stereo(&mut service, 4); // still suspended: silence continues
     service.resume().unwrap();
+    assert!(
+        !service.health().suspended,
+        "service truth: resumed before the first post-resume callback"
+    );
 
     // Post-resume frame k: voice1 contributes clip frame 10+k (continuation),
     // voice2 contributes clip frame k (fresh start). Output is interleaved: frame k
@@ -562,6 +593,45 @@ fn suspend_does_not_restart_or_replay_stale_sounds() {
         service.health().voices_completed,
         2,
         "exactly two completions, no restarts"
+    );
+}
+
+#[test]
+fn suspend_truth_does_not_depend_on_render_callbacks() {
+    // 2026-09-12 OnePlus 13: the old health snapshot read the render-thread mirror,
+    // but AAudio stops delivering callbacks once paused, so suspension was never
+    // observable. The service must publish its own control-side truth on return.
+    let mut service = AudioService::new().unwrap();
+    let clip = service.register_clip(ClipSpec::mono(&[0.25; 32])).unwrap();
+    let _voice = service.play(clip, PlayOptions::default()).unwrap();
+    render_stereo(&mut service, 1); // apply the play and let the mixer run
+
+    let before = service.health();
+    assert!(!before.suspended, "running service is not suspended");
+    assert!(!before.rt_suspended, "render thread is not suspended");
+
+    service.suspend().unwrap();
+    let suspended = service.health();
+    assert!(
+        suspended.suspended,
+        "control-side suspension must be observable without a render callback"
+    );
+    assert!(
+        !suspended.rt_suspended,
+        "no render ran since Suspend was queued, so the mirror is still clear"
+    );
+
+    // Deliberately no mock_render here: this models a paused backend that delivers
+    // no callbacks, so only the control-side state can change.
+    service.resume().unwrap();
+    let resumed = service.health();
+    assert!(
+        !resumed.suspended,
+        "resume clears control-side suspension without a render callback"
+    );
+    assert!(
+        !resumed.rt_suspended,
+        "the queued Suspend/Resume pair was never applied, so the mirror stays clear"
     );
 }
 
