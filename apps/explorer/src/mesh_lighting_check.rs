@@ -34,6 +34,7 @@ use matterweave_core::{Mesh, World};
 use matterweave_render::indirect::{IndirectVolume, MeshGeometry, MeshProxy, UpdateBudget};
 use matterweave_render::reflection::{
     reflect_sample_with_mesh, shade_sample, MaterialTable, ReflectionVolume, DEFAULT_TRACE_STEPS,
+    SURFACE_OFFSET,
 };
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance, Sun};
 use std::{
@@ -137,6 +138,72 @@ fn prototype() -> Mesh {
     let mut voxel = World::new(0);
     voxel.set([0, 0, 0], 1);
     voxel.mesh()
+}
+
+/// Source cell of one world-mesh vertex: the solid cell whose exposed face
+/// with this normal emitted it. The naive `floor(p - n * eps)` lookup fails on
+/// voxel-boundary edges (e.g. the top edge of a side face resolves one cell
+/// too high, into air), so boundary axes try both adjacent cells and keep a
+/// solid cell whose face along the normal is actually exposed. Deterministic:
+/// the naive cell first, then ascending neighbours. Exact for this fixture,
+/// where same-material neighbours share every ambiguous edge.
+fn source_cell(world: &World, position: [f32; 3], normal: [f32; 3]) -> Result<[i32; 3], String> {
+    let biased = std::array::from_fn(|a| position[a] - normal[a] * SURFACE_OFFSET);
+    let base = biased.map(|v| v.floor() as i32);
+    let mut candidates = vec![base];
+    for axis in 0..3 {
+        if biased[axis].fract() == 0.0 {
+            let mut extra = Vec::new();
+            for cell in &candidates {
+                let mut below = *cell;
+                below[axis] -= 1;
+                extra.push(below);
+            }
+            candidates.extend(extra);
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    // Keep the naive lookup first: it is the common interior case.
+    candidates.sort_by_key(|cell| if *cell == base { 0 } else { 1 });
+    let step = normal.map(|v| v as i32);
+    for cell in candidates {
+        if world.get(cell) == 0 {
+            continue;
+        }
+        let neighbour = std::array::from_fn(|a| cell[a] + step[a]);
+        if world.get(neighbour) == 0 {
+            return Ok(cell);
+        }
+    }
+    Err(format!(
+        "world mesh vertex has no exposed source face: {position:?}"
+    ))
+}
+
+/// Authoritative fixture-world raster geometry with fixture-consistent colours.
+/// `World::mesh` paints engine-default material colours, so every vertex is
+/// recolored from the CPU fixture palette through its own source cell.
+/// An empty mesh is an error: the floor and receiver column must reach the
+/// rasterizer, otherwise the lighting publication would cover instance
+/// geometry floating over a missing world.
+fn world_mesh(world: &World) -> Result<Mesh, String> {
+    let mut mesh = world.mesh();
+    if mesh.vertices.is_empty() {
+        return Err("fixture world produced no raster geometry".into());
+    }
+    let colors = palette();
+    for vertex in &mut mesh.vertices {
+        let cell = source_cell(world, vertex.position, vertex.normal)?;
+        vertex.color = colors[world.get(cell) as usize];
+    }
+    Ok(mesh)
+}
+
+/// Truthful one-line proxy identity for phase evidence: the digest plus the
+/// actual occupied-cell count, never a packed material id under a count label.
+fn describe_proxy(digest: u64, occupied_cells: usize) -> String {
+    format!("proxy digest={digest} occupied_cells={occupied_cells}")
 }
 
 fn placement(cell: [i32; 3]) -> StaticInstance {
@@ -345,7 +412,20 @@ impl MeshLightingCheck {
         else {
             return Err("renderer initialization suspended".into());
         };
-        let renderer = renderer.map_err(|error| format!("renderer init: {error}"))?;
+        let mut renderer = renderer.map_err(|error| format!("renderer init: {error}"))?;
+        // The CPU fixture world must reach the rasterizer on every renderer
+        // creation, including resume: without this upload the floor/receiver
+        // exist only in the lighting volumes while the frames show instances
+        // over a missing world. Static proxy/instance geometry is still
+        // paired separately in each phase via `sync_static_scene`.
+        let world = world_mesh(&self.world)?;
+        let (vertices, indices) = (world.vertices.len(), world.indices.len());
+        renderer
+            .upload(&world)
+            .map_err(|error| format!("fixture world upload: {error}"))?;
+        self.record(format!(
+            "world geometry uploaded: {vertices} vertices {indices} indices (fixture palette)"
+        ));
         if !self.capabilities_recorded {
             self.record(format!("capabilities: {}", renderer.capabilities));
             self.capabilities_recorded = true;
@@ -377,6 +457,28 @@ impl MeshLightingCheck {
             .replace_static_scene(&self.meshes, &self.instances)
             .map_err(|error| format!("static scene upload: {error}"))?;
         Ok(())
+    }
+
+    /// Honest GPU residency for phase evidence: legacy world bytes plus the
+    /// resident static prototype/instance counts behind the frame.
+    fn gpu_geometry_line(&self) -> String {
+        match self.renderer.as_ref() {
+            Some(renderer) => match renderer.static_scene_stats() {
+                Some(stats) => format!(
+                    "gpu mesh_bytes={} static prototypes={} instances={} vertices={} indices={}",
+                    renderer.mesh_bytes,
+                    stats.prototypes,
+                    stats.instances,
+                    stats.vertices,
+                    stats.indices
+                ),
+                None => format!(
+                    "gpu mesh_bytes={} static scene cleared",
+                    renderer.mesh_bytes
+                ),
+            },
+            None => "gpu no renderer".into(),
+        }
     }
 
     fn check_oracle_rest(&self, volume: &IndirectVolume) -> Result<String, String> {
@@ -566,7 +668,8 @@ impl MeshLightingCheck {
         self.sync_static_scene()?;
         let proxy = proxy_for(&self.meshes, &self.instances, &self.materials)?;
         let digest = proxy.digest();
-        if proxy.occupied_cells() == 0 {
+        let occupied = proxy.occupied_cells();
+        if occupied == 0 {
             return Err("the rest proxy marks no cell".into());
         }
         let oracle = self.check_oracle_rest(&volume_with(
@@ -594,10 +697,7 @@ impl MeshLightingCheck {
             return Err("matching publication must enable lighting".into());
         }
         self.evidence = vec![
-            format!(
-                "proxy digest={digest} cells={}",
-                pack.material_at(OBJECT_CELL)
-            ),
+            describe_proxy(digest, occupied),
             oracle,
             reflection_oracle,
             format!("published {} reflection bytes", stats.bytes),
@@ -835,8 +935,9 @@ impl MeshLightingCheck {
             return Ok(false);
         }
         let evidence = std::mem::take(&mut self.evidence);
+        let residency = self.gpu_geometry_line();
         self.record(format!(
-            "phase={} {} drawn={PHASE_FRAMES} {}",
+            "phase={} {} drawn={PHASE_FRAMES} {} | {residency}",
             self.phase,
             phase_name(self.phase),
             evidence.join(" | ")
@@ -955,6 +1056,50 @@ mod tests {
         let mut check = MeshLightingCheck::new(path.clone());
         test(&mut check);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn world_mesh_uses_fixture_palette_on_every_vertex() {
+        let world = fixture_world();
+        let mesh = world_mesh(&world).unwrap();
+        assert!(!mesh.vertices.is_empty());
+        let colors = palette();
+        let (mut floor, mut wall) = (0, 0);
+        for vertex in &mesh.vertices {
+            let cell = source_cell(&world, vertex.position, vertex.normal).unwrap();
+            let material = world.get(cell);
+            assert!(material == FLOOR || material == WALL, "cell {cell:?}");
+            assert_eq!(vertex.color, colors[material as usize], "cell {cell:?}");
+            if material == FLOOR {
+                floor += 1;
+            } else {
+                wall += 1;
+            }
+        }
+        assert!(floor > 0 && wall > 0, "floor {floor} wall {wall}");
+        // Engine-default mesher colours must be gone: moss is material 1's
+        // default, soil material 2's.
+        for vertex in &mesh.vertices {
+            assert_ne!(vertex.color, [0.29, 0.48, 0.27]);
+            assert_ne!(vertex.color, [0.35, 0.24, 0.17]);
+        }
+    }
+
+    #[test]
+    fn describe_proxy_reports_digest_and_occupied_count() {
+        let meshes = [prototype()];
+        let materials = [OBJECT];
+        let proxy = proxy_for(&meshes, &rest_instances(), &materials).unwrap();
+        let line = describe_proxy(proxy.digest(), proxy.occupied_cells());
+        assert_eq!(
+            line,
+            format!(
+                "proxy digest={} occupied_cells={}",
+                proxy.digest(),
+                proxy.occupied_cells()
+            )
+        );
+        assert!(line.contains("occupied_cells="));
     }
 
     #[test]
