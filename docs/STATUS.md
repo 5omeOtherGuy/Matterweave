@@ -1,6 +1,6 @@
 # Current status
 
-Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
@@ -11,14 +11,40 @@ functionally verified on OnePlus13; see [controls and evidence](performance/terr
 PR #31 wires the production wetland camera to the detail runtime and passes the
 [Android render/edit/persistence/lifecycle slice](performance/wetland-auto-detail.md).
 Actual tested wetland views stayed at Source under retained quality guards;
-coarse transition acceptance remains open. Shared audio integration passes142
-host app tests and strict Clippy; Android audio integration and hearing are next.
+coarse transition acceptance remains open. Shared audio at `b2ffd5b` passes147 app tests,49 audio tests, strict scoped
+Clippy/fmt and independent Gemini review. The phone exposed AAudio resume failure
+-899; after repair, **3/3 wetland cycles and one Relay cycle** reproduced the
+failure and recovered automatically to successful stream starts and real events.
+[Shared audio evidence](performance/shared-sample-audio.md). PR #32 merged at `f370990`, all six checks passing; owner hearing confirmation is recorded below.
+All original user saves and the completed Relay import were restored and hashed.
 
-Global worker reconciliation found preserved D2.2 destruction (`w_80029347`) and
-D3.1 lighting (`w_9d03d127`) workers from the other lead. Do not duplicate them or
-edit their isolated paths. This session continues app integration and the phone.
-PR #30 contains that lead's board/plan updates; merge additively, preserving both
-sessions' records and latest owner instructions.
+Current reconciliation supersedes the out-of-order coordination messages:
+PR #33 physics merged at `c86980b`; PR #34 production mesh lighting merged at
+`16ad342`. No open PRs at this observation. Claude remains an engine-slice
+producer; Codex owns app integration, acceptance and the phone.
+
+The destruction diagnostic at `d22954c` passed its first Android run: 1501
+presentations, exactly 64 pieces, 24 kg conserved mass, 20 internal reset/load
+cycles, one internal renderer recreation and one real HOME/resume. Independent
+Gemini review then found duplicate phase execution on resize and incorrect final
+phase reporting after a presentation Retry. Lead correction `5347e91` passes 157 app tests, scoped Clippy,
+151 host Vulkan frames and a repeated Android run with HOME/resume specifically
+during phase 4: 25 unique 60-frame phases, one internal recreation, four current
+user-save hashes unchanged. Corrective independent Gemini review `w_004fc6f2` passes. Retained-byte evidence covers the
+dynamic mesh cache only. [Detailed evidence](performance/destruction-android.md).
+
+D1.2 production detail fixtures are committed at `d8a5cde`; Gemini worker
+`w_1f749699` found two real diagnostic gaps; DeepSeek `w_761c1314`
+resumes the original session to repair surface-callback handling and validate
+packed renderer transforms. D2.3 continues in the preserved exact
+session (`w_5484fb7e`); contributor D3.2 runs as `w_7ea6fc6d`. The three-worker
+cap includes the reviewer. No duplicate assignments or Astra workers.
+
+The owner subsequently confirmed: "Audio works 100% it is all yours." Human
+audibility is accepted on that report and the phone is released for Android tests. The app exit coincided with lead
+diagnostic deployment; the Android crash buffer was empty, which does not prove
+a crash impossible. The listening window is complete and lead device tests may resume. Preserve the
+owner's newer saves rather than restoring earlier test backups.
 
 ## Development takeover and coarse terrain — 2026-09-12
 
