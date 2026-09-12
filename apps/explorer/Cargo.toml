@@ -19,6 +19,7 @@ matterweave-detail = { path = "../../crates/matterweave-detail" }
 matterweave-render = { path = "../../crates/matterweave-render" }
 matterweave-physics = { path = "../../crates/matterweave-physics" }
 matterweave-pacing = { path = "../../crates/matterweave-pacing" }
+matterweave-audio = { path = "../../crates/matterweave-audio", default-features = false }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
 winit = { version = "=0.30.12", features = ["android-native-activity"] }
@@ -26,10 +27,16 @@ glam = "=0.30.9"
 pollster = "=0.4.0"
 log = "=0.4.28"
 
+[target.'cfg(not(target_os = "android"))'.dependencies]
+matterweave-audio = { path = "../../crates/matterweave-audio", default-features = false, features = ["backend-mock"] }
+
 # Thread CPU clock for opt-in capture only; already in the locked graph.
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc = "=0.2.189"
 
+# Real AAudio output on device; the deterministic mock elsewhere. Features are
+# additive per target, so a host build never links the Android backend.
 [target.'cfg(target_os = "android")'.dependencies]
+matterweave-audio = { path = "../../crates/matterweave-audio", default-features = false, features = ["backend-android"] }
 android-activity = { version = "=0.6.0", features = ["native-activity"] }
 android_logger = "=0.15.1"
