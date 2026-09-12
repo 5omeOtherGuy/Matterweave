@@ -1,0 +1,71 @@
+audio diagnostic: opening service
+negotiated: rate 48000 Hz, channels 2, f32 true, burst 96, capacity 1536, frames_per_callback None, device 3, session None, low_latency true, exclusive false
+playback: frames 96 -> 5184 (submitted frames, not proof of audible PCM)
+during-play: callbacks 54, frames 5184, applied 2, pending 0, xruns 0, device_errors 0, recreations 0, completed 0, suspended false, rt_suspended false
+suspend: service-suspended true at 5184 frames; render-side mirror false (AAudio delivers no callbacks while paused); no stale replay (policy is FIFO continuation)
+resume: frames 5184 -> 7200, render-side mirror false
+recreated: rate 48000 Hz, channels 2, f32 true, burst 96, capacity 1536, frames_per_callback None, device 3, session None, low_latency true, exclusive false
+after-recreate: callbacks 97, frames 9312, applied 5, pending 2, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 1 paused-recreated: callbacks 12, frames 1152, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 1 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 1/20: paused recreation/resume/shutdown ok
+cycle 2 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 2 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 2/20: paused recreation/resume/shutdown ok
+cycle 3 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 3 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 3/20: paused recreation/resume/shutdown ok
+cycle 4 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 4 resumed-progress: callbacks 32, frames 3072, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 4/20: paused recreation/resume/shutdown ok
+cycle 5 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 5 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 5/20: paused recreation/resume/shutdown ok
+cycle 6 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 6 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 6/20: paused recreation/resume/shutdown ok
+cycle 7 paused-recreated: callbacks 12, frames 1152, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 7 resumed-progress: callbacks 34, frames 3264, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 7/20: paused recreation/resume/shutdown ok
+cycle 8 paused-recreated: callbacks 12, frames 1152, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 8 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 8/20: paused recreation/resume/shutdown ok
+cycle 9 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 9 resumed-progress: callbacks 34, frames 3264, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 9/20: paused recreation/resume/shutdown ok
+cycle 10 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 10 resumed-progress: callbacks 32, frames 3072, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 10/20: paused recreation/resume/shutdown ok
+cycle 11 paused-recreated: callbacks 12, frames 1152, applied 3, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended true
+cycle 11 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 11/20: paused recreation/resume/shutdown ok
+cycle 12 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 12 resumed-progress: callbacks 32, frames 3072, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 12/20: paused recreation/resume/shutdown ok
+cycle 13 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 13 resumed-progress: callbacks 32, frames 3072, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 13/20: paused recreation/resume/shutdown ok
+cycle 14 paused-recreated: callbacks 12, frames 1152, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 14 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 14/20: paused recreation/resume/shutdown ok
+cycle 15 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 15 resumed-progress: callbacks 32, frames 3072, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 15/20: paused recreation/resume/shutdown ok
+cycle 16 paused-recreated: callbacks 12, frames 1152, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 16 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 16/20: paused recreation/resume/shutdown ok
+cycle 17 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 17 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 17/20: paused recreation/resume/shutdown ok
+cycle 18 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 18 resumed-progress: callbacks 32, frames 3072, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 18/20: paused recreation/resume/shutdown ok
+cycle 19 paused-recreated: callbacks 13, frames 1248, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 19 resumed-progress: callbacks 34, frames 3264, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 19/20: paused recreation/resume/shutdown ok
+cycle 20 paused-recreated: callbacks 11, frames 1056, applied 2, pending 1, xruns 0, device_errors 0, recreations 1, completed 0, suspended true, rt_suspended false
+cycle 20 resumed-progress: callbacks 33, frames 3168, applied 4, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+cycle 20/20: paused recreation/resume/shutdown ok
+final: callbacks 1945, frames 186720, applied 7, pending 0, xruns 0, device_errors 0, recreations 1, completed 0, suspended false, rt_suspended false
+audio diagnostic: final service shutdown complete
+audio diagnostic: PASS (submitted-frames check only; audibility is a human observation)

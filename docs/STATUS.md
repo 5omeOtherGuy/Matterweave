@@ -24,8 +24,16 @@ pending-window regression, offline measurement qualification and audio recovery.
 GLM failed before inference on an unsupported provider cache parameter; Astra took
 that stopped assignment. Worker completion is not acceptance. The
 [gate ledger](performance/completion-gates-20260912.md) records remaining M2–M6
-ownership, evidence and next checks. Independent frozen reviews and integrated
-Android validation remain pending for this wave.
+ownership, evidence and next checks. Independent Muse/Gemini reviews identified audio lifecycle and command-lifetime
+findings; corrections and re-review are active. Initial integrated source `22070ca`
+passes 477 Rust tests (3 existing ignored gates), strict Clippy, fmt, and 218 Python
+checks. Lead correction `959faab` fixes identical-repeat noise reporting (220 Python
+checks pass). The phone passes 3 × 11 native ARM64 collision cadence tests and
+4 × 20 AAudio paused-recreation/resume/shutdown cycles. These are functional checks,
+not audibility or efficiency evidence, and do not accept later corrections. See
+[review triage](performance/completion-wave1-review-triage.md). The existing collector
+always enables profiling; explicit same-build ON/OFF collection is now assigned,
+so current-build E2 qualification remains NOT RUN.
 
 ## Production frame-loop scheduling — integrated and device-checked
 

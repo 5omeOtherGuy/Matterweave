@@ -1,0 +1,32 @@
+{
+  "source": "22070ca",
+  "binary_sha256": "d92e745d45605e90c01d9e1042eca9a2fdf8ffcd64f349ba591a3707108df4eb",
+  "device": "192.168.178.93:5555",
+  "runs": [
+    {
+      "run": 1,
+      "cycles": 20,
+      "exit_code": 0,
+      "log_sha256": "1eb6c6da3877c8a99963f6af45ba349600bd67240f84f39eaaf23bf89e89113e"
+    },
+    {
+      "run": 2,
+      "cycles": 20,
+      "exit_code": 0,
+      "log_sha256": "e0099c9614373e70e85fdf16db747e230c0bef262417c582f0b38258daf41932"
+    },
+    {
+      "run": 3,
+      "cycles": 20,
+      "exit_code": 0,
+      "log_sha256": "2ca7f7dd5a0c08e4efd59cc3c2c3ca659e6281093d5684fb1dfe9b3553fc9102"
+    },
+    {
+      "run": 4,
+      "cycles": 20,
+      "exit_code": 0,
+      "log_sha256": "8da0404b7451e6a45bf6afa42ef88257f0625292f240ffedb35b39079371d911"
+    }
+  ],
+  "scope": "AAudio callback progress, suspended controlled recreation, resume and shutdown; audibility not observed"
+}

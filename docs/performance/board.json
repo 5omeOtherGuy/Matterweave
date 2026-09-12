@@ -526,19 +526,20 @@
     "E1-cadence": {
       "attempt": 1,
       "owner": "w_2cd6ca40",
-      "state": "running",
+      "state": "candidate-reviewed-device-tested",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e1-cadence-20260912",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e1-muse",
       "paths": [
         "crates/matterweave-physics/tests/detail_cadence.rs"
       ],
-      "acceptance": "Pending frozen independent Muse/Gemini reviews, lead checks and affected Android gates."
+      "acceptance": "Muse frozen combined review no cadence finding; Gemini pending; ARM64 11tests x3PASS. Lead acceptance pending final review.",
+      "artifact": "d8810da"
     },
     "E2-measurement": {
       "attempt": 1,
       "owner": "w_0040ee0c",
-      "state": "running",
+      "state": "candidate-lead-corrected-review-pending",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-measurement-20260912",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e2-opus",
@@ -546,26 +547,44 @@
         "tools/performance/qualify_measurements.py",
         "tools/performance/test_qualify_measurements.py"
       ],
-      "acceptance": "Pending frozen independent Muse/Gemini reviews, lead checks and affected Android gates."
+      "acceptance": "218 original tool tests; zero-noise review regression reproduced then fixed,220PASS. Actual current-build qualification NOT RUN.",
+      "artifact": "959faab"
     },
     "E1-audio-recovery": {
       "attempt": 2,
-      "owner": "w_3cf7c461",
-      "state": "running",
+      "owner": "w_4ef4b01d",
+      "state": "review-fixes-running",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/audio-suspend-fix",
-      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-astra",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-review-fixes",
       "paths": [
         "crates/matterweave-audio/**"
       ],
-      "acceptance": "Pending frozen independent Muse/Gemini reviews, lead checks and affected Android gates.",
+      "acceptance": "4x20 AAudio suspended recreation/resume/shutdownPASS at22070ca. Review found older unload/pause-failure issues; lead found command acknowledgment race. Corrective worker active; final acceptance pending.",
       "history": [
         {
           "worker": "w_8b5fb3bc",
           "state": "failed-before-inference",
           "reason": "HTTP400 prompt_cache_retention unsupported; no source edits"
         }
-      ]
+      ],
+      "artifact": "22070ca"
+    },
+    "E2-collector": {
+      "attempt": 1,
+      "owner": "w_b8d9841b",
+      "state": "running",
+      "base": "d91058b",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-collector-20260912",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e2-collector-opus",
+      "paths": [
+        "tools/performance/collect_wetland_pair.py",
+        "tools/performance/test_collect_wetland_pair.py",
+        "tools/performance/analyze_wetland_pairs.py",
+        "tools/performance/test_analyze_wetland_pairs.py",
+        "docs/performance/measurement-qualification.md"
+      ],
+      "acceptance": "Existing collector always enables capture; implement explicit same-build ON/OFF collection. Worker tests, independent reviews and phone qualification pending."
     }
   },
   "capacity": {
@@ -573,7 +592,9 @@
   },
   "provider_blockers": {
     "muse": "Paid Contributor works after owner opt-in; transient429 retried successfully. Historical free-model quota is not current.",
-    "opus": "Opus5 works after reset; detail/review tasks completed."
+    "opus": "Opus5 works after reset; detail/review tasks completed.",
+    "glm": "2026-09-12 HTTP400 before inference: prompt_cache_retention unsupported; stopped and rerouted.",
+    "hy4": "Narrow review240s timeout, final-only exact-session continuation120s timeout; no completed review accepted."
   },
   "orchestration": "Lead integration with paid Muse Contributor, Opus5, Hy4 and GLM5.3 Flash. Bounded Pi leaf workers; live availability overrides historical quota notes.",
   "reconciliation": {

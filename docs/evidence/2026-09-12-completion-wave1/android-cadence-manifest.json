@@ -1,0 +1,26 @@
+{
+  "physics_test_source": "d8810da",
+  "binary_sha256": "806acb70c57c5725fbf9ddc0b5e60043801331eb98ce155c289080e9ce31e97b",
+  "device": "192.168.178.93:5555",
+  "runs": [
+    {
+      "run": 1,
+      "exit_code": 0,
+      "log_sha256": "d8136a4f7086baa17a24be8c09c0dc9ae44e417077249711ef6f67f541c521f4"
+    },
+    {
+      "run": 2,
+      "exit_code": 0,
+      "log_sha256": "f95d95a3b3dc46da2d85699c8f690e7ebce9c0d6409c21731a4b194736c8b2c9"
+    },
+    {
+      "run": 3,
+      "exit_code": 0,
+      "log_sha256": "eddb0d016c8708067afe7fdf3c555280fc0a4e6c0ece1fb66f66d0c5536c0022"
+    }
+  ],
+  "scope": "Native ARM64 physics regression, no graphics or efficiency claim",
+  "build_started_revision": "d8810da",
+  "integration_revision": "22070ca",
+  "source_note": "Physics/core/detail source and lockfile unchanged between these revisions; integration advanced audio and Python tooling during the build."
+}

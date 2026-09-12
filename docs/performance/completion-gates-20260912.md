@@ -2,7 +2,7 @@
 
 Execution baseline: local `704bb4a`; remote main `065ff6e`; no open PRs at reconciliation. The local commit adds device evidence. Existing uncommitted completion plan/HANDOFF/STATUS/ROADMAP edits are preserved. No supervised workers were live before dispatch; historical board reservations do not reserve the phone. The stopped audio worker left a useful uncommitted fix in `audio-suspend-fix`; its distinct Hy4 predecessor remains untouched.
 
-Current assignments and attempt IDs are in [board.json](board.json). The lead exclusively owns OnePlus 13 `192.168.178.93:5555`, app wiring, integration, Android builds and acceptance. Toolchain: Rust 1.96.0, NDK 28.2.13676358, API 28 linker/API 35 SDK, Gradle 8.11.1; build commands are in [DEVELOPMENT](../DEVELOPMENT.md). No new performance result is claimed by reconciliation.
+Current assignments and attempt IDs are in [board.json](board.json). The lead exclusively owns OnePlus 13 `192.168.178.93:5555`, app wiring, integration, Android builds and acceptance. Toolchain: Rust 1.96.0, NDK 28.2.13676358, API 28 linker/API 35 SDK, Gradle 8.11.1; build commands are in [DEVELOPMENT](../DEVELOPMENT.md). Installed baseline APK SHA-256: `f7523ed8a9e2e9791ba63c226a3c1e6445e665d28c5908f8315aeb72a501d19d` (matches the recorded pacing APK). The initial phone read reports Android 16, battery 42%, 26.9 C and all power-source flags false; this is a readiness observation, not an efficiency measurement. No new performance result is claimed by reconciliation.
 
 | Gate | Owner / dependency | Evidence level at reconciliation | Next executable check or bounded task |
 | --- | --- | --- | --- |
