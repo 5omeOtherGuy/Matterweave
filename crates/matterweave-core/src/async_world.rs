@@ -27,7 +27,10 @@
 //!   147 keys, and the stored edit overrides that back re-entry, capped by the
 //!   streaming module's `MAX_OVERRIDES` (512).
 //!
-//! [`AsyncStats::within_bounds`] restates these bounds for callers and tests.
+//! [`AsyncStats::within_bounds`] restates the queue, staging and mesh-byte bounds
+//! for callers and tests. Residency and the stored-override cap are enforced by the
+//! streaming module (`stream_around`, [`World::set`]) and are not observable in
+//! [`AsyncStats`], so they are declared here but not checked by `within_bounds`.
 
 use crate::mesh::{mesh_halo, Halo};
 use crate::{Mesh, Vertex, World};
@@ -72,7 +75,12 @@ pub struct AsyncStats {
 }
 
 impl AsyncStats {
-    /// Whether every queue and staging count is inside its declared bound.
+    /// Whether every queue and staging count, and the buffered mesh bytes, are
+    /// inside their declared bounds.
+    ///
+    /// Scope: only the counts [`AsyncStats`] exposes. The resident window
+    /// ([`crate::STREAM_RADIUS_CHUNKS`]) and the stored-override cap enforced by
+    /// `World::set` are not represented here and are not checked by this method.
     ///
     /// The mesh byte bound is only compared once a second result is buffered. A
     /// single result is admitted into an empty queue even when it alone exceeds
@@ -801,11 +809,15 @@ mod tests {
     /// whether the refusing condition can clear, so the same loop continues with
     /// edits every second interval and then with edits stopped.
     ///
-    /// Verdict: DISMISSED. Refusal is per preparation interval: eight edited
-    /// intervals completed eight preparations and refused all eight, one edit-free
-    /// interval published while edits were still arriving, and the refusals lost
-    /// nothing, because the synchronous replay of the same operations reaches the
-    /// identical world.
+    /// Verdict: the safety core is correct, and this test proves *conditional*
+    /// progress, not sustained-edit liveness. Refusal is per preparation interval:
+    /// eight edited intervals completed eight preparations and refused all eight,
+    /// one edit-free interval published while edits were still arriving, and the
+    /// refusals lost nothing, because the synchronous replay of the same operations
+    /// reaches the identical world. An edit inside *every* interval is still never
+    /// published by this design, so streaming liveness under sustained edits stays
+    /// OPEN until a caller-side fallback (or another edit-preserving approach) is
+    /// implemented and device-verified.
     #[test]
     fn stale_stream_refusal_defers_until_one_preparation_interval_is_edit_free() {
         const SEED: u64 = 20260912;
@@ -1077,6 +1089,94 @@ mod tests {
             MAX_QUEUED_STREAM_JOBS + MAX_STREAM_RESULTS
         );
         assert!(stats.within_bounds(), "{stats:?}");
+    }
+
+    /// The real byte-admission branch in `run_job`, exercised with production meshes
+    /// instead of synthetic `AsyncStats` literals. A 3D checkerboard chunk defeats
+    /// greedy merging, so each result is several MiB and the byte bound is reached
+    /// while the result count is still below `MAX_MESH_RESULTS`. The refusal must
+    /// leave the retained count and bytes unchanged and must free the key for
+    /// re-request; deleting the byte clause in `run_job` would admit the completion
+    /// and this test would find no refusal at all.
+    #[test]
+    fn mesh_result_byte_bound_refuses_a_completion_below_the_count_cap() {
+        // Eight independent checkerboard chunks, no streaming, so `set` needs no
+        // residency gate. Parity is global, so no two solid voxels share a face and
+        // every one of the 2048 solids per chunk contributes six unmergeable quads
+        // (12288 quads). Eight keys is deliberate: with the byte clause removed all
+        // eight fit under the count cap and no refusal happens.
+        let keys: [[i32; 3]; 8] = [
+            [0, 0, 0],
+            [1, 0, 0],
+            [2, 0, 0],
+            [3, 0, 0],
+            [4, 0, 0],
+            [5, 0, 0],
+            [6, 0, 0],
+            [7, 0, 0],
+        ];
+        let mut world = World::new(0);
+        for key in keys {
+            for z in 0..16 {
+                for y in 0..16 {
+                    for x in 0..16 {
+                        if (x + y + z) % 2 == 0 {
+                            assert!(world.set([key[0] * 16 + x, y, z], 3));
+                        }
+                    }
+                }
+            }
+        }
+        // Real meshes, measured from actual allocate capacities rather than assumed.
+        let sizes: Vec<usize> = keys
+            .iter()
+            .map(|&key| mesh_bytes(&world.mesh_chunk(key)))
+            .collect();
+        assert!(
+            sizes.iter().sum::<usize>() > MAX_MESH_RESULT_BYTES,
+            "workload cannot reach the byte bound: {sizes:?}"
+        );
+
+        let mut jobs = AsyncWorld::manual();
+        for (admitted, &key) in keys.iter().enumerate() {
+            assert!(jobs.request_mesh(&world, key), "request {key:?} refused");
+            let job = take_job(&mut jobs.shared.lock());
+            let refused_key = match &job {
+                Job::Mesh(job) => job.key,
+                Job::Stream(_) => panic!("expected a mesh job"),
+            };
+            let before = jobs.stats();
+            run_job(&jobs.shared, job);
+            let after = jobs.stats();
+            if after.mesh_results == before.mesh_results {
+                // The byte branch, not the count cap, refused this completion.
+                assert_eq!(
+                    after.mesh_result_bytes, before.mesh_result_bytes,
+                    "a byte-refused completion changed the retained bytes"
+                );
+                assert!(
+                    before.mesh_results < MAX_MESH_RESULTS,
+                    "the count cap fired at {} results before the byte bound: {sizes:?}",
+                    before.mesh_results
+                );
+                assert!(
+                    before.mesh_result_bytes + sizes[admitted] > MAX_MESH_RESULT_BYTES,
+                    "the byte bound did not actually fire: {before:?} + {}",
+                    sizes[admitted]
+                );
+                assert!(
+                    jobs.request_mesh(&world, refused_key),
+                    "a byte-refused key was not requestable again"
+                );
+                eprintln!(
+                    "byte saturation: {admitted} results retained, {} bytes; refused {refused_key:?} of {} bytes (bound {}); sizes {sizes:?}",
+                    before.mesh_result_bytes, sizes[admitted], MAX_MESH_RESULT_BYTES
+                );
+                assert!(jobs.stats().within_bounds());
+                return;
+            }
+        }
+        panic!("no byte refusal occurred; workload too small: {sizes:?}");
     }
 
     /// Eviction and re-entry. Publication replaces the window in one step, so a
