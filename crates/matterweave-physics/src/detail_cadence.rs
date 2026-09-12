@@ -36,9 +36,11 @@
 //!   rapid edits and clear on every accepted publication, so the gate always
 //!   covers the full diff against the last accepted publication. A structural
 //!   (`None`) change latches a conservative mode that defers while any body
-//!   overlaps any prepared collider; it clears on publication. The region list
-//!   is bounded by [`MAX_PENDING_ADDED`]; overflow latches the same
-//!   conservative mode.
+//!   overlaps a prepared collider that is not already live at the same pose and
+//!   shape — i.e. while a body overlaps material the publication would add;
+//!   a body resting on an unchanged collider cannot block it. The mode clears
+//!   on publication. The region list is bounded by [`MAX_PENDING_ADDED`];
+//!   overflow latches the same conservative mode.
 //! - Why regions, not collider comparison: a whole-collider AABB equality
 //!   check cannot establish unchanged shape — filling an interior hole leaves
 //!   the outer AABB identical while new solid material appears inside it. The
@@ -236,9 +238,10 @@ impl DetailCollisionCadence {
     /// publishes it. Returns `Ok(Some)` with the accepted publication stats,
     /// `Ok(None)` when nothing was published this frame — including a result
     /// retained by the publication gate because a dynamic body overlaps an
-    /// added-solid region — and `Err(_)` when preparation of the current
-    /// scene failed (live collision preserved; the gate region is cleared and
-    /// the owner reverts the burst).
+    /// added-solid region, or (after a structural change) a prepared collider
+    /// the live world does not already hold — and `Err(_)` when preparation of
+    /// the current scene failed (live collision preserved; the gate region is
+    /// cleared and the owner reverts the burst).
     pub fn step(
         &mut self,
         scene: &DetailScene,
@@ -375,10 +378,11 @@ impl DetailCollisionCadence {
     }
 }
 
-/// Whether the gate currently defers `prepared`: an added-solid overlap, or
-/// any prepared-collider overlap after a structural change. A free function
-/// so poll closures can snapshot the inputs without borrowing the cadence
-/// while its controller is borrowed mutably.
+/// Whether the gate currently defers `prepared`: an added-solid overlap, or a
+/// body overlap with a prepared collider the live world does not already hold
+/// after a structural change. A free function so poll closures can snapshot
+/// the inputs without borrowing the cadence while its controller is borrowed
+/// mutably.
 fn gate_blocked(
     structural: bool,
     added: &[Aabb],
@@ -389,11 +393,7 @@ fn gate_blocked(
         return false;
     };
     if structural {
-        let blockers = prepared.collider_aabbs();
-        return physics
-            .dynamic_body_aabbs()
-            .iter()
-            .any(|body| blockers.iter().any(|region| region.intersects(body)));
+        return physics.detail_structural_blocked(prepared);
     }
     physics.detail_added_blocked(added)
 }
