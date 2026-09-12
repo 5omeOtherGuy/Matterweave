@@ -653,6 +653,39 @@
       "base": "0c025d8",
       "scope": "ENGINE_COMPLETION_PLAN.md only",
       "acceptance": "PASS no blocking contradictions. Plan only; no future code acceptance."
+    },
+    "S1-landscape-fixtures": {
+      "attempt": 1,
+      "owner": "w_b429a845",
+      "state": "running",
+      "base": "7dace54",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "owned_paths": [
+        "crates/matterweave-render/examples/renderer_comparison.rs",
+        "docs/performance/landscape-functional-fixtures.md",
+        "docs/performance/logs/swarm-landscape-fixtures.md"
+      ],
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-landscape-fixtures",
+      "run_root": "/mnt/bench/matterweave-dev/microvoxel-roadmap",
+      "device_access": "none; other session retains phone lease",
+      "acceptance": "Pending independent tests/review; worker completion is not acceptance."
+    },
+    "S2-landscape-research": {
+      "attempt": 1,
+      "owner": "w_547ae261",
+      "state": "running",
+      "base": "7dace54",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "owned_paths": [
+        "docs/performance/landscape-streaming-research.md",
+        "docs/performance/logs/swarm-landscape-research.md"
+      ],
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-landscape-research",
+      "run_root": "/mnt/bench/matterweave-dev/microvoxel-roadmap",
+      "device_access": "none; other session retains phone lease",
+      "acceptance": "Pending independent tests/review; worker completion is not acceptance."
     }
   },
   "capacity": {
@@ -674,5 +707,10 @@
     "preserved": "Existing completion-plan/handoff changes and completed audio-suspend-fix diff retained. Historical entries below are historical evidence, not live reservations.",
     "routing": "Router consulted; no category has two supported arms. Preferred free Muse for bounded test; Opus medium for measurement contract; GLM high for bounded audio recovery. Collect independent acceptance evidence; do not interpret cross-category DeepSeek ranking as established superiority."
   },
-  "routing_policy": "Owner 2026-09-12: DeepSeek V4.1 Flash primary Pi worker; Gemini initial independent review waves; Opus only justified escalation. Never delegate Astra. Technical development and functional Android acceptance first; E2/M5 measurement and optimization deferred by owner until technical completion."
+  "routing_policy": "Owner 2026-09-12: DeepSeek V4.1 Flash primary Pi worker; Gemini initial independent review waves; Opus only justified escalation. Never delegate Astra. Technical development and functional Android acceptance first; E2/M5 measurement and optimization deferred by owner until technical completion.",
+  "parallel_followup": {
+    "authorization": "Owner explicitly requested this follow-up session start disjoint parallel work on 2026-09-12.",
+    "preserved_session": "phase-a/lead-wave-1a-dispatch at dc97fae; D1/D2/D4 and phone remain owned there.",
+    "coordination": "These S1/S2 entries add reservations only. Merge with the other lead board changes; never replace its assignments with this historical baseline. Check global Pi workers before launch; combined capacity remains three workers plus lead under current policy."
+  }
 }
