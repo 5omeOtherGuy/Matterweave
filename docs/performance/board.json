@@ -893,13 +893,16 @@
     },
     "D2.3-preserved": {
       "owner": "current Codex coordination / w_5484fb7e (exact session resumed)",
-      "state": "review-recovery-dispatch",
-      "workspace": "/mnt/bench/matterweave-dev/worktrees/d2-3-streaming",
+      "state": "repair-running",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/streaming",
       "session": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1/session.jsonl",
       "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/streaming-publication-resume",
-      "acceptance": "Host-verified committed source pushed for preservation; prior review result unreadable after I/O failure, fresh read-only review of Git objects. App sustained-edit progress and Android remain open.",
+      "acceptance": "Independent review w_3287036b: correct stale refusal but app liveness not closed; bound scope/snapshot documentation and real byte-admission test require repair. Narrow repair dispatched; no production rejection changes.",
       "artifact": "5e5c2909828bd765fbcc8947dcbe7df1584bba9d",
-      "review_worker": "w_3287036b"
+      "review_worker": "w_3287036b",
+      "worker": "w_b5255700",
+      "profile": "deepseek-flash-openrouter",
+      "thinking": "high"
     },
     "D3.2-live-reconciliation": {
       "owner": "Claude contributor / w_7ea6fc6d",

@@ -11,9 +11,10 @@ and data remain deferred. [Recovery state](performance/recovery-20260912.md).
 DeepSeek Go returned HTTP429 weekly quota errors. Per owner direction, the live
 D1 repair worker is OpenRouter `deepseek/deepseek-v4.1-flash` high (`w_f38feb0e`);
 D3.2 recovery uses exact Muse Spark 1.3 Contributor Free high (`w_a0a724e3`).
-Both have executed source-reading tool calls. Gemini `w_3287036b` reviews frozen
-D2.3 Git objects; its previous review result became unreadable after the drive
-failure. No Opus or Astra worker was launched. No top-up or overage enabled.
+Both have executed source-reading tool calls. Gemini `w_3287036b` reviewed frozen
+D2.3 Git objects after its earlier result became unreadable. OpenRouter DeepSeek
+`w_b5255700` now repairs its concrete bound-scope and byte-admission test gaps;
+sustained-edit app liveness remains open. No Opus or Astra worker was launched. No top-up or overage enabled.
 
 
 Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
