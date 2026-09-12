@@ -24,7 +24,8 @@
 //! - prepared windows awaiting publication: [`MAX_STREAM_RESULTS`];
 //! - units executing on the worker: [`MAX_INFLIGHT_JOBS`];
 //! - resident chunks: the 7x7x3 window selected by [`crate::STREAM_RADIUS_CHUNKS`],
-//!   147 keys, and stored edit overrides: the streaming module's override cap.
+//!   147 keys, and the stored edit overrides that back re-entry, capped by the
+//!   streaming module's `MAX_OVERRIDES` (512).
 //!
 //! [`AsyncStats::within_bounds`] restates these bounds for callers and tests.
 
