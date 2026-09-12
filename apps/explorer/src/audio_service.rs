@@ -70,17 +70,25 @@
 //! trigger, and a stop the service cannot accept yet is retried by the next
 //! maintenance pass instead of being forgotten.
 //!
-//! # Not wired yet
+//! # Integration
 //!
-//! This is the D4.1 adapter only. Wiring `experience.rs` and the samples' call sites
-//! is the lead's follow-up; the temporary `#![allow(dead_code)]` below keeps strict
-//! clippy (`-D warnings`) green until that commit lands and should be removed with it.
-
-#![allow(dead_code)] // D4.1 integration follow-up; see "Not wired yet" above.
+//! [`Experience`](crate::experience::Experience) owns exactly one adapter and pumps
+//! it once per app frame: it polls the device, drains the active sample's bounded
+//! [`EventQueue`] and triggers each event. Samples queue plain events; they never
+//! open a device, own a service or keep a second audio path.
+//!
+//! A sample launched directly (`--voxel-relay`, or a test that drives a sample app
+//! itself) has no audio owner. Its [`EventQueue`] is bounded and simply never
+//! drained, so that path is explicitly silent instead of opening its own device.
+//!
+//! Mute and volume are implemented here ([`AudioAdapter::set_muted`],
+//! [`AudioAdapter::set_volume`]), but no sample UI exposes them yet: the app has no
+//! settings seam for them today, so nothing drives these methods in production.
 
 use matterweave_audio::{
     AudioService, AudioServiceError, ClipHandle, ClipSpec, PlayOptions, VoiceHandle, MAX_VOICES,
 };
+use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 /// A gameplay fact that should be audible.
@@ -158,6 +166,66 @@ fn clamp_strength(strength: f32) -> f32 {
     }
 }
 
+/// Capacity of one sample's gameplay-event queue.
+///
+/// Gameplay queues events between the input/frame path that produces them and the
+/// app's once-per-frame adapter drain, so a handful of slots covers normal play;
+/// the cap exists so a sample cannot grow an unbounded backlog if the app stops
+/// draining (standalone launch, suspension, a stalled frame).
+pub const EVENT_QUEUE_CAPACITY: usize = 16;
+
+/// Bounded FIFO of plain gameplay events held by one sample.
+///
+/// A push into a full queue drops the *oldest* event and keeps the newest: the
+/// most recent actions are the ones worth hearing, and the queue stays bounded
+/// without ever blocking the caller. Nothing here is a service or a device; a
+/// sample can queue events with no audio owner (standalone launch) and the queue
+/// simply stays silent.
+#[derive(Debug, Default)]
+pub struct EventQueue {
+    events: VecDeque<GameplayEvent>,
+    dropped: u64,
+}
+
+impl EventQueue {
+    /// Maximum number of queued events.
+    pub const CAPACITY: usize = EVENT_QUEUE_CAPACITY;
+
+    /// Queue `event`, dropping the oldest queued event when the queue is full.
+    pub fn push(&mut self, event: GameplayEvent) {
+        if self.events.len() >= Self::CAPACITY {
+            self.events.pop_front();
+            self.dropped += 1;
+        }
+        self.events.push_back(event);
+    }
+
+    /// Remove and return the oldest queued event, if any.
+    pub fn pop(&mut self) -> Option<GameplayEvent> {
+        self.events.pop_front()
+    }
+
+    /// Drop every queued event without playing it.
+    ///
+    /// The app calls this when the sample loses focus, is suspended or is replaced:
+    /// feedback from before a pause or a scope switch must not sound afterwards.
+    pub fn clear(&mut self) {
+        self.events.clear();
+    }
+
+    /// Number of queued events (tests and diagnostics).
+    #[cfg(test)]
+    pub fn queued(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Events dropped because the queue was full (tests and diagnostics).
+    #[cfg(test)]
+    pub fn dropped(&self) -> u64 {
+        self.dropped
+    }
+}
+
 /// The application (sample) that currently owns the adapter.
 ///
 /// The adapter serves one scope at a time. Voices are tagged with the scope that
@@ -209,6 +277,7 @@ pub enum TriggerOutcome {
 
 impl TriggerOutcome {
     /// Whether a voice was started.
+    #[allow(dead_code)] // exercised by the adapter tests
     pub fn started(&self) -> bool {
         matches!(self, Self::Started)
     }
@@ -226,6 +295,7 @@ impl TriggerOutcome {
 ///
 /// Invariant: `started + dropped == triggered`, and `dropped` equals the sum of the
 /// `dropped_*` counters. These count events, not audibility.
+#[allow(dead_code)] // full diagnostic surface; the app reads only the failure counts
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AdapterCounters {
     /// Events passed to [`AudioAdapter::trigger`].
@@ -256,6 +326,7 @@ pub struct AdapterCounters {
 }
 
 /// Diagnostic snapshot of the adapter, for the HUD, logs and tests.
+#[allow(dead_code)] // full diagnostic surface; the app reads only part of it today
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdapterStatus {
     /// True while an output stream is open; false before the first resume, after a
@@ -450,6 +521,10 @@ impl AudioAdapter {
     ///
     /// While muted no new voice is started, and sounding voices are pushed to gain 0.
     /// Unmuting restores each sounding voice's own level.
+    ///
+    /// No sample UI exposes mute yet, so the app does not drive this; adding the
+    /// settings seam is an explicit follow-up, not an integration claim.
+    #[allow(dead_code)]
     pub fn set_muted(&mut self, muted: bool) {
         if self.muted == muted {
             return;
@@ -463,6 +538,9 @@ impl AudioAdapter {
     /// The value is clamped into `0.0..=1.0`. Non-finite input is ignored and the
     /// previous volume stays in effect. Volume is not mute: unlike mute it does not
     /// suppress voice starts.
+    ///
+    /// No sample UI exposes volume yet; see [`AudioAdapter::set_muted`].
+    #[allow(dead_code)]
     pub fn set_volume(&mut self, volume: f32) {
         if !volume.is_finite() {
             return;
@@ -546,6 +624,14 @@ impl AudioAdapter {
             }
         }
         self.maintain();
+    }
+
+    /// True while the adapter is suspended and refuses new events.
+    ///
+    /// A narrow accessor so the per-frame pump can skip the device and the drain
+    /// without building a full diagnostic snapshot.
+    pub fn is_suspended(&self) -> bool {
+        self.suspended
     }
 
     /// True while an output stream is open.
@@ -1459,5 +1545,42 @@ mod tests {
                 + counters.dropped_service_error
         );
         assert_eq!(adapter.status().tracked_voices, MAX_VOICES);
+    }
+
+    #[test]
+    fn event_queue_is_bounded_and_keeps_the_newest_events() {
+        let mut queue = EventQueue::default();
+        for _ in 0..EventQueue::CAPACITY {
+            queue.push(GameplayEvent::Footstep);
+        }
+        assert_eq!(queue.queued(), EventQueue::CAPACITY);
+        assert_eq!(queue.dropped(), 0);
+
+        // One push past capacity drops the oldest event and keeps the newest.
+        queue.push(GameplayEvent::Objective);
+        assert_eq!(queue.queued(), EventQueue::CAPACITY);
+        assert_eq!(queue.dropped(), 1);
+        let mut events = Vec::new();
+        while let Some(event) = queue.pop() {
+            events.push(event);
+        }
+        assert!(
+            events.contains(&GameplayEvent::Objective),
+            "the newest event must survive"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| **event == GameplayEvent::Footstep)
+                .count(),
+            EventQueue::CAPACITY - 1
+        );
+
+        // Clearing drops the queue without affecting the drop counter.
+        queue.push(GameplayEvent::Jump);
+        queue.clear();
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.pop(), None);
+        assert_eq!(queue.dropped(), 1);
     }
 }

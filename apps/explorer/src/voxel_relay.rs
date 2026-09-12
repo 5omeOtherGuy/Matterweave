@@ -1,7 +1,13 @@
 //! Voxel Relay puzzle game sample.
 //! Demonstrates engine reuse with an orthographic camera, authoritative voxel chamber,
 //! real rigid body physics crate pushing, door reactions, and player voxel edits.
+//!
+//! Gameplay feedback is queued as bounded plain [`GameplayEvent`]s on a
+//! [`EventQueue`]; the app's shared audio owner drains it. This sample never opens
+//! an audio device itself, so running it directly (`--voxel-relay`) is silent by
+//! construction: the bounded queue is simply never drained.
 
+use crate::audio_service::{EventQueue, GameplayEvent};
 use glam::{Mat4, Vec3};
 use matterweave_core::{InputService, VirtualKey, World};
 use matterweave_physics::{BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot};
@@ -150,6 +156,9 @@ pub struct VoxelRelayApp {
     pub focused: bool,
     pub last_frame: Instant,
     pub recreate_renderer: bool,
+    /// Gameplay feedback since the last drain by the shared audio owner. Private:
+    /// the vocabulary is the accessor, not the field.
+    events: EventQueue,
 }
 
 impl VoxelRelayApp {
@@ -174,6 +183,7 @@ impl VoxelRelayApp {
             focused: true,
             last_frame: Instant::now(),
             recreate_renderer: true,
+            events: EventQueue::default(),
         };
 
         app.setup_input();
@@ -203,6 +213,9 @@ impl VoxelRelayApp {
     }
 
     pub fn reset(&mut self) {
+        // A reset returns to the initial puzzle: feedback queued for the old run
+        // is stale and must not play after the restart.
+        self.events.clear();
         self.world = generate_chamber(CHAMBER_SEED);
         self.physics = initial_physics(&self.world);
         self.door_open = false;
@@ -249,6 +262,9 @@ impl VoxelRelayApp {
             _ if self.door_open => "DOOR OPEN",
             _ => "PUSH CRATE ONTO PLATE",
         };
+        // The loaded state replaces the run: nothing queued for the old state may
+        // play, and the load itself is not a gameplay event.
+        self.events.clear();
         self.recreate_renderer = true;
         Ok(())
     }
@@ -287,6 +303,8 @@ impl VoxelRelayApp {
             }
             self.physics.sync_world(&self.world);
             self.status = "OBSTACLE CLEARED";
+            // A real voxel removal: the one successful edit this action makes.
+            self.events.push(GameplayEvent::BlockEdit);
             return true;
         }
         false
@@ -324,12 +342,16 @@ impl VoxelRelayApp {
                 self.world.set([x, y, z], 0);
             }
             self.physics.sync_world(&self.world);
+            // The plate-to-door transition is the puzzle's first objective.
+            self.events.push(GameplayEvent::Objective);
         }
 
         // Exit zone check
         let eye = self.physics.character_eye();
-        if eye[2] >= EXIT_Z_MIN && eye[0] >= 3.5 && eye[0] <= 8.5 {
+        if eye[2] >= EXIT_Z_MIN && eye[0] >= 3.5 && eye[0] <= 8.5 && !self.solved {
             self.solved = true;
+            // Reaching the exit solves the puzzle once, not once per frame.
+            self.events.push(GameplayEvent::Objective);
         }
 
         // Status update
@@ -339,6 +361,20 @@ impl VoxelRelayApp {
             _ if self.door_open => "DOOR OPEN",
             _ => "PUSH CRATE ONTO PLATE",
         };
+    }
+
+    /// Remove the oldest queued gameplay event, if any.
+    ///
+    /// The app's shared audio owner drains this once per frame; nothing else does.
+    pub(crate) fn pop_event(&mut self) -> Option<GameplayEvent> {
+        self.events.pop()
+    }
+
+    /// Drop every queued gameplay event without playing it.
+    ///
+    /// The audio owner calls this on focus loss, suspension and scope switches.
+    pub(crate) fn clear_events(&mut self) {
+        self.events.clear();
     }
 
     /// High-angle orthographic view-projection matrix framing the entire chamber.
@@ -834,6 +870,79 @@ mod tests {
 
         assert!(app.solved);
         assert_eq!(app.status, "PUZZLE SOLVED");
+    }
+
+    fn unique_save_path(name: &str) -> PathBuf {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "voxel_relay_{name}_{}_{}.json",
+            std::process::id(),
+            id
+        ))
+    }
+
+    #[test]
+    fn gameplay_events_follow_real_transitions_once() {
+        let mut app = VoxelRelayApp::new(unique_save_path("events"), None);
+
+        // A rejected attempt (nothing in range) queues nothing.
+        assert!(!app.try_remove_obstacle());
+        assert_eq!(app.pop_event(), None);
+
+        // One successful obstacle removal queues exactly one block edit.
+        assert!(app.physics.teleport([6.0, 2.55, 13.8]));
+        assert!(app.try_remove_obstacle());
+        assert_eq!(app.pop_event(), Some(GameplayEvent::BlockEdit));
+        // Repeating a completed removal is a no-op and emits nothing.
+        assert!(!app.try_remove_obstacle());
+        assert_eq!(app.pop_event(), None);
+
+        // The pressure-plate reaction emits one objective event, once.
+        let snapshot = PhysicsSnapshot {
+            version: 1,
+            eye: PLAYER_SPAWN,
+            bodies: vec![BodySnapshot {
+                position: [10.0, 1.55, 7.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                velocity: [0.0; 3],
+                angular_velocity: [0.0; 3],
+                dimensions: CRATE_DIMENSIONS,
+                material: CRATE_MATERIAL,
+            }],
+        };
+        app.physics.restore(&snapshot).unwrap();
+        app.update(0.016);
+        assert!(app.door_open);
+        assert_eq!(app.pop_event(), Some(GameplayEvent::Objective));
+        app.update(0.016);
+        assert_eq!(app.pop_event(), None, "an open door must not re-trigger");
+
+        // Reaching the exit emits the second objective event, once.
+        assert!(app.physics.teleport([6.0, 2.55, 21.0]));
+        app.update(0.016);
+        assert!(app.solved);
+        assert_eq!(app.pop_event(), Some(GameplayEvent::Objective));
+        app.update(0.016);
+        assert_eq!(app.pop_event(), None, "a solved puzzle must not re-trigger");
+    }
+
+    #[test]
+    fn clear_and_reset_drop_queued_events() {
+        let mut app = VoxelRelayApp::new(unique_save_path("clear_events"), None);
+
+        assert!(app.physics.teleport([6.0, 2.55, 13.8]));
+        assert!(app.try_remove_obstacle());
+        app.clear_events();
+        assert_eq!(app.pop_event(), None, "clear_events must drop the queue");
+
+        app.reset();
+        assert!(app.physics.teleport([6.0, 2.55, 13.8]));
+        assert!(app.try_remove_obstacle());
+        app.reset();
+        assert_eq!(app.pop_event(), None, "reset must drop the old run's queue");
     }
 
     #[test]
