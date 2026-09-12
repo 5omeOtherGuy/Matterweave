@@ -1,6 +1,24 @@
 # Current status
 
+Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
+
+## Playable lab and production integration — 2026-09-12
+
+PR #29 merged at `bd01a65`, all six checks passing. Terrain Lab is installed and
+functionally verified on OnePlus13; see [controls and evidence](performance/terrain-lab.md).
+PR #31 wires the production wetland camera to the detail runtime and passes the
+[Android render/edit/persistence/lifecycle slice](performance/wetland-auto-detail.md).
+Actual tested wetland views stayed at Source under retained quality guards;
+coarse transition acceptance remains open. Shared audio integration passes142
+host app tests and strict Clippy; Android audio integration and hearing are next.
+
+Global worker reconciliation found preserved D2.2 destruction (`w_80029347`) and
+D3.1 lighting (`w_9d03d127`) workers from the other lead. Do not duplicate them or
+edit their isolated paths. This session continues app integration and the phone.
+PR #30 contains that lead's board/plan updates; merge additively, preserving both
+sessions' records and latest owner instructions.
 
 ## Development takeover and coarse terrain — 2026-09-12
 
@@ -16,8 +34,14 @@ physical OnePlus13 ARM64**, plus five independent public-API checks after correc
 a tester fixture. [Design, review and evidence](performance/coarse-terrain.md).
 This is actual device CPU correctness evidence, not an APK visual/LOD acceptance.
 
-Current workers: real scaled-mesh renderer example and interactive Terrain Lab module.
-The lead owns chooser wiring, Android deployment and acceptance. Core async coarse
+PR #28 merged the coarse core at `c095047`. The scaled renderer example passes six
+CPU tests and four software-Vulkan frames; independent Gemini review found no defects.
+Terrain Lab passes 13 focused tests and the full app suite (125 passed, one ignored),
+strict app Clippy and a four-frame host render. Lead chooser wiring is implemented;
+Android build and independent integration review are underway.
+
+Current DeepSeek workers integrate camera-driven wetland detail and shared audio
+events in isolated checkouts. Lead owns their integration, Android deployment and acceptance. Core async coarse
 publication, seamless LOD transitions and production landscape scale remain open.
 Read the board before dispatch; no other session's implementation assignments remain
 reserved after the owner transfer, but preserve its merged results.
@@ -37,7 +61,7 @@ Clippy pass. [Review and provenance](performance/reviews/landscape-followup.md),
 The first orthographic fixture exposed a 116-pixel top-row coverage mismatch.
 Reframing passes without relaxed tolerances; the original remains a regression case,
 not a fixed renderer defect. The [streaming research](performance/landscape-streaming-research.md)
-recommends a narrow coarse-derivation experiment; none is adopted or implemented yet.
+recommended the narrow coarse-derivation experiment now delivered by PR #28.
 
 The owner explicitly requires all runtime work on device. R01 and S5 now include a
 network-disabled Android cold start, local generation/load/render/simulation/edit,
@@ -46,8 +70,8 @@ were assessed for reusable technology and concepts; no offline Android SDK was
 verified and neither engine is selected. Materials/fluids demonstrations do not
 silently expand technical-freeze requirements.
 
-No Android run or milestone closure is claimed for this follow-up. The other session
-retains D1/D2/D4 and the phone lease. Global worker inspection showed its three
+No Android run or milestone closure was claimed for that fixture follow-up. At that
+point the other session retained D1/D2/D4 and the phone lease (now transferred above). Global worker inspection showed its three
 workers active during integration; these were preserved and no competing workers
 were dispatched until capacity became available. Read the actual board and live
 sessions before resuming, and merge that lead's updates instead of replacing them.

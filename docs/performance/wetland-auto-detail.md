@@ -1,0 +1,11 @@
+# Production camera-driven detail
+
+The wetland now drives DetailRuntime with the actual camera and physical viewport. It preserves source-derived collision, installs geometry only when resident meshes change or the renderer is recreated, and updates packed instances for selection-only changes. Coarse realization is capped at two new levels per prepare. Stationary cameras continue deferred work while it progresses.
+
+Verified: seven focused detail tests,19 wetland tests, explicit full-map edit/collision/reload test (pass), strict scoped Clippy and independent Gemini source review. Lead repaired a stationary-budget starvation bug and a test-only unused import. A combined integration with the upcoming audio slice also passes142 app tests/1ignored and Clippy; that is supporting evidence, not this PR's Android binary identity.
+
+On OnePlus13 Android16, source `e5e2e08` / [APK identity and checklist](../evidence/2026-09-12-wetland-detail/manifest.json): production render, touch approach/retreat/look, source edit and refreshed geometry, save/process restart/load, and HOME/resume pass. [Runtime log](../evidence/2026-09-12-wetland-detail/runtime.log). The original wetland save was held aside and restored byte-identically; test edits were disposable.
+
+**Android coarse transitions are not demonstrated by this run.** The observed selection after an edit was8302 Source,0 Half,0 Quarter. The unchanged opening guard (`max_local_loss_fraction=0`) is intentionally conservative; the lead did not relax it to manufacture a coarsening result. Host near/far and stationary convergence fixtures do exercise coarser levels. D1.2 still owes representative eligible production fixtures and physical transition/zoom/occlusion acceptance. M2 remains open; no measured performance claim.
+
+Reproduce: `cargo test --locked -p matterweave-explorer --lib wetland::detail_tests`; explicitly run `cargo test --locked -p matterweave-explorer --lib full_wetland_load_edit_collision_and_reload -- --ignored`. Build/install using [DEVELOPMENT](../DEVELOPMENT.md), enter the wetland, move/look, remove a reachable voxel, HOME/resume and restart/load. Preserve the user's existing save before interactive edit checks.
