@@ -63,6 +63,41 @@ samples `dumpsys SurfaceFlinger --latency` and `/proc/<pid>/stat` in an OFF
 trial exactly as in an ON trial, and an OFF trial that produced no valid
 presentation history is rejected rather than reduced.
 
+## Generator and composition agreement
+
+The collector never assumes which showcase generator the build under test uses.
+The generator is read from the frozen `*-build.json` manifests and then applied
+consistently to every generator-dependent gate:
+
+- every manifest in the run must declare the same generator, and it must be one
+  the collector supports (`2`, `3`; the app's current showcase generator is
+  `matterweave_detail::SHOWCASE_GENERATOR_VERSION`, currently `3`). A mixed or
+  unsupported declaration aborts the run;
+- the `--fixture` session must declare that same generator, otherwise the app
+  would never restore it from the recovery slot. This is checked before any
+  device access, so a mismatched pair never installs, writes or deletes
+  anything on the phone;
+- the base `files/wetland-session.json` must be invalid *for that generator*,
+  which is what makes `SavedWetland::load_recovering` scan the recovery slots.
+  A base save that is valid for the generator under test aborts the run: the
+  fixture would be ignored and a user's session is never overwritten;
+- the session pulled back after the trial is revalidated against the same
+  generator;
+- the expected full-world scene size comes from the manifest's
+  `composition_hash`. Both known frozen compositions carry their own exact
+  counts and their own generator, and a composition whose generator disagrees
+  with the declared generator is rejected. An unknown composition requires an
+  explicit `expected_scene` (`{"cells": int, "instances": int}`) in *both*
+  manifests; the counts are never relaxed or inferred.
+
+| Composition | Generator | Expected scene | Source |
+| --- | --- | --- | --- |
+| `dfb9f40519a3c151` | 3 | 34,716,467 cells / 8,302 placed objects | [full-wetland-generator3.json](../evidence/full-wetland-generator3.json) (`counts.instance_expanded_occupied_cells`, `counts.instances`) |
+| `f458591e7b345546` | 2 | 34,864,520 cells / 8,324 placed objects | [completion-execution.md](logs/completion-execution.md) |
+
+Generator 2 is retained only so the existing frozen generator-2 paired
+experiment stays reproducible. New runs use the current generator.
+
 ## Collecting a same-build ON/OFF batch
 
 `--mode capture-on-off` measures ONE build in both capture states. Compared
