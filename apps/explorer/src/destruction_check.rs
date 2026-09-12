@@ -510,6 +510,7 @@ pub(crate) struct DestructionCheck {
     platform_resumes: u32,
     internal_recreations: u32,
     retained_bytes_after_first_cycle: Option<usize>,
+    finalizing: bool,
     final_reset_done: bool,
     failed: bool,
     finished: bool,
@@ -553,6 +554,7 @@ impl DestructionCheck {
             platform_resumes: 0,
             internal_recreations: 0,
             retained_bytes_after_first_cycle: None,
+            finalizing: false,
             final_reset_done: false,
             failed: false,
             finished: false,
@@ -615,7 +617,6 @@ impl DestructionCheck {
         self.renderer_epoch += 1;
         self.renderer = Some(renderer);
         self.window = Some(window);
-        self.prepared = None;
         let capabilities = self
             .renderer
             .as_ref()
@@ -632,7 +633,8 @@ impl DestructionCheck {
     fn release_renderer(&mut self) {
         self.renderer = None;
         self.window = None;
-        self.prepared = None;
+        // Simulation progress survives loss of GPU resources. The next renderer
+        // epoch forces a dynamic upload without repeating the current phase.
     }
 
     /// Rebuilds the CPU dynamic geometry if the bodies moved and uploads it when
@@ -659,9 +661,9 @@ impl DestructionCheck {
         Ok(())
     }
 
-    /// Presents one frame of the current state and advances physics by one fixed
-    /// step. Returns whether a frame was actually presented; zero extent and
-    /// swapchain Retry present nothing and are never counted.
+    /// Presents one frame of the current state. The caller advances physics only
+    /// after a successful presentation. Zero extent and swapchain Retry present
+    /// nothing and are never counted.
     fn draw(&mut self) -> Result<bool, String> {
         let Some(window) = self.window.as_ref() else {
             return Ok(false);
@@ -710,10 +712,7 @@ impl DestructionCheck {
             &self.lighting,
         );
         match result {
-            FrameResult::Presented => {
-                self.phase_presented += 1;
-                self.total_presented += 1;
-            }
+            FrameResult::Presented => {}
             FrameResult::Retry => return Ok(false),
             FrameResult::OutOfMemory => {
                 return Err("renderer reported out of memory".into());
@@ -722,11 +721,24 @@ impl DestructionCheck {
                 return Err(format!("renderer fatal: {error}"));
             }
         }
+        Ok(true)
+    }
+
+    fn presented(&mut self) {
+        self.total_presented += 1;
+        if !self.finalizing {
+            self.phase_presented += 1;
+        }
         if let Some(fixture) = self.fixture.as_mut() {
             fixture.physics.set_flying_eye(CAMERA_EYE);
             fixture.physics.step_objects(FIXED_DT);
         }
-        Ok(true)
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(width, height);
+        }
     }
 
     fn load_baseline(&mut self, context: &str) -> Result<(), String> {
@@ -1025,10 +1037,8 @@ impl DestructionCheck {
         )
     }
 
-    /// Resets through the persisted baseline and presents one frame of the
-    /// restored welded structure. `Ok(false)` means the window is not
-    /// drawable yet; the caller retries on the next redraw.
-    fn finalize(&mut self) -> Result<bool, String> {
+    /// Restores the welded structure once, independently of presentation retries.
+    fn prepare_final_reset(&mut self) -> Result<(), String> {
         if !self.final_reset_done {
             self.load_baseline("final-reset")?;
             self.check_source("final-reset")?;
@@ -1040,7 +1050,46 @@ impl DestructionCheck {
                 colliders(SOURCE_BODIES)
             ));
         }
-        self.draw()
+        Ok(())
+    }
+
+    /// The GPU operations are callbacks so the real progression can also be
+    /// tested with deterministic Retry results, without a window or a driver.
+    fn advance(
+        &mut self,
+        prepare: impl FnOnce(&mut Self) -> Result<(), String>,
+        mut draw: impl FnMut(&mut Self) -> Result<bool, String>,
+    ) -> Result<bool, String> {
+        if !self.finalizing {
+            if self.prepared != Some(self.phase) {
+                prepare(self)?;
+                self.prepared = Some(self.phase);
+            }
+            if !draw(self)? {
+                return Ok(false);
+            }
+            self.presented();
+            if self.phase_presented < PHASE_FRAMES {
+                return Ok(false);
+            }
+            self.record(self.phase_summary());
+            if self.phase + 1 < PHASE_COUNT {
+                self.phase += 1;
+                self.phase_presented = 0;
+                self.phase_uploads = 0;
+                self.phase_rebuilds = 0;
+                self.prepared = None;
+                return Ok(false);
+            }
+            // Retrying the final restored frame must never re-enter phase 24.
+            self.finalizing = true;
+        }
+        self.prepare_final_reset()?;
+        if !draw(self)? {
+            return Ok(false);
+        }
+        self.presented();
+        Ok(true)
     }
 
     fn pass_line(&self) -> String {
@@ -1061,7 +1110,7 @@ impl DestructionCheck {
 
 impl ApplicationHandler for DestructionCheck {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.renderer.is_some() {
+        if self.finished || self.renderer.is_some() {
             return;
         }
         if let Some(error) = self.init_error.take() {
@@ -1074,9 +1123,8 @@ impl ApplicationHandler for DestructionCheck {
         }
         if self.platform_suspends > self.platform_resumes {
             self.platform_resumes += 1;
-            self.prepared = None;
             self.record(format!(
-                "platform-resumed (Android HOME/RESUME): renderer recreated; phase {} {} restarts from the saved baseline",
+                "platform-resumed (Android HOME/RESUME): renderer recreated; phase {} {} simulation and presentation progress preserved",
                 self.phase,
                 phase_name(phase_for(self.phase))
             ));
@@ -1086,10 +1134,7 @@ impl ApplicationHandler for DestructionCheck {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::Resized(size) => {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height);
-                }
-                self.prepared = None;
+                self.resize(size.width, size.height);
                 return;
             }
             WindowEvent::CloseRequested => {
@@ -1102,35 +1147,7 @@ impl ApplicationHandler for DestructionCheck {
         if self.finished || self.renderer.is_none() {
             return;
         }
-        if self.prepared != Some(self.phase) {
-            if let Err(error) = self.apply_phase(event_loop) {
-                self.fail(event_loop, error);
-                return;
-            }
-            self.prepared = Some(self.phase);
-        }
-        match self.draw() {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(error) => {
-                self.fail(event_loop, error);
-                return;
-            }
-        }
-        if self.phase_presented < PHASE_FRAMES {
-            return;
-        }
-        let summary = self.phase_summary();
-        self.record(summary);
-        if self.phase + 1 < PHASE_COUNT {
-            self.phase += 1;
-            self.phase_presented = 0;
-            self.phase_uploads = 0;
-            self.phase_rebuilds = 0;
-            self.prepared = None;
-            return;
-        }
-        match self.finalize() {
+        match self.advance(|check| check.apply_phase(event_loop), Self::draw) {
             Ok(true) => {
                 let pass = self.pass_line();
                 self.record(pass);
@@ -1148,7 +1165,7 @@ impl ApplicationHandler for DestructionCheck {
         self.platform_suspends += 1;
         self.release_renderer();
         self.record(format!(
-            "platform-suspended (Android HOME/RESUME): renderer released; phase {} {} will restart from the saved baseline",
+            "platform-suspended (Android HOME/RESUME): renderer released; phase {} {} simulation and presentation progress preserved",
             self.phase,
             phase_name(phase_for(self.phase))
         ));
@@ -1165,6 +1182,138 @@ impl ApplicationHandler for DestructionCheck {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    fn with_check(name: &str, test: impl FnOnce(&mut DestructionCheck)) {
+        let report = std::env::temp_dir().join(format!(
+            "matterweave-destruction-{}-{name}.txt",
+            std::process::id()
+        ));
+        let mut check = DestructionCheck::new(report.clone());
+        assert!(check.init_error.is_none());
+        test(&mut check);
+        std::fs::remove_file(report).unwrap();
+    }
+
+    #[test]
+    fn resize_and_renderer_loss_preserve_prepared_physics_and_frame_progress() {
+        with_check("resize", |check| {
+            // Include the internal-recreation phase: a platform callback must
+            // not execute that operation again or reset its simulation.
+            for phase in [2, 4] {
+                check.phase = phase;
+                check.phase_presented = 0;
+                check.prepared = None;
+                assert!(!check
+                    .advance(
+                        |check| {
+                            check.apply_full_fracture_phase()?;
+                            Ok(())
+                        },
+                        |_| Ok(true)
+                    )
+                    .unwrap());
+                let before_retry = check.fixture.as_ref().unwrap().physics.save();
+                check.resize(0, 0);
+                check.resize(720, 480);
+                check.release_renderer();
+                assert!(!check
+                    .advance(
+                        |_| panic!("prepared phase repeated after resize/release"),
+                        |_| Ok(false),
+                    )
+                    .unwrap());
+                assert_eq!(check.phase_presented, 1);
+                assert_eq!(check.fixture.as_ref().unwrap().physics.save(), before_retry);
+                for _ in 1..PHASE_FRAMES {
+                    assert!(!check
+                        .advance(
+                            |_| panic!("prepared phase repeated before frame quota"),
+                            |_| Ok(true),
+                        )
+                        .unwrap());
+                }
+                assert_eq!(check.phase, phase + 1);
+                assert_eq!(
+                    check.fixture.as_ref().unwrap().physics.body_count(),
+                    MAX_BODIES
+                );
+                let summaries: Vec<_> = check
+                    .report
+                    .iter()
+                    .filter(|line| {
+                        line.starts_with(&format!("phase={phase} ")) && line.contains("drawn=")
+                    })
+                    .collect();
+                assert_eq!(summaries.len(), 1);
+                assert!(summaries[0].contains(&format!("drawn={PHASE_FRAMES} ")));
+            }
+        });
+    }
+
+    #[test]
+    fn final_frame_retries_never_repeat_the_last_phase_or_its_summary() {
+        with_check("final-retry", |check| {
+            check.phase = PHASE_COUNT - 1;
+            check.phase_presented = PHASE_FRAMES - 1;
+            check.prepared = Some(check.phase);
+            check.apply_reset_cycle_phase(RESET_CYCLES - 1).unwrap();
+            let mut draws = 0;
+            assert!(!check
+                .advance(
+                    |_| panic!("last phase already prepared"),
+                    |check| {
+                        draws += 1;
+                        let expected = if draws == 1 {
+                            MAX_BODIES
+                        } else {
+                            SOURCE_BODIES
+                        };
+                        assert_eq!(
+                            check.fixture.as_ref().unwrap().physics.body_count(),
+                            expected
+                        );
+                        Ok(draws == 1)
+                    },
+                )
+                .unwrap());
+            assert!(check.finalizing);
+            let restored = check.fixture.as_ref().unwrap().physics.save();
+            for _ in 0..3 {
+                check.resize(0, 0);
+                check.release_renderer();
+                assert!(!check
+                    .advance(
+                        |_| panic!("final retry re-entered phase preparation"),
+                        |_| Ok(false),
+                    )
+                    .unwrap());
+                assert_eq!(check.fixture.as_ref().unwrap().physics.save(), restored);
+            }
+            assert!(check
+                .advance(
+                    |_| panic!("final presentation re-entered phase preparation"),
+                    |_| Ok(true),
+                )
+                .unwrap());
+            assert_eq!(check.total_presented, 2);
+            assert_eq!(check.phase_presented, PHASE_FRAMES);
+            let summaries: Vec<_> = check
+                .report
+                .iter()
+                .filter(|line| line.contains("drawn="))
+                .collect();
+            assert_eq!(summaries.len(), 1);
+            assert!(summaries[0].contains("bodies=64 "));
+            assert_eq!(
+                check
+                    .report
+                    .iter()
+                    .filter(|line| line.starts_with("final-reset "))
+                    .count(),
+                1
+            );
+        });
+    }
 
     #[test]
     fn fixture_source_is_exactly_sixty_four_voxels_in_six_welded_bodies() {
