@@ -1,6 +1,7 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod controls;
 mod detail_check;
+mod detail_runtime;
 mod dynamic_upload;
 mod engine_check;
 mod experience;

@@ -9,13 +9,13 @@
 //! Owns no world, physics or save path. Writes a local report; Android
 //! screenshots are captured externally with adb by the device lead.
 
+use crate::detail_runtime::{lod_histogram, DetailRuntime, RESIDENT_LODS};
 use glam::{Mat4, Vec3};
-use matterweave_core::Mesh;
 use matterweave_detail::{
-    material, Camera as LodCamera, DetailScene, DetailVolume, Lod, LodConfig, PreparedFrame,
-    Projection, Scale, Transform, Yaw, SCALE_FINE_M,
+    material, Camera as LodCamera, DetailScene, DetailVolume, Lod, LodConfig, Projection, Scale,
+    Transform, Yaw, SCALE_FINE_M,
 };
-use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, StaticInstance, Sun};
+use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -30,7 +30,7 @@ use winit::{
 };
 
 /// The derived levels preloaded once per nonempty prototype.
-const LODS: [Lod; 3] = [Lod::Source, Lod::Half, Lod::Quarter];
+const LODS: [Lod; 3] = RESIDENT_LODS;
 
 const BOULDER: &str = "boulder";
 const SHEET: &str = "sheet";
@@ -143,130 +143,6 @@ pub fn fixture_scene() -> DetailScene {
         )
         .expect("place sheet");
     scene
-}
-
-/// Resident derived geometry: one `Mesh` per `(prototype, Lod)` and the index of
-/// each in the static-scene geometry pool. Built once per renderer.
-pub struct StaticCatalog {
-    pub meshes: Vec<Mesh>,
-    source_version: matterweave_detail::SceneVersion,
-    index: BTreeMap<(String, Lod), usize>,
-    /// Per `(prototype, Lod)` derived-mesh revision, traced against source.
-    revisions: BTreeMap<(String, Lod), u64>,
-}
-
-impl StaticCatalog {
-    /// Preloads `Source`/`Half`/`Quarter` for every nonempty prototype exactly
-    /// once, verifying each derived mesh carries the authoritative source
-    /// revision, and records the `(prototype, Lod)` -> pool-index map.
-    pub fn preload(scene: &mut DetailScene) -> Result<Self, String> {
-        let mut meshes = Vec::new();
-        let mut index = BTreeMap::new();
-        let mut revisions = BTreeMap::new();
-        let mut ids = scene.prototype_ids();
-        ids.sort();
-        for id in ids {
-            let occupied = scene
-                .prototype(&id)
-                .ok_or_else(|| format!("prototype {id} vanished"))?
-                .occupied_cells();
-            if occupied == 0 {
-                continue;
-            }
-            let source_revision = scene
-                .prototype(&id)
-                .ok_or_else(|| format!("prototype {id} vanished"))?
-                .revision();
-            for lod in LODS {
-                // Build + cache once (drops the &mut borrow at the semicolon).
-                scene
-                    .prototype_mesh(&id, lod)
-                    .map_err(|e| format!("build {id} {lod:?}: {e}"))?;
-                let cached = scene
-                    .cached_prototype_mesh(&id, lod)
-                    .ok_or_else(|| format!("{id} {lod:?} not resident after build"))?;
-                if cached.revision != source_revision {
-                    return Err(format!(
-                        "{id} {lod:?} derived revision {} does not match source revision {source_revision}",
-                        cached.revision
-                    ));
-                }
-                let mesh = Mesh {
-                    vertices: cached.vertices.clone(),
-                    indices: cached.indices.clone(),
-                    revision: cached.revision,
-                };
-                index.insert((id.clone(), lod), meshes.len());
-                revisions.insert((id.clone(), lod), mesh.revision);
-                meshes.push(mesh);
-            }
-        }
-        if meshes.is_empty() {
-            return Err("fixture produced no nonempty prototypes".into());
-        }
-        Ok(Self {
-            source_version: scene.source_version(),
-            meshes,
-            index,
-            revisions,
-        })
-    }
-
-    /// Pool index of the resident geometry for one `(prototype, Lod)`.
-    pub fn instance_index(&self, prototype: &str, lod: Lod) -> Option<usize> {
-        self.index.get(&(prototype.to_string(), lod)).copied()
-    }
-
-    fn revision(&self, prototype: &str, lod: Lod) -> Option<u64> {
-        self.revisions.get(&(prototype.to_string(), lod)).copied()
-    }
-}
-
-fn yaw_quarters(yaw: Yaw) -> u8 {
-    match yaw {
-        Yaw::Deg0 => 0,
-        Yaw::Deg90 => 1,
-        Yaw::Deg180 => 2,
-        Yaw::Deg270 => 3,
-    }
-}
-
-/// Maps a prepared frame's per-instance LOD selection to packed static instances
-/// that reference already-resident geometry. Only the instance list changes
-/// between frames; geometry is never rebuilt here.
-pub fn instances_for_frame(
-    frame: &PreparedFrame,
-    catalog: &StaticCatalog,
-) -> Result<Vec<StaticInstance>, String> {
-    if frame.source_version != catalog.source_version {
-        return Err("prepared frame and resident catalog source versions differ".into());
-    }
-    let mut out = Vec::with_capacity(frame.selected.len());
-    for item in &frame.selected {
-        let prototype = catalog
-            .instance_index(&item.prototype, item.lod)
-            .ok_or_else(|| {
-                format!(
-                    "selected {} {:?} has no resident geometry",
-                    item.prototype, item.lod
-                )
-            })?;
-        out.push(StaticInstance {
-            prototype,
-            translation: item.transform.translation_m,
-            yaw_quarters: yaw_quarters(item.transform.yaw),
-        });
-    }
-    Ok(out)
-}
-
-/// Count of each chosen LOD in a prepared frame, for the report.
-pub fn lod_histogram(frame: &PreparedFrame) -> BTreeMap<Lod, usize> {
-    let mut counts = BTreeMap::new();
-    for item in &frame.selected {
-        *counts.entry(item.lod).or_insert(0) += 1;
-    }
-    counts
 }
 
 fn histogram_label(counts: &BTreeMap<Lod, usize>) -> String {
@@ -466,7 +342,7 @@ pub(crate) struct DetailCheck {
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     scene: DetailScene,
-    catalog: Option<StaticCatalog>,
+    runtime: Option<DetailRuntime>,
     plans: Vec<PhasePlan>,
     lighting: LightingSettings,
     baseline: Option<SourceBaseline>,
@@ -488,7 +364,7 @@ impl DetailCheck {
             renderer: None,
             window: None,
             scene: fixture_scene(),
-            catalog: None,
+            runtime: None,
             plans: phases(),
             lighting: LightingSettings {
                 sun: Sun {
@@ -522,26 +398,22 @@ impl DetailCheck {
     /// scene, with the current phase's instance selection. One `replace_static_scene`
     /// per renderer; later frames call `update_static_instances` only.
     fn install_static_scene(&mut self, phase: usize) -> Result<(), String> {
-        let catalog = StaticCatalog::preload(&mut self.scene)?;
+        let mut runtime = DetailRuntime::preload(&mut self.scene)?;
         let plan = self.plans[phase];
         let height = self
             .window
             .as_ref()
             .map(|w| w.inner_size().height.max(1) as f32)
             .unwrap_or(480.0);
-        let frame = self
-            .scene
-            .prepare_batches(&plan.lod_camera(height), &plan.config)
-            .map_err(|e| e.to_string())?;
-        let instances = instances_for_frame(&frame, &catalog)?;
+        let update = runtime.prepare(&mut self.scene, &plan.lod_camera(height), &plan.config)?;
         let renderer = self
             .renderer
             .as_mut()
             .ok_or("no renderer for static scene")?;
         renderer
-            .replace_static_scene(&catalog.meshes, &instances)
+            .replace_static_scene(runtime.meshes(), &update.instances)
             .map_err(|e| format!("replace_static_scene: {e}"))?;
-        self.catalog = Some(catalog);
+        self.runtime = Some(runtime);
         Ok(())
     }
 
@@ -567,8 +439,8 @@ impl DetailCheck {
             // re-baseline the (unchanged at the probe) source answer.
             self.install_static_scene(phase)?;
             self.baseline = Some(SourceBaseline::capture(&self.scene)?);
-            let catalog = self.catalog.as_ref().expect("catalog after rebuild");
-            let rev = catalog
+            let runtime = self.runtime.as_ref().expect("runtime after rebuild");
+            let rev = runtime
                 .revision(BOULDER, Lod::Quarter)
                 .ok_or("missing rebuilt boulder revision")?;
             let source_rev = self
@@ -583,16 +455,26 @@ impl DetailCheck {
             }
         }
 
-        let catalog = self.catalog.as_ref().ok_or("no catalog")?;
-        let frame = self
-            .scene
-            .prepare_batches(&plan.lod_camera(height), &plan.config)
-            .map_err(|e| e.to_string())?;
+        let update = self.runtime.as_mut().ok_or("no runtime")?.prepare(
+            &mut self.scene,
+            &plan.lod_camera(height),
+            &plan.config,
+        )?;
+        let frame = &update.frame;
 
         // The prepared frame must have been derived from the live source.
         if frame.source_version != self.scene.source_version() {
             return Err("prepared frame source version disagrees with the scene".into());
         }
+
+        // The gate installs resident geometry before any phase runs; a
+        // mid-phase geometry change would leave the renderer's static scene
+        // stale, so it is an error, not a silent instance-only update.
+        if update.geometry_changed {
+            return Err("resident geometry changed outside static-scene install".into());
+        }
+
+        let runtime = self.runtime.as_ref().ok_or("no runtime")?;
 
         // Trace resident revisions against the authoritative source.
         for item in &frame.selected {
@@ -601,7 +483,7 @@ impl DetailCheck {
                 .prototype(&item.prototype)
                 .ok_or("selected prototype vanished")?
                 .revision();
-            let resident = catalog
+            let resident = runtime
                 .revision(&item.prototype, item.lod)
                 .ok_or("selected LOD not resident")?;
             if resident != source_rev {
@@ -612,7 +494,7 @@ impl DetailCheck {
             }
         }
 
-        let histogram = lod_histogram(&frame);
+        let histogram = lod_histogram(frame);
         for lod in histogram.keys() {
             self.lods_seen.insert(*lod);
         }
@@ -667,10 +549,9 @@ impl DetailCheck {
             return Err("source collision/sample answer changed with the camera".into());
         }
 
-        let instances = instances_for_frame(&frame, catalog)?;
         let renderer = self.renderer.as_mut().ok_or("no renderer")?;
         renderer
-            .update_static_instances(&instances)
+            .update_static_instances(&update.instances)
             .map_err(|e| format!("update_static_instances: {e}"))?;
 
         let selections = frame
@@ -682,7 +563,7 @@ impl DetailCheck {
                     s.instance,
                     s.prototype,
                     s.lod,
-                    catalog.revision(&s.prototype, s.lod).unwrap()
+                    runtime.revision(&s.prototype, s.lod).unwrap()
                 )
             })
             .collect::<Vec<_>>()
@@ -696,12 +577,12 @@ impl DetailCheck {
                 Projection::Orthographic { .. } => "orthographic",
             },
             histogram_label(&histogram),
-            instances.len(),
+            update.instances.len(),
             frame.mesh_builds_this_call,
             frame.cached_mesh_bytes,
             counts.unique_stored_cells,
             counts.source_bytes,
-            catalog.meshes.len(),
+            runtime.meshes().len(),
         ))
     }
 
@@ -889,7 +770,7 @@ impl ApplicationHandler for DetailCheck {
         self.renderer = None;
         self.window = None;
         // Resident GPU geometry is renderer-owned; a fresh renderer re-preloads.
-        self.catalog = None;
+        self.runtime = None;
         self.prepared = None;
     }
 
@@ -903,11 +784,12 @@ impl ApplicationHandler for DetailCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::detail_runtime::yaw_quarters;
 
     #[test]
-    fn stale_catalog_is_rejected_after_source_edit() {
+    fn stale_runtime_is_rejected_after_source_edit() {
         let mut scene = fixture_scene();
-        let catalog = StaticCatalog::preload(&mut scene).unwrap();
+        let runtime = DetailRuntime::preload(&mut scene).unwrap();
         scene
             .edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE)
             .unwrap();
@@ -915,22 +797,22 @@ mod tests {
         let frame = scene
             .prepare_batches(&plan.lod_camera(480.0), &plan.config)
             .unwrap();
-        assert!(instances_for_frame(&frame, &catalog).is_err());
+        assert!(runtime.instances_for_frame(&frame).is_err());
     }
 
     #[test]
     fn preload_builds_each_lod_once_with_source_revisions() {
         let mut scene = fixture_scene();
         let before = scene.counts().mesh_builds;
-        let catalog = StaticCatalog::preload(&mut scene).unwrap();
+        let runtime = DetailRuntime::preload(&mut scene).unwrap();
         // Three nonempty prototypes x three LODs.
-        assert_eq!(catalog.meshes.len(), 9);
+        assert_eq!(runtime.meshes().len(), 9);
         assert_eq!(scene.counts().mesh_builds, before + 9);
         for id in [BOULDER, SHEET, OPENING] {
             let source_rev = scene.prototype(id).unwrap().revision();
             for lod in LODS {
-                assert!(catalog.instance_index(id, lod).is_some());
-                assert_eq!(catalog.revision(id, lod), Some(source_rev));
+                assert!(runtime.instance_index(id, lod).is_some());
+                assert_eq!(runtime.revision(id, lod), Some(source_rev));
             }
         }
         // Distinct pool indices.
@@ -938,9 +820,9 @@ mod tests {
             .iter()
             .flat_map(|&lod| {
                 [
-                    catalog.instance_index(BOULDER, lod),
-                    catalog.instance_index(SHEET, lod),
-                    catalog.instance_index(OPENING, lod),
+                    runtime.instance_index(BOULDER, lod),
+                    runtime.instance_index(SHEET, lod),
+                    runtime.instance_index(OPENING, lod),
                 ]
             })
             .map(|i| i.unwrap())
@@ -1039,16 +921,16 @@ mod tests {
     #[test]
     fn edit_advances_source_version_and_rebuild_matches_new_revision() {
         let mut scene = fixture_scene();
-        let mut catalog = StaticCatalog::preload(&mut scene).unwrap();
+        let mut runtime = DetailRuntime::preload(&mut scene).unwrap();
         let before = scene.source_version();
-        let before_rev = catalog.revision(BOULDER, Lod::Quarter).unwrap();
+        let before_rev = runtime.revision(BOULDER, Lod::Quarter).unwrap();
         scene
             .edit_prototype(BOULDER, [12, 12, 12], material::BANK_STONE)
             .unwrap();
         assert_ne!(scene.source_version(), before);
         // A rebuild realizes fresh geometry matching the advanced revision.
-        catalog = StaticCatalog::preload(&mut scene).unwrap();
-        let after_rev = catalog.revision(BOULDER, Lod::Quarter).unwrap();
+        runtime = DetailRuntime::preload(&mut scene).unwrap();
+        let after_rev = runtime.revision(BOULDER, Lod::Quarter).unwrap();
         assert_ne!(after_rev, before_rev);
         assert_eq!(after_rev, scene.prototype(BOULDER).unwrap().revision());
     }
@@ -1073,16 +955,16 @@ mod tests {
             .all(|s| s.fallback));
         assert!(frame.selected.iter().any(|s| s.fallback));
         // Once every LOD is resident, the same cap builds nothing more.
-        let catalog = StaticCatalog::preload(&mut scene).unwrap();
+        let runtime = DetailRuntime::preload(&mut scene).unwrap();
         let again = scene
             .prepare_batches(&far.lod_camera(1080.0), &far.config)
             .unwrap();
         assert_eq!(again.mesh_builds_this_call, 0);
-        let instances = instances_for_frame(&again, &catalog).unwrap();
+        let instances = runtime.instances_for_frame(&again).unwrap();
         for (instance, selected) in instances.iter().zip(&again.selected) {
             assert_eq!(
                 instance.prototype,
-                catalog
+                runtime
                     .instance_index(&selected.prototype, selected.lod)
                     .unwrap()
             );
@@ -1092,17 +974,17 @@ mod tests {
     #[test]
     fn instances_map_selection_to_resident_indices_with_transform() {
         let mut scene = fixture_scene();
-        let catalog = StaticCatalog::preload(&mut scene).unwrap();
+        let runtime = DetailRuntime::preload(&mut scene).unwrap();
         let plan = phases()[2];
         let frame = scene
             .prepare_batches(&plan.lod_camera(1080.0), &plan.config)
             .unwrap();
-        let instances = instances_for_frame(&frame, &catalog).unwrap();
+        let instances = runtime.instances_for_frame(&frame).unwrap();
         assert_eq!(instances.len(), frame.selected.len());
         for (instance, selected) in instances.iter().zip(&frame.selected) {
             assert_eq!(
                 instance.prototype,
-                catalog
+                runtime
                     .instance_index(&selected.prototype, selected.lod)
                     .unwrap()
             );
