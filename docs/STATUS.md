@@ -1,5 +1,15 @@
 # Current status
 
+## Production-detail diagnostic repair — 2026-09-12
+
+The opt-in detail diagnostic uses production flora, bounded stationary convergence,
+packed renderer transform/index validation and lifecycle-safe one-shot mutations.
+20 focused and158 app tests, scoped checks and14 host Vulkan phases passed;
+independent corrective Gemini review returned no concrete findings. Default
+playable detail guards remain unchanged. Android acceptance is NOT RUN and is
+batched into the next integrated build under the owner's updated test cadence.
+[Evidence and limits](performance/logs/detail-production-fixtures.md).
+
 ## D2.3 streaming contract verification — 2026-09-12
 
 Core streaming tests now discriminate reversal, cancellation, stale publication,
