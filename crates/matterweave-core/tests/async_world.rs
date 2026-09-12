@@ -1,4 +1,7 @@
-use matterweave_core::{AsyncWorld, Mesh, World, MAX_MESH_RESULTS, MAX_QUEUED_MESH_JOBS};
+use matterweave_core::{
+    AsyncWorld, Mesh, World, CHUNK_EDGE, MAX_MESH_RESULTS, MAX_QUEUED_MESH_JOBS,
+    STREAM_RADIUS_CHUNKS,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -97,6 +100,83 @@ fn streamed(seed: u64, eye: [f32; 3]) -> World {
     world.enable_streaming();
     assert!(world.stream_around(eye));
     world
+}
+
+/// Chunks in a published window: 7x7x3, from the declared stream radius.
+const WINDOW_CHUNKS: usize =
+    (2 * STREAM_RADIUS_CHUNKS as usize + 1) * (2 * STREAM_RADIUS_CHUNKS as usize + 1) * 3;
+
+/// The declared residency window for the interior eye positions used here: the eye's
+/// chunk plus `STREAM_RADIUS_CHUNKS` in x and z, and the three vertical layers.
+fn window_keys(eye: [f32; 3]) -> BTreeSet<[i32; 3]> {
+    let center = [eye[0], eye[2]].map(|v| (v.floor() as i32).div_euclid(CHUNK_EDGE));
+    let mut keys = BTreeSet::new();
+    for x in center[0] - STREAM_RADIUS_CHUNKS..=center[0] + STREAM_RADIUS_CHUNKS {
+        for z in center[1] - STREAM_RADIUS_CHUNKS..=center[1] + STREAM_RADIUS_CHUNKS {
+            for y in -1..2 {
+                keys.insert([x, y, z]);
+            }
+        }
+    }
+    keys
+}
+
+/// No orphaned or duplicated chunks: residency is exactly the declared span and
+/// every materialized chunk is inside it.
+fn assert_window_shape(world: &World, eye: [f32; 3]) {
+    let resident: BTreeSet<[i32; 3]> = world
+        .stream_resident_chunks()
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(resident.len(), WINDOW_CHUNKS, "declared window size");
+    assert_eq!(resident, window_keys(eye), "not the declared window span");
+    assert!(
+        world.chunk_keys().iter().all(|key| resident.contains(key)),
+        "a materialized chunk is outside the resident window"
+    );
+}
+
+/// Sampled interior positions report support. This is the publication contract that
+/// keeps movement and collision off an evicted window; whether a physics body is
+/// physically supported is an integration-level gate, not a core claim.
+fn assert_window_supported(world: &World, eye: [f32; 3]) {
+    assert_window_shape(world, eye);
+    let base = [eye[0].floor(), eye[2].floor()];
+    for dx in [-40.0, -24.0, -8.0, 8.0, 24.0, 40.0] {
+        for dz in [-40.0, -24.0, -8.0, 8.0, 24.0, 40.0] {
+            for y in [-14.0, 4.0, 30.0] {
+                let position = [base[0] + dx, y, base[1] + dz];
+                assert!(
+                    world.stream_contains_position(position, 1.0),
+                    "{position:?} is unsupported inside the window around {eye:?}"
+                );
+            }
+        }
+    }
+}
+
+/// The content publication must preserve: the resident window, the resident chunk set
+/// and every material in it. Revisions legitimately differ between the asynchronous
+/// and synchronous paths, so they are asserted present, not equal.
+fn assert_same_content(actual: &World, expected: &World) {
+    assert_eq!(actual.chunk_keys(), expected.chunk_keys());
+    assert_eq!(actual.stats().chunks, expected.stats().chunks);
+    assert_eq!(actual.stats().solid_voxels, expected.stats().solid_voxels);
+    for key in expected.chunk_keys() {
+        assert!(
+            actual.chunk_revision(key).is_some(),
+            "chunk {key:?} has no revision"
+        );
+        for z in 0..16 {
+            for y in 0..16 {
+                for x in 0..16 {
+                    let cell = [key[0] * 16 + x, key[1] * 16 + y, key[2] * 16 + z];
+                    assert_eq!(actual.get(cell), expected.get(cell), "cell {cell:?}");
+                }
+            }
+        }
+    }
 }
 
 /// Requests every dirty chunk, respecting the bounded queue, until each resident
@@ -269,6 +349,7 @@ fn saturated_requests_stay_bounded_and_still_deliver_the_latest_meshes() {
     let end = Instant::now() + LIMIT;
     loop {
         let stats = jobs.stats();
+        assert!(stats.within_bounds(), "{stats:?}");
         assert!(stats.queued_meshes <= MAX_QUEUED_MESH_JOBS, "{stats:?}");
         assert!(stats.mesh_results <= MAX_MESH_RESULTS, "{stats:?}");
         assert!(
@@ -380,4 +461,117 @@ fn returning_home_cancels_a_prepared_destination_and_repeated_requests_coalesce(
     assert!(jobs.request_stream(&world, [-120., 4., 0.]));
     publish(&mut jobs, &mut world);
     assert!(world.stream_contains_position([-120., 4., 0.], 1.));
+}
+
+#[test]
+fn edit_then_reverse_leaves_the_window_equal_to_an_unedited_world() {
+    let seed = 20260912;
+    let eye = [0.0, 4.0, 0.0];
+    let mut world = streamed(seed, eye);
+    let untouched = streamed(seed, eye);
+
+    // One generated-air cell whose chunk is generated empty, and one generated-solid
+    // cell: the reversal shapes are "create then remove" and "edit then restore".
+    let air = [0, 20, 0];
+    let solid = [0, -4, 0];
+    assert_eq!(world.get(air), 0);
+    let solid_material = world.get(solid);
+    assert_ne!(solid_material, 0);
+    for (cell, original, temporary) in [(air, 0u8, 9u8), (solid, solid_material, 0u8)] {
+        assert!(world.set(cell, temporary), "edit of {cell:?} was refused");
+        assert!(world.set(cell, original), "reverse of {cell:?} was refused");
+        assert_eq!(world.get(cell), original);
+    }
+
+    // Round-trip the window through the worker, so publication has every chance to
+    // resurrect the temporary material or leave an orphaned chunk behind.
+    let mut jobs = AsyncWorld::new();
+    assert!(jobs.request_stream(&world, [120.0, 4.0, 0.0]));
+    publish(&mut jobs, &mut world);
+    assert!(jobs.request_stream(&world, eye));
+    publish(&mut jobs, &mut world);
+
+    assert_window_supported(&world, eye);
+    assert_same_content(&world, &untouched);
+    assert_eq!(world.get(air), 0);
+    assert_eq!(world.get(solid), solid_material);
+}
+
+#[test]
+fn eviction_then_rerequest_restores_the_window_and_supports_it_again() {
+    let seed = 20260912;
+    let origin = [0.0, 4.0, 0.0];
+    let far = [120.0, 4.0, 0.0];
+    let edit = [0, 20, 0];
+    let mut world = streamed(seed, origin);
+    assert!(world.set(edit, 9));
+    let mut stayed = streamed(seed, origin);
+    assert!(stayed.set(edit, 9));
+
+    let mut jobs = AsyncWorld::new();
+    assert!(jobs.request_stream(&world, far));
+    publish(&mut jobs, &mut world);
+    assert_window_supported(&world, far);
+    assert!(!world.stream_contains_position(origin, 1.0));
+    assert_eq!(world.get(edit), 0, "an evicted chunk stayed materialized");
+
+    assert!(jobs.request_stream(&world, origin));
+    publish(&mut jobs, &mut world);
+    assert_window_supported(&world, origin);
+    assert_eq!(
+        world.get(edit),
+        9,
+        "the edit did not survive eviction and re-entry"
+    );
+    assert_same_content(&world, &stayed);
+}
+
+#[test]
+fn reset_cancels_queued_and_in_flight_work_and_returns_to_the_baseline() {
+    let eye = [0.0, 4.0, 0.0];
+    let mut world = streamed(20260912, eye);
+    let revision = world.revision();
+    let resident = world.stream_resident_chunks().unwrap();
+    let keys = world.chunk_keys();
+    let mut jobs = AsyncWorld::new();
+    for &key in &keys {
+        jobs.request_mesh(&world, key);
+    }
+    assert!(jobs.request_stream(&world, [120.0, 4.0, 0.0]));
+    jobs.reset();
+
+    // Stated baseline: every queue and staging slot is empty, so nothing cancelled
+    // can be delivered. Only the executing unit may still hold its single slot.
+    let stats = jobs.stats();
+    assert_eq!(stats.queued_meshes, 0);
+    assert_eq!(stats.queued_streams, 0);
+    assert_eq!(stats.mesh_results, 0);
+    assert_eq!(stats.mesh_result_bytes, 0);
+    assert_eq!(stats.stream_results, 0);
+    assert_eq!(stats.generation, 1);
+    assert!(stats.within_bounds(), "{stats:?}");
+
+    // Once the executing unit finishes, the counts are at zero and nothing from
+    // before the cancellation is ever delivered.
+    settle(&jobs);
+    assert_eq!(jobs.stats().inflight, 0);
+    assert!(
+        !jobs.poll_stream(&mut world),
+        "a cancelled window was published"
+    );
+    assert!(
+        jobs.poll_mesh(&world).is_none(),
+        "a cancelled mesh was published"
+    );
+    assert_eq!(world.revision(), revision);
+    assert_eq!(world.stream_resident_chunks().unwrap(), resident);
+    assert!(jobs.available());
+
+    // Cancelled work is immediately re-requestable and still correct.
+    for &key in &keys {
+        jobs.request_mesh(&world, key);
+    }
+    let (key, mesh) = next_mesh(&mut jobs, &world);
+    assert_eq!(world.chunk_revision(key), Some(mesh.revision));
+    assert_eq!(dump(&mesh), dump(&world.mesh_chunk(key)));
 }
