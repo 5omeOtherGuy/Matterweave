@@ -719,7 +719,7 @@
       "acceptance": "Six tests, strict Clippy and four software Vulkan frames pass; Gemini independent review no findings. Lead integrates into Terrain Lab PR."
     },
     "S1-terrain-lab": {
-      "state": "delivery",
+      "state": "accepted",
       "owner": "lead",
       "base": "a91f7a0",
       "owned_paths": [
@@ -728,11 +728,11 @@
         "docs/performance/logs/terrain-lab.md"
       ],
       "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-terrain-lab",
-      "acceptance": "Android fine/mixed/edit/save/reload/restart/elevation/suspend-resume/back pass; existing saves unchanged.14 lab tests and Gemini reviews pass; PR29 CI pending.",
+      "acceptance": "PR29 merged bd01a65; six checks passed; physical Android functional checklist passed.",
       "review_worker": "w_292b5501"
     },
     "D1-production-detail": {
-      "state": "integration",
+      "state": "delivery",
       "owner": "lead",
       "profile": "deepseek-flash-go",
       "thinking": "max",
@@ -740,8 +740,8 @@
       "scope": "wetland.rs graphics/detail frame integration; excludes menu and audio",
       "device_access": "none; lead owns Android",
       "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
-      "artifact": "61f5bd0",
-      "acceptance": "7 detail tests,19 wetland tests and explicit full-map integration pass; Clippy repaired unused test import; Gemini no findings."
+      "artifact": "e5e2e08",
+      "acceptance": "PR31; Android production render/edit/save-restart/HOME-resume pass. All observed8302 selections Source under retained guards; Android coarse-transition gate remains open."
     },
     "D4-production-audio": {
       "state": "review",
@@ -754,6 +754,20 @@
       "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
       "artifact": "1c16b810",
       "acceptance": "Source completed; tests delegated to lead warm integration build."
+    },
+    "D2.2-preserved": {
+      "state": "running",
+      "owner": "w_80029347",
+      "dispatcher": "other lead; preserve existing assignment",
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/d2-2-destruction",
+      "device_access": "none; this integration lead currently operates phone"
+    },
+    "D3.1-preserved": {
+      "state": "running",
+      "owner": "w_9d03d127",
+      "dispatcher": "other lead; preserve existing assignment",
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/d3-1-production-lighting",
+      "device_access": "none; this integration lead currently operates phone"
     }
   },
   "capacity": {

@@ -333,6 +333,15 @@ impl WetlandDetail {
             self.deferred = deferred;
             if frame.geometry_changed {
                 self.reinstall = true;
+                let counts = crate::detail_runtime::lod_histogram(&frame.frame);
+                log::info!(
+                    "Wetland detail geometry refreshed: source={} half={} quarter={} deferred={} resident_meshes={}",
+                    counts.get(&Lod::Source).copied().unwrap_or(0),
+                    counts.get(&Lod::Half).copied().unwrap_or(0),
+                    counts.get(&Lod::Quarter).copied().unwrap_or(0),
+                    deferred,
+                    self.runtime.meshes().len(),
+                );
             }
             self.instances = frame.instances;
             self.prepared_camera = Some(view);
