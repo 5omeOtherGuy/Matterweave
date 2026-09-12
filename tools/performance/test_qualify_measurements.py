@@ -109,6 +109,26 @@ class ArithmeticTests(unittest.TestCase):
         self.assertEqual(qualify_document(quiet)["resolution"]["mean_ms"]
                          ["verdict"], "below same-build noise range")
 
+    def test_identical_repeats_do_not_claim_an_overhead_difference(self):
+        doc = document()
+        for entry in doc["runs"]:
+            entry["mean_ms"] = 20.0
+        verdict = qualify_document(doc)["resolution"]["mean_ms"]
+        self.assertEqual(verdict["same_build_noise_range"], 0.0)
+        self.assertEqual(verdict["mean_on_vs_off_absolute"], 0.0)
+        self.assertIsNone(verdict["abs_mean_over_noise_range"])
+        self.assertEqual(verdict["verdict"], "no observed difference")
+
+    def test_constant_nonzero_overhead_exceeds_zero_observed_noise(self):
+        doc = document()
+        for entry in doc["runs"]:
+            entry["mean_ms"] = 21.0 if entry["profiling"] == "on" else 20.0
+        verdict = qualify_document(doc)["resolution"]["mean_ms"]
+        self.assertEqual(verdict["same_build_noise_range"], 0.0)
+        self.assertEqual(verdict["mean_on_vs_off_absolute"], 1.0)
+        self.assertIsNone(verdict["abs_mean_over_noise_range"])
+        self.assertEqual(verdict["verdict"], "exceeds same-build noise range")
+
     def test_off_side_is_never_swapped_when_off_runs_first(self):
         doc = document()
         doc["runs"] = doc["runs"][1:] + [run("on-04", "on", 21.0, "1" * 64)]

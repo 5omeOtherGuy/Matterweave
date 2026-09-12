@@ -534,8 +534,9 @@ def resolution(noise, overhead, metric_names):
             "mean_on_vs_off_absolute": mean_delta,
             "abs_mean_over_noise_range": (abs(mean_delta) / floor
                                           if floor > 0 else None),
-            "verdict": ("below same-build noise range"
-                        if floor > 0 and abs(mean_delta) <= floor
+            "verdict": ("no observed difference" if mean_delta == 0
+                        else "below same-build noise range"
+                        if abs(mean_delta) <= floor
                         else "exceeds same-build noise range"),
             "note": "Descriptive comparison of two observed spreads. Not a "
                     "significance test and not a per-frame cost model.",
