@@ -1,0 +1,41 @@
+{
+  "source": "4a60df73fcb2f20e30a45121d51f857c087278bc",
+  "main_tree_equivalent": "ac1ce4442fd7072eca2253916ff625570267b0d7",
+  "ci_run": 34712351477,
+  "ci_apk_sha256": "46ca85bbd5d8c86b09f37d2472bf1f6b21ba65d26b282820263f9fc30209e98e",
+  "locally_resigned_apk_sha256": "0cbba011ed9d9d779ba7f95f04328f8e688619b5c85bf9172ccee9852a204a9f",
+  "signing": "existing local Android debug key; no uninstall/data clear",
+  "device": "OnePlus13 CPH2653 Android16 Adreno830 Vulkan1.3.284 driver2150760522",
+  "checks": {
+    "signature": "PASS",
+    "zip_16kb_alignment": "PASS",
+    "native_LOAD_alignment": "PASS",
+    "install_replace": "PASS",
+    "wetland_render_existing_save": "PASS visually inspected",
+    "relay_render_solved_save": "PASS visually inspected",
+    "save_bytes_restored": "PASS all four",
+    "physical_touch_lock_unlock": "NOT RUN"
+  },
+  "smoke_modified_then_restored": [
+    "wetland-session.json"
+  ],
+  "save_hashes": {
+    "world.json": {
+      "sha256": "4f66fd00c82cc0fef6225b2a02c15a0f05b24d66b39781e6d2d0230c93d51084",
+      "bytes": 16982
+    },
+    "world.json.session-recovery-1.json": {
+      "sha256": "d53380cf00e4288bccb08f62a84f23044794a0d99f40d3dcc1fc144e8c3f26a6",
+      "bytes": 21309
+    },
+    "wetland-session.json": {
+      "sha256": "f5ed1132f988f0c63f66a0bed6fc888bf6eba9218d3cd778fe022ad83104274d",
+      "bytes": 1353
+    },
+    "voxel-relay.json": {
+      "sha256": "e474b8c9012754ee638aa13124161d15f50d3a30585b8829b7b226dba061c228",
+      "bytes": 16981
+    }
+  },
+  "remaining": "No final E8 candidate or new lighting/detail Android acceptance claimed."
+}

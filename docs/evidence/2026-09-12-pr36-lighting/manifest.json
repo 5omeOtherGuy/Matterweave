@@ -1,0 +1,24 @@
+{
+  "source": "45ab5de3bd5bddb30c4f29b0b98aaca55649522b",
+  "apk_sha256": "c49181d41dd761f6259df4f090bca33f2494cdc81c064c6101bf22f9128f86b2",
+  "device": "OnePlus 13 CPH2653 Android 16 Adreno 830 Vulkan 1.3.284 driver 2150760522",
+  "scene": "standalone mesh-lighting 5 phases",
+  "build": "Cargo dev opt2 debug0; Gradle assembleDebug; arm64-v8a; 16KiB verified",
+  "runs": [
+    {
+      "report": "mesh-lighting-report.txt",
+      "sha256": "b4d28fe58801860c58a3e4ca1f86ee7dc34ec444e7b8f18c812f0b910ccb3cc3",
+      "presented": 300
+    },
+    {
+      "report": "mesh-lighting-resume-report.txt",
+      "sha256": "7352724dfdcaee23612a4f1d4bfa45f31d30f2cff1cdb3e1b882f9a5a722c028",
+      "presented": 300
+    }
+  ],
+  "limits": [
+    "Functional publication and CPU oracle checks; no full-scene production GI or pixel fidelity acceptance",
+    "Second run HOME/resume once; no physical lock/unlock",
+    "Not a performance or thermal measurement"
+  ]
+}

@@ -1,5 +1,23 @@
 # Implementation handoff
 
+**Current pickup:** PR37/38 are merged at main495d9f9. PR36/39 are under
+GLM5.3 Flash review, with Opus corrective workers recorded in the board. PR36's
+Android lighting diagnostic passes300frames and HOME/resume; the separate detail
+diagnostic fails its phase0 cold-convergence guard on Android and remains open.
+The owner's interaction-freeze report is confirmed by an Android input ANR and has
+an isolated corrective worker. See the top STATUS entry for evidence and boundaries.
+Continue using healthy SSD worktrees; preserve the current five user saves.
+
+**Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
+
+**Recovery update, 2026-09-12:** PR #35 merged at `ac1ce444` with all six checks
+passing. `/mnt/bench` now has hardware I/O failures in its backing device `sdb`;
+do not resume writes or builds there until the drive is repaired and verified.
+The live lead checkout is
+`/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/integration`
+(`engine/recovered-mesh-lighting`). See [recovery state](performance/recovery-20260912.md)
+and the [board](performance/board.json) for workers. Original worktrees are preserved.
+
 Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
 
 The entry point for a fresh session: what is true now and what is authorized next.

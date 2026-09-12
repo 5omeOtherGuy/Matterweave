@@ -181,7 +181,8 @@ impl ApplicationHandler for IndirectCheck {
                         upload_world(r, &self.world);
                         assert!(!r.indirect_enabled());
                         assert!(
-                            r.upload_indirect(&self.cache, &self.world, 0).is_err(),
+                            r.upload_indirect(&self.cache, &self.world, 0, None)
+                                .is_err(),
                             "old edit result rejected"
                         );
                     }
@@ -195,7 +196,8 @@ impl ApplicationHandler for IndirectCheck {
                 self.phase_applied = Some(phase);
             }
             if phase == 6 {
-                r.upload_indirect(&self.cache, &self.world, 0).unwrap();
+                r.upload_indirect(&self.cache, &self.world, 0, None)
+                    .unwrap();
                 assert!(r.indirect_enabled());
                 self.lighting.sun.intensity = 0.;
             } else if phase == 0 || phase == 5 {
@@ -234,7 +236,8 @@ impl ApplicationHandler for IndirectCheck {
                         assert!(sample[0] > 0.02);
                     }
                     let start = std::time::Instant::now();
-                    r.upload_indirect(&self.cache, &self.world, 0).unwrap();
+                    r.upload_indirect(&self.cache, &self.world, 0, None)
+                        .unwrap();
                     phase_report = Some(format!(
                         "phase={phase} async=on request_ms={:.3} worker_to_poll_ms={latency_ms:.3} upload_ms={:.3} waiting_presentations={} bytes={} sample={sample:?}",
                         self.request_ms, start.elapsed().as_secs_f64() * 1000.,
@@ -274,7 +277,8 @@ impl ApplicationHandler for IndirectCheck {
                 } else {
                     assert!(sample[0] > 0.02);
                 }
-                r.upload_indirect(&self.cache, &self.world, 0).unwrap();
+                r.upload_indirect(&self.cache, &self.world, 0, None)
+                    .unwrap();
                 phase_report = Some(format!(
                     "phase={phase} cpu_prepare_upload_ms={:.3} rays={rays} bytes={} sample={sample:?}",
                     start.elapsed().as_secs_f64() * 1000.,

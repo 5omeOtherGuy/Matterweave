@@ -1,5 +1,74 @@
 # Current status
 
+## PR36/39 acceptance and interaction incident — 2026-09-12
+
+Main is `495d9f9` (PR37 streaming contract tests and PR38 detail diagnostic merged).
+PR36 (`45ab5de`) and PR39 (`343dc36` plus preserved corrective work) remain draft
+until their explicit reviews/checks pass. The owner corrected the requested review
+model to OpenRouter **GLM 5.3 Flash** (`z-ai/glm-5.3-flash`, high). Previous full
+GLM attempts and Muse quota failures are preserved, not counted as completed reviews.
+Opus subscription workers repair the streaming counter and the interaction incident;
+no Astra workers. The board records current identities.
+
+PR36 Android mesh-lighting functional gate PASS at `45ab5de`: five phases, 300
+presentations; second run also PASS with one real HOME/resume. Source/API rejection,
+matching proxy publication, move invalidation, recompute and removal are covered.
+[Manifest and exact reports](evidence/2026-09-12-pr36-lighting/manifest.json).
+This is not full-scene production GI, pixel-quality or performance acceptance.
+GLM Flash review found a caller-contract clarification and a report-write panic.
+The documentation is clarified and report failures now terminate as failed gates;
+13 focused mesh-lighting tests and scoped strict app Clippy pass after correction.
+Formatting and documentation checks pass.
+
+The separate merged detail diagnostic FAILS on this Android viewport in phase0:
+its cold bounded-convergence guard observes no deferred levels. Host tests had
+passed; the physical result supersedes any inferred Android completion. M2 remains
+open. Raw report is preserved in the healthy recovery orchestration/pr36-device directory.
+
+Owner reports Wetland/Amber Mine BREAK/THROW/PLACE/GRAB freezes and recovery.
+Android recorded a real input ANR at23:25:55 (waited5001ms for MotionEvent), with
+android_main CPU97% during the short sample. The shared action ray query repeatedly
+scans occupied cells for per-instance bounds; investigation and a narrow corrective
+branch are in progress. This is an existing installed-build incident, not evidence
+that either draft PR caused it. Fresh backups include all five current JSON saves.
+
+
+## Post-reboot primary-plan development — 2026-09-12
+
+The owner prioritizes development batches over repeated intermediate live checks.
+Host tests and independent review remain required; Android acceptance is batched
+on integrated behavioral changes. Two free Muse workers implement native
+mesh-lighting publication and the actual continuous-edit streaming progress fix.
+Gemini corrective review of detail05549eb and streamingf63055b found no concrete
+defects. Streaming host contract checks are in PR37; application progress and
+Android streaming acceptance remain open.
+
+Clean CI source4a60df7 (tree identical to mainac1ce444) was re-signed with the
+existing debug key, verified for signature/16KiB alignment, installed without data
+clear, and visually ran both wetland and the existing solved Relay save. All four
+original saves were verified restored byte-for-byte after smoke. This revalidates
+the existing install/run slice, not the final E8 candidate.
+[Manifest](evidence/2026-09-12-restart-smoke/manifest.json).
+
+
+**Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
+
+## Recovery and continued development — 2026-09-12
+
+PR #35 merged at `ac1ce444`: reviewed, host/device-verified destruction diagnostic,
+all six CI checks green. Audio audibility is confirmed by the owner. A later
+`/mnt/bench` hardware I/O failure interrupted follow-up development, not that delivery.
+Source work continues in isolated healthy-disk recovery checkouts; benchmark work
+and data remain deferred. [Recovery state](performance/recovery-20260912.md).
+
+DeepSeek Go returned HTTP429 weekly quota errors. Per owner direction, the live
+D1 repair worker is OpenRouter `deepseek/deepseek-v4.1-flash` high (`w_f38feb0e`);
+D3.2 recovery uses exact Muse Spark 1.3 Contributor Free high (`w_a0a724e3`).
+Both have executed source-reading tool calls. Gemini `w_3287036b` reviewed frozen
+D2.3 Git objects after its earlier result became unreadable. OpenRouter DeepSeek
+`w_b5255700` now repairs its concrete bound-scope and byte-admission test gaps;
+sustained-edit app liveness remains open. No Opus or Astra worker was launched. No top-up or overage enabled.
+
 ## Production-detail diagnostic repair — 2026-09-12
 
 The opt-in detail diagnostic uses production flora, bounded stationary convergence,
