@@ -929,6 +929,13 @@ mod tests {
         assert!(jobs.request_mesh(&world, keys[0]));
         run_job(&jobs.shared, cancelled_stream);
         assert_eq!(jobs.stats().inflight, 0);
+        // The cancelled completion must not occupy a staging slot either: a refused
+        // result still holds its bytes until `poll_*` drops it.
+        assert_eq!(
+            jobs.stats().stream_results,
+            0,
+            "a cancelled window stayed staged"
+        );
         assert!(
             !jobs.poll_stream(&mut world),
             "a cancelled window was published"
@@ -952,6 +959,12 @@ mod tests {
         assert_eq!(jobs.stats().generation, 2);
         assert!(jobs.request_mesh(&world, keys[1]));
         run_job(&jobs.shared, cancelled_mesh);
+        assert_eq!(
+            jobs.stats().mesh_results,
+            0,
+            "a cancelled mesh stayed staged"
+        );
+        assert_eq!(jobs.stats().mesh_result_bytes, 0);
         assert!(
             jobs.poll_mesh(&world).is_none(),
             "a cancelled mesh was published"
