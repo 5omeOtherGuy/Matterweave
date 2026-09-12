@@ -1168,6 +1168,201 @@ mod tests {
         );
     }
 
+    // ===================================================================
+    // D3.2 dynamic-response probes. Declared criteria, asserted rather than
+    // eyeballed:
+    //
+    // R1 moving reflector: lifting a mesh-only object redirects a reflection
+    //    that hit it (onto the far wall, at a longer distance) while a
+    //    reflection travelling away from the move and the packed cells of a
+    //    second, static mesh-only object stay bit-identical; the two packs
+    //    carry different proxy identities and each is valid only for its own.
+    // R2 edit and supersession: removing one world wall cell invalidates the
+    //    previous pack (valid_for and valid_for_scene both refuse it, including
+    //    after an A->B->A round trip at a new revision), the repacked volume
+    //    reports the edited reflectivity (a former wall hit is now a miss)
+    //    while an untouched footprint digest and the mesh-proxy identity are
+    //    unchanged.
+    // ===================================================================
+    const LIFTED_CELL: [i32; 3] = [0, 3, 0];
+    const CONTROL_CELL: [i32; 3] = [-3, 0, -3];
+
+    fn lifted_object() -> StaticInstance {
+        StaticInstance {
+            prototype: 0,
+            translation: [0., 3., 0.],
+            yaw_quarters: 0,
+        }
+    }
+
+    fn control_object() -> StaticInstance {
+        StaticInstance {
+            prototype: 0,
+            translation: [-3., 0., -3.],
+            yaw_quarters: 0,
+        }
+    }
+
+    #[test]
+    fn moving_reflector_redirects_response_and_static_control_holds() {
+        let world = mesh_world();
+        let table = mesh_table();
+        let rest = mesh_proxy(&[mesh_object(), control_object()]);
+        let lifted = mesh_proxy(&[lifted_object(), control_object()]);
+        assert_ne!(
+            rest.digest(),
+            lifted.digest(),
+            "a moved reflector must change the pack identity"
+        );
+        assert_eq!(rest.occupied_cells(), 2);
+        assert_eq!(lifted.occupied_cells(), 2);
+        let at_rest = ReflectionVolume::pack_with_mesh(
+            &world,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &rest,
+        )
+        .unwrap();
+        let raised = ReflectionVolume::pack_with_mesh(
+            &world,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &lifted,
+        )
+        .unwrap();
+        // The static control object packs identically in both volumes, and the
+        // moved cell is occupied in exactly one pack each way.
+        assert_eq!(at_rest.material_at(CONTROL_CELL), OBJECT);
+        assert_eq!(raised.material_at(CONTROL_CELL), OBJECT);
+        assert_eq!(at_rest.material_at(LIFTED_CELL), 0);
+        assert_eq!(raised.material_at(LIFTED_CELL), OBJECT);
+        assert_eq!(raised.material_at(OBJECT_CELL), 0);
+        assert_eq!(at_rest.mirror_at(CONTROL_CELL), 1.0);
+        assert_eq!(raised.mirror_at(CONTROL_CELL), 1.0);
+        // The affected ray (c8): off the world mirror it hits the object at
+        // rest, and the far wall once the object is lifted out of the path.
+        let point = [-1.5, 0.0, 0.5];
+        let normal = [0., 1., 0.];
+        let eye = [-3.0, 1.5, 0.5];
+        let before = reflect_sample_with_mesh(&at_rest, &world, &rest, point, normal, eye);
+        assert!(
+            before.hit && before.cell == OBJECT_CELL && before.material == OBJECT,
+            "at rest the ray hits the reflector: {before:?}"
+        );
+        let after = reflect_sample_with_mesh(&raised, &world, &lifted, point, normal, eye);
+        assert!(
+            after.hit && after.cell[0] == 3 && after.material == WALL,
+            "lifted, the same ray reaches the wall: {after:?}"
+        );
+        assert!(
+            after.distance > before.distance,
+            "the wall is farther than the reflector was: {} vs {}",
+            after.distance,
+            before.distance
+        );
+        // The static control: a reflection off the same mirror travelling -X,
+        // away from both reflector positions and the wall, is bit-identical.
+        let away = [1.0, 1.5, 0.5];
+        let control_before = reflect_sample_with_mesh(&at_rest, &world, &rest, point, normal, away);
+        let control_after = reflect_sample_with_mesh(&raised, &world, &lifted, point, normal, away);
+        assert!(!control_before.hit && !control_after.hit);
+        assert_eq!(
+            control_before, control_after,
+            "a reflection that cannot see the move must not drift"
+        );
+        // Each pack is valid only for the proxy identity it was built from.
+        assert!(at_rest.valid_for(&world, 0));
+        assert!(at_rest.valid_for_scene(&world, 0, Some(rest.digest())));
+        assert!(!at_rest.valid_for_scene(&world, 0, Some(lifted.digest())));
+        assert!(!at_rest.valid_for_scene(&world, 0, None));
+        assert!(raised.valid_for_scene(&world, 0, Some(lifted.digest())));
+        assert!(!raised.valid_for_scene(&world, 0, Some(rest.digest())));
+    }
+
+    #[test]
+    fn world_edit_updates_reflectivity_and_superseded_pack_is_refused() {
+        let world = mesh_world();
+        let table = mesh_table();
+        let proxy = mesh_proxy(&[mesh_object()]);
+        let before = ReflectionVolume::pack_with_mesh(
+            &world,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &proxy,
+        )
+        .unwrap();
+        // Sanity: the mesh-top ray hits the wall cell the edit will remove.
+        let top = [0.5, 2.0, 0.5];
+        let up = [0., 1., 0.];
+        let above = [-1.0, 3.0, 0.5];
+        let was = reflect_sample_with_mesh(&before, &world, &proxy, top, up, above);
+        assert!(
+            was.hit && was.cell == [3, 3, 0] && was.material == WALL,
+            "the mesh mirror reflects onto the wall cell under test: {was:?}"
+        );
+        assert_eq!(before.material_at([3, 3, 0]), WALL);
+        // Remove the wall cells on the ray's climb: one authoritative edit per
+        // cell. The ray enters the x = 3 plane at y ≈ 3.67 ([3, 3, 0]) and
+        // climbs into [3, 4, 0], so both must go for the ray to leave the wall.
+        let mut edited = world.clone();
+        assert!(edited.set([3, 3, 0], 0));
+        assert!(edited.set([3, 4, 0], 0));
+        // The previous pack is refused for the edited scene by both checks.
+        assert!(!before.valid_for(&edited, 0));
+        assert!(!before.valid_for_scene(&edited, 0, Some(proxy.digest())));
+        // The repacked volume reports the edited reflectivity: the former hit
+        // now leaves through the hole, while the mesh cell itself is unchanged.
+        let after = ReflectionVolume::pack_with_mesh(
+            &edited,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &proxy,
+        )
+        .unwrap();
+        assert_eq!(after.material_at([3, 3, 0]), 0);
+        assert_eq!(after.material_at([3, 4, 0]), 0);
+        assert_eq!(after.material_at(OBJECT_CELL), OBJECT);
+        assert_eq!(after.mirror_at(OBJECT_CELL), 1.0);
+        let now = reflect_sample_with_mesh(&after, &edited, &proxy, top, up, above);
+        assert!(
+            !now.hit,
+            "the removed wall cell no longer reflects: {now:?}"
+        );
+        assert!(now.distance > 0., "a miss still reports its exit");
+        assert!(after.valid_for(&edited, 0));
+        assert!(after.valid_for_scene(&edited, 0, Some(proxy.digest())));
+        // Untouched geometry keeps its identity: the footprint outside the wall
+        // and the rebuilt proxy digest are stable, while the edited footprint
+        // changes. Compared before the round trip below restores the cells.
+        assert_eq!(
+            footprint_digest(&world, [-4, -2, -4], [6, 7, 8]),
+            footprint_digest(&edited, [-4, -2, -4], [6, 7, 8]),
+            "x in -4..1 excludes the wall"
+        );
+        assert_ne!(
+            footprint_digest(&world, MESH_ORIGIN, MESH_DIMS),
+            footprint_digest(&edited, MESH_ORIGIN, MESH_DIMS)
+        );
+        assert_eq!(mesh_proxy(&[mesh_object()]).digest(), proxy.digest());
+        // Restoring the cells at a new revision does not resurrect the old pack.
+        edited.set([3, 3, 0], WALL);
+        edited.set([3, 4, 0], WALL);
+        assert!(!before.valid_for(&edited, 0));
+        assert!(!before.valid_for_scene(&edited, 0, Some(proxy.digest())));
+    }
+
     #[test]
     fn shading_and_fog_match_the_documented_model() {
         let world = scene(-4..4, None);

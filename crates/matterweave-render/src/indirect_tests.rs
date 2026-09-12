@@ -806,3 +806,451 @@ fn c12_degenerate_and_planar_triangles_stay_bounded() {
     assert_eq!(proxy.material_at([0, 2, 0]), PROBE_OBJECT);
     assert_eq!(proxy.material_at([0, 1, 0]), 0, "nothing below a -Y face");
 }
+
+// ===========================================================================
+// D3.2 dynamic-response probes. Declared criteria, asserted rather than
+// eyeballed:
+//
+// L1 moving sun: a divider wall's two faces gather opposite floor halves; a low
+//    sun puts the down-sun half in the wall's own shadow, so the up-sun-facing
+//    face must brighten and the down-sun-facing face must go exactly dark, and
+//    the reverse sun flips the pair. The wall top cannot see the floor under any
+//    sun and is the static control: exactly zero throughout.
+// L2 enclosure: a sealed unit-voxel room leaks nothing on any interior face
+//    (`SEALED_ENCLOSURE_LEAKAGE_MAX`), a partial opening admits strictly more
+//    than that bound but no more than a full opening, and closing the roof
+//    removes the response after the invalidating update.
+// L3 voxel edit: one authoritative `World::set` updates the indirect response
+//    (red floor replaced by a sunlit green voxel), leaves a face whose hemisphere
+//    cannot see the edit bit-identical, and keeps every untouched footprint and
+//    the attached mesh-proxy identity unchanged.
+// L5 colour bleeding: the two faces of a column standing on a half-red,
+//    half-green floor report the hue of the half each one gathers, and swapping
+//    the two albedos swaps the responses.
+// L6 latency: a key change clears the old radiance in the first `update` call
+//    that observes it, and the declared work bound bounds the calls to complete.
+// L7 stale publication: a superseding light clears the previous result in the
+//    same call, an incomplete volume is never valid or publishable, and a fresh
+//    computation of the same key is bit-identical (no mixed partial state).
+// ===========================================================================
+use crate::indirect::{footprint_digest, light_key};
+
+fn tilted_sun(direction: [f32; 3]) -> Sun {
+    Sun {
+        direction_to_sun: direction,
+        intensity: 1.,
+    }
+}
+
+/// Symmetric red floor split by a one-cell-thick, three-cell-tall wall at
+/// `x = 0`. With the sun low toward +X (`[2, 1, 0]`, slope 0.5) the wall's
+/// shadow reaches 6 cells, covering the whole five-cell -X half, while the +X
+/// half stays lit; the reverse sun mirrors that exactly.
+fn divider_world() -> World {
+    let mut world = World::new(0);
+    for x in -5..5 {
+        for z in -5..5 {
+            world.set([x, -1, z], PROBE_FLOOR);
+        }
+    }
+    for z in -5..5 {
+        for y in 0..3 {
+            world.set([0, y, z], PROBE_WALL);
+        }
+    }
+    world
+}
+
+#[test]
+fn moving_sun_redirects_indirect_response_and_static_control_holds() {
+    let world = divider_world();
+    let mut vertical = probe_volume();
+    finish(&mut vertical, &world, 0, sun());
+    let mut toward_pos_x = probe_volume();
+    finish(&mut toward_pos_x, &world, 0, tilted_sun([2., 1., 0.]));
+    let mut toward_neg_x = probe_volume();
+    finish(&mut toward_neg_x, &world, 0, tilted_sun([-2., 1., 0.]));
+    let face = |v: &IndirectVolume, f: usize| v.sample([0, 1, 0], f)[0];
+    // A vertical sun lights both halves: both wall faces gather red floor.
+    assert!(
+        face(&vertical, 0) > 0.05 && face(&vertical, 1) > 0.05,
+        "vertical sun: {} {}",
+        face(&vertical, 0),
+        face(&vertical, 1)
+    );
+    // Low sun toward +X: the -X half is entirely inside the wall's shadow, so
+    // the +X face gathers lit floor and the -X face gathers nothing.
+    assert!(face(&toward_pos_x, 0) > 0.05, "sun side stays lit");
+    assert_eq!(face(&toward_pos_x, 1), 0.0, "down-sun half is shadowed");
+    // The reverse sun flips exactly that pair.
+    assert!(face(&toward_neg_x, 1) > 0.05, "sun side stays lit");
+    assert_eq!(face(&toward_neg_x, 0), 0.0, "down-sun half is shadowed");
+    // The wall top cannot see the floor under any sun: the static control never
+    // drifts.
+    for volume in [&vertical, &toward_pos_x, &toward_neg_x] {
+        assert_eq!(
+            volume.sample([0, 2, 0], 2),
+            [0.; 3],
+            "+Y gathers upward only"
+        );
+    }
+    // The sun is part of the source identity: a volume for one sun is not valid
+    // for another, and a scaled direction is the same physical light.
+    assert!(vertical.valid_for(&world, 0, sun()));
+    assert!(!vertical.valid_for(&world, 0, tilted_sun([2., 1., 0.])));
+    assert_eq!(
+        light_key(sun()).unwrap(),
+        light_key(tilted_sun([0., 2., 0.])).unwrap(),
+        "a scaled sun direction is the same light"
+    );
+    assert_ne!(
+        light_key(sun()).unwrap(),
+        light_key(tilted_sun([2., 1., 0.])).unwrap()
+    );
+    // Recomputing the same key reproduces the same radiance bit for bit.
+    let mut repeat = probe_volume();
+    finish(&mut repeat, &world, 0, sun());
+    for cell in [[0, 1, 0], [0, 2, 0], [-3, 1, 0], [3, 1, 3]] {
+        for f in 0..6 {
+            assert_eq!(repeat.sample(cell, f), vertical.sample(cell, f));
+        }
+    }
+}
+
+/// Declared leakage bound for a sealed unit-voxel enclosure. The sampler is an
+/// exact DDA over the authoritative grid and a miss is black, so a closed
+/// enclosure reports exactly zero on every interior face; the constant is the
+/// contract this test asserts, not an eyeballed tolerance.
+const SEALED_ENCLOSURE_LEAKAGE_MAX: f32 = 0.0;
+
+#[test]
+fn enclosure_response_follows_the_opening_and_sealed_leakage_is_bounded() {
+    let face = 0; // +X face of the wall at [-3, 1, 0], pointing into the room.
+    let sealed = {
+        let world = room(true);
+        let mut volume = volume();
+        finish(&mut volume, &world, 0, sun());
+        volume
+    };
+    for f in 0..6 {
+        assert!(
+            sealed.sample([-3, 1, 0], f)[0] <= SEALED_ENCLOSURE_LEAKAGE_MAX,
+            "sealed room face {f} leaks above the declared bound: {:?}",
+            sealed.sample([-3, 1, 0], f)
+        );
+    }
+    // A 3x3 skylight admits indirect light: the same interior face now sees a
+    // sunlit floor patch through the opening.
+    let mut world = room(true);
+    for x in -1..=1 {
+        for z in -1..=1 {
+            world.set([x, 3, z], 0);
+        }
+    }
+    let mut skylight = volume();
+    finish(&mut skylight, &world, 0, sun());
+    let admitted = skylight.sample([-3, 1, 0], face)[0];
+    assert!(
+        admitted > SEALED_ENCLOSURE_LEAKAGE_MAX,
+        "a skylight must admit light: {admitted}"
+    );
+    assert!(
+        admitted > skylight.sample([-3, 1, 0], 1)[0],
+        "the admission is directional: it enters on the opening's side"
+    );
+    // Opening the whole roof lights a superset of the skylight's floor, so it
+    // cannot admit less.
+    for x in -3..=3 {
+        for z in -3..=3 {
+            world.set([x, 3, z], 0);
+        }
+    }
+    let mut open = volume();
+    finish(&mut open, &world, 0, sun());
+    let fully_open = open.sample([-3, 1, 0], face)[0];
+    assert!(
+        fully_open >= admitted,
+        "full opening {fully_open} vs skylight {admitted}"
+    );
+    assert!(fully_open > 0.03, "the open room must admit light");
+    // Closing the roof removes the response: the first update after the edit
+    // clears the old open-room radiance, so no stale value can be observed, and
+    // the recomputed sealed room is back under the declared bound.
+    for x in -3..=3 {
+        for z in -3..=3 {
+            world.set([x, 3, z], 2);
+        }
+    }
+    open.update(&world, 0, sun(), UpdateBudget { rays: 0, work: 0 })
+        .unwrap();
+    assert!(!open.complete(), "the roof edit invalidates the cache");
+    for f in 0..6 {
+        assert!(
+            open.sample([-3, 1, 0], f)[0] <= SEALED_ENCLOSURE_LEAKAGE_MAX,
+            "a closed roof must remove the response on face {f}"
+        );
+    }
+    finish(&mut open, &world, 0, sun());
+    assert!(open.sample([-3, 1, 0], face)[0] <= SEALED_ENCLOSURE_LEAKAGE_MAX);
+}
+
+#[test]
+fn voxel_edit_updates_indirect_and_leaves_untouched_identity_unchanged() {
+    let before = probe_world();
+    let edit_cell = [-3, 1, 0];
+    let face = 0; // +X face of the receiver's top cell, looking at the edit.
+    let control_face = 1; // -X face, whose hemisphere cannot contain the edit.
+    let sample_cell = [-4, 2, 0];
+    let untouched_proxy = probe_placement([3, 0, 3]);
+    let mut volume = probe_volume();
+    volume.set_mesh_proxy(Some(probe_proxy(&[untouched_proxy])));
+    finish(&mut volume, &before, 0, sun());
+    let (red_before, green_before) = {
+        let v = volume.sample(sample_cell, face);
+        (v[0], v[1])
+    };
+    assert!(
+        red_before > 0.05 && red_before > 10. * green_before,
+        "before: the red floor dominates the gather: {red_before} {green_before}"
+    );
+    let control_before = volume.sample(sample_cell, control_face);
+    let proxy_digest = volume.mesh_digest();
+    assert!(proxy_digest.is_some());
+
+    let mut after = before.clone();
+    assert!(after.set(edit_cell, PROBE_OBJECT));
+
+    // The edit is recognized in the first update: the old radiance is cleared
+    // and nothing is valid for publication until the new revision completes.
+    let stats = volume
+        .update(&after, 0, sun(), UpdateBudget { rays: 0, work: 0 })
+        .unwrap();
+    assert!(!stats.complete && !volume.complete());
+    assert!(!volume.valid_for(&after, 0, sun()));
+    assert_eq!(volume.sample(sample_cell, face), [0.; 3]);
+
+    finish(&mut volume, &after, 0, sun());
+    let (red_after, green_after) = {
+        let v = volume.sample(sample_cell, face);
+        (v[0], v[1])
+    };
+    assert!(
+        red_after < red_before,
+        "the added voxel occludes red floor: {red_after} vs {red_before}"
+    );
+    assert!(
+        green_after > green_before * 2.,
+        "the voxel's green albedo enters the gather: {green_after} vs {green_before}"
+    );
+    // A face whose hemisphere points away from the edit keeps its prior value
+    // exactly: the edit is local, not a whole-scene re-render.
+    assert_eq!(volume.sample(sample_cell, control_face), control_before);
+    // The edit changed no mesh geometry: the proxy identity is untouched, so
+    // the proxy does not need a rebuild.
+    assert_eq!(volume.mesh_digest(), proxy_digest);
+    let rebuilt = probe_proxy(&[untouched_proxy]);
+    assert_eq!(rebuilt.digest(), proxy_digest.unwrap());
+    // Untouched world footprint keeps its digest; an edited footprint changes.
+    let untouched_origin = [-5, -2, -5];
+    let untouched_dims = [2, 6, 11]; // x = -5, -4: the edit at x = -3 is outside.
+    assert_eq!(
+        footprint_digest(&before, untouched_origin, untouched_dims),
+        footprint_digest(&after, untouched_origin, untouched_dims)
+    );
+    let edited_dims = [3, 6, 11]; // includes x = -3.
+    assert_ne!(
+        footprint_digest(&before, untouched_origin, edited_dims),
+        footprint_digest(&after, untouched_origin, edited_dims)
+    );
+    // The updated result is exactly the result of computing the edited scene
+    // from scratch: no value of the pre-edit scene survives the invalidation.
+    let mut fresh = probe_volume();
+    fresh.set_mesh_proxy(Some(probe_proxy(&[untouched_proxy])));
+    finish(&mut fresh, &after, 0, sun());
+    for cell in [sample_cell, [0, 1, 0], [-3, 1, 0], [2, 1, 2]] {
+        for f in 0..6 {
+            assert_eq!(volume.sample(cell, f), fresh.sample(cell, f));
+        }
+    }
+}
+
+#[test]
+fn colour_bleeding_carries_the_source_hue_to_the_neighbouring_surface() {
+    let split = |negative_half: u8, positive_half: u8| {
+        let mut world = World::new(0);
+        for x in -5..5 {
+            for z in -5..5 {
+                world.set(
+                    [x, -1, z],
+                    if x < 0 { negative_half } else { positive_half },
+                );
+            }
+        }
+        for y in 0..3 {
+            world.set([0, y, 0], PROBE_WALL);
+        }
+        world
+    };
+    let mut world = split(PROBE_FLOOR, PROBE_OBJECT);
+    let mut volume = probe_volume();
+    finish(&mut volume, &world, 0, sun());
+    let negative = volume.sample([0, 1, 0], 1); // gathers the -X floor half
+    let positive = volume.sample([0, 1, 0], 0); // gathers the +X floor half
+    assert!(
+        negative[0] > 2. * negative[1] && negative[0] > 0.05,
+        "the -X face must gather the red half: {negative:?}"
+    );
+    assert!(
+        positive[1] > 2. * positive[0] && positive[1] > 0.05,
+        "the +X face must gather the green half: {positive:?}"
+    );
+    // Swapping the two albedos swaps the two responses, so the hue follows the
+    // surface colour and not an asymmetry in the sampling pattern.
+    world = split(PROBE_OBJECT, PROBE_FLOOR);
+    let mut swapped = probe_volume();
+    finish(&mut swapped, &world, 0, sun());
+    let negative = swapped.sample([0, 1, 0], 1);
+    let positive = swapped.sample([0, 1, 0], 0);
+    assert!(
+        negative[1] > 2. * negative[0] && negative[1] > 0.05,
+        "after the swap the -X face must gather the green half: {negative:?}"
+    );
+    assert!(
+        positive[0] > 2. * positive[1] && positive[0] > 0.05,
+        "after the swap the +X face must gather the red half: {positive:?}"
+    );
+}
+
+/// Fixture work budget for the latency probe. The volume has 48 face slots and
+/// 8 samples, so a changed key starts with at most 384 work units pending; a
+/// 32-unit slice therefore completes it in at most 12 calls, the declared bound.
+const LATENCY_WORK_BUDGET: usize = 32;
+const LATENCY_CALL_BOUND: usize = 12;
+
+#[test]
+fn lighting_latency_is_bounded_and_declared() {
+    let mut world = World::new(0);
+    world.set([0, 0, 0], PROBE_FLOOR);
+    let mut volume = IndirectVolume::new([0, 0, 0], [2, 2, 2], 8, 16., probe_palette()).unwrap();
+    assert!(!volume.complete(), "a fresh volume has no current key");
+    // The first call with the key spends no work but makes the change fully
+    // observable: the volume is cleared and the remaining work is known.
+    volume
+        .update(&world, 0, sun(), UpdateBudget { rays: 0, work: 0 })
+        .unwrap();
+    assert!(!volume.complete());
+    let pending = volume.pending_work();
+    assert!(
+        pending <= 48 * 8,
+        "pending_work must bound the fixture: {pending}"
+    );
+    assert!(
+        pending.div_ceil(LATENCY_WORK_BUDGET) <= LATENCY_CALL_BOUND,
+        "the declared bound must cover the fixture"
+    );
+    let mut calls = 0;
+    let mut previous = pending;
+    while !volume.complete() {
+        let stats = volume
+            .update(
+                &world,
+                0,
+                sun(),
+                UpdateBudget {
+                    rays: 4096,
+                    work: LATENCY_WORK_BUDGET,
+                },
+            )
+            .unwrap();
+        calls += 1;
+        assert!(stats.rays <= 4096 && stats.work <= LATENCY_WORK_BUDGET);
+        assert!(
+            calls <= LATENCY_CALL_BOUND,
+            "completion took {calls} calls, above the declared bound {LATENCY_CALL_BOUND}"
+        );
+        let remaining = volume.pending_work();
+        assert!(remaining < previous, "work must advance every call");
+        assert_eq!(volume.complete(), stats.complete);
+        previous = remaining;
+    }
+    assert_eq!(volume.pending_work(), 0);
+    assert!(volume.valid_for(&world, 0, sun()));
+    // The sliced result equals one full-budget call: scheduling changes when the
+    // value appears, never what it converges to.
+    let mut whole = IndirectVolume::new([0, 0, 0], [2, 2, 2], 8, 16., probe_palette()).unwrap();
+    whole
+        .update(
+            &world,
+            0,
+            sun(),
+            UpdateBudget {
+                rays: usize::MAX,
+                work: usize::MAX,
+            },
+        )
+        .unwrap();
+    assert!(whole.complete());
+    for cell in [[0, 0, 0], [1, 1, 1]] {
+        for f in 0..6 {
+            assert_eq!(volume.sample(cell, f), whole.sample(cell, f));
+        }
+    }
+}
+
+#[test]
+fn superseded_lighting_never_becomes_visible() {
+    let world = probe_world();
+    let sun_a = sun();
+    let sun_b = tilted_sun([2., 1., 0.]);
+    let mut volume = probe_volume();
+    finish(&mut volume, &world, 0, sun_a);
+    assert!(volume.complete());
+    assert!(volume.valid_for(&world, 0, sun_a));
+    assert!(volume.source_valid(&world, 0));
+    assert!(volume.sample(RECEIVER_CELL, RECEIVER_FACE)[0] > 0.05);
+    // The newer light is recognized with a zero-work call: the old radiance is
+    // cleared in that same call, so it can never be observed after the change,
+    // and neither the old nor the new key validates while incomplete.
+    let stats = volume
+        .update(&world, 0, sun_b, UpdateBudget { rays: 0, work: 0 })
+        .unwrap();
+    assert!(!stats.complete && !volume.complete());
+    for cell in [RECEIVER_CELL, [0, 1, 0], [-3, 1, 0], [0, 0, 0]] {
+        for f in 0..6 {
+            assert_eq!(
+                volume.sample(cell, f),
+                [0.; 3],
+                "superseded radiance must be gone from cell {cell:?} face {f}"
+            );
+        }
+    }
+    assert!(!volume.valid_for(&world, 0, sun_a));
+    assert!(!volume.valid_for(&world, 0, sun_b));
+    assert!(
+        !volume.source_valid(&world, 0),
+        "incomplete is not publishable"
+    );
+    // Completing the newer light reproduces a fresh volume bit for bit: no
+    // sample accumulated for the old light can survive into the new result.
+    let mut fresh_b = probe_volume();
+    finish(&mut fresh_b, &world, 0, sun_b);
+    finish(&mut volume, &world, 0, sun_b);
+    for cell in [RECEIVER_CELL, [0, 1, 0], [-3, 1, 0], [0, 0, 0]] {
+        for f in 0..6 {
+            assert_eq!(volume.sample(cell, f), fresh_b.sample(cell, f));
+        }
+    }
+    assert!(volume.valid_for(&world, 0, sun_b) && volume.source_valid(&world, 0));
+    assert!(!volume.valid_for(&world, 0, sun_a));
+    // Re-requesting the superseded light reuses no mixed partial state: it
+    // clears again and equals a fresh old-light volume.
+    let mut fresh_a = probe_volume();
+    finish(&mut fresh_a, &world, 0, sun_a);
+    finish(&mut volume, &world, 0, sun_a);
+    for cell in [RECEIVER_CELL, [0, 1, 0], [-3, 1, 0], [0, 0, 0]] {
+        for f in 0..6 {
+            assert_eq!(volume.sample(cell, f), fresh_a.sample(cell, f));
+        }
+    }
+    assert!(volume.valid_for(&world, 0, sun_a));
+}
