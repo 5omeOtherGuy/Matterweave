@@ -2,8 +2,11 @@
 
 **Current worker routing (owner, 2026-09-13):** use direct Pi
 `deepseek/deepseek-flash` (DeepSeek V4.1 Flash) and OpenRouter
-`z-ai/glm-5.3-flash` for most implementation and review. Reserve Claude
-subscription Opus at **medium** effort for concretely complex tasks only.
+`z-ai/glm-5.3-flash` for most development. Use Claude subscription Opus
+at **medium** effort for independent review of completed implementations,
+results and fixes; this is the owner-designated complex-task role. Other Opus
+implementation assignments still require a concretely complex task. The already
+running GLM review may finish; subsequent acceptance reviews go to Opus.
 The owner reports the 5-hour limit resets in 17 minutes from their update;
 this is reported availability, not a verified reset. Do not retry before it.
 Never dispatch Astra workers. Preserve the global three-worker cap.

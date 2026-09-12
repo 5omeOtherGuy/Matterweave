@@ -1,8 +1,10 @@
 # Current status
 
 Owner routing update (2026-09-13): DeepSeek V4.1 Flash direct and GLM5.3
-Flash handle most work; Claude subscription at medium is reserved for complex
-tasks after its reported reset. No Astra workers. Both functional-fix authors
+Flash handle most development; the owner subsequently selected Claude/Opus
+at medium for independent review of results and fixes after its reported reset.
+Current GLM reviewer `w_94385293` may finish; subsequent acceptance reviews use
+Opus. Other Opus implementation work remains complex-task only. No Astra workers. Both functional-fix authors
 have finished: interaction `c1e8777` (integrated as `bb68e59`), independent
 GLM Flash review `w_a6f188e8` found no defects; detail diagnostic `648dda2`
 passes 21 scoped app tests and 122 detail tests, independent review pending.
