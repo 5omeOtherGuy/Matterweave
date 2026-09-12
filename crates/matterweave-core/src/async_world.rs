@@ -71,9 +71,10 @@ pub struct AsyncStats {
     pub stream_results: usize,
     /// Results dropped by saturation, cancellation or superseding requests.
     pub discarded: u64,
-    /// Consecutive edit-stale stream completions for the current destination.
-    /// Stream-specific: mesh churn never changes it. Drives the bounded
-    /// synchronous fallback ([`AsyncWorld::STALE_STREAM_FALLBACK_AFTER`]).
+    /// Consecutive edit-stale stream preparations rejected for the current
+    /// destination, wherever they were rejected: upstream in the worker or at
+    /// `poll_stream`. Stream-specific: mesh churn never changes it. Drives the
+    /// bounded synchronous fallback ([`AsyncWorld::STALE_STREAM_FALLBACK_AFTER`]).
     pub consecutive_stale_streams: u32,
     pub generation: u64,
 }
@@ -143,12 +144,21 @@ struct Queue {
     stream_result: Option<StreamResult>,
     stream_active: Option<([i32; 2], u64, u64, u64)>,
     stream_requested: Option<([i32; 2], u64, u64, u64)>,
-    /// Consecutive edit-stale stream completions for the current destination.
-    /// Incremented only when `poll_stream` rejects a preparation that is current
-    /// in generation, seed, center and streaming mode but predates an edit
-    /// (`source_revision != world.revision()`). Mesh churn, pending work,
-    /// superseded centers, cancellations and world replacement never increment
-    /// it; they reset it. Saturates instead of wrapping.
+    /// Consecutive edit-stale stream preparations rejected for the current
+    /// destination. A completed preparation is rejected in exactly one place, so
+    /// it is counted in exactly one place: either upstream in `run_job` (the
+    /// request already advanced, or the staged result it displaces) or at
+    /// `poll_stream`. It counts only when the rejected preparation is current in
+    /// generation, seed and destination but predates an edit (its
+    /// `source_revision` is not the one now wanted).
+    ///
+    /// Nothing else increments it, and the two ways it stops counting are
+    /// distinct. Left unchanged: mesh work of any kind, pending stream work that
+    /// has not been rejected yet, a queued replacement that never ran, and a
+    /// completion stamped with a retired generation. Cleared: a successful
+    /// publication, a rejection that is not edit-stale (superseded destination or
+    /// seed replacement), a new or reversed destination, a reached destination and
+    /// an explicit [`AsyncWorld::reset`]. Saturates instead of wrapping.
     stale_streams: u32,
     /// Destination the `stale_streams` count belongs to. A new destination
     /// resets the count instead of inheriting it.
@@ -160,6 +170,31 @@ struct Queue {
     shutdown: bool,
     generation: u64,
     discarded: u64,
+}
+
+impl Queue {
+    /// Records one rejected stream preparation for `center`. `edit_stale` means it
+    /// was current in destination, seed and generation but predates an edit; every
+    /// other rejection clears the count. The single place the count grows, so the
+    /// upstream and `poll_stream` rejection paths cannot drift apart.
+    fn note_rejected_stream(&mut self, center: [i32; 2], edit_stale: bool) {
+        if !edit_stale {
+            self.clear_stall();
+            return;
+        }
+        if self.stale_center == Some(center) {
+            self.stale_streams = self.stale_streams.saturating_add(1);
+        } else {
+            self.stale_center = Some(center);
+            self.stale_streams = 1;
+        }
+    }
+
+    /// Drops any outstanding stall: no destination owes a synchronous fallback.
+    fn clear_stall(&mut self) {
+        self.stale_streams = 0;
+        self.stale_center = None;
+    }
 }
 
 struct Shared {
@@ -251,8 +286,7 @@ impl AsyncWorld {
             queue.stream_result = None;
             queue.stream_requested = None;
             // Destination reached or streaming off: no stall is outstanding.
-            queue.stale_streams = 0;
-            queue.stale_center = None;
+            queue.clear_stall();
             return false;
         }
         let mut queue = self.shared.lock();
@@ -262,8 +296,7 @@ impl AsyncWorld {
         if previous != Some(center) {
             // Reversal or a new destination starts a fresh stall count; the old
             // destination's refusals must not force a fallback for the new one.
-            queue.stale_streams = 0;
-            queue.stale_center = None;
+            queue.clear_stall();
         }
         let generation = queue.generation;
         let identity = (center, world.revision(), world.seed(), generation);
@@ -318,9 +351,11 @@ impl AsyncWorld {
     /// superseded or when the controller generation changed. Until a valid window
     /// arrives the old complete window stays resident and traversable.
     ///
-    /// A rejection that is current in generation, seed, center and streaming mode
-    /// but predates an edit counts toward the bounded synchronous fallback
-    /// (`sync_fallback_if_stalled`); any other rejection resets that count.
+    /// A rejection here that is current in generation, seed, center and streaming
+    /// mode but predates an edit counts toward the bounded synchronous fallback
+    /// (`sync_fallback_if_stalled`); any other rejection resets that count. A
+    /// completed preparation the worker already rejected never reaches this
+    /// function and is counted there instead, exactly once (see `run_job`).
     pub fn poll_stream(&mut self, world: &mut World) -> bool {
         let mut queue = self.shared.lock();
         let Some(result) = queue.stream_result.take() else {
@@ -338,28 +373,18 @@ impl AsyncWorld {
                 && result.seed == world.seed()
                 && world.is_streaming()
                 && result.source_revision != world.revision();
-            if edit_stale {
-                if queue.stale_center == Some(result.center) {
-                    queue.stale_streams = queue.stale_streams.saturating_add(1);
-                } else {
-                    queue.stale_center = Some(result.center);
-                    queue.stale_streams = 1;
-                }
-            } else {
-                queue.stale_streams = 0;
-                queue.stale_center = None;
-            }
+            queue.note_rejected_stream(result.center, edit_stale);
             return false;
         }
-        queue.stale_streams = 0;
-        queue.stale_center = None;
+        queue.clear_stall();
         drop(queue);
         *world = result.world;
         true
     }
 
-    /// Consecutive edit-stale stream completions counted for the current
-    /// destination. Mesh churn and ordinary pending work never change it.
+    /// Consecutive edit-stale stream preparations counted for the current
+    /// destination, whether the worker rejected them upstream or `poll_stream`
+    /// did. Mesh churn and pending work that never ran change nothing.
     pub fn consecutive_stale_streams(&self) -> u32 {
         self.shared.lock().stale_streams
     }
@@ -376,30 +401,34 @@ impl AsyncWorld {
             return false;
         };
         {
-            let queue = self.shared.lock();
+            let mut queue = self.shared.lock();
+            if !world.is_streaming() || world.stream_center() == Some(center) {
+                // Destination already reached (or streaming is off): nothing is
+                // outstanding, so clear the stall this destination owns instead of
+                // leaving it armed for a later frame. A stall counted for another
+                // destination is left alone.
+                if queue.stale_center == Some(center) {
+                    queue.clear_stall();
+                }
+                return false;
+            }
             if queue.stale_streams < Self::STALE_STREAM_FALLBACK_AFTER
                 || queue.stale_center != Some(center)
                 || self.requested_center != Some(center)
             {
                 return false;
             }
-            if !world.is_streaming() || world.stream_center() == Some(center) {
-                return false;
-            }
         }
-        if world.stream_around(eye) {
-            let mut queue = self.shared.lock();
-            queue.stale_streams = 0;
-            queue.stale_center = None;
-            return true;
+        // The destination differs from the resident centre, the world streams and
+        // `eye` has a centre, all checked above and unchanged since (`world` is
+        // exclusively borrowed), so only revision exhaustion can refuse here. A
+        // refusal keeps the count, and the caller retries cheaply next frame
+        // instead of spinning on a synchronous window.
+        if !world.stream_around(eye) {
+            return false;
         }
-        // Destination already reached clears the stall without a fallback.
-        if world.stream_center() == Some(center) {
-            let mut queue = self.shared.lock();
-            queue.stale_streams = 0;
-            queue.stale_center = None;
-        }
-        false
+        self.shared.lock().clear_stall();
+        true
     }
 
     /// Requests a mesh for `key` from a copy of only that chunk and its halo.
@@ -477,8 +506,7 @@ impl AsyncWorld {
         queue.stream = None;
         queue.stream_result = None;
         queue.stream_requested = None;
-        queue.stale_streams = 0;
-        queue.stale_center = None;
+        queue.clear_stall();
         // The generation is an opaque, strictly increasing cancellation token that is
         // never reused: each reset mints a fresh value that invalidates every job
         // stamped with an older one, including the job in flight. Saturating at
@@ -598,25 +626,58 @@ fn run_job(shared: &Shared, job: Job) {
             let mut queue = shared.lock();
             queue.inflight = 0;
             queue.stream_active = None;
-            if queue.shutdown
-                || queue.generation != job.generation
-                || queue.stream_requested
-                    != Some((job.center, job.source_revision, job.seed, job.generation))
-            {
+            if queue.shutdown || queue.generation != job.generation {
+                // Cancelled or retired: completed work nobody can use. The stall
+                // count belongs to live work of the current generation, so a
+                // late pre-generation completion leaves it unchanged.
                 queue.discarded += 1;
                 return;
             }
-            let superseded = queue
-                .stream_result
-                .replace(StreamResult {
-                    world,
-                    center: job.center,
-                    source_revision: job.source_revision,
-                    seed: job.seed,
-                    generation: job.generation,
-                })
-                .is_some();
-            queue.discarded += u64::from(superseded);
+            if queue.stream_requested
+                != Some((job.center, job.source_revision, job.seed, job.generation))
+            {
+                // The completed preparation is rejected here and never reaches
+                // `poll_stream`, so this is its one classification: a newer
+                // request for the SAME destination, seed and generation means an
+                // edit advanced the revision mid-preparation (the sustained-edit
+                // schedule with the next request landing before completion).
+                // Anything else is a superseded center, a seed replacement or a
+                // cleared request, which resets instead of counting. Queued
+                // replacements never complete and are never counted.
+                queue.discarded += 1;
+                let edit_stale =
+                    queue
+                        .stream_requested
+                        .is_some_and(|(center, revision, seed, generation)| {
+                            center == job.center
+                                && seed == job.seed
+                                && generation == job.generation
+                                && revision != job.source_revision
+                        });
+                queue.note_rejected_stream(job.center, edit_stale);
+                return;
+            }
+            let displaced = queue.stream_result.replace(StreamResult {
+                world,
+                center: job.center,
+                source_revision: job.source_revision,
+                seed: job.seed,
+                generation: job.generation,
+            });
+            if let Some(old) = displaced {
+                // The displaced staged preparation is rejected here and never
+                // reaches `poll_stream`, so classify it exactly once by the same
+                // rule: same destination, seed and generation with an older
+                // revision is edit-stale work; anything else resets. The freshly
+                // staged preparation is not counted here; `poll_stream` counts it
+                // if and only if it is rejected there.
+                queue.discarded += 1;
+                let edit_stale = old.center == job.center
+                    && old.seed == job.seed
+                    && old.generation == job.generation
+                    && old.source_revision != job.source_revision;
+                queue.note_rejected_stream(old.center, edit_stale);
+            }
         }
         Job::Mesh(job) => {
             let mesh = mesh_halo(job.key, &job.voxels, job.revision);
@@ -1572,8 +1633,260 @@ mod tests {
         assert_eq!(applied, 2, "fallback must fire exactly once per threshold");
         assert_window_supported(&world, eye_a);
         assert!(jobs.stats().within_bounds());
-        // Destination reached clears the stall without firing.
+
+        // A reached destination clears an outstanding stall instead of leaving it
+        // armed for a later frame. Built from a real count, then the destination is
+        // reached by another means (the synchronous path), so the assertion is not
+        // satisfied by the reset a fallback or a publication would have done.
+        let mut world = streamed(20260912, origin_eye);
+        let mut jobs = AsyncWorld::manual();
+        for frame in 0..after {
+            let material = 9 + (frame % 2) as u8;
+            let (queued, prepared, published) =
+                async_frame(&mut jobs, &mut world, eye_a, Some((edit, material)));
+            assert!(queued && prepared && !published);
+        }
+        assert_eq!(jobs.consecutive_stale_streams(), after);
+        assert!(world.stream_around(eye_a), "synchronous rewindow refused");
         assert!(!jobs.sync_fallback_if_stalled(&mut world, eye_a));
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            0,
+            "a reached destination kept an armed stall"
+        );
+        // A stall counted for another destination is left alone.
+        let mut world = streamed(20260912, origin_eye);
+        let mut jobs = AsyncWorld::manual();
+        for material in [9, 8] {
+            let (queued, prepared, published) =
+                async_frame(&mut jobs, &mut world, eye_a, Some((edit, material)));
+            assert!(queued && prepared && !published);
+        }
+        assert_eq!(jobs.consecutive_stale_streams(), 2);
+        assert!(!jobs.sync_fallback_if_stalled(&mut world, origin_eye));
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            2,
+            "reaching an unrelated destination cleared another destination's stall"
+        );
+    }
+
+    /// Upstream rejection path: `run_job` discards a completed preparation when
+    /// `stream_requested` has already advanced to a newer revision, so the work
+    /// never reaches `poll_stream`. Real schedule from the second frame on: the
+    /// next frame's request lands, then the previous frame's job completes and is
+    /// rejected upstream, then the new job is taken, an edit lands, and the poll
+    /// finds nothing staged. Repeating this must still drive the bounded fallback
+    /// through the exact app-invoked sequence; counting only in `poll_stream`
+    /// never fires here, so the sandbox would stall under sustained edits.
+    #[test]
+    fn upstream_discard_with_next_request_before_completion_still_drives_fallback() {
+        const SEED: u64 = 20260912;
+        let origin_eye = [0.0, 4.0, 0.0];
+        let storm_eye = [120.0, 4.0, 0.0];
+        let edit = [0, 20, 0];
+        let mut world = streamed(SEED, origin_eye);
+        assert_eq!(world.get(edit), 0);
+        let mut jobs = AsyncWorld::manual();
+        let after = AsyncWorld::STALE_STREAM_FALLBACK_AFTER as usize;
+        // Job taken last frame: it always completes after this frame's request.
+        let mut carried: Option<Job> = None;
+        let mut edits: Vec<([i32; 3], u8)> = Vec::new();
+        let mut fallbacks = 0_usize;
+        let mut published_at = None;
+        for frame in 0..after + 4 {
+            let material = 9 + (frame % 2) as u8;
+            // Latest destination first, exactly like the explorer tick.
+            assert!(
+                jobs.request_stream(&world, storm_eye),
+                "frame {frame}: the request was not queued"
+            );
+            // The previous frame's job completes after this request: with an edit
+            // already past its snapshot revision, the worker rejects it upstream
+            // and stages nothing.
+            if let Some(job) = carried.take() {
+                let discarded_before = jobs.stats().discarded;
+                run_job(&jobs.shared, job);
+                assert_eq!(
+                    jobs.stats().stream_results,
+                    0,
+                    "frame {frame}: an edit-stale completion was staged"
+                );
+                assert!(
+                    jobs.stats().discarded > discarded_before,
+                    "frame {frame}: the upstream completion was not discarded"
+                );
+            }
+            carried = Some(take_job(&mut jobs.shared.lock()));
+            assert!(world.set(edit, material), "frame {frame}: edit refused");
+            edits.push((edit, material));
+            assert!(
+                !jobs.poll_stream(&mut world),
+                "frame {frame}: a stale window was published"
+            );
+            if jobs.sync_fallback_if_stalled(&mut world, storm_eye) {
+                fallbacks += 1;
+                published_at = Some(frame);
+                // Residency moved: the origin edit is evicted with its chunk and
+                // kept as a stored override until re-entry.
+                assert_eq!(world.get(edit), 0, "an evicted chunk stayed materialized");
+                break;
+            }
+            // One upstream edit-stale discard per frame after the first.
+            assert_eq!(
+                jobs.consecutive_stale_streams(),
+                frame as u32,
+                "upstream discard did not count toward the stall"
+            );
+            assert!(jobs.stats().within_bounds());
+        }
+        assert_eq!(fallbacks, 1, "exactly one bounded fallback must fire");
+        assert_eq!(
+            published_at,
+            Some(after),
+            "fallback must fire after STALE_STREAM_FALLBACK_AFTER upstream discards"
+        );
         assert_eq!(jobs.consecutive_stale_streams(), 0);
+        assert!(jobs.stats().within_bounds());
+        assert_window_supported(&world, storm_eye);
+        // Re-entry restores the edits the fallback carried past eviction, and the
+        // round trip equals the ordered synchronous replay.
+        let last_material = edits.last().copied().unwrap().1;
+        let (queued, prepared, published) = async_frame(&mut jobs, &mut world, origin_eye, None);
+        assert!(queued && prepared && published);
+        assert_window_supported(&world, origin_eye);
+        assert_eq!(
+            world.get(edit),
+            last_material,
+            "the edit did not survive fallback eviction and re-entry"
+        );
+        let mut reference = streamed(SEED, origin_eye);
+        for (cell, material) in &edits {
+            assert!(reference.set(*cell, *material));
+        }
+        assert!(reference.stream_around(storm_eye));
+        assert!(reference.stream_around(origin_eye));
+        assert_worlds_equal(&world, &reference);
+    }
+
+    /// Controls for the upstream counting path: only an edit on the still-wanted
+    /// destination counts there. An abandoned destination, a seed replacement, a
+    /// retired generation and mesh completions must not raise or disturb the
+    /// count, and one rejected preparation must be counted exactly once even when
+    /// it is displaced while staged rather than rejected at `poll_stream`.
+    #[test]
+    fn upstream_discard_counts_only_edit_stale_work_for_the_wanted_destination() {
+        const SEED: u64 = 20260912;
+        let origin_eye = [0.0, 4.0, 0.0];
+        let eye_a = [120.0, 4.0, 0.0];
+        let eye_b = [-120.0, 4.0, 0.0];
+        let edit = [0, 20, 0];
+
+        // Two stales toward A, then a reversal to B while A's job is in flight:
+        // A's late completion belongs to the abandoned destination and must not
+        // re-raise the count the reversal cleared.
+        let mut world = streamed(SEED, origin_eye);
+        let mut jobs = AsyncWorld::manual();
+        for material in [9, 8] {
+            let (queued, prepared, published) =
+                async_frame(&mut jobs, &mut world, eye_a, Some((edit, material)));
+            assert!(queued && prepared && !published);
+        }
+        assert_eq!(jobs.consecutive_stale_streams(), 2);
+        assert!(jobs.request_stream(&world, eye_a));
+        let job = take_job(&mut jobs.shared.lock());
+        assert!(world.set(edit, 9));
+        assert!(jobs.request_stream(&world, eye_b));
+        assert_eq!(jobs.consecutive_stale_streams(), 0);
+        run_job(&jobs.shared, job);
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            0,
+            "a completion for the abandoned destination counted upstream"
+        );
+
+        // A world replacement with a different seed is not an edit stall: the
+        // completion is discarded and the count clears.
+        let mut world = streamed(SEED, origin_eye);
+        let mut jobs = AsyncWorld::manual();
+        for material in [9, 8] {
+            let (queued, prepared, published) =
+                async_frame(&mut jobs, &mut world, eye_a, Some((edit, material)));
+            assert!(queued && prepared && !published);
+        }
+        assert_eq!(jobs.consecutive_stale_streams(), 2);
+        assert!(jobs.request_stream(&world, eye_a));
+        let job = take_job(&mut jobs.shared.lock());
+        let world = streamed(SEED + 1, origin_eye);
+        assert!(jobs.request_stream(&world, eye_a));
+        run_job(&jobs.shared, job);
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            0,
+            "a seed replacement counted as an edit stall"
+        );
+
+        // A completion stamped with a retired generation is nobody's work: it
+        // neither counts nor disturbs the live count rebuilt after the reset.
+        let mut world = streamed(SEED, origin_eye);
+        let mut jobs = AsyncWorld::manual();
+        assert!(jobs.request_stream(&world, eye_a));
+        let job = take_job(&mut jobs.shared.lock());
+        jobs.reset();
+        assert_eq!(jobs.consecutive_stale_streams(), 0);
+        for material in [9, 8] {
+            let (queued, prepared, published) =
+                async_frame(&mut jobs, &mut world, eye_a, Some((edit, material)));
+            assert!(queued && prepared && !published);
+        }
+        assert_eq!(jobs.consecutive_stale_streams(), 2);
+        run_job(&jobs.shared, job);
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            2,
+            "a retired completion disturbed the live stall count"
+        );
+        // Mesh work completing under an outstanding stall changes nothing either.
+        let key = world
+            .chunk_keys()
+            .into_iter()
+            .next()
+            .expect("resident chunk");
+        assert!(jobs.request_mesh(&world, key));
+        jobs.drain();
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            2,
+            "a mesh completion disturbed the stream-specific stall count"
+        );
+        assert!(jobs.stats().within_bounds());
+
+        // Displacement counts the displaced preparation exactly once, and staging
+        // the fresh one counts nothing: the fresh one is still current, so it
+        // publishes and clears instead of counting a second time.
+        let mut world = streamed(SEED, origin_eye);
+        let mut jobs = AsyncWorld::manual();
+        assert!(jobs.request_stream(&world, eye_a));
+        let job = take_job(&mut jobs.shared.lock());
+        run_job(&jobs.shared, job);
+        assert_eq!(jobs.stats().stream_results, 1);
+        assert_eq!(jobs.consecutive_stale_streams(), 0);
+        assert!(world.set(edit, 9));
+        assert!(jobs.request_stream(&world, eye_a));
+        let job = take_job(&mut jobs.shared.lock());
+        run_job(&jobs.shared, job);
+        assert_eq!(jobs.stats().stream_results, 1);
+        assert_eq!(
+            jobs.consecutive_stale_streams(),
+            1,
+            "the displaced preparation was not counted exactly once"
+        );
+        assert!(jobs.poll_stream(&mut world));
+        assert_eq!(jobs.consecutive_stale_streams(), 0);
+        assert_window_supported(&world, eye_a);
+        // The window moved, so the origin edit is evicted with its chunk and kept
+        // as a stored override until re-entry.
+        assert_eq!(world.get(edit), 0);
+        assert!(jobs.stats().within_bounds());
     }
 }

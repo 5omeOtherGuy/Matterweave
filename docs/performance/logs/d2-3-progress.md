@@ -200,3 +200,141 @@ unchanged). No renderer/device run here.
 | Real sandbox callsite and physics synchronization wired | app build/tests plus source inspection | worker | **PASS** |
 | Scoped checks, commit, evidence log | exact commands above; SHAs in handoff | worker | **PASS** |
 | Independent review and combined Android acceptance | lead gate, never claim passed | lead | **NOT RUN** |
+
+---
+
+# Corrective review of PR39 (independent, 2026-09-12)
+
+Scope: `crates/matterweave-core/src/async_world.rs` and its tests. The explorer
+tick was inspected and left unchanged (`apps/explorer/src/lib.rs:1023-1041`): its
+order — `request_stream`, `poll_stream`, else `sync_fallback_if_stalled`, physics
+sync on either publication — is exactly what the tests drive, so no app edit was
+needed. `AsyncWorld`'s public signatures are unchanged.
+
+## Confirmed defect 1 (critical): the fallback never fires on the real schedule
+
+`run_job` rejects a completed preparation itself when `stream_requested` has
+already advanced, so the work never reaches `poll_stream`. The shipped counter
+only incremented in `poll_stream`, so the real frame order
+`request R0 → take job → edit to R1 → request R1 → complete R0` produced zero
+counts and the sandbox stalled indefinitely under sustained edits.
+
+Demonstrated red against the shipped code at `343dc36`, with only the new test
+added (`RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=…/streaming-progress-target
+cargo test -p matterweave-core --lib -- async_world`):
+
+```
+test async_world::tests::upstream_discard_with_next_request_before_completion_still_drives_fallback ... FAILED
+  assertion `left == right` failed: upstream discard did not count toward the stall
+  left: 0   right: 1
+test result: FAILED. 12 passed; 1 failed
+```
+
+## Confirmed defect 2: a rejected preparation could go uncounted or uncleared twice over
+
+The same upstream rejection point also decides seed replacement and abandoned
+destinations. With counting only in `poll_stream`, a world replacement with a
+different seed left an old destination's stall armed (count stayed at 2 instead
+of clearing), and a preparation displaced while staged was never classified at
+all. Both are now classified exactly once at their single rejection point.
+
+## Confirmed defect 3: `sync_fallback_if_stalled` left a reached destination armed
+
+The reached-destination check returned before the advertised clearing branch, so
+that branch was unreachable dead code (`stream_around` can only refuse for
+revision exhaustion once the pre-checks passed) and a real outstanding count
+survived a destination reached by other means.
+
+Both were demonstrated red against the shipped code with the corrected tests:
+
+```
+... upstream_discard_counts_only_edit_stale_work_for_the_wanted_destination ... FAILED
+  assertion `left == right` failed: a seed replacement counted as an edit stall
+  left: 2   right: 0
+... stall_fallback_ignores_pending_and_mesh_churn_and_resets_on_reversal_cancel_and_success ... FAILED
+  assertion `left == right` failed: a reached destination kept an armed stall
+  left: 3   right: 0
+test result: FAILED. 11 passed; 3 failed
+```
+
+The displacement control was confirmed red in isolation (the assertions above
+mask it in one run): `the displaced preparation was not counted exactly once,
+left: 0, right: 1`.
+
+## Confirmed defect 4 (documentation): the counter contract was wrong
+
+`Queue::stale_streams` claimed increments happen "only when `poll_stream` rejects"
+and that pending/mesh churn *reset* the count. Neither was true. The doc now
+separates the two outcomes explicitly: **left unchanged** by mesh work, pending
+stream work, a queued replacement that never ran and a retired-generation
+completion; **cleared** by publication, a non-edit-stale rejection, a new or
+reversed destination, a reached destination and `reset()`.
+
+## Corrections applied
+
+- Count a rejected stream preparation at its actual rejection point, exactly
+  once, through one shared classifier `Queue::note_rejected_stream` used by both
+  the `run_job` upstream reject, the `run_job` displaced-staged reject and
+  `poll_stream`. Stale snapshots are still never staged or published, and the
+  freshly staged preparation is never counted at staging time.
+- `sync_fallback_if_stalled`: the reached-destination / non-streaming check now
+  clears the stall it owns (and only that destination's stall), the unreachable
+  post-failure branch is deleted, and the remaining refusal is documented as
+  revision exhaustion only.
+- Doc corrections above; `clear_stall()` replaces the four hand-inlined resets.
+
+## Verification (actual results, this correction)
+
+```
+RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 \
+CARGO_TARGET_DIR=/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/streaming-progress-target \
+cargo test -p matterweave-core
+  lib 36 passed; api 1; async_world 10; performance_replay 10; streaming 8;
+  world 13; doc-tests 0 — 0 failed in every suite
+  (async_world module unit tests: 14 passed, including the 2 new ones)
+cargo clippy -p matterweave-core --all-targets -- -D warnings   # clean
+cargo fmt -p matterweave-core -- --check                        # clean
+```
+
+New/strengthened tests, all deterministic (`AsyncWorld::manual()`, no sleeps):
+
+- `upstream_discard_with_next_request_before_completion_still_drives_fallback`
+  (new, red→green): the real interleaving, asserting nothing is staged, the
+  upstream discard is counted, one bounded fallback fires, no stale window is
+  published, the edit survives eviction and re-entry, and the result is
+  bit-identical to the ordered synchronous replay.
+- `upstream_discard_counts_only_edit_stale_work_for_the_wanted_destination`
+  (new): abandoned destination, seed replacement, retired generation, mesh
+  completion under a live stall, and exactly-once counting of a displaced
+  staged preparation.
+- `stall_fallback_ignores_pending_and_mesh_churn_and_resets_on_reversal_cancel_and_success`
+  (strengthened): the previous destination-reached assertion was vacuous (the
+  count was already 0); it now builds a real count of 3, reaches the destination
+  synchronously, and asserts both the clearing and that an unrelated
+  destination's stall is left alone.
+
+## Remaining limitations (honest)
+
+- App-suite and renderer/device behaviour were not re-run: no app source change
+  was made. Integrated Android and final acceptance remain the lead's, **NOT RUN**.
+- The synchronous fallback cost statement above is unchanged and still
+  host-only; no frame-time measurement was taken in this correction.
+- The counter is advisory state shared with the worker thread; the tests drive
+  the state machine deterministically rather than racing a real worker, so
+  thread-interleaving beyond the documented single-worker ordering is reasoned
+  about from the lock discipline, not measured.
+- Unchanged and still true: a stall can only be observed through
+  `consecutive_stale_streams()`/`AsyncStats`; nothing else in the engine reads it.
+
+| Criterion | Verification | Owner | Result |
+| --- | --- | --- | --- |
+| PR39 and the preserved partial repair reviewed; four concrete defects resolved | source review + red/green above | worker | **PASS** |
+| Real interleaving progresses without stale publication | `upstream_discard_…_still_drives_fallback` red at `343dc36`, green after | worker | **PASS** |
+| No double counting; pending/mesh/cancellation/reversal/seed controls | `upstream_discard_counts_only_…` + strengthened control test | worker | **PASS** |
+| Scoped core tests, clippy, fmt, corrective commit | commands and results above | worker | **PASS** |
+| Independent corrective review and integrated Android acceptance | lead gate | lead | **NOT RUN** |
+
+The earlier PR39 verdict rows above this section are superseded: "Sustained-edit
+progress" and "Destination/reset/cancellation and mesh churn safe" were claimed
+PASS while the upstream rejection path left the fallback unreachable on the real
+frame schedule. Treat them as **FAILED at `343dc36`**, resolved here.
