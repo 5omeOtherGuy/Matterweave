@@ -991,7 +991,19 @@
         "detail@05549eb",
         "streaming@f63055b"
       ],
-      "worker": "w_d124c729"
-    }
+      "worker": "w_d124c729",
+      "state": "completed-no-concrete-findings"
+    },
+    "streaming_progress": {
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/streaming-progress",
+      "base": "d95c63ef8268fae2f3efeb535105548d54c865e4",
+      "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/streaming-progress.md",
+      "state": "running",
+      "profile": "muse-free",
+      "ownership": "core async streaming; explorer tick streaming block only; dedicated log",
+      "worker": "w_8783a4d7"
+    },
+    "device_policy": "Owner requests coherent development batches and fewer live tests. Relevant host tests/review before one integrated Android acceptance; immediate device checks only for actual Android/GPU/lifecycle uncertainty.",
+    "streaming_contract_pr": 37
   }
 }

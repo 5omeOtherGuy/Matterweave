@@ -1,5 +1,11 @@
 # Implementation handoff
 
+**Post-reboot:** two free Muse workers are implementing mesh lighting and sustained-edit
+streaming progress; see the board. PR37 contains reviewed host streaming contracts.
+Owner now requests fewer intermediate live tests and coherent development batches;
+retain relevant host/review checks and combined Android acceptance. The SSD remains
+the working location while another session investigates the HDD.
+
 **Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
 
 **Recovery update, 2026-09-12:** PR #35 merged at `ac1ce444` with all six checks

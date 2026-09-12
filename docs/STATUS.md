@@ -1,5 +1,23 @@
 # Current status
 
+## Post-reboot primary-plan development — 2026-09-12
+
+The owner prioritizes development batches over repeated intermediate live checks.
+Host tests and independent review remain required; Android acceptance is batched
+on integrated behavioral changes. Two free Muse workers implement native
+mesh-lighting publication and the actual continuous-edit streaming progress fix.
+Gemini corrective review of detail05549eb and streamingf63055b found no concrete
+defects. Streaming host contract checks are in PR37; application progress and
+Android streaming acceptance remain open.
+
+Clean CI source4a60df7 (tree identical to mainac1ce444) was re-signed with the
+existing debug key, verified for signature/16KiB alignment, installed without data
+clear, and visually ran both wetland and the existing solved Relay save. All four
+original saves were verified restored byte-for-byte after smoke. This revalidates
+the existing install/run slice, not the final E8 candidate.
+[Manifest](evidence/2026-09-12-restart-smoke/manifest.json).
+
+
 **Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
 
 ## Recovery and continued development — 2026-09-12
