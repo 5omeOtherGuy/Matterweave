@@ -77,12 +77,27 @@ BASE_SAVE_NAME = "wetland-session.json"
 PROFILE_REQUEST_NAME = "profile-frames.txt"
 GALLERY_MARKER_NAME = "detail-gallery.txt"
 PROFILE_ROWS = 100000
-EXPECTED_GENERATOR = 2
 EXPECTED_BODIES = 6
 EXPECTED_SEED = 20260908
-EXPECTED_COMPOSITION = "f458591e7b345546"
-# Exact frozen-composition scene size; a smaller map is a different experiment.
-EXPECTED_SCENE = {"cells": 34864520, "instances": 8324}
+# The generator under test is never assumed: it is read from the frozen build
+# manifests and then applied consistently to the fixture, the base-save
+# invalidity check, the recovered session and the expected scene size.
+# The app's current showcase generator is
+# matterweave_detail::SHOWCASE_GENERATOR_VERSION (3, crates/matterweave-detail/src/showcase.rs).
+# Generator 2 stays accepted only so the existing frozen generator-2 paired
+# experiment remains reproducible.
+CURRENT_GENERATOR = 3
+SUPPORTED_GENERATORS = (2, 3)
+# Exact frozen-composition scene sizes; a smaller map is a different experiment.
+# Sources (host-generated composition records, not performance results):
+#   dfb9f40519a3c151 - docs/evidence/full-wetland-generator3.json:
+#       counts.instance_expanded_occupied_cells 34716467, counts.instances 8302
+#   f458591e7b345546 - docs/performance/logs/completion-execution.md:
+#       "Exact 34864520 cells/8324 instances loaded."
+KNOWN_COMPOSITIONS = {
+    "dfb9f40519a3c151": {"generator": 3, "cells": 34716467, "instances": 8302},
+    "f458591e7b345546": {"generator": 2, "cells": 34864520, "instances": 8324},
+}
 MAX_EDITS = 4096          # apps/explorer/src/wetland_state.rs MAX_EDITS
 MAX_PITCH = 1.5           # SavedWetland::validate
 MAX_EYE_ABS = 16384.0     # SavedWetland::validate
@@ -226,11 +241,13 @@ def _finite(value, what, limit=None):
     return value
 
 
-def check_fixture(raw, seed=EXPECTED_SEED):
+def check_fixture(raw, generator, seed=EXPECTED_SEED):
     """Validate the lead-provided benchmark session bytes; raise ValueError.
 
     Mirrors the invariants `SavedWetland::validate` enforces on the device plus
-    the experiment's own requirements (known seed, empty edit list).
+    the experiment's own requirements (known seed, empty edit list). `generator`
+    is the value the frozen build manifests declare, so a fixture written for a
+    different generator is rejected before anything is written to the device.
     """
     if len(raw) > 2 * 1024 * 1024:
         raise ValueError("fixture exceeds the app's 2 MiB save limit")
@@ -239,9 +256,9 @@ def check_fixture(raw, seed=EXPECTED_SEED):
         raise ValueError("fixture must be a JSON object")
     if save.get("version") != 1:
         raise ValueError(f"fixture version must be 1, got {save.get('version')!r}")
-    if save.get("generator") != EXPECTED_GENERATOR:
+    if save.get("generator") != generator or isinstance(save.get("generator"), bool):
         raise ValueError(
-            f"fixture generator must be {EXPECTED_GENERATOR}, got {save.get('generator')!r}")
+            f"fixture generator must be {generator}, got {save.get('generator')!r}")
     if save.get("seed") != seed or isinstance(save.get("seed"), bool):
         raise ValueError(f"fixture seed must be {seed}, got {save.get('seed')!r}")
     edits = save.get("edits")
@@ -486,7 +503,7 @@ def record_idle_window(device, out, reference_row, args):
         "no app capture launched")
 
 
-def preflight_files(device, out, fixture_bytes, ownership):
+def preflight_files(device, out, fixture_bytes, ownership, generator):
     """Check app-private state before writing the single worker-owned fixture."""
     before = device.list_files()
     if PROFILE_REQUEST_NAME in before and not ownership.owns(PROFILE_REQUEST_NAME):
@@ -506,9 +523,9 @@ def preflight_files(device, out, fixture_bytes, ownership):
         raise TrialError(
             f"base files/{BASE_SAVE_NAME} is missing; the app would start a fresh "
             "session and never scan recovery slots, so the fixture would be ignored")
-    if not base_save_is_invalid_for(base, EXPECTED_GENERATOR):
+    if not base_save_is_invalid_for(base, generator):
         raise TrialError(
-            f"base {BASE_SAVE_NAME} is valid for generator {EXPECTED_GENERATOR}; the "
+            f"base {BASE_SAVE_NAME} is valid for generator {generator}; the "
             "recovery fixture would NOT be selected and the user's save must not be touched")
     existing = device.pull_private(FIXTURE_REMOTE_NAME)
     if existing is not None and not ownership.owns(FIXTURE_REMOTE_NAME):
@@ -524,7 +541,7 @@ def preflight_files(device, out, fixture_bytes, ownership):
         "files_before": sorted(before),
         "base_save_present": base is not None,
         "base_save_sha256": hashlib.sha256(base).hexdigest() if base is not None else None,
-        "base_save_invalid_for_generator": EXPECTED_GENERATOR,
+        "base_save_invalid_for_generator": generator,
         "fixture_remote": "files/" + FIXTURE_REMOTE_NAME,
         "fixture_sha256": hashlib.sha256(fixture_bytes).hexdigest(),
         "fixture_preexisting": existing is not None,
@@ -686,7 +703,8 @@ def collect_window(device, out, pid, layer, args):
             "health_sha256": sha256_file(out / "health.jsonl")}
 
 
-def finish_and_pull(device, out, before, fixture_bytes, ownership, capture_state="on"):
+def finish_and_pull(device, out, before, fixture_bytes, ownership, generator,
+                    capture_state="on"):
     """HOME (so the app saves and flushes), force-stop, then pull artifacts.
 
     With `capture_state="off"` no profile request was created, so nothing may
@@ -735,7 +753,9 @@ def finish_and_pull(device, out, before, fixture_bytes, ownership, capture_state
     if session is None:
         raise TrialError("worker fixture disappeared during the trial")
     (out / "session-after.json").write_bytes(session)
-    scene = check_fixture(session)  # same invariants: gen 2, six bodies, finite pose
+    # Same invariants as the pushed fixture: the generator the manifests
+    # declare, six frozen bodies and a finite pose.
+    scene = check_fixture(session, generator)
     request_present = PROFILE_REQUEST_NAME in after
     consumed = (not request_present) if expect_capture else None
     if expect_capture and consumed and ownership.owns(PROFILE_REQUEST_NAME):
@@ -796,7 +816,7 @@ def gate_before_launch(device, out, readiness, window, reference_row, args):
 
 
 def run_trial(device, spec, apk, out, fixture_bytes, fixture_info, reference_row,
-              ownership, expected_scene, args):
+              ownership, expected_scene, generator, args):
     out.mkdir(parents=True, exist_ok=False)
     (out / "trial-request.json").write_text(json.dumps({
         **spec, "apk": apk, "fixture": fixture_info,
@@ -804,7 +824,7 @@ def run_trial(device, spec, apk, out, fixture_bytes, fixture_info, reference_row
     installed = install_and_verify(device, Path(apk["apk_path"]), apk["apk_sha256"], out, args)
     environment = record_environment(device, out)
     readiness, window = record_idle_window(device, out, reference_row, args)
-    before, files_state = preflight_files(device, out, fixture_bytes, ownership)
+    before, files_state = preflight_files(device, out, fixture_bytes, ownership, generator)
     gate = gate_before_launch(device, out, readiness, window, reference_row, args)
     logcat = log_file = None
     completed = False
@@ -835,7 +855,8 @@ def run_trial(device, spec, apk, out, fixture_bytes, fixture_info, reference_row
             # app and removes only owned files.
             device.shell("input", "keyevent", "KEYCODE_HOME", timeout=20, check=False)
             time.sleep(2)
-    finished = finish_and_pull(device, out, before, fixture_bytes, ownership, capture_state)
+    finished = finish_and_pull(device, out, before, fixture_bytes, ownership, generator,
+                               capture_state)
     record = {
         **spec,
         "capture_state": capture_state,
@@ -972,24 +993,57 @@ def check_args(args):
     return args
 
 
-def resolve_expected_scene(apks):
+def resolve_generator(apks):
+    """The single generator every frozen build manifest declares.
+
+    Nothing here assumes a generator: a build declaring an unsupported one, or
+    two builds declaring different ones, is rejected before the device is
+    touched. Mixing generators would compare two different worlds.
+    """
+    declared = {}
+    for variant, apk in apks.items():
+        value = apk.get("generator")
+        if isinstance(value, bool) or not isinstance(value, int) \
+                or value not in SUPPORTED_GENERATORS:
+            raise SystemExit(
+                f"{variant} build declares generator {value!r}; this collector supports "
+                f"{SUPPORTED_GENERATORS} (current app generator {CURRENT_GENERATOR})")
+        declared[variant] = value
+    if len(set(declared.values())) != 1:
+        raise SystemExit(f"build manifests declare different generators {declared}; "
+                         "the comparison would not be matched")
+    return declared[next(iter(declared))]
+
+
+def resolve_expected_scene(apks, generator):
     """Exact expected cell/instance counts for the frozen composition."""
     declared = [apk.get("expected_scene") for apk in apks.values()]
     if all(isinstance(d, dict) for d in declared):
-        if declared[0] != declared[1]:
+        if any(d != declared[0] for d in declared):
             raise SystemExit("build manifests declare different expected scene counts")
         scene = declared[0]
         if set(scene) != {"cells", "instances"} or not all(
-                isinstance(v, int) and v > 0 for v in scene.values()):
+                isinstance(v, int) and not isinstance(v, bool) and v > 0
+                for v in scene.values()):
             raise SystemExit("expected_scene must be {'cells': int > 0, 'instances': int > 0}")
-        return scene
+        return dict(scene)
     if any(isinstance(d, dict) for d in declared):
         raise SystemExit("only one build manifest declares expected_scene")
-    if apks["candidate"]["composition_hash"] != EXPECTED_COMPOSITION:
+    compositions = {apk["composition_hash"] for apk in apks.values()}
+    if len(compositions) != 1:
+        raise SystemExit(f"build manifests declare different compositions {sorted(compositions)}")
+    composition = compositions.pop()
+    known = KNOWN_COMPOSITIONS.get(composition)
+    if known is None:
         raise SystemExit(
-            f"composition {apks['candidate']['composition_hash']} is not the known frozen "
-            f"{EXPECTED_COMPOSITION}; add an expected_scene field to both build manifests")
-    return dict(EXPECTED_SCENE)
+            f"composition {composition} is not a known frozen composition "
+            f"({sorted(KNOWN_COMPOSITIONS)}); add an expected_scene field to both "
+            "build manifests")
+    if known["generator"] != generator:
+        raise SystemExit(
+            f"composition {composition} is the generator {known['generator']} world, but the "
+            f"build manifests declare generator {generator}")
+    return {"cells": known["cells"], "instances": known["instances"]}
 
 
 def main(argv=None):
@@ -1006,7 +1060,6 @@ def main(argv=None):
             handle.write(line + "\n")
 
     fixture_bytes = args.fixture.read_bytes()
-    fixture_info = {**check_fixture(fixture_bytes), "source": str(args.fixture)}
     if args.mode == "capture-on-off":
         build = {**expected_apk_metadata(args.apk, None), "apk_path": str(args.apk)}
         apks = {SAME_BUILD_LABEL: build}
@@ -1024,11 +1077,10 @@ def main(argv=None):
         if apks["candidate"]["composition_hash"] != apks["reference"]["composition_hash"]:
             raise SystemExit("candidate and reference declare different scene composition "
                              "hashes; the comparison would not be matched")
-    for variant, apk in apks.items():
-        if apk["generator"] != EXPECTED_GENERATOR:
-            raise SystemExit(f"{variant} build is generator {apk['generator']!r}, "
-                             f"expected {EXPECTED_GENERATOR}")
-    expected_scene = resolve_expected_scene(scene_inputs)
+    generator = resolve_generator(apks)
+    expected_scene = resolve_expected_scene(scene_inputs, generator)
+    # Fixture/manifest agreement is decided here, before any device access.
+    fixture_info = {**check_fixture(fixture_bytes, generator), "source": str(args.fixture)}
     (args.out / "manifest.json").write_text(json.dumps({
         "purpose": args.purpose,
         "mode": args.mode,
@@ -1036,6 +1088,7 @@ def main(argv=None):
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "adb": str(args.adb), "serial": args.serial, "package": args.package,
         "apks": apks, "fixture": fixture_info, "plan": plan,
+        "generator": generator,
         "expected_scene": expected_scene,
         "warmup_s": args.warmup, "measurement_s": args.measure,
         "readiness_validator": "tools/performance/validate_conditions.validate_readiness",
@@ -1054,7 +1107,7 @@ def main(argv=None):
             record, last_row = run_trial(
                 device, spec, apks[spec["variant"]], args.out / spec["name"],
                 fixture_bytes, fixture_info, reference_row, ownership,
-                expected_scene, args)
+                expected_scene, generator, args)
             records.append(record)
             installs.append(record["installed"])
             if args.mode == "capture-on-off":
