@@ -162,6 +162,24 @@ pub struct VoxelRelayApp {
 }
 
 impl VoxelRelayApp {
+    /// Normal chooser entry uses a sample-specific file. Older chooser builds
+    /// shared the sandbox path: import a compatible Relay session only when no
+    /// dedicated file exists, and never write back to that legacy path.
+    pub(crate) fn for_chooser(legacy_path: &std::path::Path, frame_limit: Option<u64>) -> Self {
+        let save_path = crate::data_directory(legacy_path).join("voxel-relay.json");
+        let has_dedicated_save = save_path.exists();
+        let mut app = Self::new(save_path.clone(), frame_limit);
+        if !has_dedicated_save && legacy_path.is_file() {
+            app.save_path = legacy_path.to_path_buf();
+            if app.load().is_err() {
+                // A sandbox or malformed legacy file is not Relay progress.
+                // Reset also discards any partial in-memory restore on failure.
+                app.reset();
+            }
+            app.save_path = save_path;
+        }
+        app
+    }
     pub fn new(save_path: PathBuf, frame_limit: Option<u64>) -> Self {
         let mut app = Self {
             world: generate_chamber(CHAMBER_SEED),
@@ -882,6 +900,37 @@ mod tests {
             std::process::id(),
             id
         ))
+    }
+
+    #[test]
+    fn chooser_save_isolated_and_compatible_legacy_progress_imported() {
+        let directory = unique_save_path("chooser-isolation");
+        std::fs::create_dir_all(&directory).unwrap();
+        let legacy = directory.join("world.json");
+        std::fs::write(&legacy, b"sandbox sentinel").unwrap();
+        let mut isolated = VoxelRelayApp::for_chooser(&legacy, None);
+        assert_eq!(isolated.save_path, directory.join("voxel-relay.json"));
+        isolated.save().unwrap();
+        assert_eq!(std::fs::read(&legacy).unwrap(), b"sandbox sentinel");
+
+        // A compatible old Relay session can be read without overwriting it.
+        std::fs::remove_file(&isolated.save_path).unwrap();
+        let mut old = VoxelRelayApp::new(legacy.clone(), None);
+        assert!(old.physics.teleport([6.0, 2.55, 13.8]));
+        assert!(old.try_remove_obstacle());
+        old.save().unwrap();
+        let bytes = std::fs::read(&legacy).unwrap();
+        let mut imported = VoxelRelayApp::for_chooser(&legacy, None);
+        assert!(imported.obstacle_cleared);
+        assert_eq!(imported.save_path, directory.join("voxel-relay.json"));
+        imported.save().unwrap();
+        assert_eq!(std::fs::read(&legacy).unwrap(), bytes);
+
+        // Once a dedicated save exists it wins over conflicting legacy state.
+        old.reset();
+        old.save().unwrap();
+        assert!(VoxelRelayApp::for_chooser(&legacy, None).obstacle_cleared);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

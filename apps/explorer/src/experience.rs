@@ -126,9 +126,14 @@ impl Experience {
                 break;
             };
             let outcome = self.audio.trigger(event);
-            if let Some(reason) = outcome.dropped() {
-                log::debug!("audio dropped {}: {reason:?}", event.name());
-            }
+            let status = self.audio.status();
+            log::info!(
+                "Sample audio {:?}: event={} outcome={outcome:?} callbacks={} frames={}",
+                status.scope,
+                event.name(),
+                status.callback_count,
+                status.frames_rendered,
+            );
         }
         self.report_audio_failures();
     }
@@ -171,7 +176,7 @@ impl Experience {
             if let Some(mut wetland) = self.wetland.take() {
                 wetland.suspended(event_loop);
             }
-            let mut relay = VoxelRelayApp::new(self.legacy_path.clone(), self.frame_limit);
+            let mut relay = VoxelRelayApp::for_chooser(&self.legacy_path, self.frame_limit);
             relay.resumed(event_loop);
             self.voxel_relay = Some(relay);
         } else if self

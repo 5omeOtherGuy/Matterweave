@@ -350,6 +350,10 @@ pub struct AdapterStatus {
     /// Device errors the service has observed on this adapter's output (mirrored from
     /// its health; zero without a device). A recovered error stays visible here.
     pub device_errors: u64,
+    /// Completed mixer callbacks on the current device; not proof of audibility.
+    pub callback_count: u64,
+    /// Frames rendered on the current device; resets when that device is replaced.
+    pub frames_rendered: u64,
     /// The last failure the adapter observed, or `None` if it never observed one. A
     /// record of the most recent failure, not a live error state: a later success
     /// does not clear it.
@@ -651,7 +655,10 @@ impl AudioAdapter {
             ),
             None => (0, 0, 0),
         };
+        let health = self.device.as_ref().map(|device| device.service.health());
         AdapterStatus {
+            callback_count: health.as_ref().map_or(0, |value| value.callback_count),
+            frames_rendered: health.as_ref().map_or(0, |value| value.frames_rendered),
             available: self.is_available(),
             muted: self.muted,
             suspended: self.suspended,
@@ -1043,6 +1050,21 @@ mod tests {
 
     fn health(adapter: &AudioAdapter) -> HealthSnapshot {
         adapter.device.as_ref().expect("device").service.health()
+    }
+
+    #[test]
+    fn status_reports_real_completed_mix_work() {
+        let mut adapter = adapter(AudioScope::Wetland);
+        assert_eq!(adapter.status().callback_count, 0);
+        assert_eq!(adapter.status().frames_rendered, 0);
+        assert_eq!(
+            adapter.trigger(GameplayEvent::BlockEdit),
+            TriggerOutcome::Started
+        );
+        let samples = render(&mut adapter, 64);
+        assert!(peak(&samples) > 0.0);
+        assert_eq!(adapter.status().callback_count, 1);
+        assert_eq!(adapter.status().frames_rendered, 64);
     }
 
     #[test]
