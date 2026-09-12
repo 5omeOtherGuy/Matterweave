@@ -15,8 +15,10 @@
 //!   and 175 KiB of PCM of the 4 MiB budget.
 //! * **The gameplay vocabulary.** [`GameplayEvent`] is the whole vocabulary. It is
 //!   plain Rust data: no `ndk`, JNI, `android_activity` or backend type appears in it
-//!   or in any adapter method signature. The only service type anywhere on the
-//!   surface is the plain-data error enum in [`AdapterStatus::last_error`].
+//!   or in any adapter method signature. Two places carry the service's own
+//!   plain-data error enum: [`AdapterStatus::last_error`] and
+//!   [`DropReason::Service`]. Neither carries a platform or backend type, so a
+//!   gameplay caller still never names one.
 //! * **Backpressure.** The service refuses a play when all eight voice slots are busy
 //!   ([`AudioServiceError::VoiceLimit`]) or when its bounded command queue is full.
 //!   Both are counted and reported through [`TriggerOutcome::Dropped`]; nothing is
