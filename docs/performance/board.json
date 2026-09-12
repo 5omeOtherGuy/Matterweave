@@ -552,15 +552,15 @@
     },
     "E1-audio-recovery": {
       "attempt": 2,
-      "owner": "w_4ef4b01d",
-      "state": "review-fixes-running",
+      "owner": "w_cf416cb8",
+      "state": "pcm-ownership-repair-running",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/audio-suspend-fix",
-      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-review-fixes",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-pcm-boundary-retry",
       "paths": [
         "crates/matterweave-audio/**"
       ],
-      "acceptance": "4x20 AAudio suspended recreation/resume/shutdownPASS at22070ca. Review found older unload/pause-failure issues; lead found command acknowledgment race. Corrective worker active; final acceptance pending.",
+      "acceptance": "Command lifetime/error corrections integrated; 43 worker tests PASS. Independent oracle confirms live-core PCM aliasing; ownership repair running. Final independent review and Android rerun pending.",
       "history": [
         {
           "worker": "w_8b5fb3bc",
@@ -568,15 +568,15 @@
           "reason": "HTTP400 prompt_cache_retention unsupported; no source edits"
         }
       ],
-      "artifact": "22070ca"
+      "artifact": "da2e4fc"
     },
     "E2-collector": {
       "attempt": 1,
-      "owner": "w_b8d9841b",
-      "state": "running",
+      "owner": "w_4ebeb178",
+      "state": "generator-compatibility-repair-running",
       "base": "d91058b",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-collector-20260912",
-      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e2-collector-opus",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/collector-generator3-opus",
       "paths": [
         "tools/performance/collect_wetland_pair.py",
         "tools/performance/test_collect_wetland_pair.py",
@@ -584,7 +584,8 @@
         "tools/performance/test_analyze_wetland_pairs.py",
         "docs/performance/measurement-qualification.md"
       ],
-      "acceptance": "Existing collector always enables capture; implement explicit same-build ON/OFF collection. Worker tests, independent reviews and phone qualification pending."
+      "acceptance": "238 tests PASS; Muse review no findings at40a0844, Gemini review underway. Lead found generator2 hardcode incompatible with current generator3; bounded correction running before phone collection.",
+      "artifact": "40a0844"
     }
   },
   "capacity": {

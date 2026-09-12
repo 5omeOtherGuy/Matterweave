@@ -16,3 +16,25 @@ Frozen source `22070ca`, base `704bb4a`. Independent [Muse review](reviews/compl
 Initial integrated checks: 477 Rust tests passed (3 existing ignored gates); strict workspace Clippy and fmt pass. Physical OnePlus 13: 11 ARM64 cadence tests passed in each of 3 runs; AAudio diagnostic passed 4 runs × 20 paused-recreation/resume/shutdown cycles at `22070ca`. Those results do not accept subsequent audio corrections; affected checks and independent review must be repeated at the corrected frozen revision.
 
 Supervisor log-check friction: relative `--log` paths for the first two workers resolved in the lead checkout rather than worker worktrees; source-controlled worker logs were read directly and the unused scaffolds removed. The absolute-path audio log also received a heading-parser warning despite containing all five populated headings. These warnings are recorded, not treated as missing engineering evidence or silently relabeled as passed supervisor checks.
+
+Corrective checkpoint `da2e4fc`: worker RED commit `540b4d4` and repair
+`c277f15` (integrated as `0064843` / `da2e4fc`) reproduce and repair
+unload-generation, failed-pause compensation, command/voice acknowledgment,
+and stale/new backend-error issues. Worker package suite: 43 tests PASS,
+strict scoped Clippy/fmt PASS, 20 host diagnostic cycles PASS. These remain
+candidates pending corrective independent review and Android reruns.
+
+The [independent ownership consultation](reviews/audio-alias-oracle-20260912.md)
+confirmed the separate live-core mutable-reference defect. Disjoint sample
+indices alone do not justify registration through a mixer simultaneously
+borrowed mutably by AAudio. A separately shared fixed PCM allocation with
+narrow cell access is under implementation; no overall safety acceptance yet.
+
+Collector frozen `40a0844`: [Muse review](reviews/collector-review-muse-20260912.md)
+found no source-proven defects, Gemini review pending. Lead reproduced a
+real cross-tool mismatch: counterbalanced OFF/ON, ON/OFF pairs were rejected
+by the qualifier's global-alternation rule. `40a0844` fixes chronological
+pair validation with a red/green regression; full Python suite 238 PASS.
+Phone preparation also found the historical generator-2-only collector
+incompatible with current generator 3. A bounded compatibility repair is
+running; no current-build overhead or repeatability result exists yet.

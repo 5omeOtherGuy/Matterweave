@@ -1,5 +1,16 @@
 # Current status
 
+Execution checkpoint (2026-09-12, PR #19 still draft): integrated command-completion
+acknowledgments and audio failure-invariant repairs at `da2e4fc` (worker 43 tests
+PASS). Independent safety consultation confirms that control-thread PCM registration
+through the live mutable mixer is unsound; ownership repair is running, so audio is
+not accepted. Earlier Android audio passes validate only the earlier revision.
+Collector corrections have 238 passing Python tests; current generator 3 compatibility
+is being repaired before physical qualification. Android debug APK assembly and
+16-KiB library alignment verification passed. CI passed at `f07c87c`; subsequent
+changes still require independent review, relevant device reruns, and CI.
+
+
 Updated: 2026-09-12
 
 Latest published prerelease: **v0.5.0**. The engine objective (M2–M6) remains open.
