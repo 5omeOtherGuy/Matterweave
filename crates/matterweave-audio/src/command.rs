@@ -20,7 +20,7 @@ pub(crate) enum Command {
     UnloadClip {
         /// Clip slot.
         slot: u8,
-        /// New (invalidating) generation.
+        /// Current generation to retire; a stale unload cannot retire its successor.
         generation: u32,
     },
     /// Start a voice playing a registered clip.

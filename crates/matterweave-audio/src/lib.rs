@@ -46,7 +46,7 @@
 //!   or reusing a voice slot invalidates all older handles to it.
 //! * Unregistering a clip silences (does not merely detach) all voices still playing
 //!   it, and the freed PCM range is reused only after the audio thread has
-//!   acknowledged the unload with its epoch counter.
+//!   acknowledged the Unload command's FIFO sequence after completing PCM reads.
 //! * While the output is suspended the mixer clock freezes mid-sample: nothing is
 //!   dropped, nothing restarts, and commands queued during suspension are applied in
 //!   FIFO order on resume. [`AudioService::health`] reports suspension in `suspended`

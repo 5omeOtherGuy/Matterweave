@@ -21,8 +21,8 @@ use crate::config::{MAX_CLIPS, MAX_VOICES};
 /// and read by the control thread. Lives in an `Arc` held by both sides.
 #[derive(Debug, Default)]
 pub(crate) struct SharedRt {
-    /// Incremented at the end of every render invocation. The control thread uses it
-    /// to know that every command queued before the observed value was applied.
+    /// Incremented at the end of every render invocation (diagnostic only).
+    /// Callback completion alone does not acknowledge commands queued after drain.
     pub ack_epoch: AtomicU64,
     /// Data-callback invocations completed.
     pub callback_count: AtomicU64,
@@ -34,7 +34,8 @@ pub(crate) struct SharedRt {
     /// (mirror of the `Suspend`/`Resume` commands it applied). It cannot turn true
     /// while the backend stops delivering callbacks.
     pub suspended: AtomicBool,
-    /// Commands applied by the render thread.
+    /// FIFO commands applied through a completed callback. Published with Release
+    /// after PCM reads and live-mask stores; Acquire gates pool/voice reuse.
     pub commands_applied: AtomicU64,
     /// Commands rejected at the render thread (generation mismatch or invalid
     /// target). Under normal operation this stays zero.
@@ -126,6 +127,8 @@ pub(crate) struct MixerCore {
     slots: [RtClipSlot; MAX_CLIPS],
     voices: [RtVoice; MAX_VOICES],
     suspended: bool,
+    /// Local FIFO progress, published only after the callback finishes mixing.
+    commands_applied: u64,
     pub shared: std::sync::Arc<SharedRt>,
 }
 
@@ -142,6 +145,7 @@ impl MixerCore {
             slots: core::array::from_fn(|_| RtClipSlot::empty()),
             voices: core::array::from_fn(|_| RtVoice::empty()),
             suspended: false,
+            commands_applied: 0,
             shared,
         };
         (core, producer)
@@ -262,8 +266,8 @@ impl MixerCore {
 
         // 1) Apply every queued command in FIFO order.
         while let Some(command) = self.consumer.try_pop() {
-            self.shared.commands_applied.fetch_add(1, Ordering::Relaxed);
             self.apply(command);
+            self.commands_applied += 1;
         }
 
         after_drain();
@@ -315,8 +319,8 @@ impl MixerCore {
             }
         }
 
-        // 3) Publish state and acknowledge. Release makes every applied command and
-        //    flag visible to the control thread before the epoch value it reads.
+        // 3) Publish state, then release the completed command sequence. Callback
+        //    epochs remain diagnostics, never evidence of a particular command.
         let mut live_mask = 0u32;
         for (index, voice) in self.voices.iter().enumerate() {
             if voice.active {
@@ -331,6 +335,12 @@ impl MixerCore {
         self.shared
             .frames_rendered
             .fetch_add(out.len() as u64 / channels.max(1) as u64, Ordering::Relaxed);
+        // No PCM reads or voice-state writes follow this release. Control-side
+        // Acquire readers may now reclaim unloaded PCM and trust acknowledged
+        // voice generations. A later callback's drain cannot acknowledge early.
+        self.shared
+            .commands_applied
+            .store(self.commands_applied, Ordering::Release);
         self.shared.ack_epoch.fetch_add(1, Ordering::Release);
     }
 }

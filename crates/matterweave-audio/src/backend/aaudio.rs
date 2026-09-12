@@ -143,7 +143,7 @@ fn make_error_callback(shared: Arc<SharedRt>) -> ndk::audio::AudioStreamErrorCal
 
 impl OutputBackend for AaudioOutput {
     fn properties(&self) -> Option<StreamProperties> {
-        if self.lost {
+        if self.lost || self._shared.disconnected.load(Ordering::Acquire) {
             None
         } else {
             self.props

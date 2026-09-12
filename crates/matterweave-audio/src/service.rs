@@ -74,9 +74,10 @@ pub struct HealthSnapshot {
     pub callback_count: u64,
     /// Frames handed to the output device.
     pub frames_rendered: u64,
-    /// Commands applied by the render thread.
+    /// Commands applied through the last completed render invocation.
     pub commands_applied: u64,
-    /// Commands pushed but not yet applied (converges to exact between callbacks).
+    /// Commands pushed but not yet acknowledged by a completed callback. Includes
+    /// the in-flight batch as well as commands still in the bounded FIFO.
     pub pending_commands: usize,
     /// Commands rejected because the queue was full (backpressure, never overwrite).
     pub rejected_commands: u64,
@@ -96,7 +97,8 @@ pub struct HealthSnapshot {
     pub device_errors: u64,
     /// Times the output stream was closed and reopened (device loss, diagnostic).
     pub stream_recreations: u64,
-    /// Render-thread ack epoch (advances once per completed invocation).
+    /// Render callback epoch (advances once per completed invocation). Diagnostic
+    /// only: it does not acknowledge commands queued after that invocation's drain.
     pub ack_epoch: u64,
     /// Service suspension truth: `true` after a successful [`AudioService::suspend`]
     /// and `false` again after a successful [`AudioService::resume`]. Preserved
@@ -144,10 +146,9 @@ struct VoiceMirror {
     live: bool,
     /// Clip slot the voice plays from.
     clip_slot: u8,
-    /// Ack epoch snapshot taken after the play command was queued. While
-    /// `ack_epoch <= play_epoch` the play may not be applied yet, so the RT live
-    /// mask says nothing about this voice yet (conservative: treat as occupied).
-    play_epoch: u64,
+    /// FIFO sequence of this voice's Play. Until the completed command count
+    /// reaches it, the live mask may belong to an older generation or callback.
+    play_sequence: u64,
 }
 
 impl VoiceMirror {
@@ -156,7 +157,7 @@ impl VoiceMirror {
             generation: 0,
             live: false,
             clip_slot: 0,
-            play_epoch: 0,
+            play_sequence: 0,
         }
     }
 }
@@ -191,7 +192,9 @@ pub struct AudioService {
     clip_mirror: [ClipMirror; MAX_CLIPS],
     voice_mirror: [VoiceMirror; MAX_VOICES],
     free_ranges: Vec<PoolRange>,
-    /// Ranges freed whose unload the render thread has not acknowledged yet.
+    /// Retired PCM ranges paired with the FIFO sequence of their Unload command.
+    /// Reuse requires a completed callback acknowledging that command, not merely
+    /// a callback that happened to finish after enqueue.
     pending_ranges: Vec<(PoolRange, u64)>,
     /// Sum of registered clip samples (the "retained PCM payload").
     used_samples: usize,
@@ -318,8 +321,8 @@ impl AudioService {
             return Err(AudioServiceError::CommandQueueFull);
         }
         // First-fit range search (deterministic). A range is only reused after the
-        // audio thread acknowledged the unload (ack epoch advanced past the unload
-        // command), so no voice can still reference it.
+        // audio thread's completed command count acknowledged the unload, so no
+        // voice can still reference it.
         let range = match self.take_free_range(spec.samples.len()) {
             Ok(range) => range,
             Err(e) => {
@@ -357,7 +360,7 @@ impl AudioService {
     /// become inactive; `stop_voice` on them stays a successful no-op).
     ///
     /// The freed PCM range becomes reusable only after the render thread applied the
-    /// unload command (one ack epoch later), which is what makes reusing pool memory
+    /// unload command and finished that callback, which makes reusing pool memory
     /// safe without locks. If the render thread is suspended, freed ranges stay
     /// pending until resume; a registration needing that memory then returns
     /// [`AudioServiceError::RangeNotYetAcknowledged`].
@@ -370,7 +373,7 @@ impl AudioService {
         }
         self.push(Command::UnloadClip {
             slot: clip.slot,
-            generation,
+            generation: clip.generation,
         })
         .expect("queue space checked above");
         let range = PoolRange {
@@ -390,10 +393,9 @@ impl AudioService {
                 voice.live = false;
             }
         }
-        // Snapshot the ack epoch AFTER queueing the command: every invocation that
-        // applies the command bumps the epoch past this value when it completes.
-        let epoch = self.shared.ack_epoch.load(Ordering::Acquire);
-        self.pending_ranges.push((range, epoch));
+        // This producer owns the FIFO sequence. A callback completing after this
+        // enqueue might already have drained; only this command's ack permits reuse.
+        self.pending_ranges.push((range, self.commands_pushed));
         Ok(())
     }
 
@@ -437,14 +439,14 @@ impl AudioService {
             gain: options.gain,
         })
         .expect("queue space checked above");
-        // Snapshot after queueing: once the ack epoch advances past this value, the
-        // RT live mask is authoritative for this voice.
-        let play_epoch = self.shared.ack_epoch.load(Ordering::Acquire);
+        // The completed command sequence (not the callback epoch) determines when
+        // the RT live mask can describe this generation.
+        let play_sequence = self.commands_pushed;
         self.voice_mirror[voice_slot] = VoiceMirror {
             generation: voice_generation,
             live: true,
             clip_slot: clip.slot,
-            play_epoch,
+            play_sequence,
         };
         Ok(VoiceHandle {
             slot: voice_slot as u8,
@@ -511,7 +513,10 @@ impl AudioService {
         if !self.running {
             return Ok(());
         }
-        if queue::vacant(&self.producer) == 0 {
+        // Reserve both Suspend and its compensating Resume before changing any
+        // state. Only this thread produces commands; the consumer can only free
+        // capacity, so compensation remains possible even if pause fails.
+        if queue::vacant(&self.producer) < 2 {
             self.rejected_commands += 1;
             return Err(AudioServiceError::CommandQueueFull);
         }
@@ -522,7 +527,8 @@ impl AudioService {
         // fails, compensate by un-suspending the core so device and mixer agree.
         if let Some(backend) = self.backend.as_mut() {
             if let Err(device_error) = backend.suspend() {
-                let _ = self.push(Command::Resume);
+                self.push(Command::Resume)
+                    .expect("compensation slot reserved before Suspend");
                 return Err(device_error);
             }
         }
@@ -600,6 +606,8 @@ impl AudioService {
         slot < MAX_VOICES
             && self.voice_mirror[slot].generation == voice.generation
             && self.voice_mirror[slot].live
+            && self.shared.commands_applied.load(Ordering::Acquire)
+                >= self.voice_mirror[slot].play_sequence
             && self.rt_voice_live(slot)
     }
 
@@ -675,6 +683,10 @@ impl AudioService {
             backend.close()?;
         }
         self.backend = None;
+        // Old callbacks are now joined. Clear their notifications before open:
+        // clearing after open/start could erase a new stream's error callback.
+        self.shared.disconnected.store(false, Ordering::Relaxed);
+        self.shared.error_code.store(0, Ordering::Relaxed);
         self.backend = Some(open(self.core_ptr, self.shared.clone())?);
         // Opening is not starting: a suspended replacement receives no callbacks.
         // The retained core and its FIFO may contain either an applied or buffered
@@ -684,7 +696,6 @@ impl AudioService {
         }
         self.recovery_pending = false;
         self.stream_recreations += 1;
-        self.shared.error_code.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -717,13 +728,13 @@ impl AudioService {
     /// reported inactive by the render thread (completion). Reuse bumps the
     /// generation, which invalidates the old handle.
     fn find_free_voice_slot(&self) -> Option<usize> {
-        let ack = self.shared.ack_epoch.load(Ordering::Acquire);
+        let ack = self.shared.commands_applied.load(Ordering::Acquire);
         for (index, mirror) in self.voice_mirror.iter().enumerate() {
             if !mirror.live {
                 return Some(index);
             }
-            // Only trust the RT mask once this slot's play was applied.
-            if ack > mirror.play_epoch && !self.rt_voice_live(index) {
+            // Acquire of the completed sequence precedes reading the live mask.
+            if ack >= mirror.play_sequence && !self.rt_voice_live(index) {
                 return Some(index);
             }
         }
@@ -731,11 +742,11 @@ impl AudioService {
     }
 
     /// A voice is finished when the control side retired it or when its play was
-    /// applied (ack advanced) and the RT reported it inactive.
+    /// applied in a completed callback and the RT reported it inactive.
     fn voice_definitely_finished(&self, slot: usize) -> bool {
         let mirror = &self.voice_mirror[slot];
         !mirror.live
-            || (self.shared.ack_epoch.load(Ordering::Acquire) > mirror.play_epoch
+            || (self.shared.commands_applied.load(Ordering::Acquire) >= mirror.play_sequence
                 && !self.rt_voice_live(slot))
     }
 
@@ -773,13 +784,12 @@ impl AudioService {
         Ok(range)
     }
 
-    /// Move pending ranges whose unload command the render thread has applied (ack
-    /// epoch advanced past the recorded epoch) back into the free list. Satisfied
-    /// entries always form a prefix because epochs are recorded in push order.
+    /// Reclaim only ranges whose Unload sequence is covered by the render thread's
+    /// end-of-callback release. Entries form a prefix because the FIFO is ordered.
     fn reclaim_acknowledged_ranges(&mut self) {
-        let ack = self.shared.ack_epoch.load(Ordering::Acquire);
+        let ack = self.shared.commands_applied.load(Ordering::Acquire);
         let mut count = 0;
-        while count < self.pending_ranges.len() && ack > self.pending_ranges[count].1 {
+        while count < self.pending_ranges.len() && ack >= self.pending_ranges[count].1 {
             let (range, _) = self.pending_ranges[count];
             self.free_ranges.push(range);
             count += 1;

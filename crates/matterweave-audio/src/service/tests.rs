@@ -12,6 +12,7 @@ struct FaultOutput {
     starts: Arc<AtomicUsize>,
     fail_start: bool,
     fail_suspend: bool,
+    error_on_close: Option<i32>,
 }
 
 impl OutputBackend for FaultOutput {
@@ -36,6 +37,10 @@ impl OutputBackend for FaultOutput {
         }
     }
     fn close(&mut self) -> Result<(), AudioServiceError> {
+        if let Some(code) = self.error_on_close {
+            // Model the final old-stream error callback before close joins it.
+            self.inner.inject_device_error(code);
+        }
         self.inner.close()
     }
     fn take_error(&mut self) -> Option<BackendError> {
@@ -58,6 +63,7 @@ fn replace(service: &mut AudioService, fail_start: bool) -> Arc<AtomicUsize> {
                 starts: starts.clone(),
                 fail_start,
                 fail_suspend: false,
+                error_on_close: None,
             }))
         })
         .unwrap();
@@ -146,6 +152,7 @@ fn failed_recovery_start_is_closed_and_poll_retries_running_output() {
                 starts: Arc::new(AtomicUsize::new(0)),
                 fail_start: true,
                 fail_suspend: false,
+                error_on_close: None,
             }))
         }),
         Err(AudioServiceError::StreamStartFailed { code: -1 })

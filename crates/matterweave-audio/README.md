@@ -78,10 +78,12 @@ queued commands are never overwritten. A full command queue returns `CommandQueu
   invalidates older handles; a stale handle is rejected and cannot affect the slot's new owner.
 - Unregistering a clip silences every voice still playing it (rather than detaching it). The
   freed PCM range is reused only after the render thread has acknowledged the unload with its
-  ack epoch.
+  completed-command sequence (a callback epoch alone does not acknowledge a command).
 - Suspend freezes the mixer clock mid-sample: nothing is dropped or restarted, and commands
   queued during suspension are applied in FIFO order on resume. Resume queues the command
-  before restarting the stream so there is no silent gap. `health().suspended` reports the
+  before restarting the stream so there is no silent gap. Suspend requires two vacant
+  FIFO slots: one for Suspend and one reserved for Resume if device pause fails. With
+  fewer slots it returns `CommandQueueFull` without pausing. `health().suspended` reports the
   service state as soon as `suspend()`/`resume()` returns, without waiting for a render
   callback. `health().rt_suspended` is the render thread's own view; on a backend that
   delivers no callbacks while paused it may remain false. AAudio pause is asynchronous;
@@ -135,11 +137,14 @@ cargo test -p matterweave-audio --features backend-mock
   separate) and fault-injected device loss with recreation.
 - `tests/recovery.rs` (4 tests) covers device-loss and diagnostic recreation with applied
   and buffered Suspend, no callbacks while paused, and exact PCM continuation.
-- `src/service/tests.rs` (5 tests) checks that paused replacements never request start,
-  failed open/start retries, bounded Resume command retries and queue-full recovery.
+- `src/service/tests.rs` and its submodules (14 tests) check paused replacements,
+  open/start/pause failures, bounded queue recovery, stale/new device errors, and
+  deterministic enqueue-after-drain races for PCM reclamation and voice generations.
+- `tests/lifetime.rs` (2 tests) verifies selective unregister silencing, full-pool reuse
+  only after Unload acknowledgment, and stale clip/voice handle isolation.
 - `tests/rt_allocations.rs` (1 test) is a dedicated allocation detector that reports zero
-  allocations and deallocations across 10 000 callback invocations, including completion and
-  stop handling.
+  allocations and deallocations across 10 000 callback invocations, including completion,
+  stop, Unload silencing and command acknowledgment.
 - One inline mixer unit test interleaves a real render thread with a full control-command
   push stream and asserts no panic or deadlock, full command application and sane
   diagnostics.
