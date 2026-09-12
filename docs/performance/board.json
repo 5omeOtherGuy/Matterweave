@@ -983,7 +983,9 @@
       "base": "80a89c5",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-native.md",
       "ownership": "mesh_lighting_check.rs, minimal explorer lib.rs registration, dedicated log",
-      "worker": "w_e35c5717"
+      "worker": "w_e35c5717",
+      "state": "completed-awaiting-review-and-Android",
+      "artifact": "c043ed5"
     },
     "repair_review": {
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/repair-review.md",
@@ -1006,10 +1008,19 @@
     "device_policy": "Owner requests coherent development batches and fewer live tests. Relevant host tests/review before one integrated Android acceptance; immediate device checks only for actual Android/GPU/lifecycle uncertainty.",
     "streaming_contract_pr": 37,
     "mesh_api_review": {
-      "state": "dispatching",
+      "state": "running",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-api-review.md",
       "source": "80a89c5 renderer only",
-      "profile": "gemini-restricted"
-    }
+      "profile": "gemini-restricted",
+      "worker": "w_0a5e161c"
+    },
+    "mesh_native_review": {
+      "worker": "w_1b4b44aa",
+      "state": "running",
+      "source": "c043ed5",
+      "scope": "app diagnostic lifecycle/validity"
+    },
+    "streaming_contract_pr_state": "merged fc8c1ab",
+    "detail_pr": 38
   }
 }
