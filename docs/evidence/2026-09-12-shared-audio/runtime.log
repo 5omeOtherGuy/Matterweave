@@ -1,0 +1,48 @@
+SOURCE failed-resume.log
+D/AAudio  (31401): AAudioStream_requestStart(s#1) returned 0 ---------
+I/Matterweave(31401): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=5396 frames=518016
+I/Matterweave(31401): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=12440 frames=1194240
+I/Matterweave(31401): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=12803 frames=1229088
+D/AudioStreamInternal_Client(31401): requestStart_l() error = -898, stream was probably stolen
+D/AAudio  (31401): AAudioStream_requestStart(s#1) returned -899 ---------
+W/Matterweave(31401): matterweave_explorer::experience: audio degraded (device failures 1, registration failures 0): stream start failed (code -899)
+
+SOURCE resume-cycle-3.log
+D/AAudio  (31940): AAudioStream_requestStart(s#1) returned 0 ---------
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=4805 frames=461280
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=6161 frames=591456
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=6540 frames=627840
+D/AudioStreamInternal_Client(31940): requestStart_l() error = -898, stream was probably stolen
+D/AAudio  (31940): AAudioStream_requestStart(s#1) returned -899 ---------
+W/Matterweave(31940): matterweave_explorer::experience: audio degraded (device failures 1, registration failures 0): stream start failed (code -899)
+D/AAudio  (31940): AAudioStream_requestStart(s#2) returned 0 ---------
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=9813 frames=942048
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=10210 frames=980160
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=11804 frames=1133184
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=12163 frames=1167648
+D/AudioStreamInternal_Client(31940): requestStart_l() error = -898, stream was probably stolen
+D/AAudio  (31940): AAudioStream_requestStart(s#2) returned -899 ---------
+W/Matterweave(31940): matterweave_explorer::experience: audio degraded (device failures 2, registration failures 0): stream start failed (code -899)
+D/AAudio  (31940): AAudioStream_requestStart(s#3) returned 0 ---------
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=15482 frames=1486272
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=15845 frames=1521120
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=17528 frames=1682688
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=17910 frames=1719360
+D/AudioStreamInternal_Client(31940): requestStart_l() error = -898, stream was probably stolen
+D/AAudio  (31940): AAudioStream_requestStart(s#3) returned -899 ---------
+W/Matterweave(31940): matterweave_explorer::experience: audio degraded (device failures 3, registration failures 0): stream start failed (code -899)
+D/AAudio  (31940): AAudioStream_requestStart(s#4) returned 0 ---------
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=jump outcome=Started callbacks=21240 frames=2039040
+I/Matterweave(31940): matterweave_explorer::experience: Sample audio Wetland: event=land outcome=Started callbacks=21621 frames=2075616
+
+SOURCE relay-events.log
+09-12 19:42:41.424 31735 31750 I Matterweave: matterweave_explorer::experience: Sample audio VoxelRelay: event=block-edit outcome=Started callbacks=5389 frames=517344
+09-12 19:43:19.618 31811 31827 I Matterweave: matterweave_explorer::experience: Sample audio VoxelRelay: event=objective outcome=Started callbacks=7476 frames=717696
+
+SOURCE relay-repaired-resume.log
+D/AAudio  (32154): AAudioStream_requestStart(s#1) returned 0 ---------
+D/AudioStreamInternal_Client(32154): requestStart_l() error = -898, stream was probably stolen
+D/AAudio  (32154): AAudioStream_requestStart(s#1) returned -899 ---------
+W/Matterweave(32154): matterweave_explorer::experience: audio degraded (device failures 1, registration failures 0): stream start failed (code -899)
+D/AAudio  (32154): AAudioStream_requestStart(s#2) returned 0 ---------
+I/Matterweave(32154): matterweave_explorer::experience: Sample audio VoxelRelay: event=block-edit outcome=Started callbacks=9342 frames=896832

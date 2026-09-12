@@ -48,6 +48,14 @@
 //! [`AudioAdapter::poll_device`] recreates a lost stream;
 //! [`AudioAdapter::resume`] retries an open that failed.
 //!
+//! A resume the service cannot complete (for example a stream stolen by another
+//! app) stays a foreground intent instead of a silent dead end: the adapter
+//! remembers that the app wants output, drops events while output is not running
+//! rather than queueing them for late playback, and [`AudioAdapter::poll_device`]
+//! retries the resume on a bounded cooldown until the service reports running
+//! again. No second lifecycle resume is needed. Intentional suspension cancels that
+//! intent, so a late poll can never restart background audio.
+//!
 //! Counters are not audibility. Nothing here claims that a phone produced sound:
 //! host tests render the mock mixer into a buffer, which shows mixer output, not
 //! device output. Nothing drives the mock mixer on a host run either, so a host run is
@@ -63,25 +71,35 @@
 //!
 //! # Suspend, resume and sample switching
 //!
-//! `suspend` freezes the service (sounding voices continue where they stopped) and
-//! makes the adapter drop new events instead of queueing them, so a backgrounded
-//! sample cannot leak commands or voices. `switch_to` retires every voice the
-//! leaving scope started: their stops are queued before the arriving sample can
-//! trigger, and a stop the service cannot accept yet is retried by the next
-//! maintenance pass instead of being forgotten.
+//! `suspend` freezes the service (sounding voices continue where they stopped),
+//! makes the adapter drop new events instead of queueing them, and cancels a
+//! pending resume retry, so a backgrounded sample cannot leak commands or voices
+//! and a late poll cannot restart output the app asked to pause. `switch_to`
+//! retires every voice the leaving scope started: their stops are queued before
+//! the arriving sample can trigger, and a stop the service cannot accept yet is
+//! retried by the next maintenance pass instead of being forgotten.
 //!
-//! # Not wired yet
+//! # Integration
 //!
-//! This is the D4.1 adapter only. Wiring `experience.rs` and the samples' call sites
-//! is the lead's follow-up; the temporary `#![allow(dead_code)]` below keeps strict
-//! clippy (`-D warnings`) green until that commit lands and should be removed with it.
-
-#![allow(dead_code)] // D4.1 integration follow-up; see "Not wired yet" above.
+//! [`Experience`](crate::experience::Experience) owns exactly one adapter and pumps
+//! it once per app frame: it polls the device, drains the active sample's bounded
+//! [`EventQueue`] and triggers each event. Samples queue plain events; they never
+//! open a device, own a service or keep a second audio path.
+//!
+//! A sample launched directly (`--voxel-relay`, or a test that drives a sample app
+//! itself) has no audio owner. Its [`EventQueue`] is bounded and simply never
+//! drained, so that path is explicitly silent instead of opening its own device.
+//!
+//! Mute and volume are implemented here ([`AudioAdapter::set_muted`],
+//! [`AudioAdapter::set_volume`]), but no sample UI exposes them yet: the app has no
+//! settings seam for them today, so nothing drives these methods in production.
 
 use matterweave_audio::{
     AudioService, AudioServiceError, ClipHandle, ClipSpec, PlayOptions, VoiceHandle, MAX_VOICES,
 };
+use std::collections::VecDeque;
 use std::f32::consts::TAU;
+use std::time::{Duration, Instant};
 
 /// A gameplay fact that should be audible.
 ///
@@ -158,6 +176,66 @@ fn clamp_strength(strength: f32) -> f32 {
     }
 }
 
+/// Capacity of one sample's gameplay-event queue.
+///
+/// Gameplay queues events between the input/frame path that produces them and the
+/// app's once-per-frame adapter drain, so a handful of slots covers normal play;
+/// the cap exists so a sample cannot grow an unbounded backlog if the app stops
+/// draining (standalone launch, suspension, a stalled frame).
+pub const EVENT_QUEUE_CAPACITY: usize = 16;
+
+/// Bounded FIFO of plain gameplay events held by one sample.
+///
+/// A push into a full queue drops the *oldest* event and keeps the newest: the
+/// most recent actions are the ones worth hearing, and the queue stays bounded
+/// without ever blocking the caller. Nothing here is a service or a device; a
+/// sample can queue events with no audio owner (standalone launch) and the queue
+/// simply stays silent.
+#[derive(Debug, Default)]
+pub struct EventQueue {
+    events: VecDeque<GameplayEvent>,
+    dropped: u64,
+}
+
+impl EventQueue {
+    /// Maximum number of queued events.
+    pub const CAPACITY: usize = EVENT_QUEUE_CAPACITY;
+
+    /// Queue `event`, dropping the oldest queued event when the queue is full.
+    pub fn push(&mut self, event: GameplayEvent) {
+        if self.events.len() >= Self::CAPACITY {
+            self.events.pop_front();
+            self.dropped += 1;
+        }
+        self.events.push_back(event);
+    }
+
+    /// Remove and return the oldest queued event, if any.
+    pub fn pop(&mut self) -> Option<GameplayEvent> {
+        self.events.pop_front()
+    }
+
+    /// Drop every queued event without playing it.
+    ///
+    /// The app calls this when the sample loses focus, is suspended or is replaced:
+    /// feedback from before a pause or a scope switch must not sound afterwards.
+    pub fn clear(&mut self) {
+        self.events.clear();
+    }
+
+    /// Number of queued events (tests and diagnostics).
+    #[cfg(test)]
+    pub fn queued(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Events dropped because the queue was full (tests and diagnostics).
+    #[cfg(test)]
+    pub fn dropped(&self) -> u64 {
+        self.dropped
+    }
+}
+
 /// The application (sample) that currently owns the adapter.
 ///
 /// The adapter serves one scope at a time. Voices are tagged with the scope that
@@ -181,9 +259,10 @@ pub enum AudioScope {
 /// gameplay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DropReason {
-    /// No output device is open: the open failed, or the stream is lost until
-    /// [`AudioAdapter::poll_device`] recreates it (or [`AudioAdapter::resume`]
-    /// retries the open).
+    /// No running output: the device was never opened or its open failed, the
+    /// stream is lost until [`AudioAdapter::poll_device`] recreates it, or the
+    /// service still holds suspension while a refused [`AudioAdapter::resume`] is
+    /// retried. Nothing is queued for later.
     NoDevice,
     /// The adapter is suspended; the event is not queued for later.
     Suspended,
@@ -209,6 +288,7 @@ pub enum TriggerOutcome {
 
 impl TriggerOutcome {
     /// Whether a voice was started.
+    #[allow(dead_code)] // exercised by the adapter tests
     pub fn started(&self) -> bool {
         matches!(self, Self::Started)
     }
@@ -226,6 +306,7 @@ impl TriggerOutcome {
 ///
 /// Invariant: `started + dropped == triggered`, and `dropped` equals the sum of the
 /// `dropped_*` counters. These count events, not audibility.
+#[allow(dead_code)] // full diagnostic surface; the app reads only the failure counts
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AdapterCounters {
     /// Events passed to [`AudioAdapter::trigger`].
@@ -256,10 +337,12 @@ pub struct AdapterCounters {
 }
 
 /// Diagnostic snapshot of the adapter, for the HUD, logs and tests.
+#[allow(dead_code)] // full diagnostic surface; the app reads only part of it today
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdapterStatus {
-    /// True while an output stream is open; false before the first resume, after a
-    /// failed open, and while a lost stream waits for recovery.
+    /// True while output is open and running; false before the first resume, after
+    /// a failed open, while suspended, and while a lost stream or a refused resume
+    /// waits for recovery.
     pub available: bool,
     /// True while muted.
     pub muted: bool,
@@ -279,6 +362,10 @@ pub struct AdapterStatus {
     /// Device errors the service has observed on this adapter's output (mirrored from
     /// its health; zero without a device). A recovered error stays visible here.
     pub device_errors: u64,
+    /// Completed mixer callbacks on the current device; not proof of audibility.
+    pub callback_count: u64,
+    /// Frames rendered on the current device; resets when that device is replaced.
+    pub frames_rendered: u64,
     /// The last failure the adapter observed, or `None` if it never observed one. A
     /// record of the most recent failure, not a live error state: a later success
     /// does not clear it.
@@ -361,6 +448,24 @@ struct Device {
     clips: Clips,
 }
 
+/// True while the device is open *and* the service reports output running.
+///
+/// Open is not running: a service that refused a resume keeps suspension even
+/// after its start failed, and a poll may open a replacement that stays paused.
+/// "Available" and "may start a voice" both need the service's own suspension
+/// truth, not just negotiated properties.
+fn device_running(device: &Device) -> bool {
+    device.service.stream_properties().is_some() && !device.service.health().suspended
+}
+
+/// Wall-clock cooldown between retries of a foreground resume the service refused.
+///
+/// It caps a permanently failing device at two reopen/start attempts per second
+/// instead of one per frame, while events keep being dropped deliberately for the
+/// duration of the cooldown. The adapter reads `Instant::now()`; tests inject a clock
+/// through [`AudioAdapter::now`] so the cooldown is exercised without sleeping.
+const RESUME_RETRY_COOLDOWN: Duration = Duration::from_millis(500);
+
 /// Turn gameplay events into sound through the shared audio service.
 ///
 /// See the module documentation for the contract. Every method is control-thread
@@ -371,6 +476,14 @@ pub struct AudioAdapter {
     scope: AudioScope,
     muted: bool,
     suspended: bool,
+    /// When a refused foreground resume may be retried, or `None` when no retry is
+    /// pending.
+    ///
+    /// Set when a `resume` (or its retry) leaves the service suspended; cleared by
+    /// a confirmed resume, by intentional `suspend`, and by a failed initial open
+    /// (which keeps the next-lifecycle-resume policy). Separate from `suspended`:
+    /// the app is in front, but output is not running yet.
+    resume_retry_at: Option<Instant>,
     volume: f32,
     last_error: Option<AudioServiceError>,
     counters: AdapterCounters,
@@ -380,6 +493,11 @@ pub struct AudioAdapter {
     /// failed-open branch; see `failed_open_degrades_to_silence_and_resume_retries`.
     #[cfg(test)]
     open_failure: Option<AudioServiceError>,
+    /// Test-only clock override; production reads `Instant::now()` through
+    /// [`AudioAdapter::now`]. Tests advance it so the resume cooldown runs without
+    /// sleeping.
+    #[cfg(test)]
+    test_now: Option<Instant>,
 }
 
 impl AudioAdapter {
@@ -395,11 +513,14 @@ impl AudioAdapter {
             scope,
             muted: false,
             suspended: false,
+            resume_retry_at: None,
             volume: 1.0,
             last_error: None,
             counters: AdapterCounters::default(),
             #[cfg(test)]
             open_failure: None,
+            #[cfg(test)]
+            test_now: None,
         }
     }
 
@@ -450,6 +571,10 @@ impl AudioAdapter {
     ///
     /// While muted no new voice is started, and sounding voices are pushed to gain 0.
     /// Unmuting restores each sounding voice's own level.
+    ///
+    /// No sample UI exposes mute yet, so the app does not drive this; adding the
+    /// settings seam is an explicit follow-up, not an integration claim.
+    #[allow(dead_code)]
     pub fn set_muted(&mut self, muted: bool) {
         if self.muted == muted {
             return;
@@ -463,6 +588,9 @@ impl AudioAdapter {
     /// The value is clamped into `0.0..=1.0`. Non-finite input is ignored and the
     /// previous volume stays in effect. Volume is not mute: unlike mute it does not
     /// suppress voice starts.
+    ///
+    /// No sample UI exposes volume yet; see [`AudioAdapter::set_muted`].
+    #[allow(dead_code)]
     pub fn set_volume(&mut self, volume: f32) {
         if !volume.is_finite() {
             return;
@@ -481,9 +609,11 @@ impl AudioAdapter {
     /// stopped on resume) and the adapter stops accepting events, so nothing is
     /// queued behind the pause. Idempotent. A suspend the device refuses is recorded
     /// and the adapter stays suspended by intent: no new events and no device opens
-    /// while the app is not in front.
+    /// while the app is not in front. A pending resume retry is cancelled, so a
+    /// late poll can never restart output the app asked to pause.
     pub fn suspend(&mut self) {
         self.suspended = true;
+        self.resume_retry_at = None;
         let Some(device) = self.device.as_mut() else {
             return;
         };
@@ -503,37 +633,42 @@ impl AudioAdapter {
     /// the device: this is the one place that opens a device, so a failed open is
     /// retried on the next app resume and never once per frame. Idempotent while
     /// running.
+    ///
+    /// A resume the service refuses (open, start or command backpressure) leaves a
+    /// retryable foreground intent that [`AudioAdapter::poll_device`] finishes on a
+    /// bounded cooldown, so one lifecycle resume is enough. Events are dropped while
+    /// the service still reports suspension.
     pub fn resume(&mut self) {
         self.suspended = false;
+        self.resume_retry_at = None;
         if self.device.is_none() {
             self.open_device();
         }
-        if let Some(device) = self.device.as_mut() {
-            match device.service.resume() {
-                Ok(()) => {}
-                Err(AudioServiceError::CommandQueueFull) => {
-                    self.counters.cleanup_backpressure += 1;
-                }
-                Err(error) => {
-                    self.counters.device_failures += 1;
-                    self.last_error = Some(error);
-                }
-            }
+        if self.device.is_some() {
+            self.attempt_resume();
         }
         self.maintain();
     }
 
-    /// Per-frame upkeep: let the service recreate a lost stream, then reclaim finished
-    /// voices, retry deferred stops and push deferred gain changes.
+    /// Per-frame upkeep: let the service recreate a lost stream, finish a resume the
+    /// service refused, then reclaim finished voices, retry deferred stops and push
+    /// deferred gain changes.
     ///
     /// This never opens a device that was never opened (that is
     /// [`AudioAdapter::resume`]'s job) and does nothing while suspended: a
-    /// backgrounded app must not poke the device every frame.
+    /// backgrounded app must not poke the device every frame, and a late poll must
+    /// not undo an intentional suspension. A pending resume retry runs at most once
+    /// per `RESUME_RETRY_COOLDOWN` of wall-clock time, so a refused resume cannot
+    /// close, reopen and start the device on every frame.
     pub fn poll_device(&mut self) {
         if self.suspended {
             return;
         }
-        if let Some(device) = self.device.as_mut() {
+        if let Some(due) = self.resume_retry_at {
+            if self.now() >= due {
+                self.attempt_resume();
+            }
+        } else if let Some(device) = self.device.as_mut() {
             match device.service.poll_device() {
                 Ok(()) => {}
                 Err(AudioServiceError::CommandQueueFull) => {
@@ -548,11 +683,20 @@ impl AudioAdapter {
         self.maintain();
     }
 
-    /// True while an output stream is open.
+    /// True while the adapter is suspended and refuses new events.
+    ///
+    /// A narrow accessor so the per-frame pump can skip the device and the drain
+    /// without building a full diagnostic snapshot.
+    pub fn is_suspended(&self) -> bool {
+        self.suspended
+    }
+
+    /// True while output is open and running (not suspended).
+    ///
+    /// An open but paused stream is not usable output: this stays false after a
+    /// refused resume until the bounded retry observes the service running again.
     pub fn is_available(&self) -> bool {
-        self.device
-            .as_ref()
-            .is_some_and(|device| device.service.stream_properties().is_some())
+        self.device.as_ref().is_some_and(device_running)
     }
 
     /// Diagnostic snapshot (see [`AdapterStatus`]).
@@ -565,7 +709,10 @@ impl AudioAdapter {
             ),
             None => (0, 0, 0),
         };
+        let health = self.device.as_ref().map(|device| device.service.health());
         AdapterStatus {
+            callback_count: health.as_ref().map_or(0, |value| value.callback_count),
+            frames_rendered: health.as_ref().map_or(0, |value| value.frames_rendered),
             available: self.is_available(),
             muted: self.muted,
             suspended: self.suspended,
@@ -619,6 +766,54 @@ impl AudioAdapter {
         }
     }
 
+    /// Ask the service to leave suspension and record whether output is running.
+    ///
+    /// The service keeps `health().suspended` true when a resume cannot open,
+    /// start or enqueue its Resume command, even though the adapter already left
+    /// intentional suspension. Treating that as success is the integration defect
+    /// this method prevents: the adapter instead records a retryable foreground
+    /// intent that [`AudioAdapter::poll_device`] finishes later.
+    fn attempt_resume(&mut self) {
+        let Some(device) = self.device.as_mut() else {
+            self.resume_retry_at = None;
+            return;
+        };
+        match device.service.resume() {
+            Ok(()) => {}
+            Err(AudioServiceError::CommandQueueFull) => {
+                self.counters.cleanup_backpressure += 1;
+            }
+            Err(error) => {
+                self.counters.device_failures += 1;
+                self.last_error = Some(error);
+            }
+        }
+        // The service's own state decides, not the result: `CommandQueueFull`
+        // leaves suspension in force just as a failed start does, and only the
+        // service can say output is running again.
+        let still_suspended = device.service.health().suspended;
+        self.resume_retry_at = if still_suspended {
+            Some(self.now() + RESUME_RETRY_COOLDOWN)
+        } else {
+            None
+        };
+    }
+
+    /// The adapter's clock, read by the resume-retry cooldown.
+    ///
+    /// Production reads `Instant::now()`. Tests replace it through the test-only
+    /// `test_now` field so the cooldown is exercised deterministically without
+    /// sleeping.
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        {
+            if let Some(now) = self.test_now {
+                return now;
+            }
+        }
+        Instant::now()
+    }
+
     // ---- voices ------------------------------------------------------------
 
     /// Start a voice for `event`, or say why not.
@@ -630,8 +825,10 @@ impl AudioAdapter {
             return Err(DropReason::Muted);
         }
         match self.device.as_ref() {
-            Some(device) if device.service.stream_properties().is_some() => {}
-            // No device at all, or a lost stream that `poll_device` has to recreate.
+            Some(device) if device_running(device) => {}
+            // No device, a lost stream that `poll_device` has to recreate, or a
+            // service that still holds suspension after a refused resume: nothing
+            // may be queued that cannot start now.
             _ => return Err(DropReason::NoDevice),
         }
         self.sweep_finished();
@@ -955,8 +1152,49 @@ mod tests {
             .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
     }
 
+    /// Saturate the service's bounded command FIFO through its public API so the
+    /// next pushed command is refused with [`AudioServiceError::CommandQueueFull`].
+    ///
+    /// Repeatedly stopping a voice that started before the pause keeps pushing
+    /// commands (a stop is not applied until a render invocation), which fills the
+    /// queue deterministically: no render, no clock and no sleep. This is the real
+    /// backpressure refusal path of the mock-backed service; the adapter's retry
+    /// policy must handle it exactly like a refused stream start.
+    fn saturate_command_queue(adapter: &mut AudioAdapter) {
+        let handle = adapter
+            .voices
+            .iter()
+            .flatten()
+            .next()
+            .expect("a voice must be sounding")
+            .handle;
+        let device = adapter.device.as_mut().expect("device");
+        loop {
+            match device.service.stop_voice(handle) {
+                Ok(()) => {}
+                Err(AudioServiceError::CommandQueueFull) => return,
+                Err(error) => panic!("unexpected stop failure: {error:?}"),
+            }
+        }
+    }
+
     fn health(adapter: &AudioAdapter) -> HealthSnapshot {
         adapter.device.as_ref().expect("device").service.health()
+    }
+
+    #[test]
+    fn status_reports_real_completed_mix_work() {
+        let mut adapter = adapter(AudioScope::Wetland);
+        assert_eq!(adapter.status().callback_count, 0);
+        assert_eq!(adapter.status().frames_rendered, 0);
+        assert_eq!(
+            adapter.trigger(GameplayEvent::BlockEdit),
+            TriggerOutcome::Started
+        );
+        let samples = render(&mut adapter, 64);
+        assert!(peak(&samples) > 0.0);
+        assert_eq!(adapter.status().callback_count, 1);
+        assert_eq!(adapter.status().frames_rendered, 64);
     }
 
     #[test]
@@ -1376,6 +1614,263 @@ mod tests {
         assert!(peak(&render(&mut adapter, 32)) > 0.0);
     }
 
+    /// Regression: the real stolen-stream resume failure from the device log.
+    ///
+    /// `android-audio/failed-resume.log` shows this sequence: the app resumes,
+    /// `AAudioStream_requestStart(s#1)` fails -899 because the stream was stolen,
+    /// the service drops that stream and keeps suspension with `recovery_pending`,
+    /// and a later poll opens a paused replacement that never starts. The adapter
+    /// used to clear its own `suspended` flag anyway and never retried, so output
+    /// stayed silent until the next lifecycle resume; a trigger could even be
+    /// accepted onto the paused replacement and queue delayed playback. This drives
+    /// the real failure through the mock's one-shot start refusal and checks event
+    /// dropping, bounded retry and recovery from `poll_device` alone.
+    #[test]
+    fn stolen_stream_resume_recovers_after_bounded_retry() {
+        let mut adapter = adapter(AudioScope::Wetland);
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Objective),
+            TriggerOutcome::Started
+        );
+        adapter.suspend();
+        assert!(health(&adapter).suspended);
+
+        // The platform refuses the next start request (AAudio -899, stolen stream).
+        adapter
+            .device
+            .as_mut()
+            .expect("device")
+            .service
+            .mock_backend()
+            .expect("mock backend")
+            .fail_next_start(-899);
+
+        let base = Instant::now();
+        adapter.test_now = Some(base);
+        adapter.resume();
+        assert!(
+            !adapter.is_available(),
+            "a failed start must not look like usable output"
+        );
+        assert!(
+            !adapter.status().suspended,
+            "the app is foreground by intent"
+        );
+        assert_eq!(
+            adapter.status().last_error,
+            Some(AudioServiceError::StreamStartFailed { code: -899 })
+        );
+        assert_eq!(
+            adapter.status().counters.device_failures,
+            1,
+            "the start failure must be recorded"
+        );
+        {
+            let device = adapter.device.as_ref().expect("device");
+            assert!(
+                device.service.stream_properties().is_none(),
+                "the failed stream must be closed, not left paused"
+            );
+        }
+
+        // Events must drop while the dead stream is not running; the cooldown poll
+        // must not open a replacement early, and nothing may be queued meanwhile.
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Jump),
+            TriggerOutcome::Dropped(DropReason::NoDevice)
+        );
+        adapter.poll_device();
+        assert!(
+            !adapter.is_available(),
+            "the retry must respect its cooldown"
+        );
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Land { strength: 1.0 }),
+            TriggerOutcome::Dropped(DropReason::NoDevice),
+            "a dead stream must not accept delayed playback"
+        );
+        assert_eq!(
+            adapter.status().tracked_voices,
+            1,
+            "dropped events must not leave voice records"
+        );
+
+        // The cooldown elapses: one foreground poll finishes the resume, replacing
+        // the dead stream and starting it, with no second lifecycle resume.
+        adapter.test_now = Some(base + RESUME_RETRY_COOLDOWN);
+        adapter.poll_device();
+        assert!(
+            adapter.is_available(),
+            "the bounded retry must recover output"
+        );
+        assert!(!health(&adapter).suspended);
+        assert_eq!(
+            health(&adapter).stream_recreations,
+            1,
+            "the dead stream must be replaced exactly once"
+        );
+        assert_eq!(
+            adapter.status().counters.device_failures,
+            1,
+            "a successful recovery adds no failure"
+        );
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Footstep),
+            TriggerOutcome::Started
+        );
+        assert!(
+            peak(&render(&mut adapter, 64)) > 0.0,
+            "recovered output must play"
+        );
+    }
+
+    /// Regression: command backpressure during resume takes the same recovery path.
+    ///
+    /// A full command queue refuses the Resume command without dropping the stream,
+    /// so the service stays suspended while its stream is still open. The adapter
+    /// must treat that refusal exactly like a failed start: drop events, retry on
+    /// the cooldown and recover without a second lifecycle resume. This variant also
+    /// exercises the open-but-paused stream directly: nothing may be queued onto it
+    /// even after a render frees queue space.
+    #[test]
+    fn refused_resume_is_retried_on_cooldown_and_drops_events_meanwhile() {
+        let mut adapter = adapter(AudioScope::Wetland);
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Objective),
+            TriggerOutcome::Started
+        );
+        adapter.suspend();
+        saturate_command_queue(&mut adapter);
+
+        // The Resume command is refused; the service keeps its suspension, while
+        // the app has already declared itself foreground again.
+        let base = Instant::now();
+        adapter.test_now = Some(base);
+        adapter.resume();
+        assert!(
+            health(&adapter).suspended,
+            "the service still refuses output"
+        );
+        assert!(
+            !adapter.status().suspended,
+            "the app is foreground by intent"
+        );
+        assert!(
+            !adapter.is_available(),
+            "a refused resume must not look like usable output"
+        );
+        let refused = adapter.status().counters;
+        assert!(
+            refused.cleanup_backpressure >= 1,
+            "backpressure must be visible"
+        );
+        assert_eq!(
+            refused.device_failures, 0,
+            "a full queue is backpressure, not a device failure"
+        );
+
+        // Free queue space. A naive adapter would now accept plays onto the
+        // still-paused service and queue delayed playback; both must be refused.
+        render(&mut adapter, 8);
+        let tracked = adapter.status().tracked_voices;
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Jump),
+            TriggerOutcome::Dropped(DropReason::NoDevice),
+            "events must drop while output is suspended, not queue for later"
+        );
+        assert_eq!(
+            adapter.status().tracked_voices,
+            tracked,
+            "a dropped event must not leave a voice record"
+        );
+        assert_eq!(
+            peak(&render(&mut adapter, 64)),
+            0.0,
+            "nothing may sound while the resume is unfinished"
+        );
+
+        // Bounded retry: polls inside the cooldown leave the device alone, and the
+        // poll once the deadline passes finishes the resume without a second one.
+        adapter.poll_device();
+        assert!(
+            !adapter.is_available(),
+            "the retry must respect its cooldown"
+        );
+        adapter.test_now = Some(base + RESUME_RETRY_COOLDOWN - Duration::from_millis(1));
+        adapter.poll_device();
+        assert!(
+            !adapter.is_available(),
+            "a poll before the deadline must not retry"
+        );
+        adapter.test_now = Some(base + RESUME_RETRY_COOLDOWN);
+        adapter.poll_device();
+        assert!(
+            adapter.is_available(),
+            "the poll at the deadline must finish the bounded retry"
+        );
+        assert!(!health(&adapter).suspended);
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Footstep),
+            TriggerOutcome::Started
+        );
+        assert!(
+            peak(&render(&mut adapter, 64)) > 0.0,
+            "recovered output must play"
+        );
+    }
+
+    /// Regression: intentional suspension cancels a pending resume retry.
+    #[test]
+    fn intentional_suspend_cancels_pending_resume_retry() {
+        let mut adapter = adapter(AudioScope::Wetland);
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Objective),
+            TriggerOutcome::Started
+        );
+        adapter.suspend();
+        saturate_command_queue(&mut adapter);
+        let base = Instant::now();
+        adapter.test_now = Some(base);
+        adapter.resume();
+        assert!(health(&adapter).suspended, "resume must have failed");
+        assert!(
+            adapter.resume_retry_at.is_some(),
+            "a refused resume must leave a retry pending"
+        );
+
+        // The app backgrounds again; the pending retry is cancelled and the queue
+        // is drained, so a retry *could* succeed if one were attempted.
+        adapter.suspend();
+        assert!(adapter.is_suspended());
+        assert!(
+            adapter.resume_retry_at.is_none(),
+            "intentional suspension must cancel the pending retry"
+        );
+        render(&mut adapter, 8);
+        adapter.test_now = Some(base + RESUME_RETRY_COOLDOWN * 2);
+        for _ in 0..8 {
+            adapter.poll_device();
+        }
+        assert!(
+            !adapter.is_available() && health(&adapter).suspended,
+            "a late poll must never resume intentional suspension"
+        );
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Jump),
+            TriggerOutcome::Dropped(DropReason::Suspended)
+        );
+        assert_eq!(peak(&render(&mut adapter, 64)), 0.0, "no stale playback");
+
+        // An explicit foreground resume still works afterwards, on this adapter.
+        adapter.resume();
+        assert!(adapter.is_available());
+        assert_eq!(
+            adapter.trigger(GameplayEvent::Footstep),
+            TriggerOutcome::Started
+        );
+        assert!(peak(&render(&mut adapter, 64)) > 0.0);
+    }
+
     #[test]
     fn deferred_cleanup_is_retried_by_the_next_maintenance_pass() {
         let mut adapter = adapter(AudioScope::Wetland);
@@ -1459,5 +1954,42 @@ mod tests {
                 + counters.dropped_service_error
         );
         assert_eq!(adapter.status().tracked_voices, MAX_VOICES);
+    }
+
+    #[test]
+    fn event_queue_is_bounded_and_keeps_the_newest_events() {
+        let mut queue = EventQueue::default();
+        for _ in 0..EventQueue::CAPACITY {
+            queue.push(GameplayEvent::Footstep);
+        }
+        assert_eq!(queue.queued(), EventQueue::CAPACITY);
+        assert_eq!(queue.dropped(), 0);
+
+        // One push past capacity drops the oldest event and keeps the newest.
+        queue.push(GameplayEvent::Objective);
+        assert_eq!(queue.queued(), EventQueue::CAPACITY);
+        assert_eq!(queue.dropped(), 1);
+        let mut events = Vec::new();
+        while let Some(event) = queue.pop() {
+            events.push(event);
+        }
+        assert!(
+            events.contains(&GameplayEvent::Objective),
+            "the newest event must survive"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| **event == GameplayEvent::Footstep)
+                .count(),
+            EventQueue::CAPACITY - 1
+        );
+
+        // Clearing drops the queue without affecting the drop counter.
+        queue.push(GameplayEvent::Jump);
+        queue.clear();
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.pop(), None);
+        assert_eq!(queue.dropped(), 1);
     }
 }

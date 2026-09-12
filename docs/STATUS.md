@@ -1,6 +1,6 @@
 # Current status
 
-Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 now passes the repaired Android resume checks; review/CI delivery is in progress and human hearing remains open.
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
@@ -11,8 +11,18 @@ functionally verified on OnePlus13; see [controls and evidence](performance/terr
 PR #31 wires the production wetland camera to the detail runtime and passes the
 [Android render/edit/persistence/lifecycle slice](performance/wetland-auto-detail.md).
 Actual tested wetland views stayed at Source under retained quality guards;
-coarse transition acceptance remains open. Shared audio integration passes142
-host app tests and strict Clippy; Android audio integration and hearing are next.
+coarse transition acceptance remains open. Shared audio at `b2ffd5b` passes147 app tests,49 audio tests, strict scoped
+Clippy/fmt and independent Gemini review. The phone exposed AAudio resume failure
+-899; after repair, **3/3 wetland cycles and one Relay cycle** reproduced the
+failure and recovered automatically to successful stream starts and real events.
+[Shared audio evidence](performance/shared-sample-audio.md). PR #32 awaits final
+CI/delivery; human hearing remains unverified and does not block independent work.
+All original user saves and the completed Relay import were restored and hashed.
+
+Worker `w_3f998c46` now implements the graphics-integrated Android destruction
+check in `engine/destruction-android-check`, based on PR #33 physics. It owns only
+the new diagnostic, registration and its log. Source work is ongoing; Android
+64-piece/20-reset-load acceptance remains NOT RUN.
 
 Global worker reconciliation found preserved D2.2 destruction (`w_80029347`) and
 D3.1 lighting (`w_9d03d127`) workers from the other lead. Do not duplicate them or

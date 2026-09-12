@@ -1,0 +1,19 @@
+{
+  "source_commit": "b2ffd5b4c5b68ea10ab306c24b112135a787e7af",
+  "apk_sha256": "7d08d10df9e7840c7793bac9f410dced1548e7e744871162fc4c7bd0b82089e4",
+  "device": "OnePlus13 CPH2653 Android16, Adreno830 Vulkan1.3.284 driver2150760522",
+  "build": "Gradle assembleDebug, Rust dev optimized, NDK28.2.13676358; validation false",
+  "wetland_fixture": "seed20260908 production wetland; disposable D1 session; actual jumps, HOME3s/resume7s x3",
+  "wetland_result": "Three AAudio requestStart failures -899 followed by new stream start0 and subsequent jump/land Started with increasing callbacks/frames in same process31940",
+  "relay_fixture": "Dedicated test save copied from reset chamber; character eye set [6,2.55,13.8] before launch, actual ACTION after HOME/resume clears obstacle",
+  "relay_result": "AAudio requestStart -899 followed by replacement start0 and actual block-edit Started callbacks9342 frames896832 process32154",
+  "baseline_other_events": "source23112d6 same event wiring: plate preposition [10,1.55,7] led real objective event; legacy completed save imported into dedicated file",
+  "audibility": "NOT VERIFIED; human question pending",
+  "original_saves": "Three pre-existing files SHA256 unchanged after restore; completed imported Relay restored",
+  "raw_evidence_root": "/mnt/bench/matterweave-dev/coarse-terrain/android-audio",
+  "files": {
+    "runtime.log": "11c3054f444ec9568166c8896664f972d8bea177dc11d6732d1d7f94e0fa0848",
+    "restored-saves.sha256": "3e8c3d9951234accff380f809f4ec820c410da3932300fbdfa648a7ef30e0b4e"
+  },
+  "relay_seed": 20260909
+}

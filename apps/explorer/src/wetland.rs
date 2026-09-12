@@ -1,6 +1,7 @@
 //! Player-facing wetland experience; source, collision, derived graphics and saves
 //! remain separate. Legacy sandbox files are never used by this mode.
 use crate::{
+    audio_service::{EventQueue, GameplayEvent},
     controls::{contains, Action, Camera, Controls},
     detail_runtime::DetailRuntime,
     metrics,
@@ -857,6 +858,36 @@ impl Runtime {
     }
 }
 
+/// Queue the audio event for one completed physics step, from its real ground
+/// transitions.
+///
+/// A takeoff is only a takeoff when a requested jump actually left the ground, and
+/// a landing only when this step changed airborne to grounded. Both are transitions,
+/// so a held key or a standing frame queues nothing.
+fn queue_locomotion(
+    events: &mut EventQueue,
+    grounded_before: bool,
+    grounded_after: bool,
+    jump_requested: bool,
+) {
+    if jump_requested && grounded_before && !grounded_after {
+        events.push(GameplayEvent::Jump);
+    }
+    if !grounded_before && grounded_after {
+        events.push(GameplayEvent::Land { strength: 1.0 });
+    }
+}
+
+/// Queue the event for one attempted authoritative edit.
+///
+/// Only an accepted edit is a world change worth hearing; every rejection path
+/// (`Err`) is status text and queues nothing.
+fn queue_edit_result(events: &mut EventQueue, result: &Result<String, String>) {
+    if result.is_ok() {
+        events.push(GameplayEvent::BlockEdit);
+    }
+}
+
 pub struct WetlandApp {
     started: Instant,
     capture: Capture,
@@ -892,6 +923,9 @@ pub struct WetlandApp {
     saved_at: Instant,
     replay_checked: bool,
     replay: Option<Replay>,
+    /// Gameplay feedback since the last drain by the shared audio owner. Private:
+    /// the vocabulary is the accessors, not the field.
+    events: EventQueue,
 }
 impl WetlandApp {
     pub fn new(directory: PathBuf, auto_start: bool, frame_limit: Option<u64>) -> Self {
@@ -929,7 +963,20 @@ impl WetlandApp {
             saved_at: Instant::now(),
             replay_checked: false,
             replay: None,
+            events: EventQueue::default(),
         }
+    }
+    /// Remove the oldest queued gameplay event, if any.
+    ///
+    /// The app's shared audio owner drains this once per frame; nothing else does.
+    pub(crate) fn pop_event(&mut self) -> Option<GameplayEvent> {
+        self.events.pop()
+    }
+    /// Drop every queued gameplay event without playing it.
+    ///
+    /// The audio owner calls this on focus loss, suspension and scope switches.
+    pub(crate) fn clear_events(&mut self) {
+        self.events.clear();
     }
     fn finish_replay(&mut self) {
         if self.replay.as_mut().is_some_and(Replay::take_finished) {
@@ -1051,7 +1098,11 @@ impl WetlandApp {
         match action {
             Action::Remove | Action::Place => {
                 let t = Instant::now();
-                self.status = r.edit(action == Action::Place).unwrap_or_else(|e| e);
+                let result = r.edit(action == Action::Place);
+                queue_edit_result(&mut self.events, &result);
+                self.status = match result {
+                    Ok(message) | Err(message) => message,
+                };
                 log::info!(
                     "WETLAND EDIT {:.3}ms {}",
                     t.elapsed().as_secs_f64() * 1000.,
@@ -1345,11 +1396,19 @@ impl WetlandApp {
                 if let Some(message) = r.sync_detail_collision() {
                     self.status = message;
                 }
-                row.physics_fixed_steps = Some(r.physics.step(
-                    dt,
-                    velocity.to_array(),
-                    !replay_active && motion.y > 0.,
-                ) as u32);
+                let grounded_before = r.physics.grounded();
+                let jump_requested = !replay_active && motion.y > 0.;
+                row.physics_fixed_steps =
+                    Some(r.physics.step(dt, velocity.to_array(), jump_requested) as u32);
+                let grounded_after = r.physics.grounded();
+                // Real transition only: a blocked or held jump queues nothing, and
+                // one step can queue at most one takeoff and one landing.
+                queue_locomotion(
+                    &mut self.events,
+                    grounded_before,
+                    grounded_after,
+                    jump_requested,
+                );
                 r.camera.position = Vec3::from_array(r.physics.character_eye());
                 if motion.length_squared() > 0.
                     || look.length_squared() > 0.
@@ -1831,10 +1890,16 @@ mod integration_tests {
         runtime = app.runtime.take().unwrap();
         assert!(runtime.edits.is_empty(), "main menu accepted a hidden edit");
         assert_eq!(runtime.scene.counts().expanded_occupied_cells, before);
-        runtime
-            .edit(false)
-            .expect("remove actual aimed source cell");
+        assert_eq!(app.pop_event(), None, "a rejected action queued audio");
+        // The same real action with the menu closed performs the edit and emits
+        // exactly one block-edit event through the app's bounded queue.
+        app.menu = false;
+        app.runtime = Some(runtime);
+        app.action(Action::Remove);
+        runtime = app.runtime.take().unwrap();
         assert_eq!(runtime.scene.counts().expanded_occupied_cells, before - 1);
+        assert_eq!(app.pop_event(), Some(GameplayEvent::BlockEdit));
+        assert_eq!(app.pop_event(), None);
         let edit = runtime.edits.last().unwrap().clone();
         runtime.save(&directory).unwrap();
         let saved_eye = runtime.physics.character_eye();
@@ -1885,6 +1950,100 @@ mod integration_tests {
         assert_eq!(std::fs::read(legacy).unwrap(), b"legacy world sentinel");
         drop(restored);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A real `Runtime` on a one-prototype fixture, without generating and meshing
+    /// the full showcase map. The edit path (`Runtime::edit`, the graphics rebuild
+    /// and the collision cadence) is the production one; only the world is tiny.
+    fn fixture_runtime(directory: &std::path::Path) -> Runtime {
+        use matterweave_detail::{material, DetailVolume, Scale, Transform};
+
+        let empty_world = World::new(7);
+        let mut scene = DetailScene::new();
+        let mut rock = DetailVolume::new("test-rock-volume", Scale::new(0.25).unwrap());
+        rock.set([0, 0, 0], material::BANK_STONE).unwrap();
+        scene.add_prototype(rock).unwrap();
+        scene
+            .place("test-rock", "test-rock-volume", Transform::identity())
+            .unwrap();
+        let camera = Camera {
+            position: Vec3::new(0.125, 0.125, 2.0),
+            yaw: std::f32::consts::PI,
+            pitch: 0.0,
+        };
+        let mut detail = WetlandDetail::new();
+        detail.warm_source(&mut scene, &camera).unwrap();
+        let mut physics = Physics::new(&empty_world);
+        physics.replace_detail_scene(&scene).unwrap();
+        Runtime {
+            scene,
+            detail,
+            physics,
+            empty_world,
+            dynamic: DynamicMeshCache::default(),
+            edits: Vec::new(),
+            save_path: directory.join("test-wetland.json"),
+            spawn: [0.125, 0.125, 2.0],
+            terrain: matterweave_detail::Terrain::generate(SEED).expect("showcase terrain grid"),
+            clearing: [0.125, 0.125, 0.0],
+            route: Vec::new(),
+            elevated_route: Vec::new(),
+            camera,
+            lighting: LightingSettings::default(),
+            dirty: false,
+            dynamic_dirty: false,
+            counts: String::new(),
+            collision: DetailCollisionCadence::new(),
+            pending_edits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn real_edit_queues_one_block_edit_and_rejections_queue_nothing() {
+        let directory =
+            std::env::temp_dir().join(format!("matterweave-wetland-events-{}", std::process::id()));
+        let mut app = WetlandApp::new(directory.clone(), false, None);
+        app.runtime = Some(fixture_runtime(&directory));
+
+        // The menu rejects the action before any world work: no event, no edit.
+        app.action(Action::Remove);
+        assert!(app.runtime.as_ref().unwrap().edits.is_empty());
+        assert_eq!(app.pop_event(), None);
+
+        // The same aimed action with the menu closed performs the real edit and
+        // queues exactly one block-edit event.
+        app.menu = false;
+        app.action(Action::Remove);
+        assert_eq!(app.runtime.as_ref().unwrap().edits.len(), 1);
+        assert_eq!(app.pop_event(), Some(GameplayEvent::BlockEdit));
+        assert_eq!(app.pop_event(), None);
+
+        // Aiming at nothing is rejected: status only, no event.
+        app.runtime.as_mut().unwrap().camera.pitch = 1.0;
+        app.action(Action::Remove);
+        assert_eq!(app.runtime.as_ref().unwrap().edits.len(), 1);
+        assert_eq!(app.pop_event(), None);
+    }
+
+    #[test]
+    fn locomotion_events_follow_real_ground_transitions_only() {
+        let mut events = EventQueue::default();
+        // Standing and walking keep the grounded state, and a blocked jump request
+        // never leaves the ground: nothing to hear.
+        queue_locomotion(&mut events, true, true, false);
+        queue_locomotion(&mut events, true, true, true);
+        assert_eq!(events.pop(), None);
+        // A real takeoff queues exactly one jump.
+        queue_locomotion(&mut events, true, false, true);
+        assert_eq!(events.pop(), Some(GameplayEvent::Jump));
+        assert_eq!(events.pop(), None);
+        // Staying airborne repeats nothing, however long the fall.
+        queue_locomotion(&mut events, false, false, true);
+        assert_eq!(events.pop(), None);
+        // The step that touches down queues exactly one landing.
+        queue_locomotion(&mut events, false, true, false);
+        assert_eq!(events.pop(), Some(GameplayEvent::Land { strength: 1.0 }));
+        assert_eq!(events.pop(), None);
     }
 }
 

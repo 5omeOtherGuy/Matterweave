@@ -8,10 +8,10 @@ work where evidence justifies it. [STATUS](STATUS.md), [ROADMAP](ROADMAP.md) and
 [board](performance/board.json) remain the live authorities; the lead updates those
 entry points, workers do not.
 
-A parallel session currently owns `phase-a/lead-wave-1a-dispatch` and the D1/D2/D4
-assignments; this roadmap preserves that ownership. The owner also authorizes this session to
-start follow-up work in parallel on disjoint paths; it must not take over those
-assignments or the other lead's phone lease.
+The owner transferred ongoing development, orchestration and Android integration to
+the current Codex lead on 2026-09-12. The other session finishes its existing merge
+workflow. Preserve its active destruction/lighting deliveries, reconcile live Pi
+workers before dispatch, and continue from the shared board without duplicate work.
 
 ## Goal (north star)
 

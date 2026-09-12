@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "run": "engine-completion-plan-v2-20260912",
-  "authority": "Two sessions work this campaign as a pipeline, by owner direction on 2026-09-12. The Claude Code session produces host-verified engine slices in the non-app crates (physics, render lighting, audio, detail) with worker dispatch and independent review, and hands each one over merged and green with its open gates named. The Codex session does the follow-up: apps/explorer integration, Android functional runs, terrain/landscape/coarse, and acceptance. The Codex session is lead for any conflict (\"in case there is conflict let codex take the lead\") and owns this authority field, acceptance and the device. Each session appends its own task entries and never overwrites the other's. Workers must not edit this file.",
+  "authority": "Current Codex lead owns integration, acceptance, shared board conflicts and the phone by owner transfer. Preserve the other session as producer of its existing non-app physics/lighting slices and merge handoffs; Codex owns apps/explorer, Android and landscape integration. Reconcile all Pi workers before dispatch; global cap3, no duplicate assignment. Historical producer acceptance entries remain intact and do not supersede later integration evidence.",
   "base": "01ab450",
   "phone_owner": "Current Codex development lead; OnePlus13 192.168.178.93:5555; workers have no device access.",
   "tasks": {
@@ -732,7 +732,7 @@
       "review_worker": "w_292b5501"
     },
     "D1-production-detail": {
-      "state": "delivery",
+      "state": "accepted",
       "owner": "lead",
       "profile": "deepseek-flash-go",
       "thinking": "max",
@@ -741,10 +741,10 @@
       "device_access": "none; lead owns Android",
       "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
       "artifact": "e5e2e08",
-      "acceptance": "PR31; Android production render/edit/save-restart/HOME-resume pass. All observed8302 selections Source under retained guards; Android coarse-transition gate remains open."
+      "acceptance": "PR31 merged04d3964; production Android render/edit/load/lifecycle pass; actual views Source-only, D1.2 transition acceptance open."
     },
     "D4-production-audio": {
-      "state": "review",
+      "state": "delivery",
       "owner": "w_14dde4de",
       "profile": "deepseek-flash-go",
       "thinking": "max",
@@ -753,7 +753,9 @@
       "device_access": "none; lead owns Android",
       "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
       "artifact": "1c16b810",
-      "acceptance": "Source completed; tests delegated to lead warm integration build."
+      "acceptance": "Source b2ffd5b:147app+49audio tests, independent Gemini repair review,3wetland+1Relay Android failed-start recoveries pass; PR32 CI pending, hearing unverified.",
+      "repair_worker": "w_adc05f59",
+      "review_worker": "w_3e710340"
     },
     "D2.2-preserved": {
       "state": "running",
@@ -768,6 +770,42 @@
       "dispatcher": "other lead; preserve existing assignment",
       "worktree": "/mnt/bench/matterweave-dev/worktrees/d3-1-production-lighting",
       "device_access": "none; this integration lead currently operates phone"
+    },
+    "D2.2-Android-rendered": {
+      "owner": "current Codex lead / w_3f998c46",
+      "state": "running",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "base": "bf532eef15154936db730aa31544c53435601f57",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/destruction-android-check",
+      "branch": "engine/destruction-android-check",
+      "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/destruction-android-worker",
+      "paths": [
+        "apps/explorer/src/destruction_check.rs",
+        "apps/explorer/src/lib.rs: diagnostic registration only",
+        "docs/performance/logs/destruction-android-check.md"
+      ],
+      "dependencies": [
+        "PR33 physics implementation; other lead owns merge"
+      ],
+      "acceptance": "NOT RUN; actual rendered64-piece and20reset/load checks then lead-owned Android",
+      "routing": "Owner explicitly requests DeepSeek primary; current Terrain Lab/detail deliveries demonstrate useful implementation after lead repair. Router Muse recommendation bypassed for owner preference; no Astra worker."
+    },
+    "D1.2-production-fixtures": {
+      "owner": "current Codex lead / w_18ada142",
+      "state": "running",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "base": "39666a82a5c4686a88a3e82d103881bb1a0c8e04",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/detail-production-fixtures",
+      "branch": "engine/detail-production-fixtures",
+      "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-worker",
+      "paths": [
+        "apps/explorer/src/detail_check.rs",
+        "docs/performance/logs/detail-production-fixtures.md"
+      ],
+      "acceptance": "NOT RUN; real production flora + occlusion/movement/edit fixtures with quality guards retained; lead Android after review",
+      "routing": "DeepSeek primary per owner; existing D1 implementation useful after lead repair; Gemini review follows frozen source."
     },
     "D1.1-detail-runtime": {
       "attempt": 1,
@@ -832,6 +870,14 @@
       ],
       "acceptance": "Lead-verified 506 workspace tests, strict clippy and fmt clean; cargo check green on host and aarch64-linux-android, with cargo tree -e features confirming backend-android on device and backend-mock on host.",
       "open": "experience.rs lifecycle wiring and both samples' event call sites are lead-owned and not done; human audibility confirmation NOT RUN and cannot be replaced by counters."
+    },
+    "D2.3-preserved": {
+      "owner": "other-session production worker w_3046451b; resume coordinated by Codex",
+      "state": "paused-for-global-cap",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/d2-3-streaming",
+      "session": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1/session.jsonl",
+      "run_dir": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1",
+      "acceptance": "NOT RUN. New fourth worker stopped after brief/read progress to honor global3-worker cap; partial source and exact session preserved. Resume same session when slot frees; never launch duplicate."
     }
   },
   "capacity": {
