@@ -182,3 +182,627 @@ fn scheduling_is_deterministic_and_does_not_edit_authority() {
     assert_eq!(w.revision(), revision);
     assert_eq!(w.stats(), stats);
 }
+
+// ===========================================================================
+// D3.1 mesh-only participation probe.
+//
+// Declared criterion, asserted here rather than eyeballed. The fixture is one
+// unit-cube prototype (the engine's own mesher output for one voxel, i.e. what a
+// detail prototype pool holds) placed on a sunlit red floor by a
+// `StaticInstance` record, in a volume whose footprint also contains a unit-voxel
+// receiver and a second, identical mesh-only object used as a static control.
+//
+// C1 presence and direction: the object's exposed side faces report exactly zero
+//    with no mesh geometry attached (air cells are never sampled) and a strictly
+//    positive radiance afterwards that is dominated by the floor's albedo channel
+//    (red), because those faces gather the sunlit floor.
+// C2 trace participation: a unit-voxel receiver face whose gather reached the
+//    sunlit floor loses red energy (the object now occludes part of that floor)
+//    and gains the object's own green albedo, so the mesh geometry is a trace
+//    target, not only a sampled surface.
+// C3 movement and control: lifting the object strictly lowers every side-face
+//    response, the vacated cell returns to exactly zero, and an identical static
+//    object's samples stay bit-identical.
+// ===========================================================================
+use crate::indirect::{MeshGeometry, MeshProxy};
+use crate::static_scene::StaticInstance;
+use matterweave_core::{Mesh, Vertex};
+
+const PROBE_FLOOR: u8 = 1;
+const PROBE_WALL: u8 = 2;
+const PROBE_OBJECT: u8 = 3;
+
+fn probe_palette() -> [[f32; 3]; 256] {
+    let mut palette = [[0.5; 3]; 256];
+    palette[0] = [0.; 3];
+    palette[PROBE_FLOOR as usize] = [0.9, 0.05, 0.02];
+    palette[PROBE_WALL as usize] = [0.5; 3];
+    palette[PROBE_OBJECT as usize] = [0.05, 0.8, 0.1];
+    palette
+}
+
+/// One unit cube at `[0,1]^3`: exactly the geometry the engine's own voxel
+/// mesher produces for a single cell, so this is a detail prototype, not a
+/// synthetic triangle soup.
+fn probe_prototype() -> Mesh {
+    let mut voxel = World::new(0);
+    voxel.set([0, 0, 0], 1);
+    voxel.mesh()
+}
+
+fn probe_placement(cell: [i32; 3]) -> StaticInstance {
+    StaticInstance {
+        prototype: 0,
+        translation: cell.map(|v| v as f32),
+        yaw_quarters: 0,
+    }
+}
+
+fn probe_volume() -> IndirectVolume {
+    IndirectVolume::new([-5, -2, -5], [11, 6, 11], 64, 16., probe_palette()).unwrap()
+}
+
+/// Sunlit floor plus one unit-voxel receiver column at `x = -4`, `y in 0..=2`.
+fn probe_world() -> World {
+    let mut world = World::new(0);
+    for x in -5..5 {
+        for z in -5..5 {
+            world.set([x, -1, z], PROBE_FLOOR);
+        }
+    }
+    for y in 0..=2 {
+        world.set([-4, y, 0], PROBE_WALL);
+    }
+    world
+}
+
+fn probe_proxy(placements: &[StaticInstance]) -> MeshProxy {
+    let meshes = [probe_prototype()];
+    let materials = [PROBE_OBJECT];
+    MeshProxy::build(
+        &MeshGeometry {
+            meshes: &meshes,
+            instances: placements,
+            materials: &materials,
+        },
+        [-5, -2, -5],
+        [11, 6, 11],
+    )
+    .unwrap()
+}
+
+const OBJECT_CELL: [i32; 3] = [0, 0, 0];
+const LIFTED_CELL: [i32; 3] = [0, 2, 0];
+const CONTROL_CELL: [i32; 3] = [-3, 0, -3];
+const RECEIVER_CELL: [i32; 3] = [-4, 1, 0];
+const RECEIVER_FACE: usize = 0;
+/// Faces whose hemispheres contain the sunlit floor for a cube standing on it.
+const SIDE_FACES: [usize; 4] = [0, 1, 4, 5];
+
+#[test]
+fn c1_mesh_only_geometry_receives_indirect_light() {
+    let world = probe_world();
+    let sun = sun();
+    let mut before = probe_volume();
+    finish(&mut before, &world, 0, sun);
+    assert!(
+        !before.has_mesh_proxy() && before.mesh_digest().is_none(),
+        "a fresh volume represents unit voxels only"
+    );
+    for face in 0..6 {
+        assert_eq!(
+            before.sample(OBJECT_CELL, face),
+            [0.; 3],
+            "an air cell has no sampled face: face {face}"
+        );
+    }
+    let mut after = probe_volume();
+    after.set_mesh_proxy(Some(probe_proxy(&[probe_placement(OBJECT_CELL)])));
+    assert!(after.has_mesh_proxy() && after.mesh_digest().is_some());
+    finish(&mut after, &world, 0, sun);
+    for face in SIDE_FACES {
+        let (r, g, b) = {
+            let v = after.sample(OBJECT_CELL, face);
+            (v[0], v[1], v[2])
+        };
+        let before_face = before.sample(OBJECT_CELL, face);
+        assert!(
+            r > 0.05 && r > 10. * g && r > 10. * b,
+            "after {face}: the object must gather the sunlit red floor, got {r} {g} {b}; \
+             before {before_face:?}"
+        );
+    }
+    // Faces pointing away from the floor stay dark: one bounce with black misses
+    // cannot light the top of an object standing on the only bounce source.
+    assert_eq!(after.sample(OBJECT_CELL, 2), [0.; 3], "+Y gathers upward");
+    assert_eq!(
+        after.sample(OBJECT_CELL, 3),
+        [0.; 3],
+        "-Y touches the floor"
+    );
+}
+
+#[test]
+fn c2_mesh_only_geometry_participates_in_the_gather() {
+    let world = probe_world();
+    let sun = sun();
+    let mut before = probe_volume();
+    before.set_mesh_proxy(Some(probe_proxy(&[])));
+    finish(&mut before, &world, 0, sun);
+    let mut after = probe_volume();
+    after.set_mesh_proxy(Some(probe_proxy(&[probe_placement(OBJECT_CELL)])));
+    finish(&mut after, &world, 0, sun);
+    // Only the receiver's outward face can see the object: -X of the column at
+    // `x = -4` gathers toward +X, and the object stands at `x in [0,1)`. Its -Z
+    // face gathers away from the object and is deliberately not asserted.
+    let face = RECEIVER_FACE;
+    let (r0, g0) = {
+        let v = before.sample(RECEIVER_CELL, face);
+        (v[0], v[1])
+    };
+    let (r1, g1) = {
+        let v = after.sample(RECEIVER_CELL, face);
+        (v[0], v[1])
+    };
+    assert!(
+        r1 < r0,
+        "face {face}: the object occludes sunlit floor, so red must fall, {r1} vs {r0}"
+    );
+    assert!(
+        g1 > g0 * 1.5,
+        "face {face}: the object's albedo must enter the gather, {g1} vs {g0}"
+    );
+}
+
+#[test]
+fn c3_movement_changes_the_response_and_a_static_object_does_not_drift() {
+    let world = probe_world();
+    let sun = sun();
+    let control = probe_placement(CONTROL_CELL);
+    let mut rest = probe_volume();
+    rest.set_mesh_proxy(Some(probe_proxy(&[probe_placement(OBJECT_CELL), control])));
+    finish(&mut rest, &world, 0, sun);
+    let mut lifted = probe_volume();
+    lifted.set_mesh_proxy(Some(probe_proxy(&[probe_placement(LIFTED_CELL), control])));
+    finish(&mut lifted, &world, 0, sun);
+    assert_ne!(
+        rest.mesh_digest(),
+        lifted.mesh_digest(),
+        "a moved object must change the representation identity"
+    );
+    for face in SIDE_FACES {
+        let at_rest = rest.sample(OBJECT_CELL, face)[0];
+        let raised = lifted.sample(LIFTED_CELL, face)[0];
+        assert!(at_rest > 0.05, "face {face}: rest response {at_rest}");
+        assert!(
+            raised < at_rest,
+            "face {face}: lifting away from the floor must lower the response, {raised} vs {at_rest}"
+        );
+    }
+    for face in 0..6 {
+        assert_eq!(
+            lifted.sample(OBJECT_CELL, face),
+            [0.; 3],
+            "the vacated cell is air again: face {face}"
+        );
+    }
+    // The control's -X face gathers toward -X while the moved object lies at
+    // `x >= 0`, and the sun is vertical, so no ray of this face can reach the
+    // object: its samples must hold exactly. Faces that do contain the object
+    // legitimately change (its +X face moves 0.3937 -> 0.4078), which is
+    // participation, not drift.
+    let face = 1;
+    assert_eq!(
+        lifted.sample(CONTROL_CELL, face),
+        rest.sample(CONTROL_CELL, face),
+        "the static control object must not drift: face {face}"
+    );
+    assert_ne!(
+        lifted.sample(CONTROL_CELL, 0),
+        rest.sample(CONTROL_CELL, 0),
+        "a control face whose hemisphere holds the object does see the move"
+    );
+}
+
+#[test]
+fn c4_proxy_identity_reparents_the_cache_and_empty_proxies_are_neutral() {
+    let world = probe_world();
+    let sun = sun();
+    let mut volume = probe_volume();
+    volume.set_mesh_proxy(Some(probe_proxy(&[probe_placement(OBJECT_CELL)])));
+    finish(&mut volume, &world, 0, sun);
+    assert!(volume.valid_for(&world, 0, sun));
+    // Attaching a different representation clears the published samples at once.
+    volume.set_mesh_proxy(Some(probe_proxy(&[probe_placement(LIFTED_CELL)])));
+    assert!(!volume.valid_for(&world, 0, sun));
+    assert_eq!(volume.sample(OBJECT_CELL, 1), [0.; 3]);
+    // A proxy that marks no cell keeps unit-voxel output bit-identical.
+    let mut plain = probe_volume();
+    finish(&mut plain, &world, 0, sun);
+    let mut empty = probe_volume();
+    empty.set_mesh_proxy(Some(probe_proxy(&[])));
+    finish(&mut empty, &world, 0, sun);
+    assert!(empty.has_mesh_proxy() && empty.mesh_digest().is_some());
+    assert!(empty.resident_bytes() > plain.resident_bytes());
+    for cell in [OBJECT_CELL, RECEIVER_CELL, [-3, 1, 0], [-5, 0, 4]] {
+        for face in 0..6 {
+            assert_eq!(empty.sample(cell, face), plain.sample(cell, face));
+        }
+    }
+}
+
+#[test]
+fn c5_proxy_rasterizes_voxel_faces_exactly_and_clips_to_its_box() {
+    // A two-voxel stack meshes into a 1x2x1 block: exactly those two cells, not
+    // an inflated AABB around them.
+    let mut voxels = World::new(0);
+    voxels.set([0, 0, 0], 1);
+    voxels.set([0, 1, 0], 1);
+    let meshes = [probe_prototype(), voxels.mesh()];
+    let materials = [PROBE_OBJECT, PROBE_WALL];
+    let placements = [
+        probe_placement([1, 0, 1]),
+        StaticInstance {
+            prototype: 1,
+            translation: [3., 0., 0.],
+            yaw_quarters: 0,
+        },
+    ];
+    let proxy = MeshProxy::build(
+        &MeshGeometry {
+            meshes: &meshes,
+            instances: &placements,
+            materials: &materials,
+        },
+        [-2, -2, -2],
+        [6, 6, 6],
+    )
+    .unwrap();
+    assert_eq!(proxy.occupied_cells(), 3);
+    assert_eq!(proxy.material_at([1, 0, 1]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([3, 0, 0]), PROBE_WALL);
+    assert_eq!(proxy.material_at([3, 1, 0]), PROBE_WALL);
+    assert_eq!(proxy.material_at([3, 2, 0]), 0);
+    assert_eq!(proxy.material_at([3, 1, 1]), 0);
+    let cells: Vec<_> = proxy.cells().collect();
+    assert_eq!(
+        cells,
+        vec![
+            ([3, 0, 0], PROBE_WALL),
+            ([3, 1, 0], PROBE_WALL),
+            ([1, 0, 1], PROBE_OBJECT),
+        ],
+        "cells are emitted in ascending local-index order"
+    );
+    // A ray outside the coverage box never enters it; inside it hits the proxy.
+    assert_eq!(proxy.raycast([10., 10., 10.], [1., 0., 0.], 4.), None);
+    assert_eq!(
+        proxy
+            .raycast([3.5, 0.5, -3.], [0., 0., 1.], 8.)
+            .unwrap()
+            .cell,
+        [3, 0, 0]
+    );
+    // Clipping: a placement outside the box contributes nothing.
+    let block_only = |translation: [f32; 3], dims: [u32; 3]| {
+        MeshProxy::build(
+            &MeshGeometry {
+                meshes: &meshes[1..2],
+                instances: &[StaticInstance {
+                    prototype: 0,
+                    translation,
+                    yaw_quarters: 0,
+                }],
+                materials: &materials[1..2],
+            },
+            [-2, -2, -2],
+            dims,
+        )
+        .unwrap()
+    };
+    let clipped = MeshProxy::build(
+        &MeshGeometry {
+            meshes: &meshes,
+            instances: &[placements[0], probe_placement([100, 0, 0])],
+            materials: &materials,
+        },
+        [-2, -2, -2],
+        [4, 4, 4],
+    )
+    .unwrap();
+    assert_eq!(clipped.occupied_cells(), 1);
+    assert_eq!(clipped.material_at([1, 0, 1]), PROBE_OBJECT);
+    // Identity follows content: an equal placement and box agree, a moved
+    // placement does not.
+    let placed = block_only([1., 0., 1.], [6, 6, 6]);
+    let same = block_only([1., 0., 1.], [6, 6, 6]);
+    let moved = block_only([1., 1., 1.], [6, 6, 6]);
+    assert_eq!(placed.digest(), same.digest());
+    assert_ne!(placed.digest(), moved.digest());
+}
+
+#[test]
+fn c6_proxy_validates_inputs_and_keeps_the_world_authoritative() {
+    let meshes = [probe_prototype()];
+    let materials = [PROBE_OBJECT];
+    let build = |instances: &[StaticInstance], materials: &[u8], dims: [u32; 3]| {
+        MeshProxy::build(
+            &MeshGeometry {
+                meshes: &meshes,
+                instances,
+                materials,
+            },
+            [0, 0, 0],
+            dims,
+        )
+    };
+    let one = [probe_placement([0, 0, 0])];
+    assert!(
+        build(&one, &[], [4; 3]).is_err(),
+        "one material per prototype"
+    );
+    assert!(build(&one, &[0], [4; 3]).is_err(), "material zero is air");
+    assert!(build(&one, &materials, [0, 4, 4]).is_err(), "nonzero dims");
+    assert!(
+        build(&one, &materials, [129, 1, 1]).is_err(),
+        "per-axis cap"
+    );
+    assert!(build(&one, &materials, [64, 64, 65]).is_err(), "cell cap");
+    assert!(
+        build(&one, &materials, [8192, 1, 1]).is_err(),
+        "precise coordinate range"
+    );
+    assert!(
+        build(
+            &[StaticInstance {
+                prototype: 1,
+                translation: [0.; 3],
+                yaw_quarters: 0
+            }],
+            &materials,
+            [4; 3]
+        )
+        .is_err(),
+        "prototype index"
+    );
+    assert!(
+        build(
+            &[StaticInstance {
+                prototype: 0,
+                translation: [f32::NAN, 0., 0.],
+                yaw_quarters: 0
+            }],
+            &materials,
+            [4; 3]
+        )
+        .is_err(),
+        "finite translation"
+    );
+    assert!(
+        build(
+            &[StaticInstance {
+                prototype: 0,
+                translation: [0.; 3],
+                yaw_quarters: 4
+            }],
+            &materials,
+            [4; 3]
+        )
+        .is_err(),
+        "yaw range"
+    );
+    let mut broken = probe_prototype();
+    broken.indices.pop();
+    assert!(
+        MeshProxy::build(
+            &MeshGeometry {
+                meshes: &[broken],
+                instances: &one,
+                materials: &materials,
+            },
+            [0; 3],
+            [4; 3]
+        )
+        .is_err(),
+        "complete triangles"
+    );
+    let mut out_of_range = probe_prototype();
+    out_of_range.indices[0] = 9_999;
+    assert!(
+        MeshProxy::build(
+            &MeshGeometry {
+                meshes: &[out_of_range],
+                instances: &one,
+                materials: &materials,
+            },
+            [0; 3],
+            [4; 3]
+        )
+        .is_err(),
+        "index range"
+    );
+    // World data wins wherever it is solid: merging touches only air cells.
+    let mut world = World::new(0);
+    world.set([0, 0, 0], PROBE_WALL);
+    let proxy = build(&one, &materials, [4; 3]).unwrap();
+    assert_eq!(proxy.material_at([0, 0, 0]), PROBE_OBJECT);
+    let mut merged = world.clone();
+    assert_eq!(proxy.merge_into(&mut merged).unwrap(), 0);
+    assert_eq!(merged.get([0, 0, 0]), PROBE_WALL);
+    assert_eq!(proxy.merge_into(&mut World::new(0)).unwrap(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Slanted-geometry rasterization. A proxy must mark a cell only when the
+// triangle actually intersects it: filling the triangle's whole AABB turns a
+// 2D surface into a solid volume, which is false occlusion and false
+// reflection hits on exactly the slanted flora/branch geometry this engine
+// renders.
+// ---------------------------------------------------------------------------
+
+fn triangle_mesh(triangles: &[[[f32; 3]; 3]]) -> Mesh {
+    let mut mesh = Mesh::default();
+    for triangle in triangles {
+        let base = mesh.vertices.len() as u32;
+        for position in triangle {
+            mesh.vertices.push(Vertex {
+                position: *position,
+                normal: [0.; 3],
+                color: [1.; 3],
+            });
+        }
+        mesh.indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+    mesh
+}
+
+fn mesh_proxy_of(mesh: Mesh, origin: [i32; 3], dimensions: [u32; 3]) -> Result<MeshProxy, String> {
+    let meshes = [mesh];
+    let materials = [PROBE_OBJECT];
+    MeshProxy::build(
+        &MeshGeometry {
+            meshes: &meshes,
+            instances: &[StaticInstance {
+                prototype: 0,
+                translation: [0.; 3],
+                yaw_quarters: 0,
+            }],
+            materials: &materials,
+        },
+        origin,
+        dimensions,
+    )
+}
+
+fn triangle_proxy(
+    triangles: &[[[f32; 3]; 3]],
+    origin: [i32; 3],
+    dimensions: [u32; 3],
+) -> MeshProxy {
+    mesh_proxy_of(triangle_mesh(triangles), origin, dimensions).unwrap()
+}
+
+#[test]
+fn c9_slanted_triangles_mark_only_cells_they_intersect() {
+    // A sheet in the plane `z = y` spanning the whole 4x4x4 box. Its AABB is the
+    // box, but the surface only passes near the diagonal plane.
+    let sheet = [[[0.1, 0.1, 0.1], [3.9, 0.1, 0.1], [3.9, 3.9, 3.9]]];
+    let proxy = triangle_proxy(&sheet, [0; 3], [4; 3]);
+    for cell in [[0, 3, 0], [0, 0, 3], [3, 0, 3], [2, 3, 0]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            0,
+            "cell {cell:?} is more than one cell from the z = y plane"
+        );
+    }
+    for cell in [[0, 0, 0], [1, 1, 1], [3, 3, 3]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            PROBE_OBJECT,
+            "cell {cell:?} lies on the surface"
+        );
+    }
+    assert!(
+        proxy.occupied_cells() < 64,
+        "a slanted sheet must not fill its bounding box: {} of 64",
+        proxy.occupied_cells()
+    );
+    assert!(proxy.occupied_cells() >= 10, "the surface is still marked");
+    // A thin ribbon along the main diagonal: AABB is still the whole box.
+    let ribbon = [[[0.1, 0.1, 0.1], [3.9, 3.9, 3.9], [0.1, 0.4, 0.1]]];
+    let proxy = triangle_proxy(&ribbon, [0; 3], [4; 3]);
+    for cell in [[3, 3, 0], [0, 3, 0], [0, 0, 3], [3, 0, 3]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            0,
+            "cell {cell:?} is off the ribbon"
+        );
+    }
+    for cell in [[0, 0, 0], [2, 2, 2], [3, 3, 3]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            PROBE_OBJECT,
+            "cell {cell:?} lies on the ribbon"
+        );
+    }
+    assert!(
+        proxy.occupied_cells() < 32,
+        "a thin diagonal ribbon must stay thin: {} of 64 (the AABB fill marks all 64; \
+         the remainder count here includes cells the closed test touches at a room \
+         corner, which are marked on purpose so no ray can slip through)",
+        proxy.occupied_cells()
+    );
+}
+
+#[test]
+fn c10_proxy_triangle_budget_is_enforced() {
+    // Each of these triangles spans the whole 64^3 coverage box, so candidates
+    // alone exceed MAX_MESH_PROXY_TESTS before the box could be filled.
+    let wide = [[0.0, 0.0, 0.0], [64.0, 0.0, 0.0], [0.0, 64.0, 64.0]];
+    let error = match mesh_proxy_of(triangle_mesh(&vec![wide; 17]), [0; 3], [64; 3]) {
+        Ok(_) => panic!("the triangle/cell test budget must bound the build"),
+        Err(error) => error,
+    };
+    assert!(error.contains("budget"), "unexpected error: {error}");
+    // Cost, not memory, is the unbounded input: the same box with one triangle
+    // is accepted and stays box-bounded.
+    let proxy = triangle_proxy(&[wide], [0; 3], [64; 3]);
+    assert!(proxy.occupied_cells() > 0 && proxy.occupied_cells() <= 64 * 64 * 64);
+}
+
+#[test]
+fn c11_slant_rasterization_covers_sampled_surface_points() {
+    // Independent check in the other direction: sample the surface itself and
+    // require every sampled point's cell to be marked, so a ray crossing the
+    // proxy surface cannot slip through a gap the intersection test created.
+    let sheet = [[[0.1, 0.1, 0.1], [3.9, 0.1, 0.1], [3.9, 3.9, 3.9]]];
+    let proxy = triangle_proxy(&sheet, [0; 3], [4; 3]);
+    let [a, b, c] = sheet[0];
+    for i in 0..=16u32 {
+        for j in 0..=(16 - i) {
+            let u = i as f32 / 16.;
+            let v = j as f32 / 16.;
+            let w = 1. - u - v;
+            let point: [f32; 3] =
+                std::array::from_fn(|axis| a[axis] * u + b[axis] * v + c[axis] * w);
+            let cell = point.map(|value| value.floor() as i32);
+            assert_eq!(
+                proxy.material_at(cell),
+                PROBE_OBJECT,
+                "surface point {point:?} in cell {cell:?} is unmarked"
+            );
+        }
+    }
+}
+
+#[test]
+fn c12_degenerate_and_planar_triangles_stay_bounded() {
+    // Zero area away from a boundary: exactly its own cell.
+    let dot = [[[1.5, 1.5, 1.5]; 3]];
+    let proxy = triangle_proxy(&dot, [0; 3], [4; 3]);
+    assert_eq!(proxy.occupied_cells(), 1);
+    assert_eq!(proxy.material_at([1, 1, 1]), PROBE_OBJECT);
+    // Zero area exactly on a cell corner has no orientation, so it keeps both
+    // sides of each integer plane: bounded by eight cells, never the whole box.
+    let corner = [[[1.0, 1.0, 1.0]; 3]];
+    let proxy = triangle_proxy(&corner, [0; 3], [4; 3]);
+    assert!(
+        (1..=8).contains(&proxy.occupied_cells()),
+        "degenerate corner marked {} cells",
+        proxy.occupied_cells()
+    );
+    // A quad lying exactly in the integer plane y = 2 and facing +Y: the mirror
+    // lookup for such a fragment reads the cell below the plane, and nothing
+    // above it may be marked.
+    let quad = [[[0.1, 2.0, 0.1], [1.9, 2.0, 1.9], [1.9, 2.0, 0.1]]];
+    let proxy = triangle_proxy(&quad, [0; 3], [4; 3]);
+    assert_eq!(proxy.material_at([0, 1, 0]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([1, 1, 1]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([0, 2, 0]), 0, "nothing above a +Y face");
+    assert_eq!(proxy.material_at([1, 2, 1]), 0, "nothing above a +Y face");
+    // The same quad wound the other way faces -Y and flips to the cell above.
+    let flipped = [[[0.1, 2.0, 0.1], [1.9, 2.0, 0.1], [1.9, 2.0, 1.9]]];
+    let proxy = triangle_proxy(&flipped, [0; 3], [4; 3]);
+    assert_eq!(proxy.material_at([0, 2, 0]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([0, 1, 0]), 0, "nothing below a -Y face");
+}
