@@ -24,8 +24,9 @@ The workspace is at version 0.5.0; v0.5.0 is the latest published prerelease, an
 intermediate engine delivery rather than a finished engine. The tree includes a Rust
 voxel core, fine-detail volumes with automatic selection, an ash/Vulkan renderer with
 direct and bounded diffuse indirect lighting, a Rapier physics adapter, a frame
-pacer, a bounded audio service (host-tested; its 2026-09-12 device diagnostic fails
-at suspension) and a native Android explorer. [README.md](../README.md) lists the subsystems;
+pacer, a bounded audio service (the original suspend diagnostic failure has a
+passing device-tested candidate; later lifetime/ownership corrections still require
+final independent review and device reruns) and a native Android explorer. [README.md](../README.md) lists the subsystems;
 [STATUS.md](STATUS.md) gives the verified state, open gates and the live integration
 branch. M2–M6 remain open.
 
@@ -44,7 +45,13 @@ branch. M2–M6 remain open.
 Use the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) for the
 next dispatch order and M2–M6 closure gates. Reconcile historical ownership before
 starting workers. Preserve the existing device-playable Voxel Relay sample; repair
-the real-backend audio suspend failure and complete remaining engine acceptance.
+the remaining audio ownership/lifetime gates and complete engine acceptance.
+PR #19 contains the current first wave on `codex/engine-completion-wave1-20260912`.
+E1 collision is accepted with final 11-test ARM64 runs passing three times. The
+collector now supports the current generator with 251 host tool tests passing;
+corrective reviews and physical ON/OFF qualification remain open. The connected
+OnePlus 13 currently has keyguard showing; graphics collection requires physical
+unlock. Do not confuse the successfully installed APK with a graphics test.
 
 Continue the engine-completion campaign in [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)
 and its [task list](PERFORMANCE_TASKS.md): advance renderer, physics, streaming,
@@ -52,7 +59,7 @@ lighting and measured efficiency under the owner's 2026-09-08 direction to finis
 engine and focus on actual engine systems. Open capabilities include the
 equivalent-quality ray/mesh/hybrid comparison and primary-path selection, full
 Lumen-like indirect lighting/reflections, sustained efficiency and thermal
-acceptance, streaming completion and the M6 second sample; [STATUS.md](STATUS.md)
+acceptance, streaming completion and the remaining M6 shared-service gates; [STATUS.md](STATUS.md)
 records which gates remain.
 
 The owner requires extensive use of all six model families (see the roster in

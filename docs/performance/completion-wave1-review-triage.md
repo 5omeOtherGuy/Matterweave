@@ -46,3 +46,10 @@ checks. Lead reproduced both: four failing assertions across two tests, then
 observation already rejects the malformed comparison; its reported diagnostic
 is accurate (different APKs cannot establish capture overhead), so no behavioral
 change is needed. Generator compatibility and final corrective reviews remain open.
+
+Final collector source `e436634`: independent [Muse](reviews/collector-final-muse-20260912.md)
+and [Gemini](reviews/collector-final-gemini-20260912.md) corrective reviews report
+no findings. Lead full suite: 251 Python tests PASS. Source changes accepted;
+current-build mobile overhead/noise qualification remains NOT RUN, independently
+of that source acceptance. Connected phone keyguard currently blocks graphics
+operation; successful installation is not treated as execution evidence.

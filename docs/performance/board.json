@@ -539,7 +539,7 @@
     "E2-measurement": {
       "attempt": 1,
       "owner": "w_0040ee0c",
-      "state": "candidate-lead-corrected-review-pending",
+      "state": "source-accepted-device-qualification-open",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-measurement-20260912",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e2-opus",
@@ -547,8 +547,8 @@
         "tools/performance/qualify_measurements.py",
         "tools/performance/test_qualify_measurements.py"
       ],
-      "acceptance": "218 original tool tests; zero-noise review regression reproduced then fixed,220PASS. Actual current-build qualification NOT RUN.",
-      "artifact": "959faab"
+      "acceptance": "Zero-noise and counterbalanced chronological pair regressions repaired; independent corrective reviews no findings; full251Python testsPASS. No current-build overhead or same-build noise result yet.",
+      "artifact": "e436634"
     },
     "E1-audio-recovery": {
       "attempt": 2,
@@ -573,7 +573,7 @@
     "E2-collector": {
       "attempt": 1,
       "owner": "codex-orchestrator",
-      "state": "corrective-independent-review-running",
+      "state": "source-accepted-device-qualification-open",
       "base": "d91058b",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-collector-20260912",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/collector-generator3-opus",
@@ -584,7 +584,7 @@
         "tools/performance/test_analyze_wetland_pairs.py",
         "docs/performance/measurement-qualification.md"
       ],
-      "acceptance": "Generator2/3 manifest-derived validation integrated; analyzer cardinality and ON-only stability repaired. Lead251Python testsPASS. Independent Muse w_7c0f12d4 and Gemini w_a6942497 at frozen e436634 running; phone graphics blocked by keyguard.",
+      "acceptance": "Independent Muse/Gemini final reviews at e436634: no findings. Lead251Python testsPASS. Source accepted; current-build ON/OFF physical collection NOT RUN; phone keyguard requires unlock.",
       "artifact": "e436634"
     }
   },
