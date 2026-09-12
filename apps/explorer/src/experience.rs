@@ -1,5 +1,5 @@
 //! Normal entry point: choose the wetland, the existing sandbox, or Voxel Relay.
-use crate::{voxel_relay::VoxelRelayApp, wetland::WetlandApp, Explorer};
+use crate::{terrain_lab::TerrainLab, voxel_relay::VoxelRelayApp, wetland::WetlandApp, Explorer};
 use std::path::PathBuf;
 use winit::{
     application::ApplicationHandler, event::WindowEvent, event_loop::ActiveEventLoop,
@@ -10,6 +10,7 @@ pub struct Experience {
     wetland: Option<WetlandApp>,
     sandbox: Option<Explorer>,
     voxel_relay: Option<VoxelRelayApp>,
+    terrain_lab: Option<TerrainLab>,
     legacy_path: PathBuf,
     frame_limit: Option<u64>,
 }
@@ -20,6 +21,7 @@ impl Experience {
             wetland: Some(WetlandApp::new(directory, auto_enter, frame_limit)),
             sandbox: None,
             voxel_relay: None,
+            terrain_lab: None,
             legacy_path,
             frame_limit,
         }
@@ -28,6 +30,7 @@ impl Experience {
         self.wetland.as_ref().is_some_and(|w| w.failed)
             || self.sandbox.as_ref().is_some_and(|s| s.failed)
             || self.voxel_relay.as_ref().is_some_and(|r| r.failed)
+            || self.terrain_lab.as_ref().is_some_and(|t| t.failed)
     }
     fn switch_if_requested(&mut self, event_loop: &ActiveEventLoop) {
         if self.wetland.as_ref().is_some_and(|w| w.sandbox_requested) {
@@ -48,6 +51,26 @@ impl Experience {
             let mut relay = VoxelRelayApp::new(self.legacy_path.clone(), self.frame_limit);
             relay.resumed(event_loop);
             self.voxel_relay = Some(relay);
+        } else if self
+            .wetland
+            .as_ref()
+            .is_some_and(|w| w.terrain_lab_requested)
+        {
+            if let Some(mut wetland) = self.wetland.take() {
+                wetland.suspended(event_loop);
+            }
+            let directory = crate::data_directory(&self.legacy_path).to_path_buf();
+            let mut lab = TerrainLab::new(directory, self.frame_limit);
+            lab.resumed(event_loop);
+            self.terrain_lab = Some(lab);
+        } else if self.terrain_lab.as_ref().is_some_and(|t| t.return_to_menu) {
+            if let Some(mut lab) = self.terrain_lab.take() {
+                lab.suspended(event_loop);
+            }
+            let directory = crate::data_directory(&self.legacy_path).to_path_buf();
+            let mut wetland = WetlandApp::new(directory, false, self.frame_limit);
+            wetland.resumed(event_loop);
+            self.wetland = Some(wetland);
         } else if self.voxel_relay.as_ref().is_some_and(|r| r.return_to_menu) {
             if let Some(mut relay) = self.voxel_relay.take() {
                 relay.suspended(event_loop);
@@ -70,6 +93,9 @@ impl ApplicationHandler for Experience {
         if let Some(r) = &mut self.voxel_relay {
             r.resumed(e);
         }
+        if let Some(t) = &mut self.terrain_lab {
+            t.resumed(e);
+        }
     }
     fn suspended(&mut self, e: &ActiveEventLoop) {
         if let Some(w) = &mut self.wetland {
@@ -81,6 +107,9 @@ impl ApplicationHandler for Experience {
         if let Some(r) = &mut self.voxel_relay {
             r.suspended(e);
         }
+        if let Some(t) = &mut self.terrain_lab {
+            t.suspended(e);
+        }
     }
     fn window_event(&mut self, e: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if let Some(w) = &mut self.wetland {
@@ -89,6 +118,8 @@ impl ApplicationHandler for Experience {
             s.window_event(e, id, event);
         } else if let Some(r) = &mut self.voxel_relay {
             r.window_event(e, id, event);
+        } else if let Some(t) = &mut self.terrain_lab {
+            t.window_event(e, id, event);
         }
         self.switch_if_requested(e);
     }
@@ -102,6 +133,9 @@ impl ApplicationHandler for Experience {
         if let Some(r) = &mut self.voxel_relay {
             r.about_to_wait(e);
         }
+        if let Some(t) = &mut self.terrain_lab {
+            t.about_to_wait(e);
+        }
     }
     fn exiting(&mut self, e: &ActiveEventLoop) {
         if let Some(w) = &mut self.wetland {
@@ -112,6 +146,9 @@ impl ApplicationHandler for Experience {
         }
         if let Some(r) = &mut self.voxel_relay {
             r.exiting(e);
+        }
+        if let Some(t) = &mut self.terrain_lab {
+            t.exiting(e);
         }
     }
 }

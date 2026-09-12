@@ -10,6 +10,7 @@ mod gallery;
 mod metrics;
 mod pacing_check;
 mod reflection_check;
+mod terrain_lab;
 pub mod voxel_relay;
 mod wetland;
 mod wetland_metrics;
@@ -1436,6 +1437,7 @@ pub fn run_desktop() {
     let mut showcase = false;
     let mut sandbox = false;
     let mut voxel_relay = false;
+    let mut terrain_lab = false;
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
@@ -1452,6 +1454,7 @@ pub fn run_desktop() {
             "--showcase" => showcase = true,
             "--sandbox" => sandbox = true,
             "--voxel-relay" => voxel_relay = true,
+            "--terrain-lab" => terrain_lab = true,
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
@@ -1469,7 +1472,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1578,6 +1581,16 @@ pub fn run_desktop() {
         smoke_frames = Some(30);
     }
     let event_loop = EventLoop::new().expect("event loop");
+    if terrain_lab {
+        let mut lab = terrain_lab::TerrainLab::new(directory, smoke_frames);
+        event_loop
+            .run_app(&mut lab)
+            .expect("terrain lab event loop run");
+        if lab.failed {
+            std::process::exit(1);
+        }
+        return;
+    }
     if voxel_relay {
         let mut relay = voxel_relay::VoxelRelayApp::new(save_path, smoke_frames);
         event_loop

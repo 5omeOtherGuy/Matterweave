@@ -1,0 +1,38 @@
+{
+  "source_commit": "aa020eec7d24f4b1e373ec9aed3b1ae3f9bdb46c",
+  "apk_sha256": "17fe4c9b3ad853d0718463a1cd87b6e136117627da58f5029e3f320b31b4d9ac",
+  "device": "OnePlus13 CPH2653",
+  "android": 16,
+  "fingerprint": "OnePlus/CPH2653EEA/OP5D55L1:16/BP2A.250605.015/V.R4T3.52da06f-2e397f6-2e81775:user/release-keys",
+  "gpu": "Adreno830 Vulkan1.3.284 driver2150760522",
+  "validation_layers": false,
+  "configuration": "Gradle debug / Rust dev optimized; ARM64; landscape3168x1440",
+  "scene": "Terrain Lab seed20261214,64x16x64 fine-cell domain, initially19284 occupied cells",
+  "checks": {
+    "fine_mixed": "PASS same camera, source19284 unchanged",
+    "dig": "PASS removes4 cells to19280",
+    "build": "PASS adds8 cells to19288",
+    "save_reload": "PASS returns19280",
+    "cold_restart": "PASS loads saved19280",
+    "touch_elevation": "PASS y20 to26 with UP and back20 with DOWN; release stops",
+    "home_resume": "PASS explicit suspended/resumed/new renderer logs and restored render",
+    "back_menu": "PASS",
+    "existing_saves": "PASS all3 hashes unchanged",
+    "physical_simultaneous_touch": "NOT RUN",
+    "network_disabled": "NOT RUN",
+    "audibility": "NOT RUN; this APK has no new shared audio wiring"
+  },
+  "existing_save_hashes": {
+    "wetland-session.json": "5fe195e01a49cba6574f2a631b8d0a1dbb2d3acbdcee504d5d5dc49d3308b5c9",
+    "world.json": "4f66fd00c82cc0fef6225b2a02c15a0f05b24d66b39781e6d2d0230c93d51084",
+    "world.json.session-recovery-1.json": "1a4ba74aab312c3cf77801bc1fd77b008a2485c2a61f44387dc4d05d194a2ab6"
+  },
+  "lab_save_sha256": "e53839c0cd6ec80d39535c9062caf2ed92dfee41fdea3ed4906cb02a7da46b43",
+  "captures": {
+    "fine.png": "7c5c1ba114928db0da07919da2422890dc4128d4784ef00e18d55d23fa735489",
+    "mixed.png": "c7762c27fc35173b6c8bb47dd6ce86291b36feadffaa39856fb2577c133e0a87",
+    "runtime.log": "1b833ff503e1d3b73a12f91dbf36dfdb773df4e635ab1c545336fec7c318cfab"
+  },
+  "raw_local_artifacts": "/mnt/bench/matterweave-dev/coarse-terrain/android-lab",
+  "performance_claim": "None; diagnostic timings in raw log are not a qualified measurement."
+}

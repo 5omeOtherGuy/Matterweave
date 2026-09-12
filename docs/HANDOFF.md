@@ -1,5 +1,7 @@
 # Implementation handoff
 
+Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+
 The entry point for a fresh session: what is true now and what is authorized next.
 [STATUS](STATUS.md) owns the dated evidence; where the two differ, STATUS is
 authoritative.
@@ -53,7 +55,7 @@ slice or describe it as a new playable APK.
 The follow-up delivered opt-in landscape comparison fixtures and a
 [reference reuse assessment](performance/virtual-matter-and-lay-of-the-land.md).
 Host default/landscape runs pass (16/24); Android execution is still unrun and
-belongs to the other lead's device schedule. See the current STATUS entry and
+now belongs to this lead's device schedule. See the current STATUS entry and
 [review evidence](performance/reviews/landscape-followup.md). All runtime work must
 run on device; the network-disabled Android round-trip gate is now explicit in R01.
 

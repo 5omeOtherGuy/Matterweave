@@ -702,7 +702,7 @@
       "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-coarse-terrain",
       "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
       "device_access": "none; other lead retains phone",
-      "acceptance": "27 core tests passed on host and physical ARM64 device; five independent public-API tests pass after correcting tester fixture. Gemini reviews and lead provenance fix complete; PR delivery pending."
+      "acceptance": "27 core tests passed on host and physical ARM64 device; five independent public-API tests pass after correcting tester fixture. Gemini reviews and lead provenance fix complete; PR delivery pending. Delivered by merged PR28 c095047."
     },
     "S2-coarse-visual-consumer": {
       "state": "accepted",
@@ -712,14 +712,15 @@
       "acceptance": "Identified Renderer aggregate upload path; implementation dispatched separately."
     },
     "S2-coarse-visual": {
-      "state": "running",
-      "owner": "w_355788a2",
+      "state": "integration",
+      "owner": "lead",
       "scope": "new renderer terrain_tiles_smoke example only",
-      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-coarse-visual"
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-coarse-visual",
+      "acceptance": "Six tests, strict Clippy and four software Vulkan frames pass; Gemini independent review no findings. Lead integrates into Terrain Lab PR."
     },
     "S1-terrain-lab": {
-      "state": "running",
-      "owner": "w_6a1f9070",
+      "state": "delivery",
+      "owner": "lead",
       "base": "a91f7a0",
       "owned_paths": [
         "apps/explorer/src/terrain_lab.rs",
@@ -727,7 +728,32 @@
         "docs/performance/logs/terrain-lab.md"
       ],
       "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-terrain-lab",
-      "acceptance": "New interactive Android-capable scene module; lead owns menu wiring and device acceptance."
+      "acceptance": "Android fine/mixed/edit/save/reload/restart/elevation/suspend-resume/back pass; existing saves unchanged.14 lab tests and Gemini reviews pass; PR29 CI pending.",
+      "review_worker": "w_292b5501"
+    },
+    "D1-production-detail": {
+      "state": "integration",
+      "owner": "lead",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/wetland-auto-detail",
+      "scope": "wetland.rs graphics/detail frame integration; excludes menu and audio",
+      "device_access": "none; lead owns Android",
+      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
+      "artifact": "61f5bd0",
+      "acceptance": "7 detail tests,19 wetland tests and explicit full-map integration pass; Clippy repaired unused test import; Gemini no findings."
+    },
+    "D4-production-audio": {
+      "state": "review",
+      "owner": "w_14dde4de",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/shared-audio-integration",
+      "scope": "audio_service.rs, experience.rs audio owner, wetland/relay event emission; preserve lead menu and D1 graphics",
+      "device_access": "none; lead owns Android",
+      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
+      "artifact": "1c16b810",
+      "acceptance": "Source completed; tests delegated to lead warm integration build."
     }
   },
   "capacity": {
@@ -739,7 +765,7 @@
     "glm": "2026-09-12 HTTP400 before inference: prompt_cache_retention unsupported; stopped and rerouted.",
     "hy4": "Narrow review240s timeout, final-only exact-session continuation120s timeout; no completed review accepted."
   },
-  "orchestration": "One Astra lead; supervised Pi leaves: Muse Free/high, Opus/medium, Astra/medium implementation; independent Muse Free/high and Gemini/high reviews; narrow Astra/xhigh ownership consultation. GLM failed before inference; Hy4 timed out. No active workers after final reviews; no acceptance inferred from completion alone.",
+  "orchestration": "Current: DeepSeek V4.1 Flash/max implementation; Gemini/high independent reviews; at most3 Pi workers. Never Astra workers. Older task entries preserve historical evidence only.",
   "reconciliation": {
     "date": "2026-09-12",
     "remote_main": "065ff6edd89eaaf0715978b2d9f30e41527f12bb",
@@ -754,11 +780,7 @@
     "authorization": "Owner explicitly requested this follow-up session start disjoint parallel work on 2026-09-12.",
     "preserved_session": "Other lead completed PRs25/26/27; main a91f7a0. Owner transferred development/device integration to this lead.",
     "coordination": "These S1/S2 entries add reservations only. Merge with the other lead board changes; never replace its assignments with this historical baseline. Check global Pi workers before launch; combined capacity remains three workers plus lead under current policy.",
-    "delivery": "PR #23 roadmap merged at 1e12264; code/research follow-up on swarm/landscape-delivery. Other lead assignments and phone ownership unchanged.",
-    "reconciled_open_prs": [
-      25,
-      26,
-      27
-    ]
+    "delivery": "PR23\u201328 merged; origin/main c095047. Current lead owns all ongoing development and Android acceptance.",
+    "reconciled_open_prs": []
   }
 }
