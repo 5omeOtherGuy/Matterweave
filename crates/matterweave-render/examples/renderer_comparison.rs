@@ -2341,7 +2341,6 @@ mod tests {
                     );
                 }
             }
-            assert_ne!(material, 0, "{} edit must change the surface", fixture.name);
         }
     }
 

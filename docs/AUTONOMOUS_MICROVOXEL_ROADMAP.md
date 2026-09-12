@@ -24,6 +24,12 @@ direction: meshing and multiresolution macrochunks with persistent prop edits
 and an earlier 10 cm voxel engine
 (<https://www.reddit.com/r/GraphicsProgramming/comments/1udkyzj/i_built_a_microvoxel_engine/>).
 
+The owner additionally requires the entire runtime on device, without required cloud
+rendering, simulation or world storage. [Virtual Matter and Lay of the Land](performance/virtual-matter-and-lay-of-the-land.md)
+are assessed for transferable concepts and reuse fit; neither is an adopted dependency.
+The S5 technical gate includes network-disabled cold start, generation/load, play,
+edit, save, process restart and reload on Android (not yet run).
+
 Target outcome on native Android:
 
 - detailed microvoxel landscapes with fine geometry nearby and rich vegetation;

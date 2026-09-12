@@ -116,5 +116,7 @@ claims, not tests performed by this project. [Its public scripting API](https://
 is a useful research entry point. A native client is not evidence of an available,
 embeddable Rust/Android engine SDK. SDK access, integration fit, offline behavior,
 source/licensing terms and costs remain unverified; no adoption or migration is
-selected. The owner has been asked whether the intent is a capability reference or
-reuse assessment. Current disjoint implementation continues unchanged.
+selected. The owner clarified: assess transferable technology and concepts, with the entire
+runtime on device, and include Lay of the Land. See the
+[completed assessment](virtual-matter-and-lay-of-the-land.md). Current disjoint
+implementation continues unchanged.
