@@ -512,9 +512,11 @@ impl AudioService {
     /// applied in FIFO order when the mixer resumes (a queued play that had not yet
     /// started begins after resume). Idempotent while already suspended.
     pub fn suspend(&mut self) -> Result<(), AudioServiceError> {
-        if !self.running {
+        if self.suspended {
             return Ok(());
         }
+        // A failed recovery may have no running stream. Still record pause
+        // intent and queue Suspend so a later poll cannot restart background audio.
         // Reserve both Suspend and its compensating Resume before changing any
         // state. Only this thread produces commands; the consumer can only free
         // capacity, so compensation remains possible even if pause fails.
@@ -536,6 +538,7 @@ impl AudioService {
         }
         self.running = false;
         self.suspended = true;
+        self.resume_queued = false;
         Ok(())
     }
 

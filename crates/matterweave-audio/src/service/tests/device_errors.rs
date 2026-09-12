@@ -68,3 +68,50 @@ fn error_callback_alone_hides_properties_before_poll() {
     service.poll_device().unwrap();
     assert!(service.stream_properties().is_some());
 }
+
+#[test]
+fn suspend_during_failed_recovery_preserves_intent_until_resume() {
+    for fail_open in [true, false] {
+        let mut service = playing();
+        let result = service.recreate_output_with(|core, shared| {
+            if fail_open {
+                Err(AudioServiceError::StreamOpenFailed { code: -2 })
+            } else {
+                Ok(Box::new(FaultOutput {
+                    inner: MockOutput::open(core, shared)?,
+                    starts: Arc::new(AtomicUsize::new(0)),
+                    fail_start: true,
+                    fail_suspend: false,
+                    error_on_close: None,
+                }))
+            }
+        });
+        assert!(result.is_err());
+        assert!(!service.running);
+        service.suspend().unwrap();
+        assert!(
+            service.health().suspended,
+            "pause intent lost during recovery"
+        );
+        service.poll_device().unwrap();
+        assert!(!service.running, "recovery started background audio");
+        assert!(service.health().suspended);
+        service.resume().unwrap();
+        assert_continuation(&mut service);
+    }
+}
+
+#[test]
+fn suspend_after_failed_resume_is_idempotent_and_retains_continuation() {
+    let mut service = playing();
+    service.suspend().unwrap();
+    replace(&mut service, true);
+    assert!(service.resume().is_err());
+    let pending = service.health().pending_commands;
+    service.suspend().unwrap();
+    assert_eq!(service.health().pending_commands, pending);
+    service.poll_device().unwrap();
+    assert!(!service.running);
+    service.resume().unwrap();
+    assert_continuation(&mut service);
+}
