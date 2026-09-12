@@ -1,5 +1,16 @@
 # Current status
 
+Latest checkpoint: E1 collision regression accepted after both independent reviews
+and final OnePlus 13 ARM64 runs at `2d024f0`: 11 tests PASS in each of three runs
+([manifest](evidence/2026-09-12-completion-wave1/android-cadence-final-manifest.json)).
+Collector generator compatibility and stricter analyzer integrated at `e436634`;
+251 Python tool tests and 16 coordination tests PASS. Corrective reviews running.
+Frozen debug APK SHA-256 `52a115b4a05e208c5d4c30629bb7e11d66202c856d8518a096457d2c13313506`
+(source `f07c87c`, app runtime unchanged) installed successfully. Android reports
+keyguard showing over the app; graphics qualification awaits physical unlock.
+No new overhead, repeatability, audibility or sustained-performance claim.
+
+
 Execution checkpoint (2026-09-12, PR #19 still draft): integrated command-completion
 acknowledgments and audio failure-invariant repairs at `da2e4fc` (worker 43 tests
 PASS). Independent safety consultation confirms that control-thread PCM registration

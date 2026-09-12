@@ -526,15 +526,15 @@
     "E1-cadence": {
       "attempt": 1,
       "owner": "w_2cd6ca40",
-      "state": "candidate-reviewed-device-tested",
+      "state": "accepted",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e1-cadence-20260912",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e1-muse",
       "paths": [
         "crates/matterweave-physics/tests/detail_cadence.rs"
       ],
-      "acceptance": "Muse frozen combined review no cadence finding; Gemini pending; ARM64 11tests x3PASS. Lead acceptance pending final review.",
-      "artifact": "d8810da"
+      "acceptance": "Independent Muse/Gemini review resolved; lead removed redundant assertion. Final ARM64 11tests x3PASS on OnePlus13. Regression blocks on tall wall until caller publishes buffered collision result; no scheduler-speed requirement.",
+      "artifact": "2d024f0"
     },
     "E2-measurement": {
       "attempt": 1,
@@ -572,8 +572,8 @@
     },
     "E2-collector": {
       "attempt": 1,
-      "owner": "w_4ebeb178",
-      "state": "generator-compatibility-repair-running",
+      "owner": "codex-orchestrator",
+      "state": "corrective-independent-review-running",
       "base": "d91058b",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-collector-20260912",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/collector-generator3-opus",
@@ -584,8 +584,8 @@
         "tools/performance/test_analyze_wetland_pairs.py",
         "docs/performance/measurement-qualification.md"
       ],
-      "acceptance": "238 tests PASS; Muse review no findings at40a0844, Gemini review underway. Lead found generator2 hardcode incompatible with current generator3; bounded correction running before phone collection.",
-      "artifact": "40a0844"
+      "acceptance": "Generator2/3 manifest-derived validation integrated; analyzer cardinality and ON-only stability repaired. Lead251Python testsPASS. Independent Muse w_7c0f12d4 and Gemini w_a6942497 at frozen e436634 running; phone graphics blocked by keyguard.",
+      "artifact": "e436634"
     }
   },
   "capacity": {

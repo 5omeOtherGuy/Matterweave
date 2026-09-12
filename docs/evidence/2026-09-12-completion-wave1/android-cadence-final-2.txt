@@ -1,0 +1,16 @@
+
+running 11 tests
+test added_wall_publishes_only_after_the_character_clears_it ... ok
+test current_scene_preparation_failure_preserves_live_collision ... ok
+test edit_during_active_movement_blocks_until_publication_then_frees_the_path ... ok
+test interior_fill_with_equal_outer_aabb_never_publishes_through_the_body ... ok
+test rejected_structural_request_preserves_the_prior_staged_addition_gate ... ok
+test repeated_and_reversed_edits_publish_only_the_final_source ... ok
+test reset_with_work_in_flight_never_publishes_retired_results ... ok
+test reversed_addition_never_publishes_through_the_character ... ok
+test stale_completion_for_an_edited_scene_is_never_published ... ok
+test teleported_character_is_gated_before_the_next_physics_step ... ok
+test unavailable_worker_stages_blocked_fallback_and_publishes_after_clearing ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+

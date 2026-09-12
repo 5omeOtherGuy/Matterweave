@@ -1,0 +1,24 @@
+{
+  "source_commit": "2d024f0",
+  "binary_sha256": "d8aed97f97e03856a497bf10d8f28d26df284a15bf45e91dce99dfcc1a761cae",
+  "device": "OnePlus13 CPH2653 Android16 ARM64 192.168.178.93:5555",
+  "build": "Rust1.96.0 test profile optimized; NDK28.2.13676358 API28; locked",
+  "results": [
+    {
+      "run": 1,
+      "exit": 0,
+      "pass": true
+    },
+    {
+      "run": 2,
+      "exit": 0,
+      "pass": true
+    },
+    {
+      "run": 3,
+      "exit": 0,
+      "pass": true
+    }
+  ],
+  "scope": "headless native physics tests; no graphics or performance claim"
+}
