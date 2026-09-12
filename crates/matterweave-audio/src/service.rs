@@ -15,6 +15,9 @@ use crate::error::AudioServiceError;
 use crate::handle::{ClipHandle, VoiceHandle};
 use crate::mixer::{MixerCore, SharedRt};
 
+#[cfg(all(test, feature = "backend-mock"))]
+mod tests;
+
 /// Negotiated output stream properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamProperties {
@@ -96,14 +99,14 @@ pub struct HealthSnapshot {
     /// Render-thread ack epoch (advances once per completed invocation).
     pub ack_epoch: u64,
     /// Service suspension truth: `true` after a successful [`AudioService::suspend`]
-    /// and `false` again whenever output starts or restarts ([`AudioService::resume`]
-    /// or stream recreation). This is the authoritative caller-observable state; it
-    /// does not depend on a render invocation.
+    /// and `false` again after a successful [`AudioService::resume`]. Preserved
+    /// across recreation and failed recovery, even while no stream is open. This
+    /// reports service intent, not synchronous device quiescence or PCM progress.
     pub suspended: bool,
     /// Render thread's own suspended view as of its last completed invocation.
     /// Unlike [`HealthSnapshot::suspended`] it changes only when a render pass runs,
-    /// so on a backend that stops delivering callbacks while paused (AAudio) it
-    /// cannot become `true` during suspension.
+    /// so it may stay `false` while paused. An in-flight callback may still apply
+    /// Suspend after an asynchronous device pause request.
     pub rt_suspended: bool,
 }
 
@@ -168,8 +171,8 @@ struct PoolRange {
 /// The bounded audio service.
 ///
 /// One instance owns one output stream and one mixer core. All operations validate
-/// completely before mutating state; rejected operations leave the service exactly
-/// as they found it.
+/// completely before mutating clip/voice state. Device open/start failures instead
+/// leave output closed and retryable, preserving suspension and queued commands.
 ///
 /// # Drop order
 ///
@@ -193,10 +196,12 @@ pub struct AudioService {
     /// Sum of registered clip samples (the "retained PCM payload").
     used_samples: usize,
     running: bool,
-    /// Control-side suspension truth: set once `backend.suspend()` has succeeded and
-    /// cleared whenever output starts, restarts or is closed. Distinct from
-    /// `!running` after a device loss, when the stream is closed rather than paused.
+    /// Successful pause intent survives output loss until resume succeeds.
     suspended: bool,
+    /// A consumed device error must remain retryable after open/start failure.
+    recovery_pending: bool,
+    /// Queue Resume at most once across failed starts (no retry queue saturation).
+    resume_queued: bool,
 
     commands_pushed: u64,
     rejected_commands: u64,
@@ -248,6 +253,8 @@ impl AudioService {
             used_samples: 0,
             running: false,
             suspended: false,
+            recovery_pending: false,
+            resume_queued: false,
             commands_pushed: 0,
             rejected_commands: 0,
             rejected_voice_starts: 0,
@@ -271,9 +278,18 @@ impl AudioService {
             .backend
             .as_mut()
             .ok_or(AudioServiceError::StreamStartFailed { code: 0 })?;
-        backend.start()?;
+        if let Err(error) = backend.start() {
+            // A failed start is not a running stream. Drop closes/joins callbacks
+            // before retrying around the same core; preserve pause/Resume intent.
+            let _ = backend.close();
+            self.backend = None;
+            self.running = false;
+            self.recovery_pending = true;
+            return Err(error);
+        }
         self.running = true;
         self.suspended = false;
+        self.resume_queued = false;
         Ok(())
     }
 
@@ -516,19 +532,25 @@ impl AudioService {
     }
 
     /// Resume output after [`AudioService::suspend`]. Idempotent while running.
-    /// Clears `suspended` as soon as the stream restarts, before the first callback.
+    /// Clears `suspended` when the start request succeeds; output progress is
+    /// observed separately through callback/frame counters. Failed open/start is
+    /// retryable by calling resume again without duplicating the Resume command.
     pub fn resume(&mut self) -> Result<(), AudioServiceError> {
         if self.running {
             return Ok(());
         }
-        if queue::vacant(&self.producer) == 0 {
-            self.rejected_commands += 1;
-            return Err(AudioServiceError::CommandQueueFull);
+        if self.recovery_pending || self.backend.is_none() {
+            self.recreate_output()?;
+            if self.running {
+                return Ok(());
+            }
         }
-        // Queue Resume before starting the stream so the first callback after the
-        // start applies the whole pending command batch (no silent gap).
-        self.push(Command::Resume)
-            .expect("queue space checked above");
+        // Queue Resume before starting so even a buffered Suspend is applied
+        // before Resume in the first callback. Retain it across failed starts.
+        if !self.resume_queued {
+            self.push(Command::Resume)?;
+            self.resume_queued = true;
+        }
         self.start_output()?;
         Ok(())
     }
@@ -536,29 +558,21 @@ impl AudioService {
     /// Check for device loss and recreate the output stream around the same mixer
     /// core. Voices continue where they stopped. Call this from the game loop; after
     /// a device loss [`AudioService::stream_properties`] returns `None` until a
-    /// successful recreation.
+    /// successful recreation. Suspension survives recreation: the replacement is
+    /// opened but not started until resume. Failed open/start is retried by later
+    /// polls; a failed resume still requires resume again to leave suspension.
     pub fn poll_device(&mut self) -> Result<(), AudioServiceError> {
         let error = self
             .backend
             .as_mut()
             .and_then(|backend| backend.take_error());
-        let Some(BackendError { code: _code }) = error else {
-            return Ok(());
-        };
-        self.device_errors += 1;
-        // Close the failed stream (joins callbacks), then open a new one around the
-        // same core. On open/start failure the service stays closed and
-        // recoverable: a later poll_device retries.
-        if let Some(backend) = self.backend.as_mut() {
-            backend.close()?;
+        if let Some(BackendError { code: _code }) = error {
+            self.device_errors += 1;
+            self.recovery_pending = true;
         }
-        self.backend = None;
-        self.running = false;
-        self.suspended = false;
-        self.open_output()?;
-        self.start_output()?;
-        self.stream_recreations += 1;
-        self.shared.error_code.store(0, Ordering::Relaxed);
+        if self.recovery_pending {
+            self.recreate_output()?;
+        }
         Ok(())
     }
 
@@ -644,6 +658,35 @@ impl AudioService {
     }
 
     // ---- internals ---------------------------------------------------------
+
+    fn recreate_output(&mut self) -> Result<(), AudioServiceError> {
+        self.recreate_output_with(backend::open_backend)
+    }
+
+    // Reuse OutputBackend; injecting only the opener lets unit tests exercise
+    // open/start failures without a public factory API or callback-side seam.
+    fn recreate_output_with(
+        &mut self,
+        open: impl FnOnce(CorePtr, Arc<SharedRt>) -> Result<Box<dyn OutputBackend>, AudioServiceError>,
+    ) -> Result<(), AudioServiceError> {
+        self.recovery_pending = true;
+        self.running = false;
+        if let Some(backend) = self.backend.as_mut() {
+            backend.close()?;
+        }
+        self.backend = None;
+        self.backend = Some(open(self.core_ptr, self.shared.clone())?);
+        // Opening is not starting: a suspended replacement receives no callbacks.
+        // The retained core and its FIFO may contain either an applied or buffered
+        // Suspend. Only resume() may arrange Resume and restart output.
+        if !self.suspended {
+            self.start_output()?;
+        }
+        self.recovery_pending = false;
+        self.stream_recreations += 1;
+        self.shared.error_code.store(0, Ordering::Relaxed);
+        Ok(())
+    }
 
     fn validate_clip(&self, clip: ClipHandle) -> Result<usize, AudioServiceError> {
         let slot = clip.slot as usize;
@@ -774,18 +817,9 @@ impl AudioService {
     /// Diagnostic helper: close and reopen the output stream around the same mixer
     /// core without a real device disconnect. Used by the audio diagnostic to prove
     /// recreation on-device; the real device-loss path is validated through fault
-    /// injection in tests.
+    /// injection in tests. Preserves suspension, just like device-loss recovery.
     pub fn diagnostic_recreate_output(&mut self) -> Result<(), AudioServiceError> {
-        if let Some(backend) = self.backend.as_mut() {
-            backend.close()?;
-        }
-        self.backend = None;
-        self.running = false;
-        self.suspended = false;
-        self.open_output()?;
-        self.start_output()?;
-        self.stream_recreations += 1;
-        Ok(())
+        self.recreate_output()
     }
 }
 

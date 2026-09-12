@@ -5,7 +5,7 @@
 //!
 //! 1. Open the service and print the negotiated stream properties.
 //! 2. Register a quiet, known sine clip (48 kHz, gain 0.2) and play it.
-//! 3. Observe frames/callbacks advancing (nonzero audio frames submitted).
+//! 3. Observe frames/callbacks advancing (not proof of nonzero PCM or audibility).
 //! 4. Suspend, observe silence, resume, play again.
 //! 5. Recreate the output (controlled close/reopen; real device loss is validated
 //!    via fault injection in tests) and play again.
@@ -148,7 +148,7 @@ fn main() {
         "frames must advance while playing"
     );
     println!(
-        "playback: frames {} -> {} (nonzero audio submitted)",
+        "playback: frames {} -> {} (submitted frames, not proof of audible PCM)",
         before, health.frames_rendered
     );
     print_health("during-play", &health);
@@ -223,7 +223,10 @@ fn main() {
         svc.diagnostic_recreate_output()
             .expect("cycle recreate while suspended");
         let paused = svc.health();
-        assert!(paused.suspended, "cycle {cycle}: recreation preserves pause");
+        assert!(
+            paused.suspended,
+            "cycle {cycle}: recreation preserves pause"
+        );
         assert_eq!(paused.stream_recreations, 1);
         // No mock render here either: the recreated output must remain unstarted.
         std::thread::sleep(Duration::from_millis(100));
@@ -246,6 +249,8 @@ fn main() {
 
     let final_health = service.health();
     print_health("final", &final_health);
+    drop(service);
+    println!("audio diagnostic: final service shutdown complete");
     println!(
         "audio diagnostic: PASS (submitted-frames check only; audibility is a human observation)"
     );

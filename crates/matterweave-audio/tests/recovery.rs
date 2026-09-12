@@ -25,7 +25,10 @@ fn suspended_recovery(recreate: fn(&mut AudioService), apply_suspend: bool) {
     for count in 1..=3 {
         recreate(&mut service);
         let paused = service.health();
-        assert!(paused.suspended, "recreation must preserve service suspension");
+        assert!(
+            paused.suspended,
+            "recreation must preserve service suspension"
+        );
         assert_eq!(paused.callback_count, before.callback_count);
         assert_eq!(paused.frames_rendered, before.frames_rendered);
         assert_eq!(paused.pending_commands, before.pending_commands);

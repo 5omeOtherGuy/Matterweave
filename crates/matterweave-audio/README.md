@@ -84,10 +84,13 @@ queued commands are never overwritten. A full command queue returns `CommandQueu
   before restarting the stream so there is no silent gap. `health().suspended` reports the
   service state as soon as `suspend()`/`resume()` returns, without waiting for a render
   callback. `health().rt_suspended` is the render thread's own view; on a backend that
-  delivers no callbacks while paused (AAudio) it cannot become true during suspension.
+  delivers no callbacks while paused it may remain false. AAudio pause is asynchronous;
+  service suspension is not proof that in-flight callbacks have finished.
 - Device loss is recorded by the AAudio error callback into shared atomics. `poll_device`
   closes and reopens the stream around the same mixer core, so voices continue where they
-  stopped.
+  stopped. Suspended replacements remain unstarted until `resume()`, including diagnostic
+  recreation. Failed open/start leaves recovery retryable by `poll_device()`; failed resume
+  retains suspension until `resume()` succeeds, without queuing duplicate Resume commands.
 - `Drop` closes the stream before dropping the mixer core. AAudio's `AAudioStream_close` joins
   all callback threads before returning, so no callback can observe freed state.
 
@@ -130,6 +133,10 @@ cargo test -p matterweave-audio --features backend-mock
   rejection, stale handles, command-queue saturation and recovery, the suspend/resume
   continuation policy (service truth observable without a render callback, render mirror
   separate) and fault-injected device loss with recreation.
+- `tests/recovery.rs` (4 tests) covers device-loss and diagnostic recreation with applied
+  and buffered Suspend, no callbacks while paused, and exact PCM continuation.
+- `src/service/tests.rs` (5 tests) checks that paused replacements never request start,
+  failed open/start retries, bounded Resume command retries and queue-full recovery.
 - `tests/rt_allocations.rs` (1 test) is a dedicated allocation detector that reports zero
   allocations and deallocations across 10 000 callback invocations, including completion and
   stop handling.
@@ -138,7 +145,9 @@ cargo test -p matterweave-audio --features backend-mock
   diagnostics.
 
 The host diagnostic example (`examples/audio_diagnostic.rs`) exercises the mock backend:
-negotiated properties, nonzero frames, suspend/resume, controlled recreation and ten
-open/play/stop/close cycles. It is silent by design and is not device evidence. The executed
+negotiated properties, frame progress, suspend/resume, controlled recreation and ten
+open/play/suspend/recreate-while-suspended/resume/stop/close cycles. Each progress check has
+an asserted two-second deadline. Paused counters are checked only after recreation has
+closed the old stream, not immediately after the asynchronous pause request. It is silent by design and is not device evidence. The executed
 host and cross-compilation results are recorded in [STATUS](../../docs/STATUS.md) and
 [ADR-0016](../../docs/adr/0016-audio-service.md).
