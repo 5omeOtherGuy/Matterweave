@@ -10,6 +10,16 @@ playable detail guards remain unchanged. Android acceptance is NOT RUN and is
 batched into the next integrated build under the owner's updated test cadence.
 [Evidence and limits](performance/logs/detail-production-fixtures.md).
 
+## D2.3 streaming contract verification — 2026-09-12
+
+Core streaming tests now discriminate reversal, cancellation, stale publication,
+queue/staging bounds and real byte saturation before the result-count cap. The
+corrective slice passed focused core tests, Clippy/fmt and independent Gemini
+review; lead accepted the host-only changes. Production stale-result rejection
+is unchanged. Continuous-edit app progress and integrated Android acceptance
+remain OPEN and belong to the next behavioral slice. See
+[streaming evidence](performance/logs/d2-3-streaming.md).
+
 
 Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
 
