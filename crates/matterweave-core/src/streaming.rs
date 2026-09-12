@@ -179,7 +179,7 @@ impl World {
     }
 }
 
-fn generated_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
+pub(crate) fn generated_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
     let mut chunk = Chunk {
         voxels: Arc::new([0; CHUNK_VOLUME]),
         solid: 0,
