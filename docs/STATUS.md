@@ -98,7 +98,7 @@ lifecycle and test reviewers returned ten, of which the lead verified nine and r
 one (a pre-existing, effectively unreachable busy-spin under frame-limited suspend, left
 unfixed and recorded here). All verified findings are fixed on the branch.
 
-## Detail-cadence test flakes — two fixed, one open
+## Detail-cadence test flakes — all three fixed
 
 Three tests in `crates/matterweave-physics/tests/detail_cadence.rs` assert
 `discarded >= 1` on the async detail worker. Two asserted it at a moment when the
@@ -121,16 +121,24 @@ time it asserts. The source was then restored exactly and all 11 pass. This
 establishes that none of the three assertions is vacuous; before the repair the
 first could pass without exercising the discard path at all.
 
-**Still open.**
+**The third is now fixed too** (PR #19).
 `detail_cadence::edit_during_active_movement_blocks_until_publication_then_frees_the_path`
-fails under the same pinning on unmodified `main` — 3 failures in 12 pinned runs, 0
-in 12 unpinned — with `the edit is pending: AsyncDetailStats { queued: 0, inflight:
-0, results: 1 }`. Its assertion treats a buffered but unpublished result as not
-pending, and its `pending_frames > 0` guard additionally requires the worker to be
-slower than the test, so there is no pending window to observe when the work
-completes immediately. Repairing it means restructuring how it observes that window,
-which was not folded into the flake fix. It has not failed in CI; single-CPU pinning
-is a harsher condition than CI applies.
+previously failed 3 times in 12 pinned runs with `the edit is pending: AsyncDetailStats
+{ queued: 0, inflight: 0, results: 1 }`, because its assertion treated a buffered but
+unpublished result as not pending and its guard required the worker to be slower than
+the test.
+
+The repair also exposed a second, larger defect the flake had been masking: the test's
+wall fixture was a single cell 0.25 m tall, below the 0.30 m character autostep limit,
+so the character could climb it. Because the old test only walked while the edit was
+pending — usually tens of frames — it never pressed long enough to notice that its
+"impassable" wall was passable. The test now uses a two-cell 0.5 m column and presses
+for 600 frames, and it separates the withheld, completed-but-unpublished and published
+phases so each is asserted without assuming worker timing.
+
+Verified at `a612f20`: 0 failures in 20 pinned runs of that test, and 0 failures in 30
+pinned runs of the full 11-test suite (`taskset -c 0`, single-threaded). The condition
+that used to fail 15 times in 20 now passes every time.
 
 ## Capability status
 
@@ -457,9 +465,11 @@ Planning and documentation reconciliation do not close any engine gate.
 
 1. Reconcile the current source, integration branches, PR state and historical board
    before dispatch; older branch assignments above are not a live ownership claim.
-2. The real-AAudio suspend failure is fixed (PR #19) and re-verified on the phone, 3 of
-   3 runs. The remaining detail-cadence observation race is open. Qualify mobile capture
-   overhead and repeatability in parallel with correctness work.
+2. Both correctness items in this group are closed: the real-AAudio suspend failure is
+   fixed (PR #19) and re-verified on the phone, 3 of 3 runs, and the detail-cadence
+   observation race is fixed (PR #19) and re-verified under single-CPU pinning, 0
+   failures in 30 suite runs. Qualifying mobile capture overhead and repeatability is
+   the remaining work in this item.
 3. Complete equivalent-quality ray/mesh/hybrid device comparison and primary-path
    selection; close production streaming/collision/destruction stress and bounds.
 4. Complete GI/reflection quality, publication scheduling and stable detail
