@@ -2,12 +2,16 @@ use super::*;
 use crate::backend::mock::MockOutput;
 use std::sync::atomic::AtomicUsize;
 
+mod device_errors;
+mod lifetime;
+
 // Existing backend trait supplies all required operations. Only the private
 // recreation opener needs injection; no global fault state or gameplay API.
 struct FaultOutput {
     inner: MockOutput,
     starts: Arc<AtomicUsize>,
     fail_start: bool,
+    fail_suspend: bool,
 }
 
 impl OutputBackend for FaultOutput {
@@ -17,13 +21,19 @@ impl OutputBackend for FaultOutput {
     fn start(&mut self) -> Result<(), AudioServiceError> {
         self.starts.fetch_add(1, Ordering::Relaxed);
         if self.fail_start {
+            // A device error callback may accompany a failed start request.
+            self.inner.inject_device_error(-1);
             Err(AudioServiceError::StreamStartFailed { code: -1 })
         } else {
             self.inner.start()
         }
     }
     fn suspend(&mut self) -> Result<(), AudioServiceError> {
-        self.inner.suspend()
+        if self.fail_suspend {
+            Err(AudioServiceError::SuspendFailed { code: -3 })
+        } else {
+            self.inner.suspend()
+        }
     }
     fn close(&mut self) -> Result<(), AudioServiceError> {
         self.inner.close()
@@ -47,6 +57,7 @@ fn replace(service: &mut AudioService, fail_start: bool) -> Arc<AtomicUsize> {
                 inner: MockOutput::open(core, shared)?,
                 starts: starts.clone(),
                 fail_start,
+                fail_suspend: false,
             }))
         })
         .unwrap();
@@ -134,6 +145,7 @@ fn failed_recovery_start_is_closed_and_poll_retries_running_output() {
                 inner: MockOutput::open(core, shared)?,
                 starts: Arc::new(AtomicUsize::new(0)),
                 fail_start: true,
+                fail_suspend: false,
             }))
         }),
         Err(AudioServiceError::StreamStartFailed { code: -1 })

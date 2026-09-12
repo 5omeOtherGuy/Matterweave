@@ -246,6 +246,17 @@ impl MixerCore {
     /// Real-time contract: no allocation, no deallocation, no locks, no I/O, no
     /// logging, no stream shutdown inside this function.
     pub(crate) fn render(&mut self, out: &mut [f32], channels: usize) {
+        self.render_with_after_drain(out, channels, || {});
+    }
+
+    // A no-op in production; tests can deterministically enqueue after the last
+    // drain but before this callback mixes/publishes, without threads or locks.
+    pub(crate) fn render_with_after_drain(
+        &mut self,
+        out: &mut [f32],
+        channels: usize,
+        after_drain: impl FnOnce(),
+    ) {
         debug_assert!(channels == 1 || channels == 2);
         debug_assert!(out.len().is_multiple_of(channels.max(1)));
 
@@ -254,6 +265,8 @@ impl MixerCore {
             self.shared.commands_applied.fetch_add(1, Ordering::Relaxed);
             self.apply(command);
         }
+
+        after_drain();
 
         // 2) Mix. Suspend renders silence and freezes all voice cursors.
         out.fill(0.0);
