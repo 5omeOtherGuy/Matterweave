@@ -972,5 +972,26 @@
     "healthy_source_root": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912",
     "source_salvage": "/home/someotherguy/Documents/ChatGPT/Matterweave-source-recovery-20260912",
     "routing": "Go quota exhausted. Verified exact OpenRouter DeepSeek high and Muse Contributor Free high profiles; no Opus dispatched, no purchases/top-up. Three-worker cap retained."
+  },
+  "restart_wave_20260912": {
+    "authority": "current Codex lead",
+    "state": "running",
+    "cap": 3,
+    "routing": "Free Muse implementation, Gemini corrective review; preserve remaining OpenRouter credit; no Astra workers",
+    "mesh_native": {
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/mesh-gate",
+      "base": "80a89c5",
+      "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-native.md",
+      "ownership": "mesh_lighting_check.rs, minimal explorer lib.rs registration, dedicated log",
+      "worker": "w_e35c5717"
+    },
+    "repair_review": {
+      "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/repair-review.md",
+      "read_only": [
+        "detail@05549eb",
+        "streaming@f63055b"
+      ],
+      "worker": "w_d124c729"
+    }
   }
 }
