@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "run": "engine-completion-plan-v2-20260912",
-  "authority": "Current Codex session owns ongoing development, dispatch, integration and acceptance by owner transfer 2026-09-12; other session completed merges25/26/27.",
+  "authority": "Current Codex lead owns integration, acceptance, shared board conflicts and the phone by owner transfer. Preserve the other session as producer of its existing non-app physics/lighting slices and merge handoffs; Codex owns apps/explorer, Android and landscape integration. Reconcile all Pi workers before dispatch; global cap3, no duplicate assignment. Historical producer acceptance entries remain intact and do not supersede later integration evidence.",
   "base": "01ab450",
   "phone_owner": "Current Codex development lead; OnePlus13 192.168.178.93:5555; workers have no device access.",
   "tasks": {
@@ -806,6 +806,78 @@
       ],
       "acceptance": "NOT RUN; real production flora + occlusion/movement/edit fixtures with quality guards retained; lead Android after review",
       "routing": "DeepSeek primary per owner; existing D1 implementation useful after lead repair; Gemini review follows frozen source."
+    },
+    "D1.1-detail-runtime": {
+      "attempt": 1,
+      "base": "7dace54",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "dispatched_by": "Claude Code lead session",
+      "device_access": "none; lead owns the phone",
+      "bounded_by": "owned paths and the definition of done; no wall-clock work budget. A supervisor deadline is a non-binding ceiling against a hung process, never an acceptance signal.",
+      "package": "D1 (M2-A)",
+      "state": "merged",
+      "owner": "w_da79f9d1 + correction",
+      "outcome": "Production automatic-detail runtime: per-frame LOD selection via prepare_batches, mapping onto resident derived geometry, refresh on source edits; detail_check.rs delegates.",
+      "pr": 27,
+      "merge_commit": "a91f7a0",
+      "log": "docs/performance/logs/d1-1-detail-runtime.md",
+      "reviews": [
+        "G1 (gemini-restricted): 4 findings",
+        "G1b re-review: no findings"
+      ],
+      "acceptance": "Lead-verified 505 workspace tests, strict clippy and fmt clean. Four defects found and corrected: emptied prototype permanently erred the frame; instances_for_frame could map a superseded revision; preload failed where the engine degrades; empty/refill leaked pool slots.",
+      "open": "wetland.rs::graphics() wiring and Android approach/retreat + edit captures are lead-owned and NOT RUN."
+    },
+    "D2.1-publication-starvation": {
+      "attempt": 1,
+      "base": "7dace54",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "dispatched_by": "Claude Code lead session",
+      "device_access": "none; lead owns the phone",
+      "bounded_by": "owned paths and the definition of done; no wall-clock work budget. A supervisor deadline is a non-binding ceiling against a hung process, never an acceptance signal.",
+      "package": "D2 (M3-A)",
+      "state": "merged",
+      "owner": "w_26a5eec0",
+      "outcome": "Reproduced and fixed structural-mode detail-collision publication starvation: the gate now defers only on prepared colliders the live world does not already hold at the same pose and shape.",
+      "pr": 25,
+      "merge_commit": "cdba443",
+      "log": "docs/performance/logs/d2-1-publication-starvation.md",
+      "reviews": [
+        "G2 (gemini-restricted): no soundness findings"
+      ],
+      "acceptance": "Verdict REPRODUCED. Lead confirmed RED at 379dab9 (stall tests failed, safety tests already passed and still pass), frozen detail_cadence.rs byte-identical and 11/11 green, 500 workspace tests, strict clippy and fmt clean.",
+      "open": "graphics-integrated Android 64-piece functional run NOT RUN; queue/staging/residency bounds belong to D2.2/D2.3."
+    },
+    "D4.1-audio-adapter": {
+      "attempt": 1,
+      "base": "7dace54",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "dispatched_by": "Claude Code lead session",
+      "device_access": "none; lead owns the phone",
+      "bounded_by": "owned paths and the definition of done; no wall-clock work budget. A supervisor deadline is a non-binding ceiling against a hung process, never an acceptance signal.",
+      "package": "D4 (M6-A)",
+      "state": "merged",
+      "owner": "w_694b6a8c",
+      "outcome": "Shared gameplay audio adapter over matterweave-audio used identically by both samples: event vocabulary, clip registration, backpressure, mute/suspend/resume, sample-switch cleanup.",
+      "pr": 26,
+      "merge_commit": "2861046",
+      "log": "docs/performance/logs/d4-1-audio-adapter.md",
+      "reviews": [
+        "G4 (gemini-restricted): 1 finding, a module-doc contradiction, fixed by the lead in 559108e"
+      ],
+      "acceptance": "Lead-verified 506 workspace tests, strict clippy and fmt clean; cargo check green on host and aarch64-linux-android, with cargo tree -e features confirming backend-android on device and backend-mock on host.",
+      "open": "experience.rs lifecycle wiring and both samples' event call sites are lead-owned and not done; human audibility confirmation NOT RUN and cannot be replaced by counters."
+    },
+    "D2.3-preserved": {
+      "owner": "other-session production worker w_3046451b; resume coordinated by Codex",
+      "state": "paused-for-global-cap",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/d2-3-streaming",
+      "session": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1/session.jsonl",
+      "run_dir": "/mnt/bench/matterweave-dev/phase-a/d2-3/attempt-1",
+      "acceptance": "NOT RUN. New fourth worker stopped after brief/read progress to honor global3-worker cap; partial source and exact session preserved. Resume same session when slot frees; never launch duplicate."
     }
   },
   "capacity": {
@@ -817,7 +889,7 @@
     "glm": "2026-09-12 HTTP400 before inference: prompt_cache_retention unsupported; stopped and rerouted.",
     "hy4": "Narrow review240s timeout, final-only exact-session continuation120s timeout; no completed review accepted."
   },
-  "orchestration": "Current: DeepSeek V4.1 Flash/max implementation; Gemini/high independent reviews; at most3 Pi workers. Never Astra workers. Older task entries preserve historical evidence only.",
+  "orchestration": "Current: DeepSeek V4.1 Flash/max implementation; Gemini/high independent reviews; at most3 Pi workers. Never Astra workers. Older task entries preserve historical evidence only. | Claude Code session, wave 1a (base 7dace54): D1.1, D2.1 and D4.1 dispatched to deepseek-flash-go in isolated worktrees with nonoverlapping owned paths, independently reviewed by gemini-restricted scopes G1/G1b/G2/G4, and merged as PRs 25, 26 and 27; D2.2 destruction follows as PR 33. Slices are bounded by scope, not by clock: the owner removed wall-clock time budgets on 2026-09-12 because a deadline measures machine load rather than the work.",
   "reconciliation": {
     "date": "2026-09-12",
     "remote_main": "065ff6edd89eaaf0715978b2d9f30e41527f12bb",
