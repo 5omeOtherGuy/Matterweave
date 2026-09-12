@@ -139,23 +139,27 @@ harness-only detour before implementation.
 
 `docs/performance/board.json` remains the **sole live assignment authority**: the lead
 writes each task/attempt into it before dispatch; the tables below are planned only.
-Every first slice is one PR-sized vertical outcome with a Pi budget of **900 s
-implementation and 240 s read-only review**, at most one same-scope correction, then
-resplit or Opus escalation with a recorded blocker. Wave 1a runs D1.1, D2.1 and D4.1
+Every first slice is one PR-sized vertical outcome bounded by its **owned paths and
+its definition of done**, at most one same-scope correction, then resplit or Opus
+escalation with a recorded blocker. No slice carries a wall-clock time budget: a
+deadline measures the machine and its current load, not the work, so it is not an
+acceptance signal and never decides whether a slice is finished. Wave 1a runs D1.1, D2.1 and D4.1
 (D4 does not wait for D1–D3); D3.1 enters when a slot frees after the lead freezes its
 minimal detail/dynamic-object seam. At most three workers run alongside the lead;
 Gemini reviews replace slots rather than exceeding them.
 
 | Slice | One-PR outcome and owned paths | Interface/dependency | Worker DoD | Lead/device DoD and stop rule |
 | --- | --- | --- | --- | --- |
-| D1.1 (M2) | Connect the existing tested detail adapter to production wetland rendering. Own `crates/matterweave-detail/**` only if needed and a new `apps/explorer/src/detail_runtime.rs`; reuse `detail_check.rs` logic rather than reimplement LOD. | Lead owns wiring in `lib.rs`/`wetland.rs`, accepts source-version + camera + instance-batch contract before dispatch. | Production-facing adapter selects near/far detail, handles edited source revisions and invalidates derived batches; focused tests and fmt/Clippy pass. Source voxels and collision stay authoritative. | Lead wires, captures Android approach/retreat and edit behavior; 900 s attempt, one bounded correction, then resplit. |
+| D1.1 (M2) | Connect the existing tested detail adapter to production wetland rendering. Own `crates/matterweave-detail/**` only if needed and a new `apps/explorer/src/detail_runtime.rs`; reuse `detail_check.rs` logic rather than reimplement LOD. | Lead owns wiring in `lib.rs`/`wetland.rs`, accepts source-version + camera + instance-batch contract before dispatch. | Production-facing adapter selects near/far detail, handles edited source revisions and invalidates derived batches; focused tests and fmt/Clippy pass. Source voxels and collision stay authoritative. | Lead wires, captures Android approach/retreat and edit behavior; one bounded correction, then resplit. |
 | D2.1 (M3) | Reproduce-or-dismiss the unverified body-overlap starvation candidate with one discriminating host test and a publication-state note; apply the smallest correctness fix only if reproduced. Owns `crates/matterweave-core/tests/**`, `crates/matterweave-physics/tests/**` (excluding frozen `detail_cadence.rs`) and the minimal in-crate fix. | No public-surface change; queued → inflight → completed-unpublished → published states named in the note. **Excludes** merging stale results and an invented mandatory `EngineContext`. | The test discriminates a stall from correct deferral without assuming worker speed; no production invariant weakened; workspace tests, fmt, strict Clippy clean. | Lead reviews, then schedules the graphics-integrated Android 64-piece functional run; stop after one same-scope correction or at the public-surface boundary. |
 | D3.1 (M4) | First production lighting slice: one moving mesh-only object or one detail volume receives correct indirect light and reflectivity in a functional probe; owns `crates/matterweave-render/src/{reflection.rs,indirect.rs,lighting.rs}` plus focused tests. Fence-outlier attribution is deferred to Phase B. | Starts only after the lead freezes the minimal detail/dynamic-object seam; no D1-owned writes; entry-point and shader registration diffs proposed to the lead. | Probe shows before/after response with an explicit observable criterion (response presence, thin-feature visibility, seam behavior); no fixed-resolution or percentage-ghosting threshold; tests, fmt, strict Clippy clean. | Lead integrates and runs the Android functional lighting slice; stop if D1-owned files overlap or after one same-scope correction. |
-| D4.1 (M6) | Shared application audio adapter and two sample sound-event hooks. Own new `apps/explorer/src/audio_service.rs` plus focused tests; preserve existing verified audio crate unless a reproduced defect requires a separate fix. | Lead adds dependency/backend configuration and wires `experience.rs`, sample events and native lifecycle. Worker supplies an event enum and adapter methods using the existing service API; no Android types in engine gameplay APIs. | Host tests cover event/backpressure handling, mute/suspend/recovery and sample switch cleanup; backend selection is explicit. Both samples use the same adapter. | Lead verifies real Android backend and both-sample lifecycle, requests human audibility at functional acceptance; 900 s attempt, one bounded correction. |
+| D4.1 (M6) | Shared application audio adapter and two sample sound-event hooks. Own new `apps/explorer/src/audio_service.rs` plus focused tests; preserve existing verified audio crate unless a reproduced defect requires a separate fix. | Lead adds dependency/backend configuration and wires `experience.rs`, sample events and native lifecycle. Worker supplies an event enum and adapter methods using the existing service API; no Android types in engine gameplay APIs. | Host tests cover event/backpressure handling, mute/suspend/recovery and sample switch cleanup; backend selection is explicit. Both samples use the same adapter. | Lead verifies real Android backend and both-sample lifecycle, requests human audibility at functional acceptance; one bounded correction. |
 
-Slice budgets are dispatch budgets, not calendar estimates: **900 s implementation and
-240 s read-only review per slice, at most one same-scope correction**, then resplit or
-escalate (Opus only with a recorded blocker). Source and fixture freeze: record base
+A slice is bounded by scope, not by clock: **owned paths, the definition of done and
+at most one same-scope correction**, then resplit or escalate (Opus only with a
+recorded blocker). A worker stops when its outcome is met or it hits a stop condition.
+Where a supervisor requires some deadline, set a non-binding safety ceiling to catch a
+hung process and record it as such, never as a work budget. Source and fixture freeze: record base
 SHA, fixture/generator hashes and the exact profile ID/default effort setting in the
 log; do not rebase mid-slice; if `main` moves, the lead decides re-base or re-dispatch.
 When a slice stops, the lead removes generated temporary-worktree build targets while
