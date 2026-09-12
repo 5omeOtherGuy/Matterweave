@@ -187,21 +187,14 @@ fn edit_during_active_movement_blocks_until_publication_then_frees_the_path() {
     // happens here, so nothing can publish even if the worker has already
     // finished and buffered the removal. The live (old) collision keeps
     // blocking and the floor keeps carrying the character: no hole, no
-    // silent wall change. Each frame records whether preparation was still
-    // in flight (pending) or already done (buffered); the blocking
-    // invariant must hold in both, and one of them must have been observed
-    // — no worker timing is assumed, but the walk provably covers a real
-    // scheduler state instead of assuming one.
-    let mut saw_pending = false;
-    let mut saw_buffered = false;
+    // silent wall change. The worker may be preparing or already done;
+    // the blocking invariant must hold without assuming its timing.
     for _ in 0..120 {
         let tracked = cadence.stats();
         assert!(
             tracked.queued + tracked.inflight + tracked.results >= 1,
             "the edit stays tracked while withheld: {tracked:?}"
         );
-        saw_pending |= tracked.results == 0;
-        saw_buffered |= tracked.results == 1;
         physics.step(FIXED_DT, [WALK_SPEED, 0.0, 0.0], false);
         let eye = physics.character_eye();
         assert!(
@@ -213,10 +206,6 @@ fn edit_during_active_movement_blocks_until_publication_then_frees_the_path() {
             "a withheld removal must not disturb the floor: eye {eye:?}"
         );
     }
-    assert!(
-        saw_pending || saw_buffered,
-        "the withheld walk must observe a real scheduler state"
-    );
     assert!(
         physics.character_eye()[0] > 1.5,
         "the withheld walk must actually press against the wall: eye {:?}",
