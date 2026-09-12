@@ -163,7 +163,7 @@ grep '^PASS destruction' /tmp/destruction-check-report.txt
 Android (device lead; one-shot marker consumed before the chooser):
 
 ```sh
-adb shell run-as com.matterweave.explorer \
+adb shell run-as dev.matterweave.explorer \
   sh -c 'echo destruction > files/engine-check.txt'
 # launch the activity; the report is written to files/destruction-check-report.txt
 ```
@@ -180,3 +180,27 @@ adb shell run-as com.matterweave.explorer \
   screenshots; optionally HOME/RESUME mid-sequence and read the report lines),
   and integration into the delivery checkout. M2-M6 gates are unaffected by
   this diagnostic; it closes no engine milestone.
+
+
+## Lead review and repair — 2026-09-12
+
+- Actions taken: integrated diagnostic as `d22954c`; ran physical Android with
+  1501 presentations, 64 pieces, 20 reset/load cycles and one real HOME/resume.
+- Issues & friction: independent Gemini found repeat preparation on resize and
+  final-frame Retry re-entry. The first physical PASS did not discriminate these
+  boundaries; it is not final corrected-source acceptance.
+- Decisions & rationale: preserve authoritative simulation across renderer loss;
+  keep finalization independent from completed-phase reporting. Retained-byte
+  evidence covers DynamicMeshCache only, not general memory-leak freedom.
+- Solutions applied: lead `5347e91` adds the real progression seam and regressions
+  for surface loss, skipped presentations and repeated final Retry. Corrected
+  Android run is pending while the owner has the grove open.
+- Insights: a successful lifecycle example is insufficient when callbacks can
+  arrive at other phase boundaries. Preserve first-run evidence and test those
+  boundaries directly.
+
+Corrective acceptance: `5347e91` passes 157 app tests (1 existing ignored),
+scoped strict Clippy and 151 host Vulkan frames. Repaired Android run passes
+1501 presentations, 25 unique 60-frame phase summaries and HOME/resume during
+phase 4; current four save hashes unchanged. Gemini `w_004fc6f2` found no defects.
+The original worker is accepted after lead repair, not first-pass accepted.

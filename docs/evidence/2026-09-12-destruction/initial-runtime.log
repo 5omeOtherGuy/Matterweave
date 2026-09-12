@@ -1,0 +1,191 @@
+--------- beginning of main
+I/Zygote  (32606): Process 32606 created for dev.matterweave.explorer
+I/rweave.explorer(32606): Late-enabling -Xcheck:jni
+I/rweave.explorer(32606): Using CollectorTypeCMC GC.
+D/nativeloader(32606): Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+W/System  (32606): ClassLoader referenced unknown path: 
+D/nativeloader(32606): Configuring clns-9 for other apk . target_sdk_version=35, uses_libraries=, library_path=/data/app/~~aKRHuI2xWEnLh2rojIF-ww==/dev.matterweave.explorer-e829zn7pkLuJXLQ6n-I9Lw==/lib/arm64:/data/app/~~aKRHuI2xWEnLh2rojIF-ww==/dev.matterweave.explorer-e829zn7pkLuJXLQ6n-I9Lw==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/dev.matterweave.explorer
+V/GraphicsEnvironment(32606): Currently set values for:
+V/GraphicsEnvironment(32606):   angle_gl_driver_selection_pkgs=[]
+V/GraphicsEnvironment(32606):   angle_gl_driver_selection_values=[]
+V/GraphicsEnvironment(32606): dev.matterweave.explorer is not listed in per-application setting
+V/GraphicsEnvironment(32606): ANGLE allowlist from config: 
+V/GraphicsEnvironment(32606): No special selections for ANGLE, returning default driver choice
+V/GraphicsEnvironment(32606): Neither updatable production driver nor prerelease driver is supported.
+D/CompatChangeReporter(32606): Compat change id reported: 202956589; UID 10223; state: ENABLED
+--------- beginning of system
+I/DisplayManager(32606): Choreographer implicitly registered for the refresh rate.
+D/vulkan  (32606): searching for layers in '/data/app/~~aKRHuI2xWEnLh2rojIF-ww==/dev.matterweave.explorer-e829zn7pkLuJXLQ6n-I9Lw==/lib/arm64'
+D/vulkan  (32606): searching for layers in '/data/app/~~aKRHuI2xWEnLh2rojIF-ww==/dev.matterweave.explorer-e829zn7pkLuJXLQ6n-I9Lw==/base.apk!/lib/arm64-v8a'
+E/ashmem  (32606): Pinning is deprecated since Android Q. Please use trim or other methods.
+I/AdrenoVK-0(32606): ===== BEGIN DUMP OF OVERRIDDEN SETTINGS =====
+I/AdrenoVK-0(32606): ===== END DUMP OF OVERRIDDEN SETTINGS =====
+D/qdgralloc(32606): Fetching IMapper5 from QtiMapper5
+D/CompatChangeReporter(32606): Compat change id reported: 309578419; UID 10223; state: ENABLED
+D/DesktopExperienceFlags(32606): Toggle override initialized to: false
+D/DesktopModeFlags(32606): Toggle override initialized to: OVERRIDE_UNSET
+D/nativeloader(32606): Load /data/app/~~aKRHuI2xWEnLh2rojIF-ww==/dev.matterweave.explorer-e829zn7pkLuJXLQ6n-I9Lw==/base.apk!/lib/arm64-v8a/libmatterweave_explorer.so using class loader ns clns-9 (caller=<unknown>): ok
+I/SnapAlloc(32606): Graphics lib is available
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/AdrenoVK-0(32606): QUALCOMM build          : a97e8c1cc4, I1c372a512c
+I/AdrenoVK-0(32606): Build Date              : 05/08/26
+I/AdrenoVK-0(32606): Shader Compiler Version : E031.47.18.51
+I/AdrenoVK-0(32606): Local Branch            : 
+I/AdrenoVK-0(32606): Remote Branch           : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.15.4.0.11.00.00.1088.862
+I/AdrenoVK-0(32606): Remote Branch           : NONE
+I/AdrenoVK-0(32606): Reconstruct Branch      : NOTHING
+I/AdrenoVK-0(32606): Build Config            : S P 18.0.0 AArch64
+I/AdrenoVK-0(32606): Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+I/AdrenoVK-0(32606): Driver Version          : 0800.74
+I/AdrenoVK-0(32606): PFP                     : 0x01500081
+I/AdrenoVK-0(32606): ME                      : 0x01500022
+I/AdrenoVK-0(32606): Application Name    : android framework
+I/AdrenoVK-0(32606): Process Name        : dev.matterweave.explorer
+I/AdrenoVK-0(32606): Application Version : 0x00000000
+I/AdrenoVK-0(32606): Engine Name         : android framework
+I/AdrenoVK-0(32606): Engine Version      : 0x00000000
+I/AdrenoVK-0(32606): Api Version         : 0x00401000
+D/CompatChangeReporter(32606): Compat change id reported: 349153669; UID 10223; state: ENABLED
+D/InsetsController(32606): Setting requestedVisibleTypes to 498 (was 503)
+D/VRI[NativeActivity](32606): WindowInsets changed: 3168x1440 statusBars:[0,98,0,0] mandatorySystemGestures:[0,98,0,112] 
+D/WindowOnBackDispatcher(32606): setTopOnBackInvokedCallback (unwrapped): android.view.ViewRootImpl$$ExternalSyntheticLambda12@4f05d88
+D/VRI[NativeActivity](32606): WindowInsets changed: statusBars:null 
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/AdrenoVK-0(32606): QUALCOMM build          : a97e8c1cc4, I1c372a512c
+I/AdrenoVK-0(32606): Build Date              : 05/08/26
+I/AdrenoVK-0(32606): Shader Compiler Version : E031.47.18.51
+I/AdrenoVK-0(32606): Local Branch            : 
+I/AdrenoVK-0(32606): Remote Branch           : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.15.4.0.11.00.00.1088.862
+I/AdrenoVK-0(32606): Remote Branch           : NONE
+I/AdrenoVK-0(32606): Reconstruct Branch      : NOTHING
+I/AdrenoVK-0(32606): Build Config            : S P 18.0.0 AArch64
+I/AdrenoVK-0(32606): Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+I/AdrenoVK-0(32606): Driver Version          : 0800.74
+I/AdrenoVK-0(32606): PFP                     : 0x01500081
+I/AdrenoVK-0(32606): ME                      : 0x01500022
+I/AdrenoVK-0(32606): Application Name    : Matterweave Explorer
+I/AdrenoVK-0(32606): Process Name        : dev.matterweave.explorer
+I/AdrenoVK-0(32606): Application Version : 0x00000001
+I/AdrenoVK-0(32606): Engine Name         : Matterweave
+I/AdrenoVK-0(32606): Engine Version      : 0x00000001
+I/AdrenoVK-0(32606): Api Version         : 0x00401000
+I/Matterweave(32606): matterweave_explorer::destruction_check: renderer epoch 1: capabilities: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=0 source bodies=6 welds=2 colliders=23 voxels=64 mass_kg=24.000 mesh_boxes=6
+I/AdrenoUtils(32606): <ReadGpuID:366>: Reading chip ID through GSL
+D/InsetsController(32606): hide(ime())
+I/ImeTracker(32606): dev.matterweave.explorer:b10f8f58: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+W/InteractionJankMonitor(32606): Initializing without READ_DEVICE_CONFIG permission. enabled=false, interval=1, missedFrameThreshold=3, frameTimeThreshold=64, package=dev.matterweave.explorer
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=0 source drawn=60 frames uploads=59 rebuilds=58 mesh_boxes=6 bodies=6 constraints=2 colliders=23
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=1 loose-fracture bodies=27 welds=2 colliders=44 mesh_boxes=27 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=1 loose-fracture drawn=60 frames uploads=60 rebuilds=60 mesh_boxes=27 bodies=27 constraints=2 colliders=44
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=2 full-fracture-64 bodies=64 welds=0 colliders=81 unit_pieces=true mass_kg=24.000 retained_bytes=90384 mesh_boxes=64 simulated_steps=30
+D/VRI[NativeActivity](32606): visibilityChanged oldVisibility=true newVisibility=false
+I/Matterweave(32606): matterweave_explorer::destruction_check: platform-suspended (Android HOME/RESUME): renderer released; phase 2 full-fracture-64 will restart from the saved baseline
+D/ViewRootImpl(32606): Skipping stats log for color mode
+D/ViewRootImpl(32606): Skipping stats log for color mode
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/AdrenoVK-0(32606): QUALCOMM build          : a97e8c1cc4, I1c372a512c
+I/AdrenoVK-0(32606): Build Date              : 05/08/26
+I/AdrenoVK-0(32606): Shader Compiler Version : E031.47.18.51
+I/AdrenoVK-0(32606): Local Branch            : 
+I/AdrenoVK-0(32606): Remote Branch           : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.15.4.0.11.00.00.1088.862
+I/AdrenoVK-0(32606): Remote Branch           : NONE
+I/AdrenoVK-0(32606): Reconstruct Branch      : NOTHING
+I/AdrenoVK-0(32606): Build Config            : S P 18.0.0 AArch64
+I/AdrenoVK-0(32606): Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+I/AdrenoVK-0(32606): Driver Version          : 0800.74
+I/AdrenoVK-0(32606): PFP                     : 0x01500081
+I/AdrenoVK-0(32606): ME                      : 0x01500022
+I/AdrenoVK-0(32606): Application Name    : Matterweave Explorer
+I/AdrenoVK-0(32606): Process Name        : dev.matterweave.explorer
+I/AdrenoVK-0(32606): Application Version : 0x00000001
+I/AdrenoVK-0(32606): Engine Name         : Matterweave
+I/AdrenoVK-0(32606): Engine Version      : 0x00000001
+I/AdrenoVK-0(32606): Api Version         : 0x00401000
+I/Matterweave(32606): matterweave_explorer::destruction_check: renderer epoch 2: capabilities: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(32606): matterweave_explorer::destruction_check: platform-resumed (Android HOME/RESUME): renderer recreated; phase 2 full-fracture-64 restarts from the saved baseline
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=2 full-fracture-64 bodies=64 welds=0 colliders=81 unit_pieces=true mass_kg=24.000 retained_bytes=92160 mesh_boxes=64 simulated_steps=30
+D/InsetsController(32606): hide(ime())
+I/ImeTracker(32606): dev.matterweave.explorer:5e8201ba: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=2 full-fracture-64 drawn=60 frames uploads=60 rebuilds=60 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=3 serialize-reload json_bytes=16246 decoded_equal=true reloaded_bodies=64 reloaded_welds=0 reloaded_colliders=81 baseline_bodies=6 baseline_welds=2 mesh_boxes=64
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=3 serialize-reload drawn=60 frames uploads=60 rebuilds=60 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/Adreno-UNKNOWN(32606): Using previously loaded IMapper library.
+I/AdrenoVK-0(32606): QUALCOMM build          : a97e8c1cc4, I1c372a512c
+I/AdrenoVK-0(32606): Build Date              : 05/08/26
+I/AdrenoVK-0(32606): Shader Compiler Version : E031.47.18.51
+I/AdrenoVK-0(32606): Local Branch            : 
+I/AdrenoVK-0(32606): Remote Branch           : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.15.4.0.11.00.00.1088.862
+I/AdrenoVK-0(32606): Remote Branch           : NONE
+I/AdrenoVK-0(32606): Reconstruct Branch      : NOTHING
+I/AdrenoVK-0(32606): Build Config            : S P 18.0.0 AArch64
+I/AdrenoVK-0(32606): Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+I/AdrenoVK-0(32606): Driver Version          : 0800.74
+I/AdrenoVK-0(32606): PFP                     : 0x01500081
+I/AdrenoVK-0(32606): ME                      : 0x01500022
+I/AdrenoVK-0(32606): Application Name    : Matterweave Explorer
+I/AdrenoVK-0(32606): Process Name        : dev.matterweave.explorer
+I/AdrenoVK-0(32606): Application Version : 0x00000001
+I/AdrenoVK-0(32606): Engine Name         : Matterweave
+I/AdrenoVK-0(32606): Engine Version      : 0x00000001
+I/AdrenoVK-0(32606): Api Version         : 0x00401000
+I/Matterweave(32606): matterweave_explorer::destruction_check: renderer epoch 3: capabilities: Vulkan 1.3.284 | Adreno (TM) 830 | driver 2150760522 | vendor 5143 device 44050001 | heaps 15107MiB:DEVICE_LOCAL,4095MiB:DEVICE_LOCAL | validation false
+I/Matterweave(32606): matterweave_explorer::destruction_check: zero-extent=Retry (no frame presented at zero size)
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=4 lifecycle-recreate internal_recreations=1 renderer_epoch=3 (internal recreation, not an Android HOME/RESUME event); dynamic mesh re-uploaded
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=4 lifecycle-recreate drawn=60 frames uploads=60 rebuilds=60 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=5 reset-cycle-00 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=5 reset-cycle-00 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=6 reset-cycle-01 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=6 reset-cycle-01 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=7 reset-cycle-02 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=7 reset-cycle-02 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=8 reset-cycle-03 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=8 reset-cycle-03 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=9 reset-cycle-04 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=9 reset-cycle-04 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=10 reset-cycle-05 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=10 reset-cycle-05 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=11 reset-cycle-06 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=11 reset-cycle-06 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=12 reset-cycle-07 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=12 reset-cycle-07 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=13 reset-cycle-08 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=13 reset-cycle-08 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=14 reset-cycle-09 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=14 reset-cycle-09 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=15 reset-cycle-10 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=15 reset-cycle-10 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=16 reset-cycle-11 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=16 reset-cycle-11 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=17 reset-cycle-12 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=17 reset-cycle-12 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=18 reset-cycle-13 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=18 reset-cycle-13 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=19 reset-cycle-14 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=19 reset-cycle-14 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=20 reset-cycle-15 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=20 reset-cycle-15 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=21 reset-cycle-16 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=21 reset-cycle-16 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=22 reset-cycle-17 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=22 reset-cycle-17 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=23 reset-cycle-18 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=23 reset-cycle-18 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=24 reset-cycle-19 reset_bodies=6 reset_welds=2 reset_colliders=23 reset_mesh_boxes=6 fractured_bodies=64 fractured_welds=0 fractured_colliders=81 fractured_mass_kg=24.000 fractured_mesh_boxes=64 retained_bytes=92160 simulated_steps=30
+I/Matterweave(32606): matterweave_explorer::destruction_check: phase=24 reset-cycle-19 drawn=60 frames uploads=61 rebuilds=61 mesh_boxes=64 bodies=64 constraints=0 colliders=81
+I/Matterweave(32606): matterweave_explorer::destruction_check: final-reset bodies=6 welds=2 colliders=23 voxels=64 mesh_boxes=6
+I/Matterweave(32606): matterweave_explorer::destruction_check: PASS destruction: source 6 bodies/64 voxels in 2 persistent welds rendered; fractured to exactly 64 unit pieces with finite conserved mass 24.000 kg and rendered while simulated; PhysicsSave JSON round trip reloaded 64 bodies and restored the 2-weld structure; 20 internal reset/load cycles each returned to 6 bodies/23 colliders/2 constraints and re-fractured to 64/81/0, with retained dynamic mesh bytes 92160 <= 137216 and no growth after the first cycle; total_presented=1501 uploads=1520 rebuilds=1519 internal_renderer_recreations=1 platform_suspends=1 platform_resumes=1 zero_extent=Retry
+E/Matterweave(32606): android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+E/Matterweave(32606): android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+D/VRI[NativeActivity](32606): visibilityChanged oldVisibility=true newVisibility=false
+E/Matterweave(32606): android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+D/ViewRootImpl(32606): Skipping stats log for color mode
+E/Matterweave(32606): android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+E/Matterweave(32606): android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+E/Matterweave(32606): android_activity::activity_impl::glue: Ignoring spurious JVM callback after last activity reference was dropped!
+D/WindowOnBackDispatcher(32606): setTopOnBackInvokedCallback (unwrapped): null
+W/rweave.explorer(32606): Cleared Reference was only reachable from finalizer (only reported once)
+W/rweave.explorer(32606): userfaultfd: MOVE ioctl seems unsupported: Connection timed out
