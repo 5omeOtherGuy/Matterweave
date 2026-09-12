@@ -1028,6 +1028,17 @@ impl Explorer {
                 .request_stream(&self.world, self.camera.position.to_array());
             if self.preparation.poll_stream(&mut self.world) {
                 self.physics.sync_world(&self.world);
+            } else if self
+                .preparation
+                .sync_fallback_if_stalled(&mut self.world, self.camera.position.to_array())
+            {
+                // Bounded progress under sustained edits: after
+                // STALE_STREAM_FALLBACK_AFTER consecutive edit-stale completions
+                // for this destination, rewindow once synchronously on the current
+                // authoritative world (edits preserved, stale snapshots never
+                // published). Cost is one synchronous window on this thread;
+                // host-measured only, no mobile performance claimed.
+                self.physics.sync_world(&self.world);
             }
         } else if self.world.stream_around(self.camera.position.to_array()) {
             self.physics.sync_world(&self.world);

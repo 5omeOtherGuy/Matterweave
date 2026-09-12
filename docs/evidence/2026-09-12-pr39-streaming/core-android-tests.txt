@@ -1,0 +1,41 @@
+
+running 36 tests
+test async_world::tests::eviction_and_rerequest_keep_every_published_window_complete ... ok
+test async_world::tests::latest_request_matching_inflight_drops_a_superseded_pending_window ... ok
+test async_world::tests::mesh_result_byte_bound_refuses_a_completion_below_the_count_cap ... ok
+test async_world::tests::queue_and_staging_limits_refuse_cleanly_at_the_declared_bounds ... ok
+test async_world::tests::reset_at_generation_exhaustion_retires_instead_of_leaking_inflight_work ... ok
+test async_world::tests::reset_below_exhaustion_bumps_generation_and_keeps_running ... ok
+test async_world::tests::reset_mid_flight_states_the_baseline_and_cancels_every_pending_unit ... ok
+test async_world::tests::retirement_reports_unavailable_before_the_worker_exits ... ok
+test async_world::tests::returning_to_buffered_window_retains_it_after_other_work_finishes ... ok
+test async_world::tests::stale_stream_refusal_defers_until_one_preparation_interval_is_edit_free ... ok
+test async_world::tests::stall_fallback_ignores_pending_and_mesh_churn_and_resets_on_reversal_cancel_and_success ... ok
+test async_world::tests::sustained_edits_advance_through_the_app_invoked_fallback_without_edit_loss ... ok
+test async_world::tests::upstream_discard_counts_only_edit_stale_work_for_the_wanted_destination ... ok
+test async_world::tests::upstream_discard_with_next_request_before_completion_still_drives_fallback ... ok
+test coarse::tests::derivation_is_deterministic_and_does_not_mutate ... ok
+test coarse::tests::edits_survive_eviction_save_and_reload ... ok
+test coarse::tests::enabling_streaming_changes_source_mode_without_a_revision_increment ... ok
+test coarse::tests::every_generated_solid_cell_maps_into_an_occupied_coarse_cell ... ok
+test coarse::tests::level_two_tile_classifies_each_fine_chunk_for_legacy_air ... ok
+test coarse::tests::levels_keys_and_overflow_are_rejected_explicitly ... ok
+test coarse::tests::material_choice_is_topmost_then_scan_order ... ok
+test coarse::tests::negative_keys_partition_euclidean_tile_boundaries ... ok
+test coarse::tests::nonstreaming_uses_stored_data_at_arbitrary_coordinates ... ok
+test coarse::tests::occupancy_is_conservative_and_fills_thin_holes ... ok
+test coarse::tests::partial_level_two_tiles_treat_outside_domain_as_air ... ok
+test coarse::tests::streaming_legacy_air_and_tombstones_survive_eviction_and_reload ... ok
+test coarse::tests::world_cell_maps_local_coarse_steps_by_level ... ok
+test input::tests::custom_look_zone_constrains_touch ... ok
+test input::tests::focus_loss_and_cancellation_clears_all_state ... ok
+test input::tests::keyboard_motion_and_diagonal_clamping ... ok
+test input::tests::quick_jump_tap_is_not_lost_between_frames ... ok
+test input::tests::simultaneous_move_look_action_and_release ... ok
+test snapshot_tests::deletion_and_reentry_preserve_snapshot_and_empty_override ... ok
+test snapshot_tests::rejected_and_unchanged_edits_keep_shared_payloads ... ok
+test snapshot_tests::snapshots_share_payloads_and_detach_only_changed_chunks ... ok
+test snapshot_tests::streaming_overrides_share_and_repeated_edits_do_not_copy_again ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
