@@ -209,10 +209,11 @@ MATTERWEAVE_VALIDATION=1 timeout 300s xvfb-run -a cargo run --locked -p matterwe
 ```
 
 The app gate runs the camera/edit/occluder/removal/sun/replacement/disable phases and
-writes `reflection-check-report.txt` beside the save. On Android, place
-`reflection-check.txt` containing `reflection` (quality phases) or `reflection-cost`
-(120 warmup + 1000 measured frames per mode) in the app data directory; on desktop use
-`--reflection-check` or `--reflection-cost`:
+writes `reflection-check-report.txt` beside the save. On Android, write `reflection`
+(quality phases) or `reflection-cost` (120 warmup + 1000 measured frames per mode) into
+the application files directory as `engine-check.txt` — the same one-shot marker the
+other Android gates consume — and launch the activity; the report is written beside it.
+On desktop use `--reflection-check` or `--reflection-cost`:
 
 ```sh
 timeout 300s xvfb-run -a cargo run --locked -p matterweave-explorer -- --reflection-check --save /tmp/x.json

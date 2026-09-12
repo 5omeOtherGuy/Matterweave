@@ -99,9 +99,9 @@ is a harsher condition than CI applies.
 | Automatic detail selection | v0.5.0; host and OnePlus 13 checks pass. | [Instance updates](performance/instance-updates.md) |
 | Background indirect-light preparation | v0.5.0; host and OnePlus 13 checks pass. | [Background lighting](performance/async-indirect.md) |
 | Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | [Collision log](performance/logs/engine-03-collision.md), [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
-| Bounded specular reflections | Merged (PR #13); host only. Device gates NOT RUN. | [Reflections](performance/reflections-engine.md) |
-| Bounded audio service | Merged (PR #12); host and cross-compile only. Device diagnostic NOT RUN. | [ADR-0016](adr/0016-audio-service.md) |
-| Voxel Relay second sample | Merged (PR #14). Physical device gate NOT RUN. | — |
+| Bounded specular reflections | Merged (PR #13). Both OnePlus 13 app gates ran 2026-09-12: all phases completed; +7.45 ms GPU per frame when enabled. | [Reflections](performance/reflections-engine.md) |
+| Bounded audio service | Merged (PR #12). OnePlus 13 diagnostic ran 2026-09-12 and **FAILS** at the suspend assertion, 4 of 4 runs. | [ADR-0016](adr/0016-audio-service.md) |
+| Voxel Relay second sample | Merged (PR #14). Physical device gate ran 2026-09-12: puzzle solved end to end on the OnePlus 13. | — |
 | v0.3 slice: directional shadows, background preparation, destruction | Released (v0.3.0 development prerelease); device validated. | [v0.3 evidence](evidence/2026-09-08-v0.3.md) |
 | v0.2 slice: walking, objects, streamed terrain | Released (v0.2.0); device exercised. | [v0.2 evidence](evidence/2026-09-07-v0.2.md) |
 
@@ -262,9 +262,13 @@ randomized probes agree with an independent `World::raycast` oracle within 0.5/2
 (3/255 tolerance); the nonreflective baseline is preserved within 0.5/255 (1/255
 tolerance); recorded images show all seven required responses including an object outside
 the camera frustum visible only through reflection; the real Renderer passes
-enable/disable/edit/resize/recreation with an empty Vulkan validation stream. **Device
-gates are NOT RUN** — the shared phone is owner-reserved; the ready-to-run candidate is the
-`--reflection-cost` app gate. See [reflection evidence](performance/reflections-engine.md)
+enable/disable/edit/resize/recreation with an empty Vulkan validation stream. **Both device
+app gates ran on 2026-09-12** and completed every phase: enabling reflections costs
++7.45 ms of GPU time per frame (4.501 -> 11.953 ms) and 50176 owned bytes, and the
+invalidation contract holds on hardware — camera and sun motion republish nothing, while
+each edit, removal and scene replacement republishes exactly once. Frame interval stayed
+display-bound at ~16.6 ms throughout, so no frame-rate cost is visible at 60 Hz and none
+is claimed at 120 Hz. See [reflection evidence](performance/reflections-engine.md)
 and [draft PR 13](https://github.com/5omeOtherGuy/Matterweave/pull/13). This advances
 R09/M4 and leaves ADR-0008 Proposed; it is not complete Lumen-like lighting.
 
@@ -284,7 +288,7 @@ through the pinned `ndk 0.9.0` bindings plus `ringbuf 0.5.1`. Decision record:
 | Workspace tests / docs | PASS: `cargo test --workspace --locked` exit 0 after changes; `python3 tools/check_docs.py` PASS. |
 | Android cross-compilation | PASS: diagnostic example builds for `aarch64-linux-android` (debug and release) with the pinned NDK 28.2.13676358 API-28 linker, links `libaaudio`; release artifact SHA-256 `5b2a66036e6b94d1dacecaea013bef4344df603de29a0b23b75db3efce221c2b`. |
 | Host diagnostic | PASS: negotiated properties, nonzero frames, suspend/resume continuation, controlled recreation, ten open/play/stop/close cycles (mock backend; silent by design). |
-| Reserved-device diagnostic | NOT RUN: no Android device was attached during the trial window (`adb devices` empty). Executable, checksum and exact procedure are delivered; final acceptance requires the coordinating reviewer to execute it. |
+| Reserved-device diagnostic | **FAIL** (OnePlus 13, 2026-09-12, 4 of 4 runs, release build SHA-256 `578241740e71b724d9f9a6eeeeadcce9d23b9aaf1af861b5296bf2a68ec2210e`). Everything before the suspend phase passes on real AAudio: negotiated 48000 Hz stereo f32, burst 96, capacity 1536, low-latency, exclusive false; ~55 callbacks render 5088+ frames with 0 xruns and 0 device errors. The run then panics at `audio_diagnostic.rs:133`, `render thread reports suspended`: after `suspend()` the health snapshot still reports `suspended false`. Deterministic, not a flake. |
 
 Limitations: no resampling and no compressed formats (48 kHz f32 mono/stereo only; a
 device that cannot negotiate that fails open explicitly); a failed stream close aborts
@@ -326,9 +330,17 @@ duplicating the engine implementation.
   reports 0 warnings. The debug APK built with Gradle 8.11.1 (`:app:assembleDebug`),
   SHA256 `aba3d489ad12d9e38573686e38fa8bd3f7646312029a1b78da9caf623e6e0165`, and
   `libmatterweave_explorer.so` ELF 16 KiB page alignment verified (`0x4000`).
-- Physical device gate: **NOT RUN** (no exclusive reservation held on the shared OnePlus
-  13; honest reporting per project rules). An independent subagent verified engine/game
-  separation, zero leakage into `crates/matterweave-*`, and the physics-backed tests.
+- Physical device gate: **PASS** (OnePlus 13, 2026-09-12). Played end to end over
+  wireless adb with injected touch events: the virtual joystick drove the kinematic
+  character, the character pushed the crate onto the plate by impulse (crate settled at
+  `[9.99, 1.50, 8.47]`), the door cells were removed and their colliders resynchronized so
+  the character walked through the doorway (eye Z 9.68 -> 13.60 at X 6.52), the ACTION
+  button cleared the destructible obstacle, and the character reached the exit at
+  Z 20.83. Final saved state: `door_open true, obstacle_cleared true, solved true`, HUD
+  `PUZZLE SOLVED`. Save attachment and screenshot in
+  `/mnt/bench/matterweave-dev/device-gates/2026-09-12/`. An independent subagent verified
+  engine/game separation, zero leakage into `crates/matterweave-*`, and the physics-backed
+  tests.
 
 ## Known limitations, non-claims and open gates
 
@@ -356,12 +368,17 @@ Not implemented, not integrated or pending validation:
 - Detail: rough concavities remain conservative, and material-filled channels plus full
   temporal/quality M4 acceptance remain open.
 - Reflections: 64³ source volume, configurable trace steps with a 512 hard maximum, one
-  secondary ray, no recursion or temporal history; device gates NOT RUN; ADR-0008 remains
-  Proposed; not complete Lumen-like lighting.
+  secondary ray, no recursion or temporal history; ADR-0008 remains Proposed; not complete
+  Lumen-like lighting. Device cost is now measured per frame but not per joule: the
+  2026-09-12 runs are seconds long and make no energy or thermal claim.
 - Audio: no resampling and no compressed formats (48 kHz f32 mono/stereo only, with
   explicit fail-open on devices that cannot negotiate it); a failed stream close aborts
-  through the ndk wrapper's drop contract; the reserved-device diagnostic is NOT RUN.
-- Voxel Relay: physical device gate NOT RUN.
+  through the ndk wrapper's drop contract. **The reserved-device diagnostic fails**: after
+  `suspend()` the health snapshot never reports `suspended` on the real AAudio backend,
+  deterministically across 4 runs. Suspension is therefore unverified on hardware, and the
+  host suite cannot see the gap because the mock backend renders from the control thread.
+- Voxel Relay: physical device gate passes; the sample is playable and completable on the
+  OnePlus 13.
 - Full M2 equivalent-quality comparison, M3 stress gates, M4 indirect illumination,
   reflection and multiresolution-transition acceptance, a second released sample and
   broader device coverage remain open.
@@ -404,9 +421,9 @@ future efficiency comparisons; charging was a confounder in the v0.2 measurement
 4. Continue from direct shadows into M4 indirect illumination/reflections/detail. Finite
    map edge quality and nonresident casters remain limitations. No full GI, reflection,
    multiresolution transitions, second sample or broader device coverage yet.
-5. Run the outstanding device gates for the merged-but-unvalidated systems: the
-   `--reflection-cost` app gate for reflections, the reserved-device diagnostic for
-   audio, and the physical device gate for the Voxel Relay sample.
+5. Fix the audio suspend gap the 2026-09-12 device diagnostic exposed, then re-run that
+   diagnostic on hardware. The other two device gates in this group — reflections and the
+   Voxel Relay sample — have been run and are recorded above.
 6. Do not make further showcase save recovery, authored route refinement or gameplay UI
    polish a prerequisite for engine work. Automatic LOD, indirect
    illumination/reflections, renderer comparison, streaming completion, second-sample
