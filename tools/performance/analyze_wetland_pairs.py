@@ -275,6 +275,8 @@ def pair_members(members):
     `capture_state` and must hold one build. The compared factor is taken from
     the recorded trials, never assumed.
     """
+    if len(members) != 2:
+        return None
     by_variant = {t['variant']: t for t in members}
     if set(by_variant) == {'reference', 'candidate'}:
         return ('candidate_minus_reference', by_variant['reference'], by_variant['candidate'])
@@ -298,12 +300,14 @@ def pair_mismatches(a, b):
     for field, bound in [('battery_c',1.0), ('skin_c',2.0)]:
         if abs(a['pre_launch_gate'][field]-b['pre_launch_gate'][field]) > bound:
             issues.append(f'paired {field} difference exceeds {bound}')
-    # Capture-CSV fields exist only where the capture ran; an OFF trial has none
-    # and its absence is not compared against anything.
-    if a['app_whole_capture'] and b['app_whole_capture']:
-        for field in ['gpu_prev_shadows','gpu_prev_shadow_map_size','voxel_bodies_total']:
-            sets = [set(row['app_whole_capture']['value_counts'][field]) - {''} for row in [a,b]]
-            if sets[0] != sets[1] or len(sets[0]) != 1: issues.append(f'{field} differs or changed during capture')
+    # Every available capture must be internally stable, including the ON
+    # member of an ON/OFF pair. Compare across captures only when both exist.
+    captures = [row['app_whole_capture'] for row in (a, b)
+                if row['app_whole_capture'] is not None]
+    for field in ['gpu_prev_shadows', 'gpu_prev_shadow_map_size', 'voxel_bodies_total']:
+        sets = [set(capture['value_counts'][field]) - {''} for capture in captures]
+        if any(len(values) != 1 for values in sets) or (len(sets) == 2 and sets[0] != sets[1]):
+            issues.append(f'{field} differs or changed during capture')
     return issues
 
 

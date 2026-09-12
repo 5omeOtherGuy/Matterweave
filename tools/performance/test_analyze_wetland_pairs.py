@@ -95,6 +95,19 @@ def off_trial():
 
 
 class CaptureStatePairTests(unittest.TestCase):
+    def test_duplicate_members_do_not_form_a_pair(self):
+        on = trial()
+        on['variant'] = 'same-build'
+        self.assertIsNone(pair_members([off_trial(), on, on]))
+
+    def test_on_capture_must_be_stable_even_when_off_has_no_csv(self):
+        for field in ['gpu_prev_shadows', 'gpu_prev_shadow_map_size', 'voxel_bodies_total']:
+            with self.subTest(field=field):
+                on = trial()
+                on['variant'] = 'same-build'
+                on['app_whole_capture']['value_counts'][field]['unexpected'] = 1
+                self.assertTrue(pair_mismatches(off_trial(), on))
+
     def test_build_pair_still_compares_variants(self):
         a, b = trial(), trial()
         a['variant'], b['variant'] = 'reference', 'candidate'

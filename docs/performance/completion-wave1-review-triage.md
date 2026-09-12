@@ -38,3 +38,11 @@ pair validation with a red/green regression; full Python suite 238 PASS.
 Phone preparation also found the historical generator-2-only collector
 incompatible with current generator 3. A bounded compatibility repair is
 running; no current-build overhead or repeatability result exists yet.
+
+[Gemini collector review](reviews/collector-review-gemini-20260912.md)
+identified missing pair cardinality validation and ON-only capture stability
+checks. Lead reproduced both: four failing assertions across two tests, then
+240 full Python tests PASS after fixing. The review's mixed-build/state label
+observation already rejects the malformed comparison; its reported diagnostic
+is accurate (different APKs cannot establish capture overhead), so no behavioral
+change is needed. Generator compatibility and final corrective reviews remain open.
