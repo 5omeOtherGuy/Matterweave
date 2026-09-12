@@ -988,6 +988,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "matterweave-ray-hierarchy"
+version = "0.5.0"
+dependencies = [
+ "glam 0.30.9",
+ "matterweave-core",
+ "matterweave-render",
+]
+
+[[package]]
 name = "matterweave-render"
 version = "0.5.0"
 dependencies = [
