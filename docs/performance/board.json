@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "run": "engine-completion-plan-v2-20260912",
-  "authority": "The Codex session is lead by owner designation on 2026-09-12 (\"in case there is conflict let codex take the lead\"). It owns this board, the authority field, acceptance decisions and the device. The Claude Code session contributed wave 1a (PRs 25, 26, 27) and stood down to contributor; its remaining workers are listed below and can be stopped by the lead at any time. Workers must not edit this file.",
+  "authority": "Two sessions work this campaign as a pipeline, by owner direction on 2026-09-12. The Claude Code session produces host-verified engine slices in the non-app crates (physics, render lighting, audio, detail) with worker dispatch and independent review, and hands each one over merged and green with its open gates named. The Codex session does the follow-up: apps/explorer integration, Android functional runs, terrain/landscape/coarse, and acceptance. The Codex session is lead for any conflict (\"in case there is conflict let codex take the lead\") and owns this authority field, acceptance and the device. Each session appends its own task entries and never overwrites the other's. Workers must not edit this file.",
   "base": "c095047",
   "phone_owner": "Current Codex development lead; OnePlus13 192.168.178.93:5555; workers have no device access.",
   "tasks": {
