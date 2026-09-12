@@ -1394,6 +1394,7 @@ impl Renderer {
         // In-place writes can change positions while retaining the revision.
         // Invalidate before any write, also covering a partial write failure.
         self.shadow.invalidate();
+        self.disable_reflection();
         if let Some(dynamic) = &mut self.dynamic {
             if dynamic.rewrite(mesh)? {
                 return Ok(());

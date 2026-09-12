@@ -251,6 +251,27 @@ impl ApplicationHandler for App {
                     );
                     self.republish();
                 }
+                7 => {
+                    // The empty-mesh fast path reuses an existing dynamic slot.
+                    // Even this geometry upload must retire publication identity.
+                    self.renderer
+                        .as_mut()
+                        .unwrap()
+                        .upload_dynamic(&Mesh::default())
+                        .unwrap();
+                    self.republish();
+                    let renderer = self.renderer.as_mut().unwrap();
+                    assert!(renderer.reflection_state().published_submission.is_some());
+                    renderer.upload_dynamic(&Mesh::default()).unwrap();
+                    assert!(!renderer.reflection_enabled());
+                    assert_eq!(
+                        renderer.reflection_state().published_submission,
+                        None,
+                        "dynamic rewrite must retire reflection publication identity"
+                    );
+                    assert_eq!(renderer.reflection_state().presented_submission, None);
+                    self.republish();
+                }
                 _ => {}
             }
             self.prepared = Some(self.frame);
