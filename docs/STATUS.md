@@ -1,5 +1,13 @@
 # Current status
 
+Owner routing update (2026-09-13): DeepSeek V4.1 Flash direct and GLM5.3
+Flash handle most work; Claude subscription at medium is reserved for complex
+tasks after its reported reset. No Astra workers. Both functional-fix authors
+have finished: interaction `c1e8777` (integrated as `bb68e59`), independent
+GLM Flash review `w_a6f188e8` found no defects; detail diagnostic `648dda2`
+passes 21 scoped app tests and 122 detail tests, independent review pending.
+Both fixes still need Android acceptance.
+
 ## Reviewed PR delivery and functional follow-up — 2026-09-13
 
 PR36 merged at `7e88f31` and PR39 at `fc6212e`; all six checks passed for each.

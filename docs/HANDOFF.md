@@ -1,5 +1,13 @@
 # Implementation handoff
 
+**Current worker routing (owner, 2026-09-13):** use direct Pi
+`deepseek/deepseek-flash` (DeepSeek V4.1 Flash) and OpenRouter
+`z-ai/glm-5.3-flash` for most implementation and review. Reserve Claude
+subscription Opus at **medium** effort for concretely complex tasks only.
+The owner reports the 5-hour limit resets in 17 minutes from their update;
+this is reported availability, not a verified reset. Do not retry before it.
+Never dispatch Astra workers. Preserve the global three-worker cap.
+
 **Current pickup (2026-09-13):** PR36 lighting and PR39 streaming are merged,
 main `fc6212e`, all six checks green each, GLM5.3 Flash reviewed. The lead branch
 is now `engine/interaction-delivery` in the healthy recovery integration checkout.
