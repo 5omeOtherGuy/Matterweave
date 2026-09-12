@@ -4,6 +4,22 @@ Terrain Lab is now installed and functionally verified on the phone; choose **EX
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
+## Playable lab and production integration — 2026-09-12
+
+PR #29 merged at `bd01a65`, all six checks passing. Terrain Lab is installed and
+functionally verified on OnePlus13; see [controls and evidence](performance/terrain-lab.md).
+PR #31 wires the production wetland camera to the detail runtime and passes the
+[Android render/edit/persistence/lifecycle slice](performance/wetland-auto-detail.md).
+Actual tested wetland views stayed at Source under retained quality guards;
+coarse transition acceptance remains open. Shared audio integration passes142
+host app tests and strict Clippy; Android audio integration and hearing are next.
+
+Global worker reconciliation found preserved D2.2 destruction (`w_80029347`) and
+D3.1 lighting (`w_9d03d127`) workers from the other lead. Do not duplicate them or
+edit their isolated paths. This session continues app integration and the phone.
+PR #30 contains that lead's board/plan updates; merge additively, preserving both
+sessions' records and latest owner instructions.
+
 ## Development takeover and coarse terrain — 2026-09-12
 
 Owner transferred ongoing development and device integration to this lead. The other
