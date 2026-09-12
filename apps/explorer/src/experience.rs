@@ -126,6 +126,9 @@ impl Experience {
                 break;
             };
             let outcome = self.audio.trigger(event);
+            if let Some(reason) = outcome.dropped() {
+                log::debug!("audio dropped {}: {reason:?}", event.name());
+            }
             let status = self.audio.status();
             log::info!(
                 "Sample audio {:?}: event={} outcome={outcome:?} callbacks={} frames={}",
