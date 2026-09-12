@@ -688,6 +688,7 @@ pub struct WetlandApp {
     diagnostics: bool,
     pub sandbox_requested: bool,
     pub voxel_relay_requested: bool,
+    pub terrain_lab_requested: bool,
     pub failed: bool,
     status: String,
     last: Instant,
@@ -725,6 +726,7 @@ impl WetlandApp {
             diagnostics: false,
             sandbox_requested: false,
             voxel_relay_requested: false,
+            terrain_lab_requested: false,
             failed: false,
             status: String::new(),
             last: Instant::now(),
@@ -787,6 +789,9 @@ impl WetlandApp {
             }
             if self.loading.is_none() && contains([70., 440., 420., 50.], p) {
                 self.voxel_relay_requested = true;
+            }
+            if self.loading.is_none() && contains([70., 498., 420., 50.], p) {
+                self.terrain_lab_requested = true;
             }
             return true;
         }
@@ -941,10 +946,12 @@ impl WetlandApp {
             h.text(96., 400., "OPEN YOUR SANDBOX", 1.4, ink);
             h.rect([70., 440., 420., 50.], panel);
             h.text(96., 458., "PLAY VOXEL RELAY", 1.4, ink);
-            h.text(74., 502., "An original alien wetland", 1.25, gold);
+            h.rect([70., 498., 420., 50.], panel);
+            h.text(96., 516., "EXPLORE TERRAIN LAB", 1.4, ink);
+            h.text(74., 562., "An original alien wetland", 1.25, gold);
             h.text(
                 74.,
-                528.,
+                586.,
                 &self.status.chars().take(88).collect::<String>(),
                 1.,
                 ink,
