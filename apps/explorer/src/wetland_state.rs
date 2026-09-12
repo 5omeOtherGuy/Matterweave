@@ -215,10 +215,20 @@ fn interval(bounds: Bounds, origin: [f32; 3], direction: [f32; 3], max: f32) -> 
     (far >= near).then_some((near, far))
 }
 
-/// Bounded voxel DDA over ray-intersected prototype bounds. Called for actions,
+/// Bounded voxel DDA over ray-intersected instance bounds. Called for actions,
 /// not every frame. Decorative leaves and liquid do not mask editable solids.
+///
+/// Instance bounds come from [`DetailScene::instance_bounds_world`], which uses
+/// the scene's cached per-revision digest instead of re-censusing every
+/// occupied cell of a shared prototype for each of its placements. The full
+/// wetland measures 8302 placements over 893 prototype sources holding 3189
+/// chunks, so the old per-instance `bounds_world` path paid up to
+/// 228,188,160 cell reads per ray where the distinct sources hold 13,062,144
+/// — the same full censuses roughly 17.5 times over, on the input thread.
+/// Selection (`select_lods`) has already refreshed every digest before an
+/// action can run, so this path performs no census work at all.
 pub fn raycast(
-    scene: &DetailScene,
+    scene: &mut DetailScene,
     origin: [f32; 3],
     direction: [f32; 3],
     distance: f32,
@@ -234,10 +244,16 @@ pub fn raycast(
     let direction = direction.map(|n| n / norm);
     let mut best: Option<Hit> = None;
     for draw in scene.draws() {
-        let volume = scene.prototype(&draw.prototype)?;
-        let Some(bounds) = volume.bounds_world(&draw.transform).ok().flatten() else {
-            continue;
+        // A missing prototype means the scene changed under the query; abort
+        // the whole raycast (unchanged contract), never skip one draw.
+        scene.prototype(&draw.prototype)?;
+        let bounds = match scene.instance_bounds_world(&draw.instance) {
+            Ok(Some(bounds)) => bounds,
+            // An unusable transform or empty source is never a hit: skip the
+            // draw, exactly as the previous per-instance bounds handling did.
+            Ok(None) | Err(_) => continue,
         };
+        let volume = scene.prototype(&draw.prototype)?;
         let Some((near, far)) = interval(
             bounds,
             origin,
@@ -476,7 +492,7 @@ mod tests {
                 Transform::new([-2., 0., -2.], Yaw::Deg90).unwrap(),
             )
             .unwrap();
-        let hit = raycast(&scene, [-1.9375, 0.0625, -1.], [0., 0., -1.], 4.).unwrap();
+        let hit = raycast(&mut scene, [-1.9375, 0.0625, -1.], [0., 0., -1.], 4.).unwrap();
         assert_eq!(hit.cell, [-2, 0, 0]);
         assert_eq!(hit.instance, "stone");
         assert!(hit.previous.is_some());
@@ -489,7 +505,7 @@ mod tests {
                 .sum::<i32>(),
             1
         );
-        assert!(raycast(&scene, [f32::NAN, 0., 0.], [0., 0., 1.], 4.).is_none());
+        assert!(raycast(&mut scene, [f32::NAN, 0., 0.], [0., 0., 1.], 4.).is_none());
         let mut leaf = DetailVolume::new("leaf", Scale::new(0.125).unwrap());
         leaf.set([-2, 0, 0], material::FLORA_FROND_BLADE).unwrap();
         scene.add_prototype(leaf).unwrap();
@@ -501,7 +517,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            raycast(&scene, [-1.9375, 0.0625, -1.], [0., 0., -1.], 4.)
+            raycast(&mut scene, [-1.9375, 0.0625, -1.], [0., 0., -1.], 4.)
                 .unwrap()
                 .instance,
             "stone"
@@ -518,7 +534,7 @@ mod tests {
             .place("corner", "corners", Transform::identity())
             .unwrap();
         for direction in [[1., 1., 0.], [-1., -1., 0.]] {
-            let hit = raycast(&scene, [0.125; 3], direction, 2.).unwrap();
+            let hit = raycast(&mut scene, [0.125; 3], direction, 2.).unwrap();
             let previous = hit.previous.unwrap();
             assert_eq!(
                 previous
@@ -536,14 +552,83 @@ mod tests {
         scene
             .edit_instance("corner", [0, 1, 0], material::BANK_STONE)
             .unwrap();
-        let hit = raycast(&scene, [0.125; 3], [1., 1., 0.], 2.).unwrap();
+        let hit = raycast(&mut scene, [0.125; 3], [1., 1., 0.], 2.).unwrap();
         assert_eq!(hit.previous, Some([1, 0, 0]));
         scene
             .edit_instance("corner", [1, 0, 0], material::BANK_STONE)
             .unwrap();
-        assert!(raycast(&scene, [0.125; 3], [1., 1., 0.], 2.)
+        assert!(raycast(&mut scene, [0.125; 3], [1., 1., 0.], 2.)
             .unwrap()
             .previous
             .is_none());
+    }
+
+    /// Regression for the reported Android interaction ANR: the action ray
+    /// must resolve instance bounds from the scene's cached per-revision
+    /// digests, not re-census every occupied cell of a shared prototype for
+    /// each of its placements. `digest_builds` counts actual recomputations,
+    /// so a single cold ray over many placements of one prototype costs one
+    /// digest build (not one per placement), a warm ray costs none, and an
+    /// edit recomputes only the prototype whose source changed.
+    #[test]
+    fn action_raycast_resolves_bounds_from_cached_revision_digests() {
+        let mut scene = DetailScene::new();
+        let mut volume = DetailVolume::new("rock", Scale::new(0.25).unwrap());
+        volume.set([-2, 0, 0], material::BANK_STONE).unwrap();
+        volume.set([1, 0, 0], material::BANK_STONE).unwrap();
+        scene.add_prototype(volume).unwrap();
+        for i in 0..64 {
+            scene
+                .place(
+                    format!("rock-{i}"),
+                    "rock",
+                    Transform::new([4. * i as f32, 0., 0.], Yaw::Deg0).unwrap(),
+                )
+                .unwrap();
+        }
+        // A differently transformed placement of the same source must not
+        // cost a second digest build: the cache is per prototype revision.
+        scene
+            .place(
+                "rock-turned",
+                "rock",
+                Transform::new([200., 0., -100.], Yaw::Deg180).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(scene.digest_builds(), 0);
+        // Instance 3's [-2,0,0] cell spans x [11.5, 11.75), y/z [0, 0.25).
+        let origin = [11.6, 0.125, -2.];
+        let direction = [0., 0., 1.];
+        let hit = raycast(&mut scene, origin, direction, 4.).unwrap();
+        assert_eq!(hit.instance, "rock-3");
+        assert_eq!(hit.cell, [-2, 0, 0]);
+        // One prototype source, one digest build — never one per placement.
+        assert_eq!(scene.digest_builds(), 1);
+        let _ = raycast(&mut scene, origin, direction, 4.);
+        assert_eq!(
+            scene.digest_builds(),
+            1,
+            "warm ray re-censused prototype sources"
+        );
+        // A copy-on-write edit mints a private prototype; only that source is
+        // recomputed (lazily, on the next ray) and the ray must then see the
+        // edited geometry.
+        scene
+            .edit_instance("rock-3", [-2, 0, 0], material::AIR)
+            .unwrap();
+        assert!(raycast(&mut scene, origin, direction, 4.).is_none());
+        assert_eq!(scene.digest_builds(), 2);
+        // An edit adding solid material OUTSIDE the previously cached bounds
+        // must grow them: a ray that hits only the new cell cannot pass if a
+        // stale, too-small bound skips the draw entirely. Instance 3's new
+        // [1,5,5] cell spans x [12.25,12.5), y/z [1.25,1.5).
+        scene
+            .edit_instance("rock-3", [1, 5, 5], material::BANK_STONE)
+            .unwrap();
+        let hit = raycast(&mut scene, [12.3, 1.375, -2.], direction, 4.).unwrap();
+        assert_eq!(hit.instance, "rock-3");
+        assert_eq!(hit.cell, [1, 5, 5]);
+        assert!(hit.previous.is_some());
+        assert_eq!(scene.digest_builds(), 3);
     }
 }

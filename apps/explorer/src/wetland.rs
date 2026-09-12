@@ -616,7 +616,7 @@ impl Runtime {
     }
     fn edit(&mut self, place: bool) -> Result<String, String> {
         let hit = wetland_state::raycast(
-            &self.scene,
+            &mut self.scene,
             self.camera.position.to_array(),
             self.camera.forward().to_array(),
             6.,
@@ -807,12 +807,24 @@ impl Runtime {
             }
         }
     }
+    /// Physics reach distance for the current view: the nearest source hit
+    /// along the camera ray, or the full six-metre range on a miss. One ray,
+    /// shared by grab and break; throw needs no source query at all.
+    fn reach(&mut self) -> f32 {
+        wetland_state::raycast(
+            &mut self.scene,
+            self.camera.position.to_array(),
+            self.camera.forward().to_array(),
+            6.,
+        )
+        .map_or(6., |h| h.distance)
+    }
     fn playground(&mut self) -> Result<(), String> {
         // A bounded six-body arch containing exactly64 half-metre voxels. The
         // nearest designated route clearing supplies the ground, never a visual LOD.
         let centre = self.clearing;
         let hit = wetland_state::raycast(
-            &self.scene,
+            &mut self.scene,
             [centre[0], centre[1] + 12., centre[2]],
             [0., -1., 0.],
             32.,
@@ -1092,11 +1104,10 @@ impl WetlandApp {
         let Some(r) = &mut self.runtime else {
             return;
         };
-        let eye = r.camera.position.to_array();
-        let forward = r.camera.forward().to_array();
-        let range = wetland_state::raycast(&r.scene, eye, forward, 6.).map_or(6., |h| h.distance);
         match action {
             Action::Remove | Action::Place => {
+                // `edit` performs the single action ray itself; no extra ray
+                // is spent here just to compute an unused range.
                 let t = Instant::now();
                 let result = r.edit(action == Action::Place);
                 queue_edit_result(&mut self.events, &result);
@@ -1110,14 +1121,21 @@ impl WetlandApp {
                 );
             }
             Action::Grab => {
+                let range = r.reach();
+                let eye = r.camera.position.to_array();
+                let forward = r.camera.forward().to_array();
                 r.physics.grab(&r.empty_world, eye, forward, range);
                 r.dirty = true;
             }
             Action::Throw => {
-                r.physics.throw(forward);
+                // No ray: throwing releases a held body along the view.
+                r.physics.throw(r.camera.forward().to_array());
                 r.dirty = true;
             }
             Action::Break => {
+                let range = r.reach();
+                let eye = r.camera.position.to_array();
+                let forward = r.camera.forward().to_array();
                 r.physics.break_body(&r.empty_world, eye, forward, range);
                 r.dirty = true;
             }

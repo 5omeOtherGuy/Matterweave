@@ -484,6 +484,7 @@ pub struct DetailScene {
     cache: BTreeMap<MeshKey, CachedMesh>,
     cache_bytes: usize,
     mesh_builds: u64,
+    digest_builds: u64,
     /// Per-prototype-revision digest cache. Pure derived data; never authoritative.
     digests: BTreeMap<String, Digest>,
     /// Last selected level per instance id, for hysteresis across prepare calls.
@@ -535,6 +536,7 @@ impl DetailScene {
             cache: BTreeMap::new(),
             cache_bytes: 0,
             mesh_builds: self.mesh_builds,
+            digest_builds: self.digest_builds,
             digests: BTreeMap::new(),
             selection: BTreeMap::new(),
         }
@@ -818,8 +820,40 @@ impl DetailScene {
         if stale {
             let digest = compute_digest(&self.prototypes[prototype_id]);
             self.digests.insert(prototype_id.to_string(), digest);
+            self.digest_builds += 1;
         }
         &self.digests[prototype_id]
+    }
+
+    /// Digests actually recomputed since construction (once per prototype
+    /// source revision), for cache-reuse proof on bounds/query paths. Deliberately
+    /// outside [`SceneCounts`]: digest warming is derived-cache work, not an
+    /// authoritative-scene mutation, and `SceneCounts` equality is used as a
+    /// no-authoritative-mutation assertion.
+    pub fn digest_builds(&self) -> u64 {
+        self.digest_builds
+    }
+
+    /// World-metre occupied bounds of one placed instance, from the cached
+    /// per-revision digest ([`Digest::bounds_local`], already refreshed by LOD
+    /// selection) under the exact instance transform. All eight corners go
+    /// through the transform, so yaw and negative translations are honoured
+    /// without assuming axis order.
+    ///
+    /// This is the reusable source-derived alternative to resolving bounds per
+    /// placement through [`DetailVolume::bounds_world`], which re-censuses every
+    /// occupied cell of the shared prototype for each instance.
+    ///
+    /// Errors on an invalid transform (an unusable transform is never a hit)
+    /// and returns `Ok(None)` when the prototype source is empty.
+    pub fn instance_bounds_world(&mut self, instance_id: &str) -> Result<Option<Bounds>> {
+        let (prototype, transform) = match self.instances.get(instance_id) {
+            Some(instance) => (instance.prototype.clone(), instance.transform),
+            None => return Ok(None),
+        };
+        transform.validate()?;
+        let bounds_local = self.digest(&prototype).bounds_local;
+        Ok(bounds_local.map(|b| b.transformed(&transform)))
     }
 
     /// Selects a view-dependent LOD per instance and records it for hysteresis.
@@ -1082,5 +1116,83 @@ mod local_topology_cost {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod instance_bounds {
+    use super::*;
+    use crate::{material, Scale, Yaw};
+
+    /// `instance_bounds_world` must agree exactly with per-instance
+    /// `bounds_world` under the same transform, build one digest per prototype
+    /// source revision (not per placement), reflect edits that grow the bounds,
+    /// and refresh only the prototype an edit actually changed.
+    #[test]
+    fn instance_bounds_match_bounds_world_and_reuse_revision_digest() {
+        let mut scene = DetailScene::new();
+        let mut volume = DetailVolume::new("rock", Scale::new(0.5).unwrap());
+        volume.set([-1, 0, 2], material::BANK_STONE).unwrap();
+        volume.set([3, 1, -4], material::BANK_STONE).unwrap();
+        scene.add_prototype(volume).unwrap();
+        let transform = Transform::new([-10., 0., -5.], Yaw::Deg270).unwrap();
+        scene.place("a", "rock", transform).unwrap();
+        scene
+            .place(
+                "b",
+                "rock",
+                Transform::new([100., -3., -100.], Yaw::Deg90).unwrap(),
+            )
+            .unwrap();
+        let expected = scene
+            .prototype("rock")
+            .unwrap()
+            .bounds_world(&transform)
+            .unwrap();
+        assert_eq!(
+            scene.instance_bounds_world("a").unwrap(),
+            expected,
+            "cached digest bounds diverged from per-instance bounds_world"
+        );
+        // Two placements of one source: one digest build, reused for "b".
+        assert!(scene.instance_bounds_world("b").unwrap().is_some());
+        assert_eq!(scene.digest_builds(), 1);
+        // An unknown instance is not a hit, not an error.
+        assert_eq!(scene.instance_bounds_world("absent").unwrap(), None);
+        // An edit adding a cell OUTSIDE the prior occupied bounds must grow
+        // the bounds immediately; compare against the edited private source
+        // under the same instance transform.
+        let before = scene.instance_bounds_world("a").unwrap().unwrap();
+        scene
+            .edit_instance("a", [6, 0, 6], material::BANK_STONE)
+            .unwrap();
+        let after = scene.instance_bounds_world("a").unwrap().unwrap();
+        assert_ne!(after, before, "bounds did not reflect the added cell");
+        let draw = scene
+            .draws()
+            .into_iter()
+            .find(|d| d.instance == "a")
+            .expect("edited instance still placed");
+        let expected_after = scene
+            .prototype(&draw.prototype)
+            .expect("edit mints a private prototype")
+            .bounds_world(&draw.transform)
+            .unwrap();
+        assert_eq!(scene.instance_bounds_world("a").unwrap(), expected_after);
+        // "b" still shares the original source; only the fork was rebuilt.
+        assert!(scene.instance_bounds_world("b").unwrap().is_some());
+        assert_eq!(scene.digest_builds(), 2);
+    }
+
+    /// An empty prototype resolves to `Ok(None)` like `bounds_world`.
+    #[test]
+    fn empty_prototype_instance_bounds_are_none() {
+        let mut scene = DetailScene::new();
+        scene
+            .add_prototype(DetailVolume::new("empty", Scale::new(0.5).unwrap()))
+            .unwrap();
+        scene.place("i", "empty", Transform::identity()).unwrap();
+        assert_eq!(scene.instance_bounds_world("i").unwrap(), None);
+        assert_eq!(scene.digest_builds(), 1);
     }
 }
