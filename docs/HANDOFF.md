@@ -24,8 +24,8 @@ The workspace is at version 0.5.0; v0.5.0 is the latest published prerelease, an
 intermediate engine delivery rather than a finished engine. The tree includes a Rust
 voxel core, fine-detail volumes with automatic selection, an ash/Vulkan renderer with
 direct and bounded diffuse indirect lighting, a Rapier physics adapter, a frame
-pacer, a bounded audio service (host-tested; its reserved-device diagnostic is not
-run) and a native Android explorer. [README.md](../README.md) lists the subsystems;
+pacer, a bounded audio service (host-tested; its 2026-09-12 device diagnostic fails
+at suspension) and a native Android explorer. [README.md](../README.md) lists the subsystems;
 [STATUS.md](STATUS.md) gives the verified state, open gates and the live integration
 branch. M2–M6 remain open.
 
@@ -40,6 +40,11 @@ branch. M2–M6 remain open.
 7. Inspect current source, branches and worktree changes before trusting any summary, including this one.
 
 ## Next authorized work
+
+Use the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) for the
+next dispatch order and M2–M6 closure gates. Reconcile historical ownership before
+starting workers. Preserve the existing device-playable Voxel Relay sample; repair
+the real-backend audio suspend failure and complete remaining engine acceptance.
 
 Continue the engine-completion campaign in [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)
 and its [task list](PERFORMANCE_TASKS.md): advance renderer, physics, streaming,

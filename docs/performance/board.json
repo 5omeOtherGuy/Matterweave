@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "run": "performance-01",
+  "run": "engine-completion-20260912",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
-  "base": "755620472e8457d8e55760165e759b6d8013c6db",
-  "phone_owner": "Sole lead; final integrated Android validation next.",
+  "base": "704bb4a",
+  "phone_owner": "Current Codex orchestrator; OnePlus 13 192.168.178.93:5555. No worker device access; serialize builds and captures.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -517,10 +517,55 @@
     },
     "E03-audio": {
       "owner": "Hy4",
-      "state": "running",
+      "state": "historical-unaccepted-preserved",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/engine-audio-service",
       "artifact": "/mnt/bench/matterweave-dev/performance/engine-03/audio-hy4-01",
-      "acceptance": "Unaccepted bounded reusable Android AAudio service for M6; actual device validation lead-owned."
+      "acceptance": "Unaccepted bounded reusable Android AAudio service for M6; actual device validation lead-owned.",
+      "remaining": "Separate old Hy4 worktree retained; audio baseline merged PR12. Current fix under E1-audio-recovery."
+    },
+    "E1-cadence": {
+      "attempt": 1,
+      "owner": "w_2cd6ca40",
+      "state": "running",
+      "base": "704bb4a",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/e1-cadence-20260912",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e1-muse",
+      "paths": [
+        "crates/matterweave-physics/tests/detail_cadence.rs"
+      ],
+      "acceptance": "Pending frozen independent Muse/Gemini reviews, lead checks and affected Android gates."
+    },
+    "E2-measurement": {
+      "attempt": 1,
+      "owner": "w_0040ee0c",
+      "state": "running",
+      "base": "704bb4a",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/e2-measurement-20260912",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/e2-opus",
+      "paths": [
+        "tools/performance/qualify_measurements.py",
+        "tools/performance/test_qualify_measurements.py"
+      ],
+      "acceptance": "Pending frozen independent Muse/Gemini reviews, lead checks and affected Android gates."
+    },
+    "E1-audio-recovery": {
+      "attempt": 2,
+      "owner": "w_3cf7c461",
+      "state": "running",
+      "base": "704bb4a",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/audio-suspend-fix",
+      "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-astra",
+      "paths": [
+        "crates/matterweave-audio/**"
+      ],
+      "acceptance": "Pending frozen independent Muse/Gemini reviews, lead checks and affected Android gates.",
+      "history": [
+        {
+          "worker": "w_8b5fb3bc",
+          "state": "failed-before-inference",
+          "reason": "HTTP400 prompt_cache_retention unsupported; no source edits"
+        }
+      ]
     }
   },
   "capacity": {
@@ -530,5 +575,14 @@
     "muse": "Paid Contributor works after owner opt-in; transient429 retried successfully. Historical free-model quota is not current.",
     "opus": "Opus5 works after reset; detail/review tasks completed."
   },
-  "orchestration": "Lead integration with paid Muse Contributor, Opus5, Hy4 and GLM5.3 Flash. Bounded Pi leaf workers; live availability overrides historical quota notes."
+  "orchestration": "Lead integration with paid Muse Contributor, Opus5, Hy4 and GLM5.3 Flash. Bounded Pi leaf workers; live availability overrides historical quota notes.",
+  "reconciliation": {
+    "date": "2026-09-12",
+    "remote_main": "065ff6edd89eaaf0715978b2d9f30e41527f12bb",
+    "local_base": "704bb4a",
+    "open_prs": [],
+    "active_workers_before_dispatch": 0,
+    "preserved": "Existing completion-plan/handoff changes and completed audio-suspend-fix diff retained. Historical entries below are historical evidence, not live reservations.",
+    "routing": "Router consulted; no category has two supported arms. Preferred free Muse for bounded test; Opus medium for measurement contract; GLM high for bounded audio recovery. Collect independent acceptance evidence; do not interpret cross-category DeepSeek ranking as established superiority."
+  }
 }

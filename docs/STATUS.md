@@ -1,6 +1,6 @@
 # Current status
 
-Updated: 2026-09-10
+Updated: 2026-09-12
 
 Latest published prerelease: **v0.5.0**. The engine objective (M2–M6) remains open.
 
@@ -9,6 +9,23 @@ known limitations and explicit non-claims, then the next concrete work. Per-slic
 commands, conditions and artifacts are in the linked `docs/performance/` and
 `docs/evidence/` records. Host results are never device results, and targets are
 never measurements.
+
+## Completion execution — wave 1 active
+
+Reconciled 2026-09-12: remote main `065ff6e`, local device-evidence base `704bb4a`,
+no open PRs and no active supervised workers before dispatch. Current integration
+branch is `codex/engine-completion-wave1-20260912`; older integration-branch and
+phone assignments below are historical. Existing audio suspension work was recovered
+without overwriting it. The OnePlus 13 is connected over Wi-Fi, Android 16; lead
+owns it and all Android builds.
+
+The [live board](performance/board.json) assigns bounded Pi workers to the collision
+pending-window regression, offline measurement qualification and audio recovery.
+GLM failed before inference on an unsupported provider cache parameter; Astra took
+that stopped assignment. Worker completion is not acceptance. The
+[gate ledger](performance/completion-gates-20260912.md) records remaining M2–M6
+ownership, evidence and next checks. Independent frozen reviews and integrated
+Android validation remain pending for this wave.
 
 ## Production frame-loop scheduling — integrated and device-checked
 
@@ -236,7 +253,7 @@ remaining M2–M6 engine requirements.
   requires at least one non-excluded hit. Final Android repeat and combined workspace
   checks are running. [Protocol](performance/renderer-comparison.md).
 
-### Merged, but not device-validated
+### Merged slices and subsequent device validation
 
 All three landed on `main` through pull requests #12, #13 and #14. Their code is in
 the tree; what remains outstanding is device validation, not integration. The host
@@ -406,28 +423,33 @@ Owner decisions:
 
 ## Next concrete work
 
-First priority: investigate stationary-scene heat. The current app still steps physics,
-rebuilds dynamic meshes and redraws shadows while stationary. Profile CPU busy time/waits,
-reuse unchanged work, and evaluate frame caps/idle cadence. The
-[benchmark protocol](BENCHMARKS.md) now requires unplugged, cooled, matched conditions for
-future efficiency comparisons; charging was a confounder in the v0.2 measurement.
+Follow the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md),
+written 2026-09-12 from the current repository evidence. It defines E0–E8,
+dependencies, bounded parallel ownership and explicit M2–M6 acceptance gates.
+Planning and documentation reconciliation do not close any engine gate.
 
-1. Complete the equivalent-quality ray/mesh/hybrid mobile comparison. The retained
-   reference mesher and new greedy path provide a correctness baseline, not a final mobile
-   renderer selection or Nanite-like LOD implementation.
-2. Profile boundary-crossing stalls, collision preparation, uploads, residency, frame
-   distributions and sustained thermals under the benchmark protocol.
-3. Stress the expanded 64-piece destruction example and gameplay/editor changes.
-4. Continue from direct shadows into M4 indirect illumination/reflections/detail. Finite
-   map edge quality and nonresident casters remain limitations. No full GI, reflection,
-   multiresolution transitions, second sample or broader device coverage yet.
-5. Fix the audio suspend gap the 2026-09-12 device diagnostic exposed, then re-run that
-   diagnostic on hardware. The other two device gates in this group — reflections and the
-   Voxel Relay sample — have been run and are recorded above.
-6. Do not make further showcase save recovery, authored route refinement or gameplay UI
-   polish a prerequisite for engine work. Automatic LOD, indirect
-   illumination/reflections, renderer comparison, streaming completion, second-sample
-   reuse and the remaining M2–M6 gates are the open work.
+1. Reconcile the current source, integration branches, PR state and historical board
+   before dispatch; older branch assignments above are not a live ownership claim.
+2. Fix the reproducible real-AAudio suspend diagnostic failure and the remaining
+   detail-cadence observation race. Qualify mobile capture overhead and repeatability
+   in parallel with correctness work.
+3. Complete equivalent-quality ray/mesh/hybrid device comparison and primary-path
+   selection; close production streaming/collision/destruction stress and bounds.
+4. Complete GI/reflection quality, publication scheduling and stable detail
+   transitions, measuring their combined costs. Reflections already pass the short
+   device functional gates; that does not close M4 or sustained acceptance.
+5. Finish reusable-service integration and acceptance for the existing wetland and
+   Voxel Relay samples. Voxel Relay already passes end-to-end device play; audio,
+   physical simultaneous touch, authoring/reuse and release acceptance remain.
+6. Run matched, unplugged sustained tests on the final quality profiles and deliver
+   the reviewed, merged Android demonstrator with durable evidence. Pacing and shadow
+   reuse are implemented; measure their current behavior instead of assuming the
+   historical unconditional-work baseline still applies.
+
+Documentation-only planning validation: `python3 tools/check_docs.py` PASS (160
+Markdown files, 539 local links, 16 ADRs, 20 requirements); `git diff --check` PASS.
+No new engine,
+APK or physical-device tests were run for the plan. M2–M6 remain open.
 
 ## Historical campaign records
 

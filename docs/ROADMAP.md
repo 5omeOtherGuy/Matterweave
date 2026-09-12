@@ -19,6 +19,12 @@ Released slices:
 
 ## In progress
 
+The [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) defines the
+current E0–E8 execution order and parallel work boundaries for closing M2–M6. It
+preserves this roadmap's acceptance criteria. Reflections and Voxel Relay passed
+short physical-device functional gates on 2026-09-12; audio failed its suspend gate.
+The existing second sample needs reuse/release acceptance, not replacement.
+
 The [performance campaign](PERFORMANCE_PLAN.md) is executing, beginning with
 trustworthy measurements and redundant-work reduction. The required
 [dense alien showcase](SHOWCASE.md) supplies demanding real workloads throughout.
