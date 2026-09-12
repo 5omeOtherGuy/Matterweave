@@ -1,11 +1,11 @@
 //! Normal entry point: choose the wetland, the existing sandbox, or Voxel Relay.
 //!
 //! [`Experience`] owns the one shared [`AudioAdapter`]. Samples queue plain
-//! [`GameplayEvent`]s in a bounded [`EventQueue`](crate::audio_service::EventQueue);
+//! [`GameplayEvent`](crate::audio_service::GameplayEvent)s in a bounded [`EventQueue`](crate::audio_service::EventQueue);
 //! the app drains the active sample once per frame, so neither sample opens a
 //! device or owns a service.
 use crate::{
-    audio_service::{AudioAdapter, AudioScope, GameplayEvent},
+    audio_service::{AudioAdapter, AudioScope},
     terrain_lab::TerrainLab,
     voxel_relay::VoxelRelayApp,
     wetland::WetlandApp,
@@ -307,7 +307,7 @@ impl ApplicationHandler for Experience {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_service::{DropReason, TriggerOutcome};
+    use crate::audio_service::{DropReason, GameplayEvent, TriggerOutcome};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);

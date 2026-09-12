@@ -1957,13 +1957,18 @@ mod integration_tests {
         scene
             .place("test-rock", "test-rock-volume", Transform::identity())
             .unwrap();
-        let (meshes, instances) = graphics(&mut scene).unwrap();
+        let camera = Camera {
+            position: Vec3::new(0.125, 0.125, 2.0),
+            yaw: std::f32::consts::PI,
+            pitch: 0.0,
+        };
+        let mut detail = WetlandDetail::new();
+        detail.warm_source(&mut scene, &camera).unwrap();
         let mut physics = Physics::new(&empty_world);
         physics.replace_detail_scene(&scene).unwrap();
         Runtime {
             scene,
-            meshes,
-            instances,
+            detail,
             physics,
             empty_world,
             dynamic: DynamicMeshCache::default(),
@@ -1974,14 +1979,9 @@ mod integration_tests {
             clearing: [0.125, 0.125, 0.0],
             route: Vec::new(),
             elevated_route: Vec::new(),
-            camera: Camera {
-                position: Vec3::new(0.125, 0.125, 2.0),
-                yaw: std::f32::consts::PI,
-                pitch: 0.0,
-            },
+            camera,
             lighting: LightingSettings::default(),
             dirty: false,
-            graphics_dirty: false,
             dynamic_dirty: false,
             counts: String::new(),
             collision: DetailCollisionCadence::new(),
