@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
-"""Supervisor for a matched 3-pair full-wetland candidate/reference phone comparison.
+"""Supervisor for a matched 3-pair full-wetland phone comparison.
 
-This script only *collects* evidence for a paired optimization experiment. It
-certifies nothing: it is not proof of a speedup, it makes no strict
-GPU/compositor join, and it never derives a verdict. Analysis is the lead's.
+Two collection modes share every gate, collector and cleanup rule:
+
+  --mode paired (default)
+      candidate vs reference builds, capture ON in every trial.
+  --mode capture-on-off
+      ONE build (`--apk`), alternating capture ON / capture OFF trials, for the
+      same-build noise and capture-overhead qualification contract in
+      docs/performance/measurement-qualification.md. Every trial must install
+      the byte-identical APK. An OFF trial never creates a profile request,
+      expects zero new frame profiles and rejects any that appear.
+
+This script only *collects* evidence. It certifies nothing: it is not proof of
+a speedup or of an overhead figure, it makes no strict GPU/compositor join, and
+it never derives a verdict. Analysis is the lead's.
 
 What one trial does, in order:
 
@@ -81,6 +92,7 @@ MAX_SAMPLE_INTERVAL_S = 35.0   # validate_conditions rejects gaps > 35 s
 READINESS_FRESHNESS_S = 180.0
 # Recovery slots the app would prefer over the worker-owned slot 127.
 OUTRANKING_SLOTS = ("wetland-session.json.recovery-128.json",)
+SAME_BUILD_LABEL = "same-build"
 MAX_BATTERY_DELTA_C = 1.0
 MAX_SKIN_DELTA_C = 2.0
 LOADED_RE = re.compile(r"WETLAND LOADED: (\d+) cells / (\d+) placed objects")
@@ -117,7 +129,11 @@ class Ownership:
 # --------------------------------------------------------------------------
 
 def trial_plan(pairs):
-    """Return the ordered trial list, alternating within-pair order AB/BA/AB."""
+    """Return the ordered trial list, alternating within-pair order AB/BA/AB.
+
+    Every paired trial runs with the frame capture ON; the capture state is
+    stated explicitly per trial so no consumer has to infer it.
+    """
     if not isinstance(pairs, int) or isinstance(pairs, bool) or pairs < 1:
         raise ValueError("pairs must be a positive integer")
     plan = []
@@ -129,9 +145,52 @@ def trial_plan(pairs):
                 "pair": pair,
                 "position": position,
                 "variant": variant,
+                "capture_state": "on",
                 "name": f"pair{pair}-{position}-{variant}",
             })
     return plan
+
+
+def capture_state_plan(pairs, build_label=SAME_BUILD_LABEL):
+    """Ordered same-build capture ON/OFF trial list, alternating OFF-ON/ON-OFF.
+
+    One build only: `variant` is the same label in every trial and the compared
+    factor is `capture_state`. The within-pair order alternates exactly like
+    `trial_plan`, so a drift in device state cannot line up with one state.
+    """
+    if not isinstance(pairs, int) or isinstance(pairs, bool) or pairs < 1:
+        raise ValueError("pairs must be a positive integer")
+    plan = []
+    for pair in range(1, pairs + 1):
+        order = ("off", "on") if pair % 2 else ("on", "off")
+        for position, state in enumerate(order, start=1):
+            plan.append({
+                "trial": len(plan) + 1,
+                "pair": pair,
+                "position": position,
+                "variant": build_label,
+                "capture_state": state,
+                "name": f"pair{pair}-{position}-capture-{state}",
+            })
+    return plan
+
+
+def check_identical_build(installed):
+    """Raise TrialError unless every recorded install is the same APK bytes.
+
+    A same-build ON/OFF comparison is only meaningful if the build never
+    changed, so the *installed* hashes (not the file paths) must all agree and
+    must all match the frozen manifest hash the collector verified per trial.
+    """
+    if not installed:
+        raise TrialError("no installs recorded; cannot assert a same-build comparison")
+    actual = sorted({record["installed_sha256"] for record in installed})
+    expected = sorted({record["expected_sha256"] for record in installed})
+    if len(actual) != 1 or actual != expected:
+        raise TrialError(
+            "capture-on-off requires the byte-identical APK in every trial; "
+            f"installed hashes {actual} vs expected {expected}")
+    return actual[0]
 
 
 def parse_wetland_loaded(text):
@@ -280,12 +339,19 @@ def sha256_file(path):
 
 
 def expected_apk_metadata(apk_path, variant):
-    """Read the frozen build manifest beside an APK, if present."""
+    """Read the frozen build manifest beside an APK, if present.
+
+    `variant=None` accepts either declared build variant, used by the same-build
+    capture ON/OFF mode where the build is not the compared factor.
+    """
     manifest = apk_path.with_name(apk_path.stem + "-build.json")
     if not manifest.exists():
         raise TrialError(f"missing frozen build manifest {manifest}")
     data = json.loads(manifest.read_text())
-    if data.get("variant") != variant:
+    if variant is None:
+        if data.get("variant") not in ("candidate", "reference"):
+            raise TrialError(f"{manifest} declares unusable variant {data.get('variant')!r}")
+    elif data.get("variant") != variant:
         raise TrialError(f"{manifest} declares variant {data.get('variant')!r}, expected {variant}")
     for key in ("apk_sha256", "source_commit", "generator", "composition_hash"):
         if not data.get(key):
@@ -620,14 +686,33 @@ def collect_window(device, out, pid, layer, args):
             "health_sha256": sha256_file(out / "health.jsonl")}
 
 
-def finish_and_pull(device, out, before, fixture_bytes, ownership):
-    """HOME (so the app saves and flushes), force-stop, then pull artifacts."""
+def finish_and_pull(device, out, before, fixture_bytes, ownership, capture_state="on"):
+    """HOME (so the app saves and flushes), force-stop, then pull artifacts.
+
+    With `capture_state="off"` no profile request was created, so nothing may
+    have been consumed and NO new frame profile may exist. Any profile found is
+    foreign or unexpected: the trial is rejected and the file is left untouched
+    on the device, because this run does not own it.
+    """
+    if capture_state not in ("on", "off"):
+        raise TrialError(f"unknown capture state {capture_state!r}")
+    expect_capture = capture_state == "on"
     device.shell("input", "keyevent", "KEYCODE_HOME", timeout=20, check=False)
     time.sleep(3)
     device.shell("am", "force-stop", device.package, timeout=30, check=False)
     time.sleep(1)
     after = device.list_files()
     captures = sorted(name for name in after - before if name.startswith("frame-profile"))
+    if not expect_capture and captures:
+        (out / "unexpected-captures.json").write_text(json.dumps({
+            "capture_state": capture_state,
+            "unexpected_captures": captures,
+            "note": "left on the device: this run neither created a profile "
+                    "request nor owns these files",
+        }, indent=2) + "\n")
+        raise TrialError(
+            f"capture-OFF trial produced frame profiles {captures}; the OFF state "
+            "is not established, so this trial is not an OFF measurement")
     pulled = []
     for name in captures:
         target = out / name
@@ -651,24 +736,35 @@ def finish_and_pull(device, out, before, fixture_bytes, ownership):
         raise TrialError("worker fixture disappeared during the trial")
     (out / "session-after.json").write_bytes(session)
     scene = check_fixture(session)  # same invariants: gen 2, six bodies, finite pose
-    consumed = PROFILE_REQUEST_NAME not in after
-    if consumed and ownership.owns(PROFILE_REQUEST_NAME):
+    request_present = PROFILE_REQUEST_NAME in after
+    consumed = (not request_present) if expect_capture else None
+    if expect_capture and consumed and ownership.owns(PROFILE_REQUEST_NAME):
         ownership.owned.remove(PROFILE_REQUEST_NAME)  # the app consumed our request
     result = {
+        "capture_state": capture_state,
+        "profile_request_created": expect_capture,
         "captures": pulled,
         "capture_count": len(pulled),
+        "profile_request_present_after": request_present,
         "profile_request_consumed": consumed,
         "session_after": scene,
         "session_after_sha256": hashlib.sha256(session).hexdigest(),
         "session_unchanged_from_fixture": session == fixture_bytes,
         "files_after": sorted(after),
     }
-    if len(pulled) != 1:
-        raise TrialError(f"expected exactly one new frame capture, got {[p['name'] for p in pulled]}")
-    if "frames_recorded" not in pulled[0]:
-        raise TrialError(f"pulled capture failed schema validation: {pulled[0].get('profile_error')}")
-    if not consumed:
-        raise TrialError("the app never consumed the profile capture request")
+    if expect_capture:
+        if len(pulled) != 1:
+            raise TrialError(
+                f"expected exactly one new frame capture, got {[p['name'] for p in pulled]}")
+        if "frames_recorded" not in pulled[0]:
+            raise TrialError(f"pulled capture failed schema validation: {pulled[0].get('profile_error')}")
+        if not consumed:
+            raise TrialError("the app never consumed the profile capture request")
+    elif request_present and not ownership.owns(PROFILE_REQUEST_NAME):
+        # Never consumed, never deleted: it belongs to whoever wrote it.
+        raise TrialError(
+            "a foreign profile capture request appeared during the capture-OFF "
+            "trial; leaving it in place and rejecting this trial")
     if scene["body_count"] != EXPECTED_BODIES:
         raise TrialError("saved session does not hold the six frozen wetland bodies")
     return result
@@ -713,12 +809,14 @@ def run_trial(device, spec, apk, out, fixture_bytes, fixture_info, reference_row
     logcat = log_file = None
     completed = False
     loaded = layer = None
+    capture_state = spec.get("capture_state", "on")
     try:
         if PROFILE_REQUEST_NAME in device.list_files():
             raise TrialError("profile capture request appeared before this run created it")
-        ownership.claim(PROFILE_REQUEST_NAME)  # claimed before creation
-        device.run_as("sh", "-c", f"'echo {PROFILE_ROWS} > files/{PROFILE_REQUEST_NAME}'",
-                      timeout=20)
+        if capture_state == "on":
+            ownership.claim(PROFILE_REQUEST_NAME)  # claimed before creation
+            device.run_as("sh", "-c", f"'echo {PROFILE_ROWS} > files/{PROFILE_REQUEST_NAME}'",
+                          timeout=20)
         pid, loaded, logcat, log_file = enter_wetland(device, out, args, expected_scene)
         layer = device.app_layer()
         collection = collect_window(device, out, pid, layer, args)
@@ -737,9 +835,10 @@ def run_trial(device, spec, apk, out, fixture_bytes, fixture_info, reference_row
             # app and removes only owned files.
             device.shell("input", "keyevent", "KEYCODE_HOME", timeout=20, check=False)
             time.sleep(2)
-    finished = finish_and_pull(device, out, before, fixture_bytes, ownership)
+    finished = finish_and_pull(device, out, before, fixture_bytes, ownership, capture_state)
     record = {
         **spec,
+        "capture_state": capture_state,
         "purpose": args.purpose,
         "apk": apk,
         "installed": installed,
@@ -758,6 +857,7 @@ def run_trial(device, spec, apk, out, fixture_bytes, fixture_info, reference_row
     (out / "trial.json").write_text(json.dumps(record, indent=2) + "\n")
     (out / "collection-complete.json").write_text(json.dumps({
         "trial": spec["trial"], "variant": spec["variant"],
+        "capture_state": capture_state,
         "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         **collection}, indent=2) + "\n")
     return record, window[-1]
@@ -807,8 +907,16 @@ def build_parser():
         epilog="Collection only. This script never decides which build is faster.")
     parser.add_argument("--adb", required=True, type=Path, help="path to the adb executable")
     parser.add_argument("--serial", required=True, help="adb device serial, e.g. 192.168.178.93:42373")
-    parser.add_argument("--candidate-apk", required=True, type=Path)
-    parser.add_argument("--reference-apk", required=True, type=Path)
+    parser.add_argument("--mode", choices=("paired", "capture-on-off"), default="paired",
+                        help="paired: candidate vs reference builds, capture ON in every "
+                             "trial (default). capture-on-off: ONE build, alternating "
+                             "capture ON / capture OFF trials for the same-build noise "
+                             "and capture-overhead qualification")
+    parser.add_argument("--candidate-apk", type=Path, help="paired mode only (required there)")
+    parser.add_argument("--reference-apk", type=Path, help="paired mode only (required there)")
+    parser.add_argument("--apk", type=Path,
+                        help="capture-on-off mode only: the single build measured with "
+                             "the capture ON and OFF")
     parser.add_argument("--fixture", required=True, type=Path,
                         help="lead-provided wetland session JSON written to the recovery slot")
     parser.add_argument("--out", required=True, type=Path, help="fresh output directory")
@@ -843,6 +951,18 @@ def check_args(args):
             raise SystemExit(f"--{name.replace('_', '-')} must be finite and positive, got {value!r}")
     if args.pairs < 1:
         raise SystemExit("--pairs must be >= 1")
+    if args.mode == "capture-on-off":
+        if args.apk is None:
+            raise SystemExit("--mode capture-on-off requires --apk: one build is measured "
+                             "with the frame capture ON and OFF")
+        if args.candidate_apk is not None or args.reference_apk is not None:
+            raise SystemExit("--mode capture-on-off compares capture states of ONE build; "
+                             "use --apk, not --candidate-apk/--reference-apk")
+    else:
+        if args.apk is not None:
+            raise SystemExit("--apk is only valid with --mode capture-on-off")
+        if args.candidate_apk is None or args.reference_apk is None:
+            raise SystemExit("--mode paired requires --candidate-apk and --reference-apk")
     if not 1 <= args.max_observations <= MAX_OBSERVATIONS_CAP:
         raise SystemExit(f"--max-observations must be 1..{MAX_OBSERVATIONS_CAP}")
     if not MIN_SAMPLE_INTERVAL_S <= args.sample_interval <= MAX_SAMPLE_INTERVAL_S:
@@ -887,23 +1007,32 @@ def main(argv=None):
 
     fixture_bytes = args.fixture.read_bytes()
     fixture_info = {**check_fixture(fixture_bytes), "source": str(args.fixture)}
-    apks = {
-        "candidate": {**expected_apk_metadata(args.candidate_apk, "candidate"),
-                      "apk_path": str(args.candidate_apk)},
-        "reference": {**expected_apk_metadata(args.reference_apk, "reference"),
-                      "apk_path": str(args.reference_apk)},
-    }
-    if apks["candidate"]["composition_hash"] != apks["reference"]["composition_hash"]:
-        raise SystemExit("candidate and reference declare different scene composition hashes; "
-                         "the comparison would not be matched")
+    if args.mode == "capture-on-off":
+        build = {**expected_apk_metadata(args.apk, None), "apk_path": str(args.apk)}
+        apks = {SAME_BUILD_LABEL: build}
+        scene_inputs = {"candidate": build, "reference": build}
+        plan = capture_state_plan(args.pairs)
+    else:
+        apks = {
+            "candidate": {**expected_apk_metadata(args.candidate_apk, "candidate"),
+                          "apk_path": str(args.candidate_apk)},
+            "reference": {**expected_apk_metadata(args.reference_apk, "reference"),
+                          "apk_path": str(args.reference_apk)},
+        }
+        scene_inputs = apks
+        plan = trial_plan(args.pairs)
+        if apks["candidate"]["composition_hash"] != apks["reference"]["composition_hash"]:
+            raise SystemExit("candidate and reference declare different scene composition "
+                             "hashes; the comparison would not be matched")
     for variant, apk in apks.items():
         if apk["generator"] != EXPECTED_GENERATOR:
             raise SystemExit(f"{variant} build is generator {apk['generator']!r}, "
                              f"expected {EXPECTED_GENERATOR}")
-    expected_scene = resolve_expected_scene(apks)
-    plan = trial_plan(args.pairs)
+    expected_scene = resolve_expected_scene(scene_inputs)
     (args.out / "manifest.json").write_text(json.dumps({
         "purpose": args.purpose,
+        "mode": args.mode,
+        "compared_factor": "capture_state" if args.mode == "capture-on-off" else "variant",
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "adb": str(args.adb), "serial": args.serial, "package": args.package,
         "apks": apks, "fixture": fixture_info, "plan": plan,
@@ -918,6 +1047,7 @@ def main(argv=None):
     ownership = Ownership()
     reference_row = None
     records = []
+    installs = []
     try:
         for spec in plan:
             log(f"trial {spec['trial']}/{len(plan)}: {spec['name']}")
@@ -926,6 +1056,9 @@ def main(argv=None):
                 fixture_bytes, fixture_info, reference_row, ownership,
                 expected_scene, args)
             records.append(record)
+            installs.append(record["installed"])
+            if args.mode == "capture-on-off":
+                check_identical_build(installs)
             if reference_row is None:
                 reference_row = last_row
                 log("trial 1 idle window is now the thermal matching reference "
@@ -942,7 +1075,10 @@ def main(argv=None):
     final_cleanup(device, args.out, ownership, log)
     (args.out / "run-complete.json").write_text(json.dumps({
         "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "mode": args.mode,
+        "installed_apk_sha256": sorted({i["installed_sha256"] for i in installs}),
         "trials": [{"name": r["name"], "variant": r["variant"], "pair": r["pair"],
+                    "capture_state": r["capture_state"],
                     "collection": r["collection"],
                     "captures": r["result"]["captures"]} for r in records],
         "claims": "raw paired collection complete; no analysis, verdict or speedup claim",

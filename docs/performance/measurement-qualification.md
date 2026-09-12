@@ -20,7 +20,7 @@ Android qualification of the current build is **NOT RUN**; see
 
 | Piece | Owns |
 | --- | --- |
-| [`collect_wetland_pair.py`](../../tools/performance/collect_wetland_pair.py) | Collecting a trial on the device: install/identity checks, unplugged and foreground gating, SurfaceFlinger sampling, `/proc/<pid>/stat` CPU, health sampling, artifact hashing. |
+| [`collect_wetland_pair.py`](../../tools/performance/collect_wetland_pair.py) | Collecting a trial on the device: install/identity checks, unplugged and foreground gating, SurfaceFlinger sampling, `/proc/<pid>/stat` CPU, health sampling, artifact hashing. `--mode capture-on-off` collects the same-build ON/OFF batch this contract needs; `--mode paired` (default) is the unchanged candidate/reference comparison. |
 | [`analyze_wetland_pairs.py`](../../tools/performance/analyze_wetland_pairs.py) | Turning a collected batch into per-trial presentation/CPU/health statistics. |
 | [`validate_frame_profile.py`](../../tools/performance/validate_frame_profile.py) | Strict format/identity validation of a schema-v2 capture CSV ([schema](measurement-v2.md)). |
 | [`validate_conditions.py`](../../tools/performance/validate_conditions.py) | Idle-readiness/thermal/power validation of raw device dumps. |
@@ -58,6 +58,52 @@ not produced by the instrumentation under test:
 `timing_source.independent_of_capture` must be `true`, and a capture-derived
 `kind` (`frame_profile_csv`, `metrics_rs`, `main_wall_ms`, …) is rejected.
 
+Both series are collected identically in both capture states: the collector
+samples `dumpsys SurfaceFlinger --latency` and `/proc/<pid>/stat` in an OFF
+trial exactly as in an ON trial, and an OFF trial that produced no valid
+presentation history is rejected rather than reduced.
+
+## Collecting a same-build ON/OFF batch
+
+`--mode capture-on-off` measures ONE build in both capture states. Compared
+with the default paired mode it:
+
+- takes a single `--apk` (with its frozen `*-build.json` manifest) and rejects
+  `--candidate-apk`/`--reference-apk`;
+- plans alternating OFF/ON, ON/OFF, OFF/ON trials, so device drift cannot line
+  up with one capture state;
+- re-checks after every trial that the *installed* APK hash is byte-identical
+  to the previous trials, and aborts the batch otherwise;
+- writes the profile request `files/profile-frames.txt` only in an ON trial. An
+  OFF trial creates no request, therefore expects nothing to be consumed, and
+  a `profile-frames.txt` that appears anyway is treated as another worker's
+  file: it is neither read as ours nor deleted, and the trial is rejected;
+- expects **zero** new `frame-profile*` files in an OFF trial. Any that appear
+  are recorded in `unexpected-captures.json`, left on the device, and fail the
+  trial, because the OFF state was not actually established;
+- records `capture_state` explicitly in `trial.json`,
+  `collection-complete.json`, `manifest.json` and `run-complete.json`, in both
+  modes (every paired-mode trial is `"on"`). No consumer infers the state from
+  the presence of a file.
+
+Everything else is shared with the paired mode and unchanged: readiness
+validation, thermal matching against the first trial, the recovery-slot fixture
+and its ownership rules, foreground/unplugged gating, and the final cleanup
+that removes only files this run created.
+
+```sh
+python3 tools/performance/collect_wetland_pair.py \
+  --mode capture-on-off \
+  --adb /absolute/platform-tools/adb --serial 192.168.178.93:42373 \
+  --apk /absolute/frozen/explorer-candidate.apk \
+  --fixture /absolute/frozen/wetland-session.json \
+  --pairs 3 \
+  --out /absolute/overhead-batch
+```
+
+The run fails closed and preserves artifacts; it makes no overhead claim. Only
+`qualify_measurements.py` decides whether the batch qualifies.
+
 ## Document schema (`matterweave-qualification-v1`)
 
 Top level. Unknown keys are rejected.
@@ -81,6 +127,7 @@ that actually differed is detected. Nothing is inherited or defaulted.
 | `name` | Unique run name. | Trial directory name. |
 | `profiling` | Declared capture state: `"on"` or `"off"`. | The trial's own capture request; ON trials have exactly one capture CSV, OFF trials none. |
 | `interval_count` | Number of qualified timing observations. | `summary.json` → `trials[].presentation.supported.interval_count`. |
+| `capture_state` context | The collector's recorded state for the run, which must equal `profiling`. | `trial.json` → `capture_state`, echoed by `summary.json` → `trials[].capture_state`. |
 | `artifact_sha256` | Digest of the verified artifact for *this* run; must be unique across runs. | `analyze_wetland_pairs.py` → `trials[].input_trial_sha256`, or the batch's own content manifest digest. |
 | `build` | This run's `source_commit`, `apk_sha256`, `composition_hash`, `generator`. | `trial.json` → `apk` (frozen build manifest, verified against the installed APK by the collector). |
 | `conditions` | This run's `quality`, `scene`, `seed`, `replay`, `output_resolution`, `refresh_hz`. | `trial.json` → `scene_loaded`, `fixture.seed`, shadow/quality settings from `session-after.json`, active SF mode from `display.txt`. `replay` names the input sequence; a stationary run with no injected input must say so explicitly (e.g. `"stationary-120s-no-input"`). |
@@ -105,7 +152,7 @@ is carried through as recorded context and listed in the report under
 
 | Key | Rule |
 | --- | --- |
-| `missing_observation_count` | Scheduled observations in the measurement window that were not obtained or were discarded (for example a `surface-samples.jsonl` row with nonzero `exit`). Must be `0`. |
+| `missing_observation_count` | Observations recorded in the measurement window that were discarded. Must be `0`. Transcribe `summary.json` → `trials[].sampling.compositor_dumps_discarded`; do not count anything by hand. |
 | `unsupported_gap_count` | `len(presentation.unsupported_gaps)` for this run. Must be `0`. |
 
 ## Rejection rules
@@ -141,12 +188,18 @@ Real data, once a qualified batch exists (paths are examples; the batch is the
 lead's):
 
 ```sh
-# 1. Collect alternating same-build ON/OFF trials with the existing collector.
+# 1. Collect alternating same-build ON/OFF trials (see the section above).
 #    Never mix builds, scenes, seeds or display modes within one batch.
+python3 tools/performance/collect_wetland_pair.py --mode capture-on-off \
+  --adb /absolute/platform-tools/adb --serial 192.168.178.93:42373 \
+  --apk /absolute/frozen/explorer-candidate.apk \
+  --fixture /absolute/frozen/wetland-session.json \
+  --pairs 3 --out /absolute/overhead-batch
 # 2. Reduce the batch.
 python3 tools/performance/analyze_wetland_pairs.py \
   --input /absolute/overhead-batch --out /absolute/overhead-analysis
-# 3. Transcribe the per-run fields above into one qualification document.
+# 3. Transcribe the per-run fields above into one qualification document
+#    (see "What has no automatic source" for the fields no tool can supply).
 # 4. Qualify.
 python3 tools/performance/qualify_measurements.py \
   --input /absolute/overhead-analysis/qualification.json \
@@ -173,6 +226,34 @@ Tests:
 python3 -m unittest discover -s tools/performance -p 'test_*.py'
 ```
 
+### What has no automatic source
+
+The qualification document is transcribed by hand, and nothing in it may be
+invented to satisfy a required field. Only these come straight from the tools:
+
+- `interval_count`, the declared metrics and `unsupported_gap_count` from
+  `summary.json` → `trials[].presentation` / `trials[].process_cpu`;
+- `missing_observation_count` from `trials[].sampling.compositor_dumps_discarded`.
+  The collector polls best effort and schedules no fixed number of compositor
+  dumps, so there is no scheduled-minus-obtained figure to report; the analyzer
+  rejects any dump with a nonzero exit code or a non-monotonic host time, so a
+  trial that was reduced at all discarded none. A trial the analyzer rejected
+  produces no row and cannot be transcribed as a qualified run at all;
+- `artifact_sha256` from `trials[].input_trial_sha256`;
+- `build` from `trials[].apk`, `observed.battery_start_c`/`skin_start_c` from
+  `trials[].pre_launch_gate`, `thermal_status_samples` from
+  `trials[].health_measurement.metrics.thermal_status` and
+  `health_measurement.thermal_status_counts`;
+- `profiling` from the collector's recorded `capture_state`.
+
+`conditions.replay`, `conditions.quality`, `conditions.output_resolution` and
+`conditions.refresh_hz` are **not** derived by any tool. `output_resolution`
+and `refresh_hz`/`active_display_mode` must be read out of the run's own
+`display.txt`, and `replay` must describe the input sequence that was actually
+performed (a stationary run with no injected input says so). If a value cannot
+be supported by an artifact of that run, the batch is not transcribed: an
+unsupported field is a NOT RUN, never a plausible default.
+
 ## What a qualified report does not establish
 
 Repeated in every report under `limitations`: no statistical significance or
@@ -192,7 +273,8 @@ a significance test.
 
 ## Status of this gate
 
-- Tool, contract and tests: implemented and passing on the host.
+- Tool, contract, ON/OFF collection mode and tests: implemented and passing on
+  the host. The collection mode has never been executed against a phone.
 - Same-build noise and capture-overhead qualification for the current build on
   the OnePlus 13: **NOT RUN**. No device work was performed for this change and
   no new measurement is claimed. The executed

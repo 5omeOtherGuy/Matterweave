@@ -15,11 +15,16 @@ from collect_wetland_pair import (
     EXPECTED_SCENE,
     FIXTURE_REMOTE_NAME,
     PROFILE_REQUEST_NAME,
+    SAME_BUILD_LABEL,
     Ownership,
     TrialError,
     base_save_is_invalid_for,
+    build_parser,
+    capture_state_plan,
     check_args,
     check_fixture,
+    check_identical_build,
+    finish_and_pull,
     check_scene_counts,
     check_thermal_match,
     final_cleanup,
@@ -172,28 +177,82 @@ class ExpectedSceneTest(unittest.TestCase):
              "reference": {"composition_hash": "x", "expected_scene": dict(scene)}}), scene)
 
 
-class ArgumentBoundsTest(unittest.TestCase):
-    class Args:
-        def __init__(self, **kw):
-            self.pairs = 3
-            self.warmup = self.measure = 120.0
-            self.chooser_delay = self.settle_delay = 5.0
-            self.launch_timeout = self.load_timeout = self.install_timeout = 60.0
-            self.sample_interval = 30.05
-            self.max_observations = 61
-            self.__dict__.update(kw)
+COMMON_ARGS = ["--adb", "/bin/true", "--serial", "phone:1",
+               "--fixture", "/tmp/fixture.json", "--out", "/tmp/out"]
+PAIRED_ARGS = COMMON_ARGS + ["--candidate-apk", "/tmp/c.apk", "--reference-apk", "/tmp/r.apk"]
+ONOFF_ARGS = COMMON_ARGS + ["--mode", "capture-on-off", "--apk", "/tmp/one.apk"]
 
+
+def parse(argv):
+    return check_args(build_parser().parse_args(argv))
+
+
+class ArgumentBoundsTest(unittest.TestCase):
     def test_accepts_defaults(self):
-        self.assertIsNotNone(check_args(self.Args()))
+        args = parse(PAIRED_ARGS)
+        self.assertEqual(args.mode, "paired")
+        self.assertIsNone(args.apk)
 
     def test_rejects_bad_timing_and_windows(self):
-        for kw in ({"warmup": 0}, {"measure": float("nan")},
-                   {"load_timeout": float("inf")}, {"measure": -1},
-                   {"max_observations": 62}, {"max_observations": 0},
-                   {"sample_interval": 5.0}, {"sample_interval": 40.0},
-                   {"pairs": 0}):
-            with self.assertRaises(SystemExit, msg=kw):
-                check_args(self.Args(**kw))
+        for extra in (["--warmup", "0"], ["--measure", "nan"],
+                      ["--load-timeout", "inf"], ["--measure", "-1"],
+                      ["--max-observations", "62"], ["--max-observations", "0"],
+                      ["--sample-interval", "5"], ["--sample-interval", "40"],
+                      ["--pairs", "0"]):
+            with self.assertRaises(SystemExit, msg=extra):
+                parse(PAIRED_ARGS + extra)
+
+
+class CaptureModeArgumentTest(unittest.TestCase):
+    def test_capture_on_off_takes_a_single_build(self):
+        args = parse(ONOFF_ARGS)
+        self.assertEqual(args.mode, "capture-on-off")
+        self.assertEqual(str(args.apk), "/tmp/one.apk")
+        self.assertIsNone(args.candidate_apk)
+
+    def test_rejects_mixed_or_missing_build_arguments(self):
+        for argv in (COMMON_ARGS + ["--mode", "capture-on-off"],
+                     ONOFF_ARGS + ["--candidate-apk", "/tmp/c.apk"],
+                     ONOFF_ARGS + ["--reference-apk", "/tmp/r.apk"],
+                     PAIRED_ARGS + ["--apk", "/tmp/one.apk"],
+                     COMMON_ARGS + ["--candidate-apk", "/tmp/c.apk"],
+                     COMMON_ARGS):
+            with self.assertRaises(SystemExit, msg=argv):
+                parse(argv)
+
+
+class CaptureStatePlanTest(unittest.TestCase):
+    def test_states_alternate_within_pairs_and_share_one_build(self):
+        plan = capture_state_plan(3)
+        self.assertEqual([t["capture_state"] for t in plan],
+                         ["off", "on", "on", "off", "off", "on"])
+        self.assertEqual({t["variant"] for t in plan}, {SAME_BUILD_LABEL})
+        self.assertEqual([t["trial"] for t in plan], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(len({t["name"] for t in plan}), 6)
+        self.assertEqual(plan[0]["name"], "pair1-1-capture-off")
+
+    def test_paired_plan_states_capture_on_explicitly(self):
+        self.assertEqual({t["capture_state"] for t in trial_plan(2)}, {"on"})
+
+    def test_rejects_nonpositive(self):
+        for bad in (0, -1, True, 2.0):
+            with self.assertRaises(ValueError):
+                capture_state_plan(bad)
+
+
+class IdenticalBuildTest(unittest.TestCase):
+    def install(self, installed, expected=None):
+        return {"installed_sha256": installed, "expected_sha256": expected or installed}
+
+    def test_same_installed_bytes_accepted(self):
+        self.assertEqual(check_identical_build([self.install("a" * 64)] * 2), "a" * 64)
+
+    def test_rejects_differing_or_mislabeled_builds(self):
+        for installs in ([],
+                         [self.install("a" * 64), self.install("b" * 64)],
+                         [self.install("a" * 64, "b" * 64)]):
+            with self.assertRaises(TrialError, msg=installs):
+                check_identical_build(installs)
 
 
 class FakeDevice:
@@ -323,6 +382,69 @@ class OwnershipCleanupTest(unittest.TestCase):
         preflight_files(device, self.out, fixture(), ownership)
         self.assertEqual(device.files[FIXTURE_REMOTE_NAME], fixture())
         self.assertEqual(ownership.owned, [FIXTURE_REMOTE_NAME])
+
+
+class CaptureOffFinishTest(unittest.TestCase):
+    """An OFF trial must expect no capture and must never touch foreign files."""
+
+    def setUp(self):
+        from unittest.mock import patch
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        sleep = patch("collect_wetland_pair.time.sleep", lambda _s: None)
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def device(self, extra=None):
+        files = {"wetland-session.json": USER_BASE, FIXTURE_REMOTE_NAME: fixture()}
+        files.update(extra or {})
+        return FakeDevice(files), set(files)
+
+    def finish(self, device, before, ownership, state="off"):
+        return finish_and_pull(device, self.out, before, fixture(), ownership, state)
+
+    def test_off_trial_expects_no_capture_and_no_request(self):
+        device, before = self.device()
+        result = self.finish(device, before, Ownership())
+        self.assertEqual(result["capture_state"], "off")
+        self.assertEqual(result["captures"], [])
+        self.assertEqual(result["capture_count"], 0)
+        self.assertFalse(result["profile_request_created"])
+        self.assertFalse(result["profile_request_present_after"])
+        # Absence of a capture is never reported as a consumed request.
+        self.assertIsNone(result["profile_request_consumed"])
+
+    def test_unexpected_capture_rejects_the_trial_and_is_left_on_device(self):
+        device, before = self.device()
+        device.files["frame-profile-v2-20260912.csv"] = b"header\n"
+        ownership = Ownership()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, ownership)
+        self.assertEqual(ownership.owned, [])
+        self.assertIn("frame-profile-v2-20260912.csv", device.files)
+        self.assertIn("unexpected_captures", json.loads(
+            (self.out / "unexpected-captures.json").read_text()))
+
+    def test_foreign_profile_request_is_rejected_never_consumed_or_deleted(self):
+        device, before = self.device()
+        device.files[PROFILE_REQUEST_NAME] = b"500\n"   # written by someone else
+        ownership = Ownership()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, ownership)
+        final_cleanup(device, self.out, ownership, log=lambda _m: None)
+        self.assertEqual(device.files[PROFILE_REQUEST_NAME], b"500\n")
+        self.assertEqual(device.files["wetland-session.json"], USER_BASE)
+
+    def test_on_trial_still_requires_exactly_one_capture(self):
+        device, before = self.device()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, Ownership(), state="on")
+
+    def test_unknown_capture_state_rejected(self):
+        device, before = self.device()
+        with self.assertRaises(TrialError):
+            self.finish(device, before, Ownership(), state="maybe")
 
 
 class LoadLineTest(unittest.TestCase):

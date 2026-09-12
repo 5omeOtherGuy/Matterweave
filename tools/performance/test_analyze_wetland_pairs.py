@@ -2,8 +2,8 @@
 import copy
 import unittest
 
-from analyze_wetland_pairs import (pair_mismatches, percentile, presentation_intervals,
-                                   proc_stat, process_cpu)
+from analyze_wetland_pairs import (pair_members, pair_mismatches, percentile,
+                                   presentation_intervals, proc_stat, process_cpu)
 
 
 def surface(elapsed, stamps):
@@ -18,10 +18,11 @@ def stat(cpu=100, start=50, pid=9):
 
 
 def trial():
-    return {'scene': {'instances': 8324}, 'environment': {'resolution': '3168x1440'},
+    return {'variant': 'candidate', 'capture_state': 'on',
+            'scene': {'instances': 8324}, 'environment': {'resolution': '3168x1440'},
             'end_camera': {'yaw': 0., 'pitch': -.08, 'shadows': True},
             'fixture': {'sha256': 'fixture'},
-            'apk': {'generator': 2, 'composition_hash': 'composition'},
+            'apk': {'generator': 2, 'composition_hash': 'composition', 'apk_sha256': 'a' * 64},
             'end_eye': [46., 15.6, 66.],
             'pre_launch_gate': {'battery_c': 32., 'skin_c': 32.},
             'app_whole_capture': {'value_counts': {
@@ -84,6 +85,45 @@ class ProcessTests(unittest.TestCase):
             record['samples'][1]['raw'] = raw
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 process_cpu(record)
+
+
+def off_trial():
+    """A capture-OFF trial: same build, no capture CSV at all."""
+    row = trial()
+    row.update(variant='same-build', capture_state='off', app_whole_capture=None)
+    return row
+
+
+class CaptureStatePairTests(unittest.TestCase):
+    def test_build_pair_still_compares_variants(self):
+        a, b = trial(), trial()
+        a['variant'], b['variant'] = 'reference', 'candidate'
+        self.assertEqual(pair_members([a, b]), ('candidate_minus_reference', a, b))
+
+    def test_same_build_pair_compares_capture_states(self):
+        off = off_trial()
+        on = trial()
+        on['variant'] = 'same-build'
+        self.assertEqual(pair_members([on, off]), ('capture_on_minus_off', off, on))
+
+    def test_two_states_of_two_builds_is_not_a_pair(self):
+        off = off_trial()
+        on = trial()
+        on['variant'] = 'other-build'
+        self.assertIsNone(pair_members([on, off]))
+        self.assertIsNone(pair_members([trial()]))
+
+    def test_absent_off_capture_is_not_compared_against_the_on_csv(self):
+        on = trial()
+        on['variant'] = 'same-build'
+        self.assertEqual(pair_mismatches(off_trial(), on), [])
+
+    def test_capture_pair_must_share_one_build(self):
+        on = trial()
+        on['variant'] = 'same-build'
+        on['apk'] = dict(on['apk'], apk_sha256='b' * 64)
+        self.assertIn('capture on/off pair does not share one build',
+                      pair_mismatches(off_trial(), on))
 
 
 class MatchTests(unittest.TestCase):
