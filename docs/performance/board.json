@@ -1079,7 +1079,7 @@
     "interaction": {
       "worker": "w_3eb557eb",
       "profile": "glm-flash-openrouter",
-      "state": "device-accepted-pending-merge",
+      "state": "merged",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/interaction-anr",
       "owns": "wetland.rs wetland_state.rs detail/scene.rs; dedicated log",
       "prior": "Opus w_c9034355 hit5h429; partial edits preserved and continued",
@@ -1104,6 +1104,8 @@
       "worker": "deepseek-functional-delivery",
       "role": "delegated integration, independent acceptance review, Android phone ownership and reviewed/passing PR merges for the two functional fixes",
       "prs": {
+        "interaction": 49,
+        "interaction_merge": "f0da177603cd7b3d5c2ad4777cd6bd47e8e4c5b2",
         "detail": 48
       },
       "combined_build": "pr36-39-acceptance bbf7d1d (engine/interaction-delivery f5fc91f + cherry-pick 648dda2); APK sha256 0531c7d115fb1d3af425d87fa4404e4aefa3048dbbcef2f41ad5b890e8a88a7e",

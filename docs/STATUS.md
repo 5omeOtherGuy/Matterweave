@@ -13,7 +13,8 @@ Delegated delivery (2026-09-13): a DeepSeek integration/acceptance worker owns
 the phone, the combined Android gate and reviewed/passing PR merges for the two
 functional fixes. Interaction `c1e8777` (integrated `bb68e59`) passed independent
 GLM review `w_a6f188e8` with no findings and the physical four-action device gate
-(real edits 13-20 ms, no new ANR/crash). Detail `648dda2` passed independent GLM
+(real edits 13-20 ms, no new ANR/crash); merged at `f0da177` (PR #49, all six
+checks green). Detail `648dda2` passed independent GLM
 review `w_94385293` (one stale fixture-log claim, corrected in `7466208`); its
 phase 0 now passes at the real 1440 px surface, but phase 7 stops on a
 pre-existing viewport-coupled occlusion-fixture assumption, so the 14-phase +

@@ -19,7 +19,8 @@ delegated to a DeepSeek integration/acceptance worker that owns the phone, the
 combined Android gate and reviewed/passing PR merges. Interaction ANR fix
 `c1e8777` (integrated `bb68e59`, branch `engine/interaction-delivery`) passed
 independent GLM review and the physical four-action gate: real voxel edits
-13-20 ms, no new ANR/crash; its PR is open. Detail diagnostic `648dda2` plus
+13-20 ms, no new ANR/crash); merged at `f0da177` (PR #49, all six checks
+green). Detail diagnostic `648dda2` plus
 docs `7466208` (branch `engine/detail-android-convergence`) fixed phase 0 at
 1440 px but stops at phase 7 on a pre-existing viewport-coupled
 occlusion-fixture assumption (PR #48 open, unmerged; isolated fixture repair
