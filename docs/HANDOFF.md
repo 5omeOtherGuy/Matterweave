@@ -1,23 +1,32 @@
 # Implementation handoff
 
-**Current worker routing (owner, 2026-09-13):** use direct Pi
-`deepseek/deepseek-flash` (DeepSeek V4.1 Flash) and OpenRouter
-`z-ai/glm-5.3-flash` for most development. Use Claude subscription Opus
-at **medium** effort for independent review of completed implementations,
-results and fixes; this is the owner-designated complex-task role. Other Opus
-implementation assignments still require a concretely complex task. The already
-running GLM review may finish; subsequent acceptance reviews go to Opus.
-The owner reports the 5-hour limit resets in 17 minutes from their update;
-this is reported availability, not a verified reset. Do not retry before it.
-Never dispatch Astra workers. Preserve the global three-worker cap.
+**Current worker routing (owner, 2026-09-13, latest):** Codex dispatches tasks
+only. Use direct Pi `deepseek/deepseek-flash` (DeepSeek V4.1 Flash) and OpenRouter
+`z-ai/glm-5.3-flash` for bulk development. The Claude subscription reset, so
+Claude/Opus at **medium** is available again for complex reviews and review
+fallback (the owner-designated complex-task role), and a separate read-only Opus
+reviewer inspects merged production lighting gaps and returns the next-slice
+brief (issue47) without phone/write ownership; do not wait on it or duplicate its
+scope. Never dispatch Astra workers. Preserve the global three-worker cap.
+Phase B cost/thermal rankings are deferred; functional issue experiments may run
+alongside engine development (third slot = issue42 ray-hierarchy experiment:
+new traversal module/shader/tests only, no renderer lib.rs, app, lighting, phone
+or shared-doc edits).
 
 **Current pickup (2026-09-13):** PR36 lighting and PR39 streaming are merged,
-main `fc6212e`, all six checks green each, GLM5.3 Flash reviewed. The lead branch
-is now `engine/interaction-delivery` in the healthy recovery integration checkout.
-GLMFlash repairs the real Wetland interaction ANR; direct DeepSeek V4.1 Flash/max
-repairs only detail_check's Android phase0 deferral fixture. The board owns exact
-workers/scopes. Do not duplicate these tasks. All five current saves are backed
-up and hash-verified restored; phone belongs to the lead. No thermal campaign.
+main `fc6212e`, all six checks green each. The functional-fix delivery is
+delegated to a DeepSeek integration/acceptance worker that owns the phone, the
+combined Android gate and reviewed/passing PR merges. Interaction ANR fix
+`c1e8777` (integrated `bb68e59`, branch `engine/interaction-delivery`) passed
+independent GLM review and the physical four-action gate: real voxel edits
+13-20 ms, no new ANR/crash; its PR is open. Detail diagnostic `648dda2` plus
+docs `7466208` (branch `engine/detail-android-convergence`) fixed phase 0 at
+1440 px but stops at phase 7 on a pre-existing viewport-coupled
+occlusion-fixture assumption (PR #48 open, unmerged; isolated fixture repair
+requested from Codex). All five current saves were restored hash-exact and the
+fixed APK stays installed. No thermal campaign. See the
+[delivery log](performance/logs/deepseek-functional-delivery.md) and
+[STATUS](STATUS.md).
 
 **Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
 
