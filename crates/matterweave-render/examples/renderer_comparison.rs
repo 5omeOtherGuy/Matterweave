@@ -129,6 +129,10 @@ struct Fixture {
     edit: Option<([i32; 3], u8)>,
     /// Marker cell used to validate the camera and image orientation convention.
     marker: [i32; 3],
+    /// Optional inclusive near-detail AABB. When set, the sparse CPU oracle must
+    /// sample at least one hit inside it, so thin near geometry cannot pass
+    /// merely because the terrain behind it was sampled.
+    detail: Option<([i32; 3], [i32; 3])>,
 }
 
 fn fixtures() -> Vec<Fixture> {
@@ -191,6 +195,7 @@ fn fixtures() -> Vec<Fixture> {
             },
             edit: Some(([-3, 4, 4], 1)),
             marker: [4, 1, 1],
+            detail: None,
         },
         Fixture {
             name: "orthographic-opening-removal",
@@ -204,6 +209,7 @@ fn fixtures() -> Vec<Fixture> {
             },
             edit: Some(([-3, 2, 2], 0)),
             marker: [4, 1, 1],
+            detail: None,
         },
         Fixture {
             name: "negative-chunk-boundary",
@@ -217,6 +223,7 @@ fn fixtures() -> Vec<Fixture> {
             },
             edit: None,
             marker: [-14, 1, 0],
+            detail: None,
         },
         Fixture {
             name: "close-perspective-thin-floor",
@@ -230,6 +237,7 @@ fn fixtures() -> Vec<Fixture> {
             },
             edit: Some(([1, 1, 1], 7)),
             marker: [3, 1, -1],
+            detail: None,
         },
         Fixture {
             name: "ortho-diagonal-thin-wall",
@@ -243,6 +251,114 @@ fn fixtures() -> Vec<Fixture> {
             },
             edit: None,
             marker: [4, 3, 3],
+            detail: None,
+        },
+    ]
+}
+
+/// Opt-in landscape fixtures (`--landscape`). They drive the same real paths,
+/// CPU oracle, edit invalidation and image gates as the default suite, but use
+/// larger scenes and are therefore excluded from the default 16-run CI gate.
+fn landscape_fixtures() -> Vec<Fixture> {
+    // (1) One-cell-thick vegetation a few cells in front of a distant stepped
+    // ridge at z = 40..42. The ridge top profile is the occluding terrain
+    // silhouette; the near stems and fronds are the thin detail the paths must
+    // order against it. Both paths see the whole world in matched mode and the
+    // x < 0 / x > 0 halves in split mode, so each half needs real geometry.
+    let mut vegetation: Vec<([i32; 3], u8)> = Vec::new();
+    for x in -24i32..=24 {
+        let ridge_top = match x {
+            -2..=3 => 6,
+            12..=15 => 7,
+            _ => 8 + x.rem_euclid(5),
+        };
+        for z in 40..=42 {
+            for y in -20..=ridge_top {
+                vegetation.push(([x, y, z], if y == ridge_top { 3 } else { 2 }));
+            }
+        }
+    }
+    for (index, x) in [-3, -1, 1, 3].into_iter().enumerate() {
+        let height = 3 + (index % 3) as i32;
+        for y in 0..height {
+            vegetation.push(([x, y, 3], 1));
+        }
+        vegetation.push(([x - 1, height - 1, 3], 6));
+        vegetation.push(([x + 1, height - 1, 3], 6));
+        vegetation.push(([x, height - 1, 4], 6));
+    }
+
+    // (2) Negative-coordinate rock terrain under an orthographic camera: a
+    // ground slab, a front wall with a three-cell-wide doorway, a back wall and
+    // loose boulders. The edit blocks the lower middle of the opening.
+    let mut terrain: Vec<([i32; 3], u8)> = Vec::new();
+    for x in -44..=-16 {
+        for z in -48..=-2 {
+            for y in -6..=-3 {
+                terrain.push(([x, y, z], 2));
+            }
+        }
+    }
+    for x in -44..=-16 {
+        for z in -20..=-19 {
+            for y in -2..=8 {
+                if (-31..=-29).contains(&x) && (-2..=3).contains(&y) {
+                    continue;
+                }
+                terrain.push(([x, y, z], 3));
+            }
+        }
+    }
+    for x in -44..=-16 {
+        for z in -46..=-45 {
+            for y in -2..=8 {
+                terrain.push(([x, y, z], if y == 8 { 4 } else { 3 }));
+            }
+        }
+    }
+    for (cell, material) in [
+        ([-34, -2, -16], 3),
+        ([-34, -1, -16], 3),
+        ([-27, -2, -14], 5),
+        ([-24, -2, -12], 5),
+        ([-30, -2, -10], 7),
+        ([-21, -2, -18], 5),
+        ([-21, -1, -18], 5),
+        ([-21, 0, -18], 5),
+    ] {
+        terrain.push((cell, material));
+    }
+
+    vec![
+        Fixture {
+            name: "vegetation-vs-distant-ridge",
+            cells: vegetation,
+            split: 0,
+            camera: Cam {
+                eye: [0.0, 4.0, -6.0],
+                target: [0.0, 3.0, 30.0],
+                orthographic: false,
+                extent: 0.9,
+            },
+            edit: Some(([-3, 1, 3], 0)),
+            marker: [6, 9, 40],
+            // Keeps the near stems and fronds in the sampled oracle; the ridge
+            // alone must not be able to satisfy this fixture's coverage checks.
+            detail: Some(([-5, 0, 3], [5, 5, 4])),
+        },
+        Fixture {
+            name: "negative-ortho-opening-edit",
+            cells: terrain,
+            split: -36,
+            camera: Cam {
+                eye: [-30.0, 14.0, 6.0],
+                target: [-30.0, -3.0, -30.0],
+                orthographic: true,
+                extent: 16.0,
+            },
+            edit: Some(([-30, 0, -19], 3)),
+            marker: [-24, 8, -20],
+            detail: None,
         },
     ]
 }
@@ -1568,6 +1684,9 @@ struct OracleReport {
     diagnostics: Vec<String>,
     ties: usize,
     inside: usize,
+    /// Samples whose first hit lies inside the fixture's declared near-detail
+    /// AABB, independent of boundary/grazing classification.
+    detail_hits: usize,
     mismatched: usize,
     max_depth_delta: f32,
     max_color_delta: f32,
@@ -1606,7 +1725,13 @@ fn is_grazing(world: &World, view_projection: Mat4, x: u32, y: u32, cell: [i32; 
     false
 }
 
-fn oracle_report(world: &World, ray: &Images, view_projection: Mat4, eye: Vec3) -> OracleReport {
+fn oracle_report(
+    world: &World,
+    ray: &Images,
+    view_projection: Mat4,
+    eye: Vec3,
+    detail: Option<([i32; 3], [i32; 3])>,
+) -> OracleReport {
     let mut report = OracleReport {
         sampled: 0,
         hits: 0,
@@ -1614,6 +1739,7 @@ fn oracle_report(world: &World, ray: &Images, view_projection: Mat4, eye: Vec3) 
         diagnostics: Vec::new(),
         ties: 0,
         inside: 0,
+        detail_hits: 0,
         mismatched: 0,
         max_depth_delta: 0.0,
         max_color_delta: 0.0,
@@ -1637,6 +1763,11 @@ fn oracle_report(world: &World, ray: &Images, view_projection: Mat4, eye: Vec3) 
             let (want_depth, want_color) = match &hit {
                 Some(hit) => {
                     report.hits += 1;
+                    if let Some((min, max)) = detail {
+                        if (0..3).all(|axis| (min[axis]..=max[axis]).contains(&hit.cell[axis])) {
+                            report.detail_hits += 1;
+                        }
+                    }
                     let point = origin + direction * hit.distance;
                     let local =
                         point - Vec3::new(point.x.floor(), point.y.floor(), point.z.floor());
@@ -1844,8 +1975,24 @@ fn main() {
         "settings: {WIDTH}x{HEIGHT}, near {NEAR}, far {FAR}, color tol {COLOR_TOL:.5}, depth tol {DEPTH_TOL}"
     );
 
+    // `--landscape` adds the larger functional fixtures; the default invocation
+    // still runs exactly the original 16-run gate that CI executes.
+    let landscape = std::env::args().skip(1).any(|arg| arg == "--landscape");
+    println!(
+        "landscape fixtures: {}",
+        if landscape {
+            "on (--landscape)"
+        } else {
+            "off (pass --landscape to add the landscape runs)"
+        }
+    );
+    let mut suite = fixtures();
+    if landscape {
+        suite.extend(landscape_fixtures());
+    }
+
     let mut summary = String::new();
-    for fixture in fixtures() {
+    for fixture in suite {
         for (mode, matched) in [("split", false), ("matched", true)] {
             let runs = if fixture.edit.is_some() { 2 } else { 1 };
             let mut previous: Option<Images> = None;
@@ -1955,7 +2102,13 @@ fn main() {
 
                 let view_projection = fixture.camera.view_projection();
                 let eye = Vec3::from_array(fixture.camera.eye);
-                let oracle = oracle_report(&result.oracle_world, &result.ray, view_projection, eye);
+                let oracle = oracle_report(
+                    &result.oracle_world,
+                    &result.ray,
+                    view_projection,
+                    eye,
+                    fixture.detail,
+                );
                 if oracle.mismatched == 0
                     && oracle.hits > oracle.ties + oracle.grazing + oracle.inside
                 {
@@ -1980,6 +2133,19 @@ fn main() {
                     depth = oracle.max_depth_delta,
                     color = oracle.max_color_delta
                 );
+                }
+                if let Some((min, max)) = fixture.detail {
+                    if oracle.detail_hits == 0 {
+                        failures += 1;
+                        println!(
+                            "  FAIL no CPU oracle sample reached near detail {min:?}..={max:?}"
+                        );
+                    } else {
+                        println!(
+                            "  PASS near detail sampled: {hits} CPU oracle hits inside {min:?}..={max:?}",
+                            hits = oracle.detail_hits
+                        );
+                    }
                 }
 
                 // Camera and image-orientation convention: the marker cell must project
@@ -2105,6 +2271,99 @@ fn combined_world(fixture: &Fixture, edited: bool) -> World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use matterweave_render::ray_reference::{MAX_AXIS, MAX_CELLS};
+
+    #[test]
+    fn landscape_fixtures_fit_declared_ray_volume_bounds() {
+        let landscape = landscape_fixtures();
+        assert_eq!(landscape.len(), 2, "expected two landscape fixtures");
+        for fixture in &landscape {
+            assert!(fixture.edit.is_some(), "{} has no edit", fixture.name);
+            let (cell, material) = fixture.edit.unwrap();
+            let existing = fixture
+                .cells
+                .iter()
+                .find(|(existing, _)| *existing == cell)
+                .map(|(_, existing)| *existing);
+            assert!(
+                existing.is_none_or(|existing| existing != material),
+                "{} edit cell {cell:?} does not change the surface (already {material})",
+                fixture.name
+            );
+            assert_ne!(
+                cell[0], fixture.split,
+                "{} edit cell {cell:?} sits on the dropped split column",
+                fixture.name
+            );
+            if let Some((min, max)) = fixture.detail {
+                let inside = |cell: &[i32; 3]| {
+                    (0..3).all(|axis| (min[axis]..=max[axis]).contains(&cell[axis]))
+                };
+                assert!(
+                    fixture
+                        .cells
+                        .iter()
+                        .any(|(cell, _)| inside(cell) && cell[0] < fixture.split),
+                    "{} has no near detail on the ray side of the split",
+                    fixture.name
+                );
+                assert!(
+                    fixture
+                        .cells
+                        .iter()
+                        .any(|(cell, _)| inside(cell) && cell[0] > fixture.split),
+                    "{} has no near detail on the mesh side of the split",
+                    fixture.name
+                );
+            }
+            let (origin, dimensions) = bounds(&fixture.cells);
+            let cells: usize = dimensions.iter().map(|&d| d as usize).product();
+            assert!(
+                dimensions.iter().all(|&d| (1..=MAX_AXIS).contains(&d)),
+                "{} dimensions {dimensions:?} exceed the RayVolume axis bound",
+                fixture.name
+            );
+            assert!(
+                cells <= MAX_CELLS,
+                "{} packs {cells} cells, over the {} cell bound",
+                fixture.name,
+                MAX_CELLS
+            );
+            // `bounds` silently clamps to 128; no fixture cell may fall outside
+            // the unclamped AABB, or the pack would crop real geometry.
+            for (cell, _) in &fixture.cells {
+                for axis in 0..3 {
+                    let relative = cell[axis] - origin[axis];
+                    assert!(
+                        (0..dimensions[axis] as i32).contains(&relative),
+                        "{} cell {cell:?} is outside packed bounds origin {origin:?} dimensions {dimensions:?}",
+                        fixture.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn default_gate_keeps_its_fixture_set() {
+        let default: Vec<&str> = fixtures().iter().map(|fixture| fixture.name).collect();
+        assert_eq!(
+            default,
+            [
+                "thin-plate-vs-block",
+                "orthographic-opening-removal",
+                "negative-chunk-boundary",
+                "close-perspective-thin-floor",
+                "ortho-diagonal-thin-wall",
+            ]
+        );
+        assert!(
+            landscape_fixtures()
+                .iter()
+                .all(|fixture| !default.contains(&fixture.name)),
+            "landscape fixture names must not collide with the default gate"
+        );
+    }
 
     #[test]
     fn face_edge_exception_requires_both_cpu_colors_and_preserved_coverage() {

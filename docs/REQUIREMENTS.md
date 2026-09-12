@@ -6,7 +6,7 @@
 
 | ID | Requirement | Basis | Evidence required | ADR / milestone |
 | --- | --- | --- | --- | --- |
-| R01 | Deliver an Android-native engine and sample application. | Owner requirement | Reproducible ARM64 APK, native execution and recorded physical-device run. | 0001, 0015 / M0–M1 |
+| R01 | Deliver an Android-native engine and sample application with all runtime work on device; no required cloud rendering, simulation or world storage. | Owner requirement | Reproducible ARM64 APK, native execution and recorded physical-device run; network-disabled cold start, local generation/load, render/simulate/edit/save, process restart and reload. | 0001, 0015 / M0–M1 |
 | R02 | Use voxels as meaningful world/object data with fine-detail capability. | Owner requirement | Queryable voxel data, two resolutions, edits and persistence; not only block-themed meshes. | 0005 / M1–M3 |
 | R03 | Prioritize high-end Android fidelity and sustained efficiency. | Owner requirement | CPU/GPU frame times, memory/residency and thermal traces under the benchmark protocol. | 0002, 0012 / all |
 | R04 | Investigate useful multicore CPU, GPU, RAM and NPU/accelerator capabilities. | Owner requirement | Device capability inventory and measured adopt/defer conclusions; bounded memory and work scheduling. | 0002, 0013 / M0–M5 |

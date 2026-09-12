@@ -42,6 +42,14 @@ branch. M2–M6 remain open.
 
 ## Next authorized work
 
+The follow-up delivered opt-in landscape comparison fixtures and a
+[reference reuse assessment](performance/virtual-matter-and-lay-of-the-land.md).
+Host default/landscape runs pass (16/24); Android execution is still unrun and
+belongs to the other lead's device schedule. See the current STATUS entry and
+[review evidence](performance/reviews/landscape-followup.md). All runtime work must
+run on device; the network-disabled Android round-trip gate is now explicit in R01.
+
+
 The owner selected MishMash's microvoxel landscape reference and requested an
 [autonomous swarm development roadmap](AUTONOMOUS_MICROVOXEL_ROADMAP.md).
 Use it as the outcome-level follow-up to the detailed completion plan: extensive

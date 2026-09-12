@@ -2,24 +2,37 @@
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
-## Autonomous microvoxel follow-up — owner direction
+## Autonomous microvoxel follow-up — implementation and reference assessment
 
-The owner chose [MishMash's microvoxel landscape video](https://www.youtube.com/watch?v=xGkWWfO87no)
-as the reference and requested a high-level autonomous agent-swarm roadmap.
-[The follow-up](AUTONOMOUS_MICROVOXEL_ROADMAP.md) links staged capability delivery
-to extensive supervised research, coding, tests and independent reviews. Technical
-completion stays first; thermal and performance optimization follow afterwards.
-This is planning, not a new implementation or Android result. Full video playback
-was unavailable; the title/thumbnail and linked creator explanations were inspected.
+[PR #23](https://github.com/5omeOtherGuy/Matterweave/pull/23) merged the
+[autonomous roadmap](AUTONOMOUS_MICROVOXEL_ROADMAP.md) at `1e12264`. The disjoint
+follow-up now adds two opt-in landscape fixtures to the real raster/ray/hybrid
+comparison: thin near vegetation against a distant ridge, and negative-coordinate
+orthographic terrain/opening edits. Default 16 runs and opt-in 24 runs pass host
+software Vulkan validation. Independent image checks confirm visible edits and
+near-detail oracle coverage; four GPU-free example tests, fmt and scoped strict
+Clippy pass. [Review and provenance](performance/reviews/landscape-followup.md),
+[fixture evidence](performance/landscape-functional-fixtures.md).
 
-This documentation branch starts from merged PR #22 (`7dace54`). A separate local
-`phase-a/lead-wave-1a-dispatch` branch (`dc97fae` at inspection) records another
-lead's D1/D2/D4 assignments. It is preserved; no engine tasks or phone ownership
-are reassigned by this follow-up. The owner then explicitly authorized parallel
-execution: `S1-landscape-fixtures` and `S2-landscape-research` are dispatched to
-supervised DeepSeek workers on isolated paths; their acceptance is pending.
-Read the actual board and active sessions before
-execution; historical snapshots below do not override live ownership.
+The first orthographic fixture exposed a 116-pixel top-row coverage mismatch.
+Reframing passes without relaxed tolerances; the original remains a regression case,
+not a fixed renderer defect. The [streaming research](performance/landscape-streaming-research.md)
+recommends a narrow coarse-derivation experiment; none is adopted or implemented yet.
+
+The owner explicitly requires all runtime work on device. R01 and S5 now include a
+network-disabled Android cold start, local generation/load/render/simulation/edit,
+save, process restart and reload gate: **NOT RUN**. [Virtual Matter and Lay of the Land](performance/virtual-matter-and-lay-of-the-land.md)
+were assessed for reusable technology and concepts; no offline Android SDK was
+verified and neither engine is selected. Materials/fluids demonstrations do not
+silently expand technical-freeze requirements.
+
+No Android run or milestone closure is claimed for this follow-up. The other session
+retains D1/D2/D4 and the phone lease. Global worker inspection showed its three
+workers active during integration; these were preserved and no competing workers
+were dispatched until capacity became available. Read the actual board and live
+sessions before resuming, and merge that lead's updates instead of replacing them.
+Next: lead-scheduled Android fixture execution; reserve coarse derivation ownership
+before coding, without taking D2-owned core tests or app integration paths.
 
 ## Current reconciliation and completion plan — after PR #21
 

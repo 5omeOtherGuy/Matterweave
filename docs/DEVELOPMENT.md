@@ -334,7 +334,13 @@ observations. See [streaming stress](performance/stream-stress.md).
 Full-image ray/raster/shared-depth hybrid correctness:
 `cargo run --locked -p matterweave-render --example renderer_comparison`. See
 [comparison protocol](performance/renderer-comparison.md) for tolerances, artifacts and
-Android evidence.
+Android evidence. Opt-in landscape correctness adds near vegetation/distant terrain
+and negative-coordinate orthographic edits:
+`cargo run --locked -p matterweave-render --example renderer_comparison -- --landscape`.
+The default remains 16 runs; the opt-in suite has 24. GPU-free fixture contracts:
+`cargo test --locked -p matterweave-render --example renderer_comparison`.
+Set `CARGO_TARGET_DIR` and `MATTERWEAVE_COMPARISON_OUT` beneath `/mnt/bench`.
+See [landscape fixture evidence](performance/landscape-functional-fixtures.md).
 
 ### Full wetland integration checks
 
