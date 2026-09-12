@@ -125,6 +125,50 @@ CARGO_TARGET_DIR=/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260
   `5068635860049478035`, lifted digest `672966773062200507`,
   `total_presented=30 suspends=0 resumes=0`.
 
+## Review correction (independent review, lead-verified findings)
+
+Two real scoped issues, both fixed in `mesh_lighting_check.rs` only
+(renderer and `lib.rs` registration untouched):
+
+1. **Missing world raster.** `create_renderer` never uploaded
+   `self.world.mesh()`: the CPU floor/receiver existed in the lighting
+   volumes but was absent from raster geometry. Every renderer creation now
+   uploads the authoritative fixture world (including resume) with
+   fixture-palette colours, before any phase lighting publication. `World::mesh`
+   paints engine-default colours, so each vertex is recolored through its
+   source cell. The naive `floor(p - n * eps)` lookup mis-resolves
+   voxel-boundary edge vertices into air (caught by the new test on cell
+   `[-5, 0, -4]`); the shipped `source_cell` helper instead tries both
+   adjacent cells on boundary axes and keeps a solid cell whose face along the
+   vertex normal is actually exposed, naive cell first, deterministic. Exact
+   for this fixture, where ambiguous edges are same-material.
+2. **Mislabeled evidence.** Phase 1 `cells={}` formatted
+   `pack.material_at(OBJECT_CELL)` (a material id) under a count label. Now
+   `describe_proxy` reports the digest plus the actual `occupied_cells`
+   (2 for the two unit-cube instances), pinned by a unit test.
+
+Host evidence now proves both geometries on GPU: `world geometry uploaded:
+1008 vertices 1512 indices (fixture palette)` at creation, and every phase
+summary carries `gpu mesh_bytes=43376 static prototypes=1 instances=2
+vertices=24 indices=36`; phase 4 after the instance clear reads
+`mesh_bytes=42336 static scene cleared`, i.e. the world raster is retained
+while only instances were removed.
+
+Verification (same env, original `mesh-native-target`, lead-confirmed free):
+
+- `cargo test -p matterweave-explorer --lib mesh_lighting_check --locked` →
+  11 passed, exit `0` (9 prior + recolor palette + `describe_proxy` label).
+- `cargo clippy -p matterweave-explorer --all-targets --locked -- -D warnings`
+  → 0 errors, exit `0` (only the pre-existing vendor/winit notice).
+- `rustfmt --edition 2021 --check` on the owned file → clean, exit `0`.
+- `python3 tools/check_docs.py` → PASS (212 files, 639 links), exit `0`.
+- Host functional run `timeout 300s xvfb-run -a cargo run --locked
+  -p matterweave-explorer -- --mesh-lighting-check --save "$smoke_dir/world.json"`
+  → exit `0`, llvmpipe, all 5 phases x 6 presented frames, report PASS with
+  rest digest `5068635860049478035`, lifted `672966773062200507`,
+  `total_presented=30`. Full app suite not repeated: only the owned module
+  changed since `c043ed5`, whose full-suite pass stands.
+
 ## Open gates (not run, lead-owned)
 
 Independent review, Android run, and merged delivery. No completion claim is
