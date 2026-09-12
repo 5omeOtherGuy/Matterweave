@@ -49,7 +49,10 @@
 //!   acknowledged the unload with its epoch counter.
 //! * While the output is suspended the mixer clock freezes mid-sample: nothing is
 //!   dropped, nothing restarts, and commands queued during suspension are applied in
-//!   FIFO order on resume.
+//!   FIFO order on resume. [`AudioService::health`] reports suspension in `suspended`
+//!   as soon as [`AudioService::suspend`] returns, without waiting for a render
+//!   invocation; `rt_suspended` is the render thread's own view, which cannot advance
+//!   while a paused backend delivers no callbacks (AAudio).
 //! * Device loss is reported by the AAudio error callback into shared atomics;
 //!   [`AudioService::poll_device`] then closes and reopens the stream on the control
 //!   thread with the same mixer core, so voices continue where they stopped.

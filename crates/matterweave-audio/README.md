@@ -24,7 +24,7 @@ through the backend's data callback. Backend and real-time types never cross the
 | `ClipHandle`, `VoiceHandle` | `slot`, `generation`, `Display`; copyable and generational. |
 | `PlayOptions` | `gain`, `with_gain`, default gain 1.0. |
 | `StreamProperties` | Negotiated rate, channels, float format, burst/buffer sizes, device/session ids, low-latency and exclusive flags. |
-| `HealthSnapshot` | Callback/frame/command counters, rejection and silence/completion counters, xruns, device errors, recreations, ack epoch, suspended. |
+| `HealthSnapshot` | Callback/frame/command counters, rejection and silence/completion counters, xruns, device errors, recreations, ack epoch, service suspension (`suspended`) and the render-thread mirror (`rt_suspended`). |
 | `AudioServiceError`, `InvalidClipReason`, `DeviceError` | Plain data; no backend types. |
 | `AudioLimits` | `pcm_pool_samples()`; plus `MAX_CLIPS`, `MAX_VOICES`, `MAX_PCM_BYTES`, `MAX_COMMANDS`. |
 | `config` module | `SAMPLE_RATE` (48 000) and `MAX_GAIN` (8.0) alongside the limit constants. |
@@ -81,7 +81,10 @@ queued commands are never overwritten. A full command queue returns `CommandQueu
   ack epoch.
 - Suspend freezes the mixer clock mid-sample: nothing is dropped or restarted, and commands
   queued during suspension are applied in FIFO order on resume. Resume queues the command
-  before restarting the stream so there is no silent gap.
+  before restarting the stream so there is no silent gap. `health().suspended` reports the
+  service state as soon as `suspend()`/`resume()` returns, without waiting for a render
+  callback. `health().rt_suspended` is the render thread's own view; on a backend that
+  delivers no callbacks while paused (AAudio) it cannot become true during suspension.
 - Device loss is recorded by the AAudio error callback into shared atomics. `poll_device`
   closes and reopens the stream around the same mixer core, so voices continue where they
   stopped.
@@ -121,11 +124,12 @@ From the repository root:
 cargo test -p matterweave-audio --features backend-mock
 ```
 
-- `tests/acceptance.rs` (20 tests) covers the two-voice fixture against an independent
+- `tests/acceptance.rs` (21 tests) covers the two-voice fixture against an independent
   reference within 1e-6, clipping and finiteness, stereo order, mono upmix, gain, completion,
   stop, silence, limit enforcement at the limit and limit+1 and after reuse, atomic clip
   rejection, stale handles, command-queue saturation and recovery, the suspend/resume
-  continuation policy and fault-injected device loss with recreation.
+  continuation policy (service truth observable without a render callback, render mirror
+  separate) and fault-injected device loss with recreation.
 - `tests/rt_allocations.rs` (1 test) is a dedicated allocation detector that reports zero
   allocations and deallocations across 10 000 callback invocations, including completion and
   stop handling.

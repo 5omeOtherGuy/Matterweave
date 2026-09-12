@@ -30,7 +30,9 @@ pub(crate) struct SharedRt {
     pub frames_rendered: AtomicU64,
     /// Bitmask of voice slots whose last invocation ended with the voice active.
     pub live_mask: AtomicU32,
-    /// Render-side suspended truth (mirror of the `Suspend`/`Resume` commands).
+    /// Render thread's own suspended view as of the last completed invocation
+    /// (mirror of the `Suspend`/`Resume` commands it applied). It cannot turn true
+    /// while the backend stops delivering callbacks.
     pub suspended: AtomicBool,
     /// Commands applied by the render thread.
     pub commands_applied: AtomicU64,

@@ -9,7 +9,7 @@
 //! 4. Suspend, observe silence, resume, play again.
 //! 5. Recreate the output (controlled close/reopen; real device loss is validated
 //!    via fault injection in tests) and play again.
-//! 6. Ten open/play/stop/close service lifecycles.
+//! 6. Repeated open/play/suspend/recreate-while-suspended/resume/stop/close cycles.
 //!
 //! On-device audible verification is a human observation; submitted frame counts
 //! alone do not prove audibility.
@@ -53,7 +53,7 @@ fn print_properties(prefix: &str, props: Option<StreamProperties>) {
 fn print_health(prefix: &str, health: &HealthSnapshot) {
     println!(
         "{prefix}: callbacks {}, frames {}, applied {}, pending {}, xruns {}, \
-         device_errors {}, recreations {}, completed {}, suspended {}",
+         device_errors {}, recreations {}, completed {}, suspended {}, rt_suspended {}",
         health.callback_count,
         health.frames_rendered,
         health.commands_applied,
@@ -63,6 +63,7 @@ fn print_health(prefix: &str, health: &HealthSnapshot) {
         health.stream_recreations,
         health.voices_completed,
         health.suspended,
+        health.rt_suspended,
     );
 }
 
@@ -71,6 +72,11 @@ fn drive_to_frames(service: &mut AudioService, target_frames: u64) {
     while service.health().frames_rendered < target_frames && Instant::now() < deadline {
         drive_step(service);
     }
+    assert!(
+        service.health().frames_rendered >= target_frames,
+        "output failed to reach {target_frames} frames within 2 seconds: {:?}",
+        service.health()
+    );
 }
 
 #[cfg(all(
@@ -91,6 +97,27 @@ fn drive_step(service: &mut AudioService) {
     std::thread::sleep(Duration::from_millis(5));
 }
 
+/// The mock driver renders synchronously on the control thread, so the render-side
+/// mirror must advance. Asserting this keeps host coverage at least as strong as
+/// before; on a real backend the mirror is printed as an observation instead,
+/// because AAudio delivers no callbacks while paused.
+#[cfg(all(
+    feature = "backend-mock",
+    not(all(target_os = "android", feature = "backend-android"))
+))]
+fn assert_mock_render_mirror_suspended(health: &HealthSnapshot) {
+    assert!(
+        health.rt_suspended,
+        "mock render ran, so the render-thread mirror must report suspended"
+    );
+}
+
+#[cfg(not(all(
+    feature = "backend-mock",
+    not(all(target_os = "android", feature = "backend-android"))
+)))]
+fn assert_mock_render_mirror_suspended(_health: &HealthSnapshot) {}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cycles: usize = args
@@ -108,7 +135,7 @@ fn main() {
     // 1) Register a quiet known signal and play it.
     let clip_samples = make_sine_clip();
     let clip = service
-        .register_clip(ClipSpec::stereo(&clip_samples))
+        .register_clip(ClipSpec::mono(&clip_samples))
         .expect("sine clip registers");
     let voice = service
         .play(clip, PlayOptions::with_gain(DIAGNOSTIC_GAIN))
@@ -128,20 +155,37 @@ fn main() {
 
     // 2) Suspend: silence, frozen clocks. Resume: continue.
     service.suspend().expect("suspend");
-    drive_step(&mut service); // apply/observe one invocation (renders silence)
+    // Service truth must be observable immediately: AAudio delivers no data
+    // callbacks once paused, so no later invocation can publish it.
+    let suspended = service.health();
+    assert!(
+        suspended.suspended,
+        "service reports suspended immediately after suspend()"
+    );
+    drive_step(&mut service); // host: one render invocation; device: yield
     let frozen = service.health();
-    assert!(frozen.suspended, "render thread reports suspended");
+    assert!(
+        frozen.suspended,
+        "service remains suspended after one further step"
+    );
+    assert_mock_render_mirror_suspended(&frozen);
     std::thread::sleep(Duration::from_millis(100));
     println!(
-        "suspend: suspended truth set at {} frames; no stale replay (policy is FIFO continuation)",
-        frozen.frames_rendered
+        "suspend: service-suspended true at {} frames; render-side mirror {} (AAudio \
+         delivers no callbacks while paused); no stale replay (policy is FIFO continuation)",
+        frozen.frames_rendered, frozen.rt_suspended
     );
     service.resume().expect("resume");
+    assert!(
+        !service.health().suspended,
+        "service reports running immediately after resume()"
+    );
     drive_to_frames(&mut service, frozen.frames_rendered + 2_000);
+    let resumed = service.health();
+    assert!(!resumed.suspended, "service is running after resume");
     println!(
-        "resume: frames {} -> {}",
-        frozen.frames_rendered,
-        service.health().frames_rendered
+        "resume: frames {} -> {}, render-side mirror {}",
+        frozen.frames_rendered, resumed.frames_rendered, resumed.rt_suspended
     );
 
     // 3) Controlled output recreation (no real device disconnect here).
@@ -161,11 +205,12 @@ fn main() {
     service.stop_voice(voice).expect("stop first voice");
     print_health("after-recreate", &service.health());
 
-    // 4) Ten open/play/stop/close lifecycles.
+    // 4) Repeated paused recreation and shutdown. Do not assume request_pause is
+    // synchronous: only close/reopen guarantees the old callbacks have quiesced.
     for cycle in 1..=cycles {
         let mut svc = AudioService::new().expect("cycle service opens");
         let clip = svc
-            .register_clip(ClipSpec::stereo(&clip_samples))
+            .register_clip(ClipSpec::mono(&clip_samples))
             .expect("cycle clip registers");
         let voice = svc
             .play(clip, PlayOptions::with_gain(DIAGNOSTIC_GAIN))
@@ -173,12 +218,30 @@ fn main() {
         drive_to_frames(&mut svc, 1_000);
         let h = svc.health();
         assert!(h.frames_rendered > 0, "cycle {cycle}: nonzero frames");
+        svc.suspend().expect("cycle suspend");
+        assert!(svc.health().suspended, "cycle {cycle}: pause intent");
+        svc.diagnostic_recreate_output()
+            .expect("cycle recreate while suspended");
+        let paused = svc.health();
+        assert!(paused.suspended, "cycle {cycle}: recreation preserves pause");
+        assert_eq!(paused.stream_recreations, 1);
+        // No mock render here either: the recreated output must remain unstarted.
+        std::thread::sleep(Duration::from_millis(100));
+        let held = svc.health();
+        assert_eq!(held.callback_count, paused.callback_count);
+        assert_eq!(held.frames_rendered, paused.frames_rendered);
+        assert_eq!(held.voices_completed, paused.voices_completed);
+        print_health(&format!("cycle {cycle} paused-recreated"), &held);
+        svc.resume().expect("cycle resume");
+        assert!(!svc.health().suspended, "cycle {cycle}: resume accepted");
+        drive_to_frames(&mut svc, held.frames_rendered + 2_000);
+        let resumed = svc.health();
+        assert!(resumed.callback_count > held.callback_count);
+        assert!(!resumed.rt_suspended, "cycle {cycle}: mixer resumed");
+        print_health(&format!("cycle {cycle} resumed-progress"), &resumed);
         svc.stop_voice(voice).expect("cycle stop");
-        drop(svc); // close
-        println!(
-            "cycle {cycle}/{}: open/play/stop/close ok (frames {})",
-            cycles, h.frames_rendered
-        );
+        drop(svc); // close joins outstanding callbacks before freeing the core
+        println!("cycle {cycle}/{cycles}: paused recreation/resume/shutdown ok");
     }
 
     let final_health = service.health();

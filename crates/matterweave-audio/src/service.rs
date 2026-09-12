@@ -95,8 +95,16 @@ pub struct HealthSnapshot {
     pub stream_recreations: u64,
     /// Render-thread ack epoch (advances once per completed invocation).
     pub ack_epoch: u64,
-    /// Render thread's suspended truth (as of the last completed invocation).
+    /// Service suspension truth: `true` after a successful [`AudioService::suspend`]
+    /// and `false` again whenever output starts or restarts ([`AudioService::resume`]
+    /// or stream recreation). This is the authoritative caller-observable state; it
+    /// does not depend on a render invocation.
     pub suspended: bool,
+    /// Render thread's own suspended view as of its last completed invocation.
+    /// Unlike [`HealthSnapshot::suspended`] it changes only when a render pass runs,
+    /// so on a backend that stops delivering callbacks while paused (AAudio) it
+    /// cannot become `true` during suspension.
+    pub rt_suspended: bool,
 }
 
 /// Control-side mirror of one clip slot.
@@ -185,6 +193,10 @@ pub struct AudioService {
     /// Sum of registered clip samples (the "retained PCM payload").
     used_samples: usize,
     running: bool,
+    /// Control-side suspension truth: set once `backend.suspend()` has succeeded and
+    /// cleared whenever output starts, restarts or is closed. Distinct from
+    /// `!running` after a device loss, when the stream is closed rather than paused.
+    suspended: bool,
 
     commands_pushed: u64,
     rejected_commands: u64,
@@ -235,6 +247,7 @@ impl AudioService {
             pending_ranges: Vec::with_capacity(256),
             used_samples: 0,
             running: false,
+            suspended: false,
             commands_pushed: 0,
             rejected_commands: 0,
             rejected_voice_starts: 0,
@@ -260,6 +273,7 @@ impl AudioService {
             .ok_or(AudioServiceError::StreamStartFailed { code: 0 })?;
         backend.start()?;
         self.running = true;
+        self.suspended = false;
         Ok(())
     }
 
@@ -470,6 +484,9 @@ impl AudioService {
 
     /// Suspend output: freeze the mixer clock mid-sample and silence the device.
     ///
+    /// On success [`AudioService::health`] reports `suspended == true` immediately;
+    /// no render invocation is required (a paused AAudio stream delivers none).
+    ///
     /// Nothing is dropped or restarted: voices active at suspend continue exactly
     /// where they stopped on resume, and commands queued during suspension are
     /// applied in FIFO order when the mixer resumes (a queued play that had not yet
@@ -494,10 +511,12 @@ impl AudioService {
             }
         }
         self.running = false;
+        self.suspended = true;
         Ok(())
     }
 
     /// Resume output after [`AudioService::suspend`]. Idempotent while running.
+    /// Clears `suspended` as soon as the stream restarts, before the first callback.
     pub fn resume(&mut self) -> Result<(), AudioServiceError> {
         if self.running {
             return Ok(());
@@ -535,6 +554,7 @@ impl AudioService {
         }
         self.backend = None;
         self.running = false;
+        self.suspended = false;
         self.open_output()?;
         self.start_output()?;
         self.stream_recreations += 1;
@@ -589,7 +609,8 @@ impl AudioService {
             device_errors: self.device_errors,
             stream_recreations: self.stream_recreations,
             ack_epoch: ack,
-            suspended: self.shared.suspended.load(Ordering::Acquire),
+            suspended: self.suspended,
+            rt_suspended: self.shared.suspended.load(Ordering::Acquire),
         }
     }
 
@@ -760,6 +781,7 @@ impl AudioService {
         }
         self.backend = None;
         self.running = false;
+        self.suspended = false;
         self.open_output()?;
         self.start_output()?;
         self.stream_recreations += 1;
