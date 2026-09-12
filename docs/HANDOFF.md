@@ -1,12 +1,12 @@
 # Implementation handoff
 
-**Current pickup:** PR37/38 are merged at main495d9f9. PR36/39 are under
-GLM5.3 Flash review, with Opus corrective workers recorded in the board. PR36's
-Android lighting diagnostic passes300frames and HOME/resume; the separate detail
-diagnostic fails its phase0 cold-convergence guard on Android and remains open.
-The owner's interaction-freeze report is confirmed by an Android input ANR and has
-an isolated corrective worker. See the top STATUS entry for evidence and boundaries.
-Continue using healthy SSD worktrees; preserve the current five user saves.
+**Current pickup (2026-09-13):** PR36 lighting and PR39 streaming are merged,
+main `fc6212e`, all six checks green each, GLM5.3 Flash reviewed. The lead branch
+is now `engine/interaction-delivery` in the healthy recovery integration checkout.
+GLMFlash repairs the real Wetland interaction ANR; direct DeepSeek V4.1 Flash/max
+repairs only detail_check's Android phase0 deferral fixture. The board owns exact
+workers/scopes. Do not duplicate these tasks. All five current saves are backed
+up and hash-verified restored; phone belongs to the lead. No thermal campaign.
 
 **Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
 

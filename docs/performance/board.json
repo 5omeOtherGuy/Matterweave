@@ -1053,7 +1053,7 @@
     }
   },
   "pr36_39_glm_review": {
-    "state": "running",
+    "state": "merged",
     "profile": "glm-flash-openrouter",
     "model": "z-ai/glm-5.3-flash",
     "thinking": "high",
@@ -1065,6 +1065,35 @@
     "streaming_repair": "w_ec3c1fcb",
     "interaction_anr_repair": "w_c9034355",
     "interaction_scope": "isolated interaction-anr branch: app wetland queries; real Android ANR recorded",
-    "android": "PR36 mesh-lighting300presentations PASS twice, second HOME/resume1/1; merged D1 detail gate FAIL phase0 deferral on Android, not closed"
+    "android": "lighting300frames twice includingHOME/resume;streaming36ARM64coretests PASS",
+    "pr36_merge": "7e88f31eb376f0a56aa543c40890edc08e21e9e6",
+    "pr39_merge": "fc6212e02009ced613009fece1386c7b5ddff9aa",
+    "lighting_corrective_review": "w_af5d3477 accepted",
+    "streaming_review": "w_8b9d64dd accepted",
+    "checks": "all6 green on each merge head"
+  },
+  "functional_followup_20260913": {
+    "lead_workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/integration",
+    "lead_branch": "engine/interaction-delivery",
+    "interaction": {
+      "worker": "w_3eb557eb",
+      "profile": "glm-flash-openrouter",
+      "state": "repair-tests-running",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/interaction-anr",
+      "owns": "wetland.rs wetland_state.rs detail/scene.rs; dedicated log",
+      "prior": "Opus w_c9034355 hit5h429; partial edits preserved and continued"
+    },
+    "detail_diagnostic": {
+      "worker": "w_d4faa874",
+      "profile": "deepseek-flash-direct",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "thinking": "max",
+      "state": "running",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/detail-android-convergence",
+      "owns": "detail_check.rs and dedicated log only"
+    },
+    "phone": "lead only, app stopped; all5 current saves restored to fresh pre-incident-test backups",
+    "scope": "functional ANR repair and existing Android diagnostic failure; no thermal campaign; independent reviews and combinedAPK acceptance next"
   }
 }

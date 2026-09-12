@@ -1,5 +1,28 @@
 # Current status
 
+## Reviewed PR delivery and functional follow-up — 2026-09-13
+
+PR36 merged at `7e88f31` and PR39 at `fc6212e`; all six checks passed for each.
+Owner-requested **GLM5.3 Flash** reviews completed (`w_46c2ce3f`, corrective
+`w_af5d3477`; streaming `w_8b9d64dd`). The full-GLM route was the owner's initial
+wording, then corrected to Flash; preserved partial reviews are not separate
+completed acceptances. Lighting report-write failure handling is fixed and the
+proxy caller contract clarified. Streaming's real upstream rejection path is
+fixed and independently reviewed. Physical evidence: lighting300presentations,
+repeat HOME/resume1/1; streaming36core tests on ARM64. One Android CI attempt
+failed during dependency resolution, then passed on retry; no checks bypassed.
+
+The owner interaction ANR is being repaired separately in `interaction-anr`:
+GLMFlash continues preserved Opus work after its5h rate limit. The narrow solution
+reuses per-revision scene bounds for action queries and removes unnecessary rays.
+The separate detail diagnostic failure at Android1440px is assigned to the newly
+owner-authorized direct DeepSeek route (`deepseek/deepseek-flash`, Pi displays
+V4.1 Flash, max verified); this is not the similarly named Go route.
+[Board](performance/board.json) records disjoint ownership and exact workers.
+Both follow-ups require review and functional Android acceptance before closure.
+All five current user JSON saves were restored and hash-verified after diagnostics.
+
+
 ## PR36/39 acceptance and interaction incident — 2026-09-12
 
 Main is `495d9f9` (PR37 streaming contract tests and PR38 detail diagnostic merged).
