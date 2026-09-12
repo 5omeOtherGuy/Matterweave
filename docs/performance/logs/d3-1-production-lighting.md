@@ -148,53 +148,163 @@ covered the geometry" into "the renderer checked that the proxy came from the sa
 pool and placements". The proxy must be built over a *coverage box*, which is chosen
 by the volume owner (the app), so this is a caller-visible contract either way.
 
+**Correction (review finding 3): `upload_reflection` does need a guard and an
+invalidation change.** The first revision of this log said it needed none, which
+left two holes: a unit-voxel pack (`source_mesh_digest() == None`) could be
+published while mesh-only geometry was resident, and a pack built for an older
+proxy stayed acceptable because the entry point only called `valid_for`, which does
+not check mesh identity. The proposed diff below closes both, mirroring
+`upload_indirect`'s guard and using the scene-aware validity check. It adds one
+parameter, so the two call sites in `apps/explorer/src/reflection_check.rs:283` and
+`crates/matterweave-render/examples/reflection_smoke.rs:139, 202, 221` pass the
+digest of the proxy they built for that volume's footprint (`None` when they build
+none).
+
+```diff
+--- a/crates/matterweave-render/src/lib.rs
++++ b/crates/matterweave-render/src/lib.rs
+@@ pub fn upload_reflection(
+-    /// The volume covers unit World voxels only: dynamic meshes, static instances
+-    /// and detail geometry are neither reflective nor reflected. Any later geometry
+-    /// upload or shadow-resource replacement disables reflection until republished.
++    /// The volume covers unit World voxels plus the mesh-only geometry of the
++    /// [`reflection::ReflectionVolume::pack_with_mesh`] proxy it was packed with.
++    /// `mesh_digest` is the identity of the proxy the caller built for this
++    /// volume's footprint, exactly as `source_epoch` identifies the World; a pack
++    /// whose proxy identity no longer matches is rejected, so moving a mesh-only
++    /// object cannot silently keep an old reflection. Any later geometry upload or
++    /// shadow-resource replacement disables reflection until republished.
+     pub fn upload_reflection(
+         &mut self,
+         volume: &reflection::ReflectionVolume,
+         world: &matterweave_core::World,
+         source_epoch: u64,
++        mesh_digest: Option<u64>,
+     ) -> Result<ReflectionUploadStats> {
+         self.disable_reflection();
+-        if !volume.valid_for(world, source_epoch) {
+-            return Err("Stale reflection source revision/epoch".into());
++        if !volume.valid_for_scene(world, source_epoch, mesh_digest) {
++            return Err("Stale reflection source revision/epoch or mesh placement".into());
++        }
++        if volume.source_mesh_digest().is_none()
++            && (self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
++                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry))
++        {
++            return Err("Reflection source does not cover mesh-only objects/instances".into());
+         }
+```
+
+The two guards are complementary, exactly as for `upload_indirect`: the first is a
+*correctness* check the renderer can make (the caller's current proxy identity
+against the pack's), the second is a *coverage* declaration it cannot verify
+against resident instances. Applying the digest parameter to `upload_indirect` too
+(`mesh_digest` compared with `volume.mesh_digest()`) is the same one-line check and
+would close the mirror-image hole there: today a volume whose proxy was never
+re-attached after a move still satisfies `source_valid` when the World revision is
+unchanged. Listed as an option, not part of the minimal diff above, because
+`upload_indirect` has no explicit mesh guard to correct.
+
 ### 5.2 `world.wgsl` + oracle — sub-cell mesh surfaces (reflection), not applied
 
-The shipped `specular_reflection` treats a solid start cell as self-intersection and
-returns a miss. That is exactly right for world voxels, whose *exposed* faces always
-have air in front, so the rule never fires for them. A mesh-only surface placed at
-fractional metres lies strictly inside a proxy cell: the mirror lookup finds the
-material (`reflection_mirror`), the grid carries it, but the reflected ray's first
-cell is the surface's own cell, so the fragment renders the background/fog target
-instead of the reflection (asserted in G1). Fixing it needs a one-branch shader
-change plus the matching oracle change, which is why both are proposed together;
-the CPU oracle at `reflection.rs` deliberately still mirrors the *shipped* shader.
+**Withdrawn and replaced (review finding 2).** The first revision proposed
+`!(iteration == 0u && cell == self_cell)`. That fix is unsound and must not be
+applied: it covers only the ray's *first* cell, so for a moved (sub-cell) mesh whose
+proxy marks several cells, the ray leaves its own first cell and enters a second
+cell of the same instance at `iteration == 1`, where the guard no longer applies.
+The result would be a false self-reflection at 0-1 cell distance, shaded with the
+object's own albedo. The shipped shader has no such artefact; its artefact is the
+opposite one (below), and a half-fix would trade a missing reflection for a wrong
+one.
+
+What the shipped shader does today (asserted in G1): `specular_reflection` treats a
+solid start cell as self-intersection and returns a miss. That is exactly right for
+world voxels, whose *exposed* faces always have air in front. A mesh-only surface at
+fractional metres lies strictly inside a proxy cell, so its reflected ray starts in
+that cell and terminates: the fragment renders `REFLECTION_BACKGROUND` (the fog
+target) instead of the scene. Grid-aligned mesh faces are unaffected and reflect
+correctly (C8). The artefact is therefore: *sub-cell mesh surfaces are reflective in
+the packed data and block/are hit by other reflections, but their own reflection
+shows background/fog rather than the scene.* No false geometry is shown.
+
+**Why it cannot be fixed correctly inside `world.wgsl` alone.** The guard has to
+skip the whole proxy footprint of the *originating instance*, not one cell, and the
+packed grid carries no instance identity: `reflection_materials[index]` is a
+material id shared by every instance of a prototype and by every object mapped to
+that material, so a material-level rule would also skip *other* objects that happen
+to share it. Applying a start-cell-only skip would introduce the false
+self-reflection above. The smallest correct fix adds per-cell instance identity to
+the data the shader already reads, which means the packer, the shader and the CPU
+oracle change together:
+
+1. `indirect.rs` — `MeshProxy` keeps a per-instance tag next to each cell
+   (1-based instance index, so it never collides with the authoritative world's 0):
+   `cells: Vec<(u32, u8, u32)>` plus `pub fn tagged_cells(&self) -> impl Iterator<Item = ([i32; 3], u8, u32)>`.
+2. `reflection.rs` — `pack_with_mesh` stops merging into a cloned `World` (so no
+   clone, no `World::set` rejection path, and the pack's own provenance matches the
+   authority again) and instead overlays the proxy into a local tagged grid:
+   `tagged: Option<Vec<u32>>` copied from `pack.materials()`, each proxy cell written
+   as `u32::from(material) | (tag << 8)`; `materials()` returns
+   `self.tagged.as_deref().unwrap_or(self.pack.materials())` and `material_at()`
+   masks with `& 0xFF`.
+3. `world.wgsl` — mask the material at both palette lookups
+   (`reflection_mirror` and the hit branch of `specular_reflection`) and replace the
+   start-cell rule with a same-tag run skip:
 
 ```diff
 --- a/crates/matterweave-render/src/world.wgsl
 +++ b/crates/matterweave-render/src/world.wgsl
-@@ fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) -> ReflectionSample
-     let origin = world_pos + normal * lighting.reflection_params.y;
-+    // The cell this fragment's surface belongs to, by the same rule
-+    // reflection_mirror uses. A mesh-only surface can lie strictly inside it.
-+    let self_cell = vec3<i32>(floor(world_pos - normal * lighting.reflection_params.y)
-+        - vec3<f32>(lighting.reflection_origin.xyz));
-     let lower = vec3<f32>(lighting.reflection_origin.xyz);
-@@ for (var iteration = 0u; iteration < bound; iteration = iteration + 1u) {
-         let material = reflection_materials[index];
--        if material != 0u {
+@@ fn reflection_mirror(world: vec3<f32>, normal: vec3<f32>) -> f32
+-    return reflection_palette[reflection_materials[index]].w;
++    // High bits carry the instance tag; only the low byte indexes the palette.
++    return reflection_palette[reflection_materials[index] & 0xFFu].w;
+@@ fn specular_reflection(...) -> ReflectionSample
++    // Instance tag of the surface being shaded, 0 for authoritative World voxels.
++    let self_tag = ... // reflection_materials[mirror_cell_index] >> 8u
+     for (var iteration = 0u; iteration < bound; iteration = iteration + 1u) {
+         if any(cell < vec3(0)) || any(cell >= vec3<i32>(dims)) { return out; }
+         let index = u32(cell.x) + dims.x * (u32(cell.y) + dims.y * u32(cell.z));
+-        let material = reflection_materials[index];
++        let tagged = reflection_materials[index];
++        let material = tagged & 0xFFu;
++        // A mesh-only surface can start strictly inside its own proxy cell. Skip
++        // the contiguous run of the originating instance's cells instead of
++        // either self-hitting them or terminating; the run ends at the first air
++        // cell, so a later, genuinely different part of the same object is still a
++        // hit. World voxels have tag 0, which never matches, so their path is
++        // unchanged (their exposed faces always have air in front).
++        if self_tag != 0u && tagged >> 8u == self_tag { continue; }
+         if material != 0u {
 -            // Self-intersection: a solid start cell is the surface being shaded.
 -            if iteration == 0u { return out; }
-+        // Self-intersection: the fragment's own cell is not a hit. Skipping it
-+        // instead of terminating lets a mesh-only surface reflect the scene;
-+        // world voxel faces always have air in front, so their rays never start
-+        // in a solid cell and this branch is unchanged for them.
-+        if material != 0u && !(iteration == 0u && cell == self_cell) {
++            if iteration == 0u { return out; }   // unchanged for world voxels
 ```
 
-Matching oracle change (same file set I own, to be applied *with* the shader, never
-alone): in `reflect_in_scene`, when the trace's first hit is the start cell at
-distance `0.` and `start == surface_cell(point, normal)`, advance the origin past
-that cell's exit plane (min over axes of `(boundary - origin) / direction`, then
-`+ 1e-6` along the direction) and re-trace the remaining distance, adding the
-advance to the reported distance. The 1e-6 is the oracle's stand-in for the
-shader's exact integer stepping; `reflection_validation.rs` compares GPU against
-this oracle, so the two must land in the same commit.
+Hmm — the `continue` above must still advance the DDA. In the shipped loop the
+advance is the code after the hit branch, so the applied version needs the skip as
+`if self_tag != 0u && tagged >> 8u == self_tag { } else if material != 0u { ... }`
+with the stepping code kept last; the exact restructuring is mechanical and must be
+written against the loop when applied. `continue` is spelled out here to state the
+rule, not as a literal hunk. The oracle applies the same rule: advance the ray
+origin past the contiguous same-tag run (min over axes of
+`(boundary - origin) / direction`, +1e-6 along the direction) and add the advance to
+the reported distance, before tracing the remaining distance with the authoritative
+DDA. `reflection_validation.rs` compares GPU against this oracle, so packer, shader
+and oracle must land in one commit.
 
-Estimated blast radius: one branch in the fragment shader, reachable only when a
-fragment's own cell is solid (mesh-only geometry, or a mesh fragment embedded in
-world voxels), plus the oracle. No uniform, binding, pipeline or registration
-change; `build.rs`/naga validates the WGSL in-tree.
+Verified vs argued: the rule's need is measured (G1, and the false-self-reflection
+case is the reason the first proposal is withdrawn); the tag plumbing is not
+implemented here and its cost is bounded but unmeasured (+4 bytes per cell only for
+mesh packs, `pack_with_mesh` becomes allocation-free in the derived-world sense).
+The change is confined to the specular path: the CPU indirect volume reads the proxy
+directly, has no self-intersection guard and needs no tag. **Do not apply the
+tagging without the shader mask**: an unmasked tagged value indexes the palette out
+of range.
+
+If the lead prefers not to add tags in this phase, the honest interim is to leave
+`world.wgsl` unchanged: sub-cell mesh surfaces show background/fog in their own
+reflection (stated artefact above) while everything else in this slice holds. The
+withdrawn one-branch guard is worse than both options.
 
 ### 5.3 `async_indirect.rs` — mesh participation on the async path (not applied)
 
@@ -242,11 +352,17 @@ result, a frame time or a visual claim.
    face has a sampled value. This matches the dispatch's separation between
    receiving and participating.
 3. **One-cell resolution, conservative rasterization.** The proxy marks the cells a
-   triangle's surface passes through, plus for degenerate axes the cell behind an
-   integer plane; a slanted triangle fills its AABB. So the proxy can be up to one
-   cell thicker than the source along an axis and, for slanted geometry, is an AABB
-   stand-in. Exact for axis-aligned faces on the world cell grid (asserted for the
-   unit cube = 1 cell and the two-voxel stack = exactly 2 cells).
+   triangle's surface actually intersects, using a separating-axis triangle/cell test
+   (see section 10.1; the first revision marked the triangle's whole AABB, which
+   turned slanted surfaces into solid volumes). Contacts count as intersections, so
+   a cell the surface only grazes at a corner is marked on purpose and rays cannot
+   slip through. A triangle that is flat in an axis additionally marks the cell on
+   the side it faces into when that plane is an integer boundary, which is the cell
+   `world.wgsl`'s mirror lookup reads. Exact for axis-aligned faces on the world
+   cell grid (asserted for the unit cube = 1 cell and the two-voxel stack = exactly
+   2 cells). A slanted surface is not an AABB stand-in; measured diagonal fixtures
+   mark 18–21 of the 64 cells of a 4³ box that the old rule filled completely,
+   with every sampled surface point still covered.
 4. **Coverage box is the caller's choice.** Geometry outside it does not
    participate; the indirect gather reaches up to `distance` beyond the volume, but
    the proxy itself is bounded by its own box. `IndirectVolume`'s exposure loop and
@@ -296,3 +412,111 @@ result, a frame time or a visual claim.
    and commit recorded; the indirect probe result is expected to be a wall/floor
    face losing red and gaining the object's albedo, and the mesh object's own side
    faces lit by the floor.
+
+## 10. Correction pass (independent review findings 1–4)
+
+Same branch, same owned paths, committed on top of the slice (`lib.rs` and the WGSL
+still untouched). The four findings were checked against this source before acting;
+all four were real.
+
+### 10.1 Slanted triangles filled their whole bounding box (finding 1, code)
+
+`MeshProxy::build` marked every cell in a triangle's AABB, because the per-axis range
+only collapsed when the triangle was exactly flat on that axis. A slanted triangle
+spans all three axes, so a 2D surface became a solid volume: false occlusion in the
+indirect volume and false reflection hits on exactly the wetland's dominant slanted
+geometry (flora, branches, foliage).
+
+Fixed by `Triangle::intersects_cell` (`indirect.rs`), the classic 13-axis
+separating-axis test between one triangle and one closed cell (three cell axes, the
+triangle normal, nine cell-axis × triangle-edge cross products), run per candidate
+cell inside the existing AABB range. `Triangle` is built once per triangle (origin,
+three edges, normal) and reused for every candidate. `MAX_MESH_PROXY_TESTS` now
+counts these real intersection tests, so the budget stays meaningful.
+
+Evidence (4³ coverage box, all fixtures fail on the previous commit by marking 64 of
+64 cells):
+
+| Fixture | Cells marked | Surface points covered |
+| --- | --- | --- |
+| Sheet in the plane `z = y` spanning the box | 21 of 64 (was 64) | all 153 sampled points marked (`c11`) |
+| Thin diagonal ribbon along `x = y = z` | 18 of 64 (was 64) | corner-touching cells are marked by design |
+| Axis-aligned unit cube (regression) | 1 (unchanged) | — |
+| Two-voxel stack (regression) | 2 (unchanged) | — |
+
+New tests, all passing: `c9_slanted_triangles_mark_only_cells_they_intersect`
+(fails on the pre-correction commit: `cell [0, 3, 0] is more than one cell from the
+z = y plane`, marked 3), `c10_proxy_triangle_budget_is_enforced` (17 box-spanning
+triangles exceed the budget with an explicit error; the same box with one triangle is
+accepted, so cost is bounded and memory stays box-bounded),
+`c11_slant_rasterization_covers_sampled_surface_points` (independent check in the
+other direction: sample the surface itself, require every sampled point's cell to be
+marked, so the intersection test cannot open a gap),
+`c12_degenerate_and_planar_triangles_stay_bounded` (zero-area triangle away from a
+boundary = exactly 1 cell; on a cell corner = at most 8; a quad flat in the integer
+plane `y = 2` marks the cell it faces into and nothing on the far side, for both
+winding directions).
+
+### 10.2 The proposed self-hit fix was unsound (finding 2, log)
+
+Corrected in place in section 5.2: the `!(iteration == 0u && cell == self_cell)`
+variant is withdrawn as unsound (it would introduce a false self-reflection at
+iteration ≥ 1 for a sub-cell mesh whose proxy spans several cells), the precise
+reason it cannot be fixed in `world.wgsl` alone is stated (the packed grid carries no
+instance identity; material ids are shared across instances and prototypes), and the
+smallest correct design is proposed instead: a per-cell instance tag in the high bits
+of the existing u32 grid (no new binding), masked at both palette lookups, with a
+contiguous same-tag run skip from the ray origin, applied atomically with the packer
+and the oracle. The shipped shader's actual artefact is stated exactly: sub-cell mesh
+surfaces show `REFLECTION_BACKGROUND`/fog in their own reflection (no false geometry),
+grid-aligned mesh faces reflect correctly, and the unrepaired case is preferred over
+the half-fix. The section also warns that tags must never reach an unmasked shader
+(they would index the palette out of range).
+
+### 10.3 `upload_reflection` invalidation (finding 3, log) — see section 5.1
+
+The claim that `upload_reflection` needed no change was wrong. The corrected
+proposal adds `mesh_digest: Option<u64>` to the entry point, checks the pack with
+`valid_for_scene`, and mirrors `upload_indirect`'s coverage guard
+(`source_mesh_digest().is_none()` while mesh-only geometry is resident → reject),
+listing the call sites that need the new argument. Still proposed, not applied.
+
+### 10.4 `MeshProxy::digest()` contract (finding 4, code)
+
+Documented on the method: the digest is taken from the rasterised cells, so it
+detects any change that moves a surface across a cell boundary and every edit that
+adds or removes a cell, but a sub-cell translation that keeps every triangle inside
+its current cells leaves it unchanged; the representation is identical there, so
+cached radiance stays valid for it. A caller that uses this three-line contract to
+skip a rebuild is skipping work for a scene that is unchanged at proxy resolution.
+
+### 10.5 Definition of done
+
+| Criterion | Verification | Result |
+| --- | --- | --- |
+| A slanted triangle marks only cells it actually intersects; untouched interior cells stay empty | `c9` (ran first against the pre-correction commit: FAIL, `cell [0, 3, 0]` marked; then PASS after the fix) | PASS |
+| Axis-aligned behaviour and every existing lighting test are unchanged | `cargo test -p matterweave-render --lib --locked` → 99 passed (95 before + 4 new); unit cube and two-voxel stack counts unchanged | PASS |
+| The triangle/cell test budget is still enforced; a degenerate mesh cannot exhaust memory or time | `c10` (explicit budget error), `c12` (degenerate triangles bounded at 1 and ≤ 8 cells), box caps and allocation checks unchanged in `c6` | PASS |
+| The self-hit guard covers the originating instance's whole proxy footprint, or the log states why it cannot and what the artefact is | section 5.2 (rewritten): tag design for the whole footprint, unsound variant withdrawn, artefact stated | PASS |
+| The proposed `upload_reflection` diff uses the scene-aware check and stays proposed | section 5.1 diff; `git diff --stat` shows no `lib.rs` change | PASS |
+| `MeshProxy::digest()` documents what it does not detect | doc comment on `MeshProxy::digest` | PASS |
+| `cargo test --workspace --locked` | run (10.6) | PASS |
+| `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | run (10.6) | PASS |
+| Correction accepted against the source rather than the summary | lead review and re-run | NOT RUN |
+| Android functional lighting run | device run | NOT RUN |
+
+### 10.6 Verification run (exact commands, correction commit)
+
+```
+cargo fmt --all -- --check          -> clean
+cargo clippy --workspace --all-targets --locked -- -D warnings
+                                    -> exit 0 (same pre-existing vendor/winit
+                                       warning, untouched)
+cargo test -p matterweave-render --lib --locked
+                                    -> 99 passed, 0 failed
+cargo test --workspace --locked     -> all suites ok, 0 failed, exit 0
+python3 tools/check_docs.py         -> PASS
+```
+`c9` was run before the fix and failed as quoted in 10.1, so the new test is
+demonstrably sensitive to the defect it covers. No GPU or Android step was executed
+from this session; nothing here is a device result.

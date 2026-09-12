@@ -206,7 +206,7 @@ fn scheduling_is_deterministic_and_does_not_edit_authority() {
 // ===========================================================================
 use crate::indirect::{MeshGeometry, MeshProxy};
 use crate::static_scene::StaticInstance;
-use matterweave_core::Mesh;
+use matterweave_core::{Mesh, Vertex};
 
 const PROBE_FLOOR: u8 = 1;
 const PROBE_WALL: u8 = 2;
@@ -630,4 +630,179 @@ fn c6_proxy_validates_inputs_and_keeps_the_world_authoritative() {
     assert_eq!(proxy.merge_into(&mut merged).unwrap(), 0);
     assert_eq!(merged.get([0, 0, 0]), PROBE_WALL);
     assert_eq!(proxy.merge_into(&mut World::new(0)).unwrap(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Slanted-geometry rasterization. A proxy must mark a cell only when the
+// triangle actually intersects it: filling the triangle's whole AABB turns a
+// 2D surface into a solid volume, which is false occlusion and false
+// reflection hits on exactly the slanted flora/branch geometry this engine
+// renders.
+// ---------------------------------------------------------------------------
+
+fn triangle_mesh(triangles: &[[[f32; 3]; 3]]) -> Mesh {
+    let mut mesh = Mesh::default();
+    for triangle in triangles {
+        let base = mesh.vertices.len() as u32;
+        for position in triangle {
+            mesh.vertices.push(Vertex {
+                position: *position,
+                normal: [0.; 3],
+                color: [1.; 3],
+            });
+        }
+        mesh.indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+    mesh
+}
+
+fn mesh_proxy_of(mesh: Mesh, origin: [i32; 3], dimensions: [u32; 3]) -> Result<MeshProxy, String> {
+    let meshes = [mesh];
+    let materials = [PROBE_OBJECT];
+    MeshProxy::build(
+        &MeshGeometry {
+            meshes: &meshes,
+            instances: &[StaticInstance {
+                prototype: 0,
+                translation: [0.; 3],
+                yaw_quarters: 0,
+            }],
+            materials: &materials,
+        },
+        origin,
+        dimensions,
+    )
+}
+
+fn triangle_proxy(
+    triangles: &[[[f32; 3]; 3]],
+    origin: [i32; 3],
+    dimensions: [u32; 3],
+) -> MeshProxy {
+    mesh_proxy_of(triangle_mesh(triangles), origin, dimensions).unwrap()
+}
+
+#[test]
+fn c9_slanted_triangles_mark_only_cells_they_intersect() {
+    // A sheet in the plane `z = y` spanning the whole 4x4x4 box. Its AABB is the
+    // box, but the surface only passes near the diagonal plane.
+    let sheet = [[[0.1, 0.1, 0.1], [3.9, 0.1, 0.1], [3.9, 3.9, 3.9]]];
+    let proxy = triangle_proxy(&sheet, [0; 3], [4; 3]);
+    for cell in [[0, 3, 0], [0, 0, 3], [3, 0, 3], [2, 3, 0]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            0,
+            "cell {cell:?} is more than one cell from the z = y plane"
+        );
+    }
+    for cell in [[0, 0, 0], [1, 1, 1], [3, 3, 3]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            PROBE_OBJECT,
+            "cell {cell:?} lies on the surface"
+        );
+    }
+    assert!(
+        proxy.occupied_cells() < 64,
+        "a slanted sheet must not fill its bounding box: {} of 64",
+        proxy.occupied_cells()
+    );
+    assert!(proxy.occupied_cells() >= 10, "the surface is still marked");
+    // A thin ribbon along the main diagonal: AABB is still the whole box.
+    let ribbon = [[[0.1, 0.1, 0.1], [3.9, 3.9, 3.9], [0.1, 0.4, 0.1]]];
+    let proxy = triangle_proxy(&ribbon, [0; 3], [4; 3]);
+    for cell in [[3, 3, 0], [0, 3, 0], [0, 0, 3], [3, 0, 3]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            0,
+            "cell {cell:?} is off the ribbon"
+        );
+    }
+    for cell in [[0, 0, 0], [2, 2, 2], [3, 3, 3]] {
+        assert_eq!(
+            proxy.material_at(cell),
+            PROBE_OBJECT,
+            "cell {cell:?} lies on the ribbon"
+        );
+    }
+    assert!(
+        proxy.occupied_cells() < 32,
+        "a thin diagonal ribbon must stay thin: {} of 64 (the AABB fill marks all 64; \
+         the remainder count here includes cells the closed test touches at a room \
+         corner, which are marked on purpose so no ray can slip through)",
+        proxy.occupied_cells()
+    );
+}
+
+#[test]
+fn c10_proxy_triangle_budget_is_enforced() {
+    // Each of these triangles spans the whole 64^3 coverage box, so candidates
+    // alone exceed MAX_MESH_PROXY_TESTS before the box could be filled.
+    let wide = [[0.0, 0.0, 0.0], [64.0, 0.0, 0.0], [0.0, 64.0, 64.0]];
+    let error = match mesh_proxy_of(triangle_mesh(&vec![wide; 17]), [0; 3], [64; 3]) {
+        Ok(_) => panic!("the triangle/cell test budget must bound the build"),
+        Err(error) => error,
+    };
+    assert!(error.contains("budget"), "unexpected error: {error}");
+    // Cost, not memory, is the unbounded input: the same box with one triangle
+    // is accepted and stays box-bounded.
+    let proxy = triangle_proxy(&[wide], [0; 3], [64; 3]);
+    assert!(proxy.occupied_cells() > 0 && proxy.occupied_cells() <= 64 * 64 * 64);
+}
+
+#[test]
+fn c11_slant_rasterization_covers_sampled_surface_points() {
+    // Independent check in the other direction: sample the surface itself and
+    // require every sampled point's cell to be marked, so a ray crossing the
+    // proxy surface cannot slip through a gap the intersection test created.
+    let sheet = [[[0.1, 0.1, 0.1], [3.9, 0.1, 0.1], [3.9, 3.9, 3.9]]];
+    let proxy = triangle_proxy(&sheet, [0; 3], [4; 3]);
+    let [a, b, c] = sheet[0];
+    for i in 0..=16u32 {
+        for j in 0..=(16 - i) {
+            let u = i as f32 / 16.;
+            let v = j as f32 / 16.;
+            let w = 1. - u - v;
+            let point: [f32; 3] =
+                std::array::from_fn(|axis| a[axis] * u + b[axis] * v + c[axis] * w);
+            let cell = point.map(|value| value.floor() as i32);
+            assert_eq!(
+                proxy.material_at(cell),
+                PROBE_OBJECT,
+                "surface point {point:?} in cell {cell:?} is unmarked"
+            );
+        }
+    }
+}
+
+#[test]
+fn c12_degenerate_and_planar_triangles_stay_bounded() {
+    // Zero area away from a boundary: exactly its own cell.
+    let dot = [[[1.5, 1.5, 1.5]; 3]];
+    let proxy = triangle_proxy(&dot, [0; 3], [4; 3]);
+    assert_eq!(proxy.occupied_cells(), 1);
+    assert_eq!(proxy.material_at([1, 1, 1]), PROBE_OBJECT);
+    // Zero area exactly on a cell corner has no orientation, so it keeps both
+    // sides of each integer plane: bounded by eight cells, never the whole box.
+    let corner = [[[1.0, 1.0, 1.0]; 3]];
+    let proxy = triangle_proxy(&corner, [0; 3], [4; 3]);
+    assert!(
+        (1..=8).contains(&proxy.occupied_cells()),
+        "degenerate corner marked {} cells",
+        proxy.occupied_cells()
+    );
+    // A quad lying exactly in the integer plane y = 2 and facing +Y: the mirror
+    // lookup for such a fragment reads the cell below the plane, and nothing
+    // above it may be marked.
+    let quad = [[[0.1, 2.0, 0.1], [1.9, 2.0, 1.9], [1.9, 2.0, 0.1]]];
+    let proxy = triangle_proxy(&quad, [0; 3], [4; 3]);
+    assert_eq!(proxy.material_at([0, 1, 0]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([1, 1, 1]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([0, 2, 0]), 0, "nothing above a +Y face");
+    assert_eq!(proxy.material_at([1, 2, 1]), 0, "nothing above a +Y face");
+    // The same quad wound the other way faces -Y and flips to the cell above.
+    let flipped = [[[0.1, 2.0, 0.1], [1.9, 2.0, 0.1], [1.9, 2.0, 1.9]]];
+    let proxy = triangle_proxy(&flipped, [0; 3], [4; 3]);
+    assert_eq!(proxy.material_at([0, 2, 0]), PROBE_OBJECT);
+    assert_eq!(proxy.material_at([0, 1, 0]), 0, "nothing below a -Y face");
 }

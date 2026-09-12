@@ -270,13 +270,14 @@ impl MeshProxy {
                         upper[axis] = upper[axis].max(world);
                     }
                 }
-                // The cell a surface point `p` belongs to is `floor(p - n * eps)`,
-                // the same rule world.wgsl uses for its mirror lookup. An axis the
-                // surface spans marks every cell that holds an interior point of
-                // the triangle (`floor(min)..=ceil(max) - 1`), and an axis the
-                // surface lies in exactly marks the plane's cell, or the cell the
-                // surface faces into when that plane is an integer boundary.
-                let normal = triangle_normal(&points);
+                // Candidate cells for this triangle: its closed world AABB range.
+                // That is a superset, so every cell the surface passes through is
+                // tested, and the degenerate-axis rule below picks the exact cell
+                // world.wgsl's mirror lookup uses (`floor(p - n * eps)`) when the
+                // surface lies in a plane, including the cell it faces into when
+                // that plane is an integer boundary.
+                let triangle = Triangle::new(&points);
+                let normal = triangle.normal;
                 let mut first = [0i32; 3];
                 let mut last = [0i32; 3];
                 let mut clipped = false;
@@ -314,6 +315,10 @@ impl MeshProxy {
                                 return Err(
                                     "Mesh proxy exceeds the triangle/cell test budget".into()
                                 );
+                            }
+                            let cell = [x, y, z];
+                            if !triangle.intersects_cell(cell) {
+                                continue;
                             }
                             let local = (x - origin[0]) as usize
                                 + dimensions[0] as usize
@@ -360,7 +365,16 @@ impl MeshProxy {
         self.cells.len()
     }
     /// Identity of the marked cells in this coverage box; part of every consumer's
-    /// cache key, so moving or editing the mesh geometry invalidates cached output.
+    /// cache key, so a moved or edited mesh object invalidates cached output.
+    ///
+    /// It is the [`footprint_digest`] of the rasterised cells, not of the source
+    /// mesh: it detects any change that moves a surface across a cell boundary and
+    /// every edit that adds or removes a cell, but a sub-cell translation that keeps
+    /// every triangle inside the cells it already occupied leaves it unchanged. A
+    /// caller using this identity to decide whether to rebuild will skip such a
+    /// move; that is inherent to a one-cell-resolution proxy and is not a defect,
+    /// because the representation is identical there and cached radiance for it
+    /// stays valid.
     pub fn digest(&self) -> u64 {
         self.digest
     }
@@ -466,15 +480,84 @@ impl MeshProxy {
     }
 }
 
-/// Unnormalized cross product of a triangle's edges, used only for the sign that
-/// decides which side of an integer cell boundary the surface faces into.
-fn triangle_normal(points: &[[f32; 3]; 3]) -> [f32; 3] {
-    let [a, b, c] = *points;
-    std::array::from_fn(|axis| {
-        let next = (axis + 1) % 3;
-        let last = (axis + 2) % 3;
-        (b[next] - a[next]) * (c[last] - a[last]) - (b[last] - a[last]) * (c[next] - a[next])
-    })
+/// One triangle of a placed mesh in world space, in the form the cell test needs:
+/// computed once per triangle, then reused for every candidate cell.
+pub(crate) struct Triangle {
+    origin: Vec3,
+    edges: [Vec3; 3],
+    normal: Vec3,
+}
+
+impl Triangle {
+    pub(crate) fn new(points: &[[f32; 3]; 3]) -> Self {
+        let origin = Vec3::from_array(points[0]);
+        let first = Vec3::from_array(points[1]) - origin;
+        let second = Vec3::from_array(points[2]) - origin;
+        Self {
+            origin,
+            edges: [first, second, second - first],
+            normal: first.cross(second),
+        }
+    }
+
+    /// Separating-axis test between this triangle and one closed unit cell: the
+    /// classic 13 axes (three cell axes, the triangle normal, and the nine
+    /// cell-axis × triangle-edge cross products). Any axis that separates the two
+    /// convex hulls proves they do not intersect, so a slanted triangle marks only
+    /// the cells it really passes through instead of its whole bounding box.
+    ///
+    /// Contacts count as intersections, which keeps the proxy conservative: a cell
+    /// the surface merely grazes is still marked, never a miss. A degenerate
+    /// (zero-area) triangle reduces to a segment or point and the same axes still
+    /// separate it, with a zero radius on the axes it has collapsed away.
+    pub(crate) fn intersects_cell(&self, cell: [i32; 3]) -> bool {
+        let half = Vec3::splat(0.5);
+        let center = Vec3::new(
+            cell[0] as f32 + 0.5,
+            cell[1] as f32 + 0.5,
+            cell[2] as f32 + 0.5,
+        );
+        let corner = self.origin - center;
+        let corners = [corner, corner + self.edges[0], corner + self.edges[1]];
+        for axis in 0..3 {
+            let (min, max) = min_max([corners[0][axis], corners[1][axis], corners[2][axis]]);
+            if min > half[axis] || max < -half[axis] {
+                return false;
+            }
+        }
+        let distance = self.normal.dot(corner);
+        if distance.abs() > half.dot(self.normal.abs()) {
+            return false;
+        }
+        for edge in self.edges {
+            for box_axis in 0..3 {
+                // Cell axis × triangle edge; signs are irrelevant because both
+                // ends of the projected interval are compared below.
+                let axis = match box_axis {
+                    0 => Vec3::new(0., -edge.z, edge.y),
+                    1 => Vec3::new(edge.z, 0., -edge.x),
+                    _ => Vec3::new(-edge.y, edge.x, 0.),
+                };
+                let (min, max) = min_max([
+                    axis.dot(corners[0]),
+                    axis.dot(corners[1]),
+                    axis.dot(corners[2]),
+                ]);
+                let radius = half.dot(axis.abs());
+                if min > radius || max < -radius {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+fn min_max(values: [f32; 3]) -> (f32, f32) {
+    (
+        values[0].min(values[1]).min(values[2]),
+        values[0].max(values[1]).max(values[2]),
+    )
 }
 
 fn local_cell(origin: [i32; 3], dimensions: [u32; 3], index: u32) -> [i32; 3] {
