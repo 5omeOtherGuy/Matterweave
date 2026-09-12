@@ -393,3 +393,19 @@ host path.
   coarse pairs at the declared 480 host / 1080 Android viewport heights; the
   unit test pins the 1080 case. An unusual runtime window height could reduce
   the pair count and fail the phase explicitly (never silently pass).
+
+## Corrective acceptance and batched device gate — 2026-09-12
+
+Gemini w_d124c729 independently reviewed frozen05549eb against d8a5cde,
+including production packing and lifecycle callsites, and returned no concrete
+findings. Lead inspected the packed-instance validator and one-shot phase state
+and accepts this diagnostic/test change for host delivery. The implementation
+worker reported 20 focused tests, 158 app tests (1 existing ignored), scoped
+Clippy/fmt/docs and all14 host Vulkan phases passing; see the preceding log.
+
+Main was merged after corrective review. The default playable paths and detail
+quality guards are unchanged. The owner now requests fewer intermediate live
+tests: Android acceptance of this opt-in diagnostic is deferred to the next
+combined integration build, not silently treated as passed. A frozen05549eb APK
+built on the recovered SDK but was NOT installed. D1/M2 remains open until the
+relevant device/transition gates pass.
