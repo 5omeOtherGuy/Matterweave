@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "run": "engine-completion-20260912",
+  "run": "engine-completion-plan-v2-20260912",
   "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
-  "base": "704bb4a",
+  "base": "01ab450",
   "phone_owner": "Current Codex orchestrator; OnePlus 13 192.168.178.93:5555. No worker device access; serialize builds and captures.",
   "tasks": {
     "P00-handoff": {
@@ -586,6 +586,65 @@
       ],
       "acceptance": "Independent Muse/Gemini final reviews at e436634: no findings. Lead251Python testsPASS. Source accepted; current-build ON/OFF physical collection NOT RUN; phone keyguard requires unlock.",
       "artifact": "e436634"
+    },
+    "plan-v2-deepseek": {
+      "attempt": 1,
+      "owner": "w_4261e42d",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "docs/ENGINE_COMPLETION_PLAN.md",
+      "run_root": "/mnt/bench/matterweave-dev/completion-plan-v2",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-render-review": {
+      "attempt": 1,
+      "owner": "w_2c88a12a",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "read-only renderer M2/M4",
+      "run_root": "/mnt/bench/matterweave-dev/completion-plan-v2",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-core-review": {
+      "attempt": 1,
+      "owner": "w_e8626b9a",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "read-only core M3/M6",
+      "run_root": "/mnt/bench/matterweave-dev/completion-plan-v2",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-measure-review": {
+      "attempt": 1,
+      "owner": "w_cb27157d",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "read-only Android functional gates",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-detail-review": {
+      "attempt": 1,
+      "owner": "w_2bd4058b",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "read-only detail transitions",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-services-review": {
+      "attempt": 1,
+      "owner": "w_08f50c2d",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "read-only audio/sample integration",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
+    },
+    "plan-v2-physics-review": {
+      "attempt": 1,
+      "owner": "w_2adc56c0",
+      "state": "accepted",
+      "base": "01ab450",
+      "scope": "read-only destruction/persistence",
+      "acceptance": "Plan/review artifact only; no engine gate closed. See reviews/completion-plan-v2-initial.md and completion-plan-v2-workers.json."
     }
   },
   "capacity": {
@@ -606,5 +665,6 @@
     "active_workers_before_dispatch": 0,
     "preserved": "Existing completion-plan/handoff changes and completed audio-suspend-fix diff retained. Historical entries below are historical evidence, not live reservations.",
     "routing": "Router consulted; no category has two supported arms. Preferred free Muse for bounded test; Opus medium for measurement contract; GLM high for bounded audio recovery. Collect independent acceptance evidence; do not interpret cross-category DeepSeek ranking as established superiority."
-  }
+  },
+  "routing_policy": "Owner 2026-09-12: DeepSeek V4.1 Flash primary Pi worker; Gemini initial independent review waves; Opus only justified escalation. Never delegate Astra. Technical development and functional Android acceptance first; E2/M5 measurement and optimization deferred by owner until technical completion."
 }

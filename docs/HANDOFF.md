@@ -46,12 +46,14 @@ Use the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) for th
 next dispatch order and M2–M6 closure gates. Reconcile historical ownership before
 starting workers. Preserve the existing device-playable Voxel Relay sample; repair
 the remaining engine acceptance gates.
-PR #19 contains the current first wave on `codex/engine-completion-wave1-20260912`.
-E1 collision is accepted with final 11-test ARM64 runs passing three times. The
-collector now supports the current generator with 251 host tool tests passing;
-corrective reviews pass; physical ON/OFF qualification remains open. The connected
-OnePlus 13 currently has keyguard showing; graphics collection requires physical
-unlock. Do not confuse the successfully installed APK with a graphics test.
+PR #21 is merged; the reconciled starting point is `main = origin/main = 01ab450`,
+with a clean checkout, no open PRs and no live Pi workers before this planning wave.
+E0 and E1 are closed: audio passes 3 × 10 physical cycles; detail cadence passes
+30 pinned suites without failures. Audibility and E7 integration remain open.
+The owner confirms sufficient battery and prioritizes technical development and
+functional Android acceptance now. E2 overhead/noise and M5 thermal/performance
+optimization follow technical completion; they do not block implementation.
+Deferred measurement gates remain open, not passed.
 
 Continue the engine-completion campaign in [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)
 and its [task list](PERFORMANCE_TASKS.md): advance renderer, physics, streaming,
@@ -62,14 +64,14 @@ Lumen-like indirect lighting/reflections, sustained efficiency and thermal
 acceptance, streaming completion and the remaining M6 shared-service gates; [STATUS.md](STATUS.md)
 records which gates remain.
 
-The owner requires extensive use of all six model families (see the roster in
-[PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)) for bounded parallel implementation and
-review, with independent Muse/Gemini reviews before the lead's review, testable
-worker definitions of done and engineering-log handoffs; the owner has explicitly
-overridden conservative-delegation guidance. This direction supersedes earlier
-showcase-campaign ordering. Do not repeat the requirements interview or delegate
-another plan-writing round in place of code; the plan exists. The lead retains
-ownership, integration and verification.
+The owner's latest routing instruction supersedes the historical six-family roster:
+use supervised DeepSeek V4.1 Flash workers for implementation and planning, extensive
+bounded Gemini initial reviews, and Opus only for a concrete escalation. Never
+spawn or resume Astra as a worker, reviewer, consultant or delegated lead. The
+existing lead owns integration and acceptance. Limit concurrency to three workers;
+use independent review scopes and verify candidate findings before acting on them.
+The updated completion plan supplies the next dispatch contracts; E3 fixtures,
+E4 correctness and E7 reuse work can proceed while device measurements are blocked.
 
 [SHOWCASE.md](SHOWCASE.md)'s dense alien fungal wetland is a mandatory workload, not
 optional content, and is the validation workload for engine work. Further demo-save

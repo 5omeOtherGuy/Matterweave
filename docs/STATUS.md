@@ -2,6 +2,28 @@
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
+## Current reconciliation and completion plan — after PR #21
+
+The planning baseline is `main = origin/main = 01ab450` (PR #21 merged), clean
+checkout and no open PRs or live Pi workers at reconciliation on 2026-09-12.
+E0 and E1 are closed: real AAudio 3/3 × 10 cycles at `a612f20`; detail-cadence
+0 failures in 30 pinned suite runs, delivered by PR #21. Historical wave-1 branch
+and routing descriptions below describe past attempts, not current assignments.
+
+The owner requested a complete M0–M6 orchestration plan. Its updated
+[execution contracts](ENGINE_COMPLETION_PLAN.md) retain M2–M6 as open and separate
+phone-dependent acceptance from implementable fixtures, correctness and reuse work.
+No engine or performance gate is closed by this documentation change. E2 remains
+NOT RUN; the P02 thermal regression and human audibility remain open. The owner
+subsequently confirmed sufficient battery and directed technical implementation
+and functional Android acceptance first. E2 qualification, thermal campaigns and
+performance optimization follow technical completion, with the original measured
+M5 acceptance explicitly deferred. No new battery reading or device test is claimed.
+
+Current routing: DeepSeek V4.1 Flash primary workers, independent Gemini initial
+review waves, Opus only for justified escalation, no delegated Astra at any effort.
+The [board](performance/board.json) owns current assignments.
+
 ## Completion execution — wave 1
 
 Current integration branch: `codex/engine-completion-wave1-20260912`, [PR #19](https://github.com/5omeOtherGuy/Matterweave/pull/19).
@@ -467,7 +489,7 @@ Planning and documentation reconciliation do not close any engine gate.
    before dispatch; older branch assignments above are not a live ownership claim.
 2. Both correctness items in this group are closed: the real-AAudio suspend failure is
    fixed (PR #19) and re-verified on the phone, 3 of 3 runs, and the detail-cadence
-   observation race is fixed (PR #19) and re-verified under single-CPU pinning, 0
+   observation race is fixed (PR #21) and re-verified under single-CPU pinning, 0
    failures in 30 suite runs. Qualifying mobile capture overhead and repeatability is
    the remaining work in this item.
 3. Complete equivalent-quality ray/mesh/hybrid device comparison and primary-path
