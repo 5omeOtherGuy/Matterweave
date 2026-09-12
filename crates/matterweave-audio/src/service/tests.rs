@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicUsize;
 
 mod device_errors;
 mod lifetime;
+mod pcm_boundary;
 
 // Existing backend trait supplies all required operations. Only the private
 // recreation opener needs injection; no global fault state or gameplay API.
