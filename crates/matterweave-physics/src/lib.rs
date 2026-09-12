@@ -848,11 +848,11 @@ impl Physics {
     /// Energy: each child receives the parent rigid-body point velocity
     /// `v + omega x offset` (rigid decomposition preserves angular velocity; that is a
     /// kinematic fact, not a conservation claim) plus an intentional outward radial
-    /// velocity of `FRACTURE_RADIAL_RATE` times the offset. That radial term is the only
-    /// energy a fracture adds: half the piece mass times the squared radial speed, which
-    /// is at most 1.95 m/s of extra speed for a unit voxel and about 8.6 J in total for
-    /// the largest supported body ([6, 2, 2]). It deliberately separates the pieces;
-    /// deleting it would silently change fracture behaviour, not fix a bug.
+    /// velocity of `FRACTURE_RADIAL_RATE` times the offset. Before the speed clamp,
+    /// the radial term adds the sum of half each piece's mass times its squared
+    /// radial speed; the total depends on the validated dimensions. The subsequent
+    /// speed clamp may remove energy. The radial term deliberately separates the
+    /// pieces; deleting it would change fracture behaviour.
     ///
     /// Bounds: one call creates at most MAX_FRACTURE_PIECES bodies, and fracture is
     /// synchronous with no queue or staging buffer. The MAX_BODIES cap is checked
