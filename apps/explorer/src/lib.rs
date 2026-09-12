@@ -1,4 +1,5 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
+mod audio_service;
 mod controls;
 mod detail_check;
 mod dynamic_upload;

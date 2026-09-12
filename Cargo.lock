@@ -960,6 +960,7 @@ dependencies = [
  "glam 0.30.9",
  "libc",
  "log",
+ "matterweave-audio",
  "matterweave-core",
  "matterweave-detail",
  "matterweave-pacing",
