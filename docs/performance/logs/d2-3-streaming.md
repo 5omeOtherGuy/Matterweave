@@ -375,3 +375,18 @@ Repair follow-up raw logs (sibling of the repository, never `/mnt/bench`):
 2. Optional: `crates/matterweave-core/examples/stream_stress.rs` inlines its own bound
    comparisons and could call `AsyncStats::within_bounds()`; not in this slice's owned
    paths.
+
+## Corrective review and lead acceptance — 2026-09-12
+
+Gemini w_d124c729 independently reviewed f63055b against 5e5c290 and returned
+no concrete findings. Lead inspected the real mesh byte-admission discriminator,
+strict stale rejection and corrected scope statements. The test/documentation
+slice is accepted for host delivery; it changes no production request/poll/job
+rejection behavior. Worker scoped core tests and strict Clippy/fmt passed, including
+a mutation probe that fails when the actual byte-admission clause is removed.
+
+This is NOT closure of D2.3: continuous-edit application progress and integrated
+Android streaming/collision acceptance remain open. A separate implementation
+worker owns the actual progress fix. Per owner instruction, device checks will be
+batched on the combined behavioral change rather than repeated for this host-only
+contract test/documentation slice.
