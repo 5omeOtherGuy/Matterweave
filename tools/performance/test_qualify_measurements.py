@@ -137,6 +137,21 @@ class ArithmeticTests(unittest.TestCase):
         self.assertEqual((pair["on"], pair["off"]), ("on-02", "off-01"))
         self.assertAlmostEqual(pair["on_vs_off_absolute"]["mean_ms"], 2.0)
 
+    def test_counterbalanced_pair_order_preserves_chronology_and_sign(self):
+        doc = document()
+        # ON/OFF, OFF/ON, ON/OFF balances run-order effects. Identical
+        # states at a pair boundary are not two measurements in one pair.
+        doc["runs"][2], doc["runs"][3] = doc["runs"][3], doc["runs"][2]
+        report = qualify_document(doc)
+        self.assertEqual([entry["name"] for entry in report["runs"]],
+                         [entry["name"] for entry in doc["runs"]])
+        pairs = report["capture_overhead"]["pairs"]
+        self.assertEqual([(p["on"], p["off"]) for p in pairs],
+                         [("on-01", "off-01"), ("on-02", "off-02"),
+                          ("on-03", "off-03")])
+        self.assertEqual([p["on_vs_off_absolute"]["mean_ms"] for p in pairs],
+                         [1.0, 2.0, 1.0])
+
 
 class HistoricalEvidenceTests(unittest.TestCase):
     """REAL executed data: reuse the 2026-09-08 contract, do not redo the run."""

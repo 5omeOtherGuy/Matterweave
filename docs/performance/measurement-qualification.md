@@ -170,7 +170,7 @@ report when any of the following holds.
 - Live power, a nonzero thermal status, an unobserved thermal state, missing
   observations or unsupported gaps.
 - A capture-derived or non-independent timing source.
-- An undeclared capture state, a non-alternating run order, an odd number of
+- An undeclared capture state, a pair containing the same state twice, an odd number of
   runs, fewer than `--min-pairs` (default 3) alternating pairs, a run with
   fewer than `--min-samples` (default 1000) intervals, duplicate run names, or
   an empty `runs` list (reported as NOT RUN, nothing to qualify).
@@ -179,7 +179,9 @@ report when any of the following holds.
 
 The defaults follow the protocol already in
 [BENCHMARKS](../BENCHMARKS.md#comparison-procedure) — at least three repeatable
-passes with alternated order. `--min-samples 1000` is roughly 17 s of 60 Hz
+passes with alternated order. Each chronological pair contains one ON and one OFF
+run; reversing the order between pairs is allowed and preserves counterbalancing.
+Measured runs are never sorted to satisfy the validator. `--min-samples 1000` is roughly 17 s of 60 Hz
 intervals; the executed 2026-09-08 runs recorded about 5500 over a 120 s window.
 
 ## Running it

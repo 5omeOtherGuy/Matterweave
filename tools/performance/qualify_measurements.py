@@ -424,22 +424,24 @@ def _check_matching(runs, build, conditions):
 
 
 def _sequence(runs, min_pairs):
-    """Require strictly alternating on/off repeats in recorded run order."""
+    """Require opposite capture states within each chronological pair.
+
+    Pair order may reverse to counterbalance drift (ON/OFF, OFF/ON, ON/OFF).
+    Never reorder measured runs or require opposite states across pair boundaries.
+    """
     names = [run["name"] for run in runs]
     if len(set(names)) != len(names):
         raise QualificationError("run names must be unique")
-    states = [run["profiling"] for run in runs]
     if len(runs) % 2 != 0:
         raise QualificationError(
             "an alternating comparison needs complete pairs; got %d run(s)"
             % len(runs))
-    for position in range(1, len(states)):
-        if states[position] == states[position - 1]:
-            raise QualificationError(
-                "capture states must alternate in run order; %r and %r are "
-                "both %r" % (runs[position - 1]["name"], runs[position]["name"],
-                             states[position]))
     pairs = list(zip(runs[0::2], runs[1::2]))
+    for first, second in pairs:
+        if first["profiling"] == second["profiling"]:
+            raise QualificationError(
+                "capture states must alternate within each pair; %r and %r are "
+                "both %r" % (first["name"], second["name"], first["profiling"]))
     if len(pairs) < min_pairs:
         raise QualificationError(
             "%d alternating pair(s) is below the required %d"
