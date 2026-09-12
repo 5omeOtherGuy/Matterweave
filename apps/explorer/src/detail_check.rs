@@ -57,10 +57,33 @@ use winit::{
 /// The derived levels the diagnostic treats as resident candidates.
 const LODS: [Lod; 3] = RESIDENT_LODS;
 
-/// Per-prepare cap on newly realized coarse levels, mirrored from the wetland
+/// Per-prepare cap on newly realized coarse levels declared by the wetland
 /// production policy (`MAX_COARSE_BUILDS_PER_PREPARE`). Kept local on purpose:
-/// the diagnostic must not import private production wiring.
+/// the diagnostic must not import private production wiring, and the cold
+/// phase's own declared bound is documented against it.
 const MAX_COARSE_BUILDS_PER_PREPARE: usize = 2;
+
+/// Coarse-build bound the diagnostic's cold phase declares for its bounded
+/// convergence proof: deliberately one, below the production maximum above.
+///
+/// The proof needs the first prepare to defer at least one eligible coarse
+/// `(prototype, Lod)` pair, and the cap counts distinct newly built pairs, so it
+/// must stay below the number of pairs the live viewport selects. At the
+/// physical Android viewport (1440 px) only two pairs clear the default pixel
+/// budget (`boulder` `Quarter`, `dense_control` `Quarter`), so the production
+/// cap of two realizes both in the first prepare and the deferral proof
+/// disappears silently. A bound tighter than production still exercises the
+/// production lazy path (selection, fallback, later realization) and proves the
+/// cap is honored; it relaxes no quality guard and does not fix the viewport.
+/// Raise it only alongside a fixture that selects more pairs at every supported
+/// viewport; `cold_lazy_convergence_defers_at_android_and_host_viewports` fails
+/// loudly when the declared cap cannot defer.
+const COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE: usize = 1;
+
+/// The cold-phase bound is only a proof of the production path while it stays
+/// below the production maximum it is compared against.
+const _: () = assert!(COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE < MAX_COARSE_BUILDS_PER_PREPARE);
+
 /// Hard bound on stationary convergence prepares, so a defective policy can
 /// never hang the gate. Production stops repeating once a repeat stops shrinking
 /// the deferred set; this only caps runaway behavior.
@@ -481,10 +504,12 @@ pub fn phases() -> Vec<PhasePlan> {
         vertical_fov_rad: FOV,
     };
     vec![
-        // Cold resident pool (Source only) plus the production coarse build
-        // cap: the first prepare realizes at most the declared bound and defers
-        // the rest; identical stationary prepares converge to zero deferred and
-        // a zero-build steady state.
+        // Cold resident pool (Source only) plus the diagnostic's declared coarse
+        // build bound (one per prepare, below the production maximum): the first
+        // prepare realizes at most that bound and defers the rest; identical
+        // stationary prepares converge to zero deferred and a zero-build steady
+        // state. The bound is explicit because the physical Android viewport
+        // selects fewer distinct coarse pairs than the host window.
         PhasePlan {
             converge: true,
             ..plan(
@@ -493,7 +518,7 @@ pub fn phases() -> Vec<PhasePlan> {
                 origin,
                 perspective,
                 LodConfig {
-                    max_coarse_builds: Some(MAX_COARSE_BUILDS_PER_PREPARE),
+                    max_coarse_builds: Some(COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE),
                     ..default
                 },
             )
@@ -1652,7 +1677,7 @@ impl ApplicationHandler for DetailCheck {
                         self.lods_seen.iter().map(|l| format!("{l:?}")).collect();
                     self.record(format!(
                         "PASS detail: {} phases over a controlled fixture plus {} exported production flora species; \
-                         bounded lazy convergence (cap {}) realized eligible dense geometry while every flora instance \
+                         bounded lazy convergence (declared cold-phase cap {}, below the production maximum {}) realized eligible dense geometry while every flora instance \
                          stayed at Source under the default guards (guarded despite a passing pixel budget where reported); \
                          occlusion view layered guarded thin flora in front of a realized coarse solid; instance move updated \
                          placements without a geometry rebuild, the moved-instance edit invalidated and refreshed its derived \
@@ -1661,6 +1686,7 @@ impl ApplicationHandler for DetailCheck {
                          budget, zero extent and lifecycle recreation verified (cold-cache cap fallback: unit test only)",
                         self.plans.len(),
                         FLORA_INSTANCES.len(),
+                        COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE,
                         MAX_COARSE_BUILDS_PER_PREPARE,
                         seen.join("/"),
                     ));
@@ -2209,7 +2235,8 @@ mod tests {
             .config
             .max_coarse_builds
             .expect("convergence declares a cap");
-        assert_eq!(cap, MAX_COARSE_BUILDS_PER_PREPARE);
+        assert_eq!(cap, COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE);
+        assert!(cap < MAX_COARSE_BUILDS_PER_PREPARE);
 
         let mut scene = fixture_scene();
         let mut runtime = DetailRuntime::new();
@@ -2265,6 +2292,129 @@ mod tests {
         assert!(
             converge_bounded(&mut runtime, &mut scene, &camera, &plan.config, true).is_err(),
             "a fully resident view must fail the lazy-path-deferral guard"
+        );
+    }
+
+    /// Render viewport heights the cold-phase convergence proof must hold at:
+    /// the physical Android device viewport first (the binding case), then the
+    /// host/portrait controls. Never a substitute for the live window height.
+    const COLD_PHASE_VIEWPORTS_PX: [f32; 4] = [1440.0, 1080.0, 720.0, 480.0];
+
+    /// The bounded-convergence phase must exercise the lazy path at every
+    /// supported render viewport, not only the host window. The physical Android
+    /// viewport (1440 px) is the binding case: the default pixel budget admits
+    /// fewer distinct coarse `(prototype, Lod)` pairs there than at 480/720/1080
+    /// px, so the declared per-prepare cap must stay below that count or the
+    /// first prepare realizes every eligible pair and the deferral proof
+    /// silently disappears.
+    #[test]
+    fn cold_lazy_convergence_defers_at_android_and_host_viewports() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let plan = phase("cold-far-bounded-convergence");
+        let cap = plan
+            .config
+            .max_coarse_builds
+            .expect("cold phase declares a coarse build cap");
+
+        // Selection evidence per viewport, measured on throwaway scenes so the
+        // convergence runs below keep pristine hysteresis state.
+        let mut evidence: BTreeMap<u32, BTreeSet<(String, Lod)>> = BTreeMap::new();
+        for viewport_px in COLD_PHASE_VIEWPORTS_PX {
+            let camera = plan.lod_camera(viewport_px);
+            let mut probe = fixture_scene();
+            let pairs: BTreeSet<(String, Lod)> = probe
+                .select_lods(&camera, &plan.config)
+                .unwrap()
+                .into_iter()
+                .filter(|selected| selected.lod > Lod::Source)
+                .map(|selected| (selected.prototype, selected.lod))
+                .collect();
+            println!(
+                "cold phase at {viewport_px} px selects {} distinct coarse pair(s): {pairs:?}",
+                pairs.len()
+            );
+            evidence.insert(viewport_px as u32, pairs);
+        }
+
+        for (viewport_px, pairs) in &evidence {
+            let camera = plan.lod_camera(*viewport_px as f32);
+            assert!(
+                pairs.len() > cap,
+                "{viewport_px} px selects {} distinct coarse pair(s); a cap of {cap} cannot defer",
+                pairs.len()
+            );
+
+            // Mirror install_static_scene: the authoritative Source is warm and
+            // every coarse level is realized lazily by the phase prepare itself.
+            let mut scene = fixture_scene();
+            let mut runtime = DetailRuntime::new();
+            runtime
+                .prepare(&mut scene, &camera, &source_only(&plan.config))
+                .unwrap();
+            let probes = capture_probes(&scene).unwrap();
+            let mut state = PhaseState::default();
+            let outcome = prepare_phase(
+                &mut scene,
+                &mut runtime,
+                &plan,
+                *viewport_px as f32,
+                &probes,
+                &mut state,
+            )
+            .unwrap_or_else(|error| panic!("{viewport_px} px cold phase: {error}"));
+            assert!(
+                outcome.iterations >= 2,
+                "{viewport_px} px converged in one prepare; the lazy path was not exercised"
+            );
+            assert!(
+                outcome.max_builds > 0 && outcome.max_builds <= cap,
+                "{viewport_px} px built {} coarse meshes in one prepare, cap is {cap}",
+                outcome.max_builds
+            );
+
+            // The converged view is stationary, fully resident and
+            // revision-matched; a further identical prepare builds nothing.
+            let steady = runtime.prepare(&mut scene, &camera, &plan.config).unwrap();
+            assert_eq!(steady.frame.mesh_builds_this_call, 0, "{viewport_px} px");
+            assert!(!steady.geometry_changed, "{viewport_px} px");
+            assert_eq!(deferred_count(&steady.frame), 0, "{viewport_px} px");
+            for selected in steady.frame.selected.iter().filter(|s| s.lod > Lod::Source) {
+                let index = runtime
+                    .instance_index(&selected.prototype, selected.lod)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{viewport_px} px {} {:?} not resident",
+                            selected.prototype, selected.lod
+                        )
+                    });
+                assert!(!runtime.meshes()[index].vertices.is_empty());
+                assert_eq!(
+                    runtime.revision(&selected.prototype, selected.lod),
+                    Some(scene.prototype(&selected.prototype).unwrap().revision()),
+                    "{viewport_px} px"
+                );
+            }
+        }
+
+        // Liveness: the physical Android viewport selects a genuinely different
+        // view than the host window. The tile-scale dense control clears the
+        // pixel budget at 480 px and stays `Source` at 1440 px, so this is the
+        // live viewport deciding, not a forced host selection.
+        let tile_coarsens = |pairs: &BTreeSet<(String, Lod)>| {
+            pairs
+                .iter()
+                .any(|(prototype, _)| prototype == DENSE_TILE_CONTROL)
+        };
+        let android = evidence.get(&1440).expect("1440 px evidence");
+        let host = evidence.get(&480).expect("480 px evidence");
+        assert!(
+            !tile_coarsens(android),
+            "tile-scale control must stay Source at the physical Android viewport"
+        );
+        assert!(
+            tile_coarsens(host),
+            "tile-scale control must coarsen at the 480 px host viewport"
         );
     }
 
