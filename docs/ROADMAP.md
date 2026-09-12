@@ -21,7 +21,10 @@ Released slices:
 
 The [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) defines the
 current E0–E8 execution order and parallel work boundaries for closing M2–M6. It
-preserves this roadmap's acceptance criteria. Reflections and Voxel Relay passed
+preserves this roadmap's acceptance criteria. The current planning baseline is merged
+PR #21 (`01ab450`); E0/E1 are closed, M0/M1 preserved, and M2–M6 remain open.
+DeepSeek V4.1 Flash owns bounded implementation, Gemini supplies initial independent
+review waves, and Opus is escalation-only. Astra delegation is prohibited. Reflections and Voxel Relay passed
 short physical-device functional gates on 2026-09-12. The original audio suspend
 failure has a corrected AAudio candidate passing 4 × 20 lifecycle cycles at
 `a999fd0`; independent corrective reviews pass. E1 collision tests pass 11 tests

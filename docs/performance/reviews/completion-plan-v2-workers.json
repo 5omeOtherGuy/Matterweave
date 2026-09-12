@@ -1,0 +1,100 @@
+[
+  {
+    "scope": "deepseek",
+    "id": "w_4261e42d",
+    "status": "completed",
+    "selection": {
+      "profile": "deepseek-flash-go",
+      "provider": "opencode-go",
+      "model": "deepseek-v4.1-flash",
+      "thinking": "max"
+    },
+    "seconds": 314.02,
+    "verdict": "repaired",
+    "acceptance": "Plan corrected by lead"
+  },
+  {
+    "scope": "gem-render",
+    "id": "w_2c88a12a",
+    "status": "completed",
+    "selection": {
+      "profile": "gemini-restricted",
+      "provider": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "thinking": "high"
+    },
+    "seconds": 37.95,
+    "verdict": "accepted",
+    "acceptance": "Candidate review only; dispositions in completion-plan-v2-initial.md"
+  },
+  {
+    "scope": "gem-core",
+    "id": "w_e8626b9a",
+    "status": "completed",
+    "selection": {
+      "profile": "gemini-restricted",
+      "provider": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "thinking": "high"
+    },
+    "seconds": 100.52,
+    "verdict": "accepted",
+    "acceptance": "Candidate review only; dispositions in completion-plan-v2-initial.md"
+  },
+  {
+    "scope": "gem-measure",
+    "id": "w_cb27157d",
+    "status": "completed",
+    "selection": {
+      "profile": "gemini-restricted",
+      "provider": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "thinking": "high"
+    },
+    "seconds": 97.58,
+    "verdict": "accepted",
+    "acceptance": "Candidate review only; dispositions in completion-plan-v2-initial.md"
+  },
+  {
+    "scope": "gem-detail",
+    "id": "w_2bd4058b",
+    "status": "completed",
+    "selection": {
+      "profile": "gemini-restricted",
+      "provider": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "thinking": "high"
+    },
+    "seconds": 102.92,
+    "verdict": "accepted",
+    "acceptance": "Candidate review only; dispositions in completion-plan-v2-initial.md"
+  },
+  {
+    "scope": "gem-services",
+    "id": "w_08f50c2d",
+    "status": "completed",
+    "selection": {
+      "profile": "gemini-restricted",
+      "provider": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "thinking": "high"
+    },
+    "seconds": 89.79,
+    "verdict": "accepted",
+    "acceptance": "Candidate review only; dispositions in completion-plan-v2-initial.md"
+  },
+  {
+    "scope": "gem-physics",
+    "id": "w_2adc56c0",
+    "status": "completed",
+    "selection": {
+      "profile": "gemini-restricted",
+      "provider": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "thinking": "high"
+    },
+    "seconds": 84.79,
+    "verdict": "accepted",
+    "acceptance": "Candidate review only; dispositions in completion-plan-v2-initial.md"
+  }
+]
