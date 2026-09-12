@@ -1,6 +1,7 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod audio_service;
 mod controls;
+mod destruction_check;
 mod detail_check;
 mod detail_runtime;
 mod dynamic_upload;
@@ -1441,6 +1442,7 @@ pub fn run_desktop() {
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
+    let mut destruction_check = false;
     let mut pacing_check = false;
     let mut reflection_check = None;
     let mut explicit_save = false;
@@ -1458,6 +1460,7 @@ pub fn run_desktop() {
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
+            "--destruction-check" => destruction_check = true,
             "--pacing-check" => pacing_check = true,
             "--reflection-check" => reflection_check = Some(crate::reflection_check::Mode::Quality),
             "--reflection-cost" => reflection_check = Some(crate::reflection_check::Mode::Cost),
@@ -1472,7 +1475,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1518,6 +1521,19 @@ pub fn run_desktop() {
             .expect("event loop")
             .run_app(&mut check)
             .expect("pacing check loop");
+        return;
+    }
+    if destruction_check {
+        let mut check = destruction_check::DestructionCheck::new(
+            save_path.with_file_name("destruction-check-report.txt"),
+        );
+        EventLoop::new()
+            .expect("event loop")
+            .run_app(&mut check)
+            .expect("destruction check loop");
+        if check.failed() {
+            std::process::exit(1);
+        }
         return;
     }
     // Explicit developer opt-in is resolved before any world is loaded, so an
@@ -1672,6 +1688,20 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             crate::pacing_check::PacingCheck::new(directory.join("pacing-check-report.txt"));
         if let Err(e) = event_loop.run_app(&mut check) {
             log::error!("Pacing check: {e}");
+        }
+        return;
+    }
+    if requested_check.as_deref() == Some("destruction") {
+        // Remove only the consumed request marker; never any world or save.
+        if let Err(e) = std::fs::remove_file(&request) {
+            log::error!("Destruction check request: {e}");
+            return;
+        }
+        let mut check = destruction_check::DestructionCheck::new(
+            directory.join("destruction-check-report.txt"),
+        );
+        if let Err(e) = event_loop.run_app(&mut check) {
+            log::error!("Destruction check: {e}");
         }
         return;
     }
