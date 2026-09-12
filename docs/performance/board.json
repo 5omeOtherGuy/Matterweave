@@ -790,6 +790,22 @@
       ],
       "acceptance": "NOT RUN; actual rendered64-piece and20reset/load checks then lead-owned Android",
       "routing": "Owner explicitly requests DeepSeek primary; current Terrain Lab/detail deliveries demonstrate useful implementation after lead repair. Router Muse recommendation bypassed for owner preference; no Astra worker."
+    },
+    "D1.2-production-fixtures": {
+      "owner": "current Codex lead / w_18ada142",
+      "state": "running",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "base": "39666a82a5c4686a88a3e82d103881bb1a0c8e04",
+      "workspace": "/mnt/bench/matterweave-dev/worktrees/detail-production-fixtures",
+      "branch": "engine/detail-production-fixtures",
+      "run_dir": "/mnt/bench/matterweave-dev/coarse-terrain/detail-production-worker",
+      "paths": [
+        "apps/explorer/src/detail_check.rs",
+        "docs/performance/logs/detail-production-fixtures.md"
+      ],
+      "acceptance": "NOT RUN; real production flora + occlusion/movement/edit fixtures with quality guards retained; lead Android after review",
+      "routing": "DeepSeek primary per owner; existing D1 implementation useful after lead repair; Gemini review follows frozen source."
     }
   },
   "capacity": {
