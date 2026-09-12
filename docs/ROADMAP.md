@@ -19,6 +19,11 @@ Released slices:
 
 ## In progress
 
+The [autonomous microvoxel roadmap](AUTONOMOUS_MICROVOXEL_ROADMAP.md) adds the
+owner's visual/world-scale reference and stage-level autonomous swarm mandate.
+It extends the existing M0–M6 work, with technical completion before M5 tuning,
+and does not mark any outstanding gate passed.
+
 The [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) defines the
 current E0–E8 execution order and parallel work boundaries for closing M2–M6. It
 preserves this roadmap's acceptance criteria. The current planning baseline is merged

@@ -2,6 +2,25 @@
 
 Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
+## Autonomous microvoxel follow-up — owner direction
+
+The owner chose [MishMash's microvoxel landscape video](https://www.youtube.com/watch?v=xGkWWfO87no)
+as the reference and requested a high-level autonomous agent-swarm roadmap.
+[The follow-up](AUTONOMOUS_MICROVOXEL_ROADMAP.md) links staged capability delivery
+to extensive supervised research, coding, tests and independent reviews. Technical
+completion stays first; thermal and performance optimization follow afterwards.
+This is planning, not a new implementation or Android result. Full video playback
+was unavailable; the title/thumbnail and linked creator explanations were inspected.
+
+This documentation branch starts from merged PR #22 (`7dace54`). A separate local
+`phase-a/lead-wave-1a-dispatch` branch (`dc97fae` at inspection) records another
+lead's D1/D2/D4 assignments. It is preserved; no engine tasks or phone ownership
+are reassigned by this follow-up. The owner then explicitly authorized parallel
+execution: `S1-landscape-fixtures` and `S2-landscape-research` are dispatched to
+supervised DeepSeek workers on isolated paths; their acceptance is pending.
+Read the actual board and active sessions before
+execution; historical snapshots below do not override live ownership.
+
 ## Current reconciliation and completion plan — after PR #21
 
 The planning baseline is `main = origin/main = 01ab450` (PR #21 merged), clean

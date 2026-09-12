@@ -42,6 +42,15 @@ branch. M2–M6 remain open.
 
 ## Next authorized work
 
+The owner selected MishMash's microvoxel landscape reference and requested an
+[autonomous swarm development roadmap](AUTONOMOUS_MICROVOXEL_ROADMAP.md).
+Use it as the outcome-level follow-up to the detailed completion plan: extensive
+supervised agent research, implementation, testing and review; technical capability
+and functional Android acceptance first; measurement/optimization afterwards.
+Continue accepted work and the existing lead's assignments rather than restarting
+or creating a competing dispatch board. Routine PR completion is a continuation
+point, not a request for further owner permission.
+
 Use the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) for the
 next dispatch order and M2–M6 closure gates. Reconcile historical ownership before
 starting workers. Preserve the existing device-playable Voxel Relay sample; repair
