@@ -142,7 +142,7 @@ is a harsher condition than CI applies.
 | Background indirect-light preparation | v0.5.0; host and OnePlus 13 checks pass. | [Background lighting](performance/async-indirect.md) |
 | Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | [Collision log](performance/logs/engine-03-collision.md), [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
 | Bounded specular reflections | Merged (PR #13). Both OnePlus 13 app gates ran 2026-09-12: all phases completed; +7.45 ms GPU per frame when enabled. | [Reflections](performance/reflections-engine.md) |
-| Bounded audio service | Merged (PR #12). OnePlus 13 diagnostic ran 2026-09-12 and **FAILS** at the suspend assertion, 4 of 4 runs. | [ADR-0016](adr/0016-audio-service.md) |
+| Bounded audio service | Merged (PR #12); suspend observability repaired (PR #19). OnePlus 13 diagnostic **PASSES** after the fix, 3 of 3 runs, 30 physical suspend/resume/shutdown cycles. | [ADR-0016](adr/0016-audio-service.md) |
 | Voxel Relay second sample | Merged (PR #14). Physical device gate ran 2026-09-12: puzzle solved end to end on the OnePlus 13. | — |
 | v0.3 slice: directional shadows, background preparation, destruction | Released (v0.3.0 development prerelease); device validated. | [v0.3 evidence](evidence/2026-09-08-v0.3.md) |
 | v0.2 slice: walking, objects, streamed terrain | Released (v0.2.0); device exercised. | [v0.2 evidence](evidence/2026-09-07-v0.2.md) |
@@ -330,7 +330,8 @@ through the pinned `ndk 0.9.0` bindings plus `ringbuf 0.5.1`. Decision record:
 | Workspace tests / docs | PASS: `cargo test --workspace --locked` exit 0 after changes; `python3 tools/check_docs.py` PASS. |
 | Android cross-compilation | PASS: diagnostic example builds for `aarch64-linux-android` (debug and release) with the pinned NDK 28.2.13676358 API-28 linker, links `libaaudio`; release artifact SHA-256 `5b2a66036e6b94d1dacecaea013bef4344df603de29a0b23b75db3efce221c2b`. |
 | Host diagnostic | PASS: negotiated properties, nonzero frames, suspend/resume continuation, controlled recreation, ten open/play/stop/close cycles (mock backend; silent by design). |
-| Reserved-device diagnostic | **FAIL** (OnePlus 13, 2026-09-12, 4 of 4 runs, release build SHA-256 `578241740e71b724d9f9a6eeeeadcce9d23b9aaf1af861b5296bf2a68ec2210e`). Everything before the suspend phase passes on real AAudio: negotiated 48000 Hz stereo f32, burst 96, capacity 1536, low-latency, exclusive false; ~55 callbacks render 5088+ frames with 0 xruns and 0 device errors. The run then panics at `audio_diagnostic.rs:133`, `render thread reports suspended`: after `suspend()` the health snapshot still reports `suspended false`. Deterministic, not a flake. |
+| Reserved-device diagnostic, before the fix | **FAIL** (OnePlus 13, 2026-09-12, 4 of 4 runs, build SHA-256 `578241740e71b724d9f9a6eeeeadcce9d23b9aaf1af861b5296bf2a68ec2210e`). Everything before the suspend phase passed on real AAudio: negotiated 48000 Hz stereo f32, burst 96, capacity 1536, low-latency, exclusive false; ~55 callbacks rendered 5088+ frames with 0 xruns and 0 device errors. The run then panicked at `audio_diagnostic.rs:133`, `render thread reports suspended`. Deterministic, not a flake. |
+| Reserved-device diagnostic, after the fix | **PASS** (OnePlus 13, 2026-09-12, 3 of 3 runs at `a612f20`, build SHA-256 `b0b8cce87f2f3634d299f2c4d9e18f66e06caadaed5235dfa9ea2e2b30e346ed`). Each run completes 10 paused recreation/resume/shutdown cycles: 1101 callbacks, 105696 frames, 0 xruns, 0 device errors, 1 recreation. The split reports what hardware actually does — `suspended true, rt_suspended false` throughout every paused window, because AAudio delivers no callbacks while paused. Audibility remains a human observation; the counters prove submitted frames only. |
 
 Limitations: no resampling and no compressed formats (48 kHz f32 mono/stereo only; a
 device that cannot negotiate that fails open explicitly); a failed stream close aborts
@@ -415,10 +416,11 @@ Not implemented, not integrated or pending validation:
   2026-09-12 runs are seconds long and make no energy or thermal claim.
 - Audio: no resampling and no compressed formats (48 kHz f32 mono/stereo only, with
   explicit fail-open on devices that cannot negotiate it); a failed stream close aborts
-  through the ndk wrapper's drop contract. **The reserved-device diagnostic fails**: after
-  `suspend()` the health snapshot never reports `suspended` on the real AAudio backend,
-  deterministically across 4 runs. Suspension is therefore unverified on hardware, and the
-  host suite cannot see the gap because the mock backend renders from the control thread.
+  through the ndk wrapper's drop contract. Suspension is now verified on hardware, but
+  `rt_suspended` is structurally unobservable as true on any backend that stops delivering
+  callbacks while paused — it stayed false across all 30 measured cycles, and no test may
+  assert otherwise on a device. Audibility is still unverified: no human has confirmed
+  sound from this device, and the counters only prove frames were submitted.
 - Voxel Relay: physical device gate passes; the sample is playable and completable on the
   OnePlus 13.
 - Full M2 equivalent-quality comparison, M3 stress gates, M4 indirect illumination,
@@ -455,9 +457,9 @@ Planning and documentation reconciliation do not close any engine gate.
 
 1. Reconcile the current source, integration branches, PR state and historical board
    before dispatch; older branch assignments above are not a live ownership claim.
-2. Fix the reproducible real-AAudio suspend diagnostic failure and the remaining
-   detail-cadence observation race. Qualify mobile capture overhead and repeatability
-   in parallel with correctness work.
+2. The real-AAudio suspend failure is fixed (PR #19) and re-verified on the phone, 3 of
+   3 runs. The remaining detail-cadence observation race is open. Qualify mobile capture
+   overhead and repeatability in parallel with correctness work.
 3. Complete equivalent-quality ray/mesh/hybrid device comparison and primary-path
    selection; close production streaming/collision/destruction stress and bounds.
 4. Complete GI/reflection quality, publication scheduling and stable detail
