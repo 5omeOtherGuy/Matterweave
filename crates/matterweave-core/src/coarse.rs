@@ -56,7 +56,9 @@
 //! revisions across worlds prove nothing about identity. A consumer must treat a
 //! revision change as "re-derive", never as proof that a tile is still valid.
 //! [`CoarseTile::seed`] and [`CoarseTile::generator_version`] identify the procedural
-//! source.
+//! source. [`CoarseTile::source_streaming`] also records the source mode: enabling
+//! streaming changes source rules without advancing the world revision. Consumers
+//! must invalidate on mode change as well as revision change, and own world identity.
 
 use crate::streaming::generated_chunk;
 use crate::{
@@ -132,6 +134,7 @@ pub struct CoarseTile {
     span: i32,
     seed: u64,
     source_revision: u64,
+    source_streaming: bool,
     generator_version: u32,
     materials: Vec<u8>,
     solid_cells: usize,
@@ -156,6 +159,12 @@ impl CoarseTile {
     /// Fine cells covered per tile axis (`16 << level`).
     pub fn span(&self) -> i32 {
         self.span
+    }
+
+    /// Whether this tile used streaming overrides and procedural source rules.
+    /// This is part of provenance: enabling streaming does not advance revision.
+    pub fn source_streaming(&self) -> bool {
+        self.source_streaming
     }
 
     /// Seed of the world this tile was derived from.
@@ -252,6 +261,7 @@ impl World {
             span,
             seed: self.seed,
             source_revision: self.revision,
+            source_streaming: self.is_streaming(),
             generator_version: GENERATOR_VERSION,
             materials: vec![0; CHUNK_VOLUME],
             solid_cells: 0,
@@ -448,6 +458,19 @@ mod tests {
                 ]
             })
             .find(|&cell| world.get(cell) != 0)
+    }
+
+    #[test]
+    fn enabling_streaming_changes_source_mode_without_a_revision_increment() {
+        let mut world = World::new(7);
+        let before = world.coarse_tile(1, [2, -1, 0]).unwrap();
+        assert!(before.is_empty());
+        world.enable_streaming();
+        let after = world.coarse_tile(1, [2, -1, 0]).unwrap();
+        assert!(!after.is_empty());
+        assert_eq!(before.source_revision(), after.source_revision());
+        assert!(!before.source_streaming());
+        assert!(after.source_streaming());
     }
 
     #[test]

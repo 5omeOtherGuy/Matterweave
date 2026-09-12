@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "run": "engine-completion-plan-v2-20260912",
-  "authority": "sole Codex desktop lead-written board; prior Pi lead retired by owner; workers must not edit",
+  "authority": "Current Codex session owns ongoing development, dispatch, integration and acceptance by owner transfer 2026-09-12; other session completed merges25/26/27.",
   "base": "01ab450",
-  "phone_owner": "Current Codex orchestrator; OnePlus 13 192.168.178.93:5555. No worker device access; serialize builds and captures.",
+  "phone_owner": "Current Codex development lead; OnePlus13 192.168.178.93:5555; workers have no device access.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -686,6 +686,48 @@
       "run_root": "/mnt/bench/matterweave-dev/microvoxel-roadmap",
       "device_access": "none; other session retains phone lease",
       "acceptance": "Accepted after lead repairs and independent review/test; see docs/performance/reviews/landscape-followup.md. Host functional fixtures and research only; no Android or milestone closure."
+    },
+    "S2-coarse-derivation": {
+      "state": "accepted",
+      "owner": "w_0d2e3948",
+      "profile": "deepseek-flash-go",
+      "thinking": "max",
+      "base": "e5864bd",
+      "owned_paths": [
+        "crates/matterweave-core/src/coarse.rs",
+        "crates/matterweave-core/src/lib.rs (module/export only)",
+        "crates/matterweave-core/src/streaming.rs (generator visibility only)",
+        "docs/performance/logs/coarse-terrain-implementation.md"
+      ],
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-coarse-terrain",
+      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain",
+      "device_access": "none; other lead retains phone",
+      "acceptance": "27 core tests passed on host and physical ARM64 device; five independent public-API tests pass after correcting tester fixture. Gemini reviews and lead provenance fix complete; PR delivery pending."
+    },
+    "S2-coarse-visual-consumer": {
+      "state": "accepted",
+      "owner": "w_6ce08fbe",
+      "scope": "read-only minimal native visual consumer; no app/phone ownership change",
+      "run_root": "/mnt/bench/matterweave-dev/coarse-terrain/visual-consumer",
+      "acceptance": "Identified Renderer aggregate upload path; implementation dispatched separately."
+    },
+    "S2-coarse-visual": {
+      "state": "running",
+      "owner": "w_355788a2",
+      "scope": "new renderer terrain_tiles_smoke example only",
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-coarse-visual"
+    },
+    "S1-terrain-lab": {
+      "state": "running",
+      "owner": "w_6a1f9070",
+      "base": "a91f7a0",
+      "owned_paths": [
+        "apps/explorer/src/terrain_lab.rs",
+        "apps/explorer/src/lib.rs (module declaration only)",
+        "docs/performance/logs/terrain-lab.md"
+      ],
+      "worktree": "/mnt/bench/matterweave-dev/worktrees/swarm-terrain-lab",
+      "acceptance": "New interactive Android-capable scene module; lead owns menu wiring and device acceptance."
     }
   },
   "capacity": {
@@ -710,8 +752,13 @@
   "routing_policy": "Owner 2026-09-12: DeepSeek V4.1 Flash primary Pi worker; Gemini initial independent review waves; Opus only justified escalation. Never delegate Astra. Technical development and functional Android acceptance first; E2/M5 measurement and optimization deferred by owner until technical completion.",
   "parallel_followup": {
     "authorization": "Owner explicitly requested this follow-up session start disjoint parallel work on 2026-09-12.",
-    "preserved_session": "phase-a/lead-wave-1a-dispatch at dc97fae; D1/D2/D4 and phone remain owned there.",
+    "preserved_session": "Other lead completed PRs25/26/27; main a91f7a0. Owner transferred development/device integration to this lead.",
     "coordination": "These S1/S2 entries add reservations only. Merge with the other lead board changes; never replace its assignments with this historical baseline. Check global Pi workers before launch; combined capacity remains three workers plus lead under current policy.",
-    "delivery": "PR #23 roadmap merged at 1e12264; code/research follow-up on swarm/landscape-delivery. Other lead assignments and phone ownership unchanged."
+    "delivery": "PR #23 roadmap merged at 1e12264; code/research follow-up on swarm/landscape-delivery. Other lead assignments and phone ownership unchanged.",
+    "reconciled_open_prs": [
+      25,
+      26,
+      27
+    ]
   }
 }

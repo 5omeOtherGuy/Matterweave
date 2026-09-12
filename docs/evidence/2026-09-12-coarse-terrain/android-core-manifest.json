@@ -1,0 +1,7 @@
+{
+  "binary_sha256": "55064fe37d7f6514c281376514a3c7d2c137d00ebbb7887eb46074d285b725ec",
+  "source_sha256": "1ec9c9889bbde83ee320fb0d990d55cc9e1336dd8687c2cf507d33a65cfad24c",
+  "exit_code": 0,
+  "device": "OnePlus 13 CPH2653",
+  "command": "TMPDIR=/data/local/tmp/matterweave-coarse-20260912 /data/local/tmp/matterweave-coarse-20260912/core-tests --test-threads=1"
+}
