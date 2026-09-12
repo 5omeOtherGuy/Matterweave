@@ -1,5 +1,68 @@
 # Current status
 
+Owner routing update (2026-09-13, latest): Codex dispatches tasks only.
+DeepSeek V4.1 Flash direct and GLM5.3 Flash do bulk development; the Claude
+subscription reset, so Opus at medium is available again for complex reviews and
+review fallback, and a separate read-only Opus reviewer inspects merged
+production lighting gaps and returns the next-slice brief (issue47) with no
+phone or write ownership and no overlap with this functional acceptance. No
+Astra workers; global cap3. Phase B cost/thermal rankings are deferred;
+functional issue experiments run alongside engine development.
+
+Delegated delivery (2026-09-13): a DeepSeek integration/acceptance worker owns
+the phone, the combined Android gate and reviewed/passing PR merges for the two
+functional fixes. Interaction `c1e8777` (integrated `bb68e59`) passed independent
+GLM review `w_a6f188e8` with no findings and the physical four-action device gate
+(real edits 13-20 ms, no new ANR/crash). Detail `648dda2` passed independent GLM
+review `w_94385293` (one stale fixture-log claim, corrected in `7466208`); its
+phase 0 now passes at the real 1440 px surface, but phase 7 stops on a
+pre-existing viewport-coupled occlusion-fixture assumption, so the 14-phase +
+HOME/resume gate is NOT PASSED and PR #48 stays unmerged pending an isolated
+fixture repair. See
+[delivery log](performance/logs/deepseek-functional-delivery.md).
+
+## Functional-fix delivery — 2026-09-13
+
+Combined acceptance source `bbf7d1d` (`engine/interaction-delivery` `f5fc91f` +
+cherry-pick `648dda2`), APK sha256
+`0531c7d115fb1d3af425d87fa4404e4aefa3048dbbcef2f41ad5b890e8a88a7e` (ARM64
+16 KiB alignment `verify_apk.py` PASS, debug-signed, installed `-r`). OnePlus 13
+CPH2653, Android 16, Vulkan 1.3.284, Adreno 830, 3168x1440, app start fresh.
+
+| Gate | Result |
+| --- | --- |
+| Interaction actions | `PLACE` 13.015 ms "Voxel added", `PLACE` 16.613 ms "Voxel added", `REMOVE` 20.232 ms "Voxel removed" (`WETLAND EDIT` app log); BREAK/GRAB/THROW dispatched responsively but missed — no physics object inside the 6 m reach at the saved camera (27 m from the arch); MENU open/close responsive |
+| ANR/crash | No new ANR: `dumpsys activity lastanr` still the 2026-09-12 23:25:55 baseline; no new `/data/anr/` trace after 23:25; no `ANR in`/`FATAL EXCEPTION` matches |
+| Detail 1440 px | Phase 0 `converge_iters=2 max_prepare_builds=1 total_converge_builds=2` (deferral proof runs); phases 1-6 PASS; phase 7 FAIL `occlusion foreground flora was not a pixel-eligible guard retention` — pre-existing viewport coupling (host probe: 1.688 px projected error vs 1.429 px budget at 1440; eligible at 480/720/1080). 14-phase + HOME/resume NOT PASSED |
+| Saves | All five owner saves re-hashed on device byte-exact to `saves-before.json`; app force-stopped; fixed APK remains installed |
+
+Evidence: `orchestration/deepseek-functional-delivery/device/` (report, logcat
+extracts, screenshots, package state) and the
+[delivery log](performance/logs/deepseek-functional-delivery.md).
+
+## Reviewed PR delivery and functional follow-up — 2026-09-13
+
+PR36 merged at `7e88f31` and PR39 at `fc6212e`; all six checks passed for each.
+Owner-requested **GLM5.3 Flash** reviews completed (`w_46c2ce3f`, corrective
+`w_af5d3477`; streaming `w_8b9d64dd`). The full-GLM route was the owner's initial
+wording, then corrected to Flash; preserved partial reviews are not separate
+completed acceptances. Lighting report-write failure handling is fixed and the
+proxy caller contract clarified. Streaming's real upstream rejection path is
+fixed and independently reviewed. Physical evidence: lighting300presentations,
+repeat HOME/resume1/1; streaming36core tests on ARM64. One Android CI attempt
+failed during dependency resolution, then passed on retry; no checks bypassed.
+
+The owner interaction ANR is being repaired separately in `interaction-anr`:
+GLMFlash continues preserved Opus work after its5h rate limit. The narrow solution
+reuses per-revision scene bounds for action queries and removes unnecessary rays.
+The separate detail diagnostic failure at Android1440px is assigned to the newly
+owner-authorized direct DeepSeek route (`deepseek/deepseek-flash`, Pi displays
+V4.1 Flash, max verified); this is not the similarly named Go route.
+[Board](performance/board.json) records disjoint ownership and exact workers.
+Both follow-ups require review and functional Android acceptance before closure.
+All five current user JSON saves were restored and hash-verified after diagnostics.
+
+
 ## PR36/39 acceptance and interaction incident — 2026-09-12
 
 Main is `495d9f9` (PR37 streaming contract tests and PR38 detail diagnostic merged).

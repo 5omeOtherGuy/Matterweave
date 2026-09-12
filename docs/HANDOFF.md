@@ -1,12 +1,32 @@
 # Implementation handoff
 
-**Current pickup:** PR37/38 are merged at main495d9f9. PR36/39 are under
-GLM5.3 Flash review, with Opus corrective workers recorded in the board. PR36's
-Android lighting diagnostic passes300frames and HOME/resume; the separate detail
-diagnostic fails its phase0 cold-convergence guard on Android and remains open.
-The owner's interaction-freeze report is confirmed by an Android input ANR and has
-an isolated corrective worker. See the top STATUS entry for evidence and boundaries.
-Continue using healthy SSD worktrees; preserve the current five user saves.
+**Current worker routing (owner, 2026-09-13, latest):** Codex dispatches tasks
+only. Use direct Pi `deepseek/deepseek-flash` (DeepSeek V4.1 Flash) and OpenRouter
+`z-ai/glm-5.3-flash` for bulk development. The Claude subscription reset, so
+Claude/Opus at **medium** is available again for complex reviews and review
+fallback (the owner-designated complex-task role), and a separate read-only Opus
+reviewer inspects merged production lighting gaps and returns the next-slice
+brief (issue47) without phone/write ownership; do not wait on it or duplicate its
+scope. Never dispatch Astra workers. Preserve the global three-worker cap.
+Phase B cost/thermal rankings are deferred; functional issue experiments may run
+alongside engine development (third slot = issue42 ray-hierarchy experiment:
+new traversal module/shader/tests only, no renderer lib.rs, app, lighting, phone
+or shared-doc edits).
+
+**Current pickup (2026-09-13):** PR36 lighting and PR39 streaming are merged,
+main `fc6212e`, all six checks green each. The functional-fix delivery is
+delegated to a DeepSeek integration/acceptance worker that owns the phone, the
+combined Android gate and reviewed/passing PR merges. Interaction ANR fix
+`c1e8777` (integrated `bb68e59`, branch `engine/interaction-delivery`) passed
+independent GLM review and the physical four-action gate: real voxel edits
+13-20 ms, no new ANR/crash; its PR is open. Detail diagnostic `648dda2` plus
+docs `7466208` (branch `engine/detail-android-convergence`) fixed phase 0 at
+1440 px but stops at phase 7 on a pre-existing viewport-coupled
+occlusion-fixture assumption (PR #48 open, unmerged; isolated fixture repair
+requested from Codex). All five current saves were restored hash-exact and the
+fixed APK stays installed. No thermal campaign. See the
+[delivery log](performance/logs/deepseek-functional-delivery.md) and
+[STATUS](STATUS.md).
 
 **Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
 
