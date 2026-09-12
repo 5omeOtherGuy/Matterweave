@@ -136,7 +136,7 @@ impl App {
         )
         .unwrap();
         let stats = renderer
-            .upload_reflection(&volume, &self.world, self.epoch)
+            .upload_reflection(&volume, &self.world, self.epoch, None)
             .unwrap();
         assert!(stats.bytes > 0);
         // Publication precedes the frame that presents it.
@@ -199,7 +199,8 @@ impl ApplicationHandler for App {
                     let stale = self.volume.take().unwrap();
                     let rejected = {
                         let renderer = self.renderer.as_mut().unwrap();
-                        let result = renderer.upload_reflection(&stale, &self.world, self.epoch);
+                        let result =
+                            renderer.upload_reflection(&stale, &self.world, self.epoch, None);
                         let disabled = !renderer.reflection_enabled();
                         (result.is_err(), disabled)
                     };
@@ -218,7 +219,7 @@ impl ApplicationHandler for App {
                     let refused = {
                         let renderer = self.renderer.as_mut().unwrap();
                         renderer
-                            .upload_reflection(&old, &self.world, self.epoch)
+                            .upload_reflection(&old, &self.world, self.epoch, None)
                             .is_err()
                             || !old.valid_for(&self.world, self.epoch)
                     };

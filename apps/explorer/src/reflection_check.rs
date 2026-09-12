@@ -280,7 +280,7 @@ impl ReflectionCheck {
         )
         .unwrap();
         let stats = renderer
-            .upload_reflection(&volume, &self.world, self.epoch)
+            .upload_reflection(&volume, &self.world, self.epoch, None)
             .unwrap();
         if let Some(m) = self.measurement.as_mut() {
             m.publications += 1;

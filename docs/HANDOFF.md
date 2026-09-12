@@ -1,5 +1,13 @@
 # Implementation handoff
 
+**Recovery update, 2026-09-12:** PR #35 merged at `ac1ce444` with all six checks
+passing. `/mnt/bench` now has hardware I/O failures in its backing device `sdb`;
+do not resume writes or builds there until the drive is repaired and verified.
+The live lead checkout is
+`/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/integration`
+(`engine/recovered-mesh-lighting`). See [recovery state](performance/recovery-20260912.md)
+and the [board](performance/board.json) for workers. Original worktrees are preserved.
+
 Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
 
 The entry point for a fresh session: what is true now and what is authorized next.

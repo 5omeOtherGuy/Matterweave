@@ -1524,21 +1524,26 @@ impl Renderer {
     /// The caller supplies the current authoritative World and replacement epoch,
     /// never a job's old snapshot. Rejected stale data disables previous output.
     /// All geometry uploads and sun changes disable GI until republished; shadow
-    /// resource replacement also disables it. Unit World voxels only, opt-in.
+    /// resource replacement also disables it. Mesh-only geometry requires an
+    /// attached proxy and its current caller-supplied digest. The digest identifies
+    /// the occupied proxy grid, not sub-cell geometry or complete scene coverage.
+    /// Pass `None` for a unit-voxel-only scene.
     pub fn upload_indirect(
         &mut self,
         volume: &indirect::IndirectVolume,
         world: &matterweave_core::World,
         source_epoch: u64,
+        mesh_digest: Option<u64>,
     ) -> Result<()> {
         self.shadow.disable_indirect();
-        if self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
-            || self.static_scene.as_ref().is_some_and(|s| s.has_geometry)
+        if !volume.has_mesh_proxy()
+            && (self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
+                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry))
         {
             return Err("Indirect World cache does not cover mesh-only objects/instances".into());
         }
-        if !volume.source_valid(world, source_epoch) {
-            return Err("Stale indirect source revision/epoch".into());
+        if !volume.source_valid(world, source_epoch) || volume.mesh_digest() != mesh_digest {
+            return Err("Stale indirect source revision/epoch or mesh proxy".into());
         }
         self.commands.wait()?;
         self.shadow.upload_indirect(volume)
@@ -1557,8 +1562,10 @@ impl Renderer {
     /// World and replacement epoch, never a stale snapshot. Rejection disables the
     /// previous publication first, so obsolete data can never remain visible.
     ///
-    /// The volume covers unit World voxels only: dynamic meshes, static instances
-    /// and detail geometry are neither reflective nor reflected. Any later geometry
+    /// Mesh-only geometry requires `pack_with_mesh` and the digest of the current
+    /// caller-built proxy. This checks proxy grid identity, not sub-cell movement
+    /// or complete coverage of resident geometry; the caller owns coverage.
+    /// Pass `None` for a unit-voxel-only scene. Any later geometry
     /// upload or shadow-resource replacement disables reflection until republished.
     /// The sun is a live per-frame uniform rather than baked data, so a sun change
     /// needs no republication; this differs from the diffuse cache deliberately.
@@ -1567,10 +1574,17 @@ impl Renderer {
         volume: &reflection::ReflectionVolume,
         world: &matterweave_core::World,
         source_epoch: u64,
+        mesh_digest: Option<u64>,
     ) -> Result<ReflectionUploadStats> {
         self.disable_reflection();
-        if !volume.valid_for(world, source_epoch) {
-            return Err("Stale reflection source revision/epoch".into());
+        if !volume.valid_for_scene(world, source_epoch, mesh_digest) {
+            return Err("Stale reflection source revision/epoch or mesh proxy".into());
+        }
+        if volume.source_mesh_digest().is_none()
+            && (self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
+                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry))
+        {
+            return Err("Reflection source does not cover mesh-only objects/instances".into());
         }
         let fence_begin = Instant::now();
         let wait = self.upload_waits.timed_begin();
