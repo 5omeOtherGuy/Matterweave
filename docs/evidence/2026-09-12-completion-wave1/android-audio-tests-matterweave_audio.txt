@@ -1,0 +1,26 @@
+
+running 21 tests
+test mixer::tests::concurrent_control_and_render_completes_without_deadlock ... ok
+test service::tests::device_errors::error_callback_alone_hides_properties_before_poll ... ok
+test service::tests::device_errors::failed_start_error_must_not_disconnect_healthy_replacement ... ok
+test service::tests::device_errors::recreation_clears_old_error_before_open_but_preserves_new_stream_error ... ok
+test service::tests::device_errors::suspend_after_failed_resume_is_idempotent_and_retains_continuation ... ok
+test service::tests::device_errors::suspend_during_failed_recovery_preserves_intent_until_resume ... ok
+test service::tests::failed_open_is_closed_and_poll_retries_with_pause_intent ... ok
+test service::tests::failed_recovery_start_is_closed_and_poll_retries_running_output ... ok
+test service::tests::failed_resume_retains_one_resume_command_and_exact_continuation ... ok
+test service::tests::lifetime::callback_finishing_after_unload_enqueue_is_not_unload_acknowledgment ... ok
+test service::tests::lifetime::callback_finishing_before_queued_plays_apply_must_not_free_voice_slots ... ok
+test service::tests::lifetime::command_acknowledgment_is_not_published_before_callback_finishes ... ok
+test service::tests::lifetime::failed_pause_near_full_fifo_keeps_exact_pcm_continuation ... ok
+test service::tests::lifetime::reused_voice_handle_does_not_observe_old_generations_live_bit ... ok
+test service::tests::lifetime::stop_of_play_queued_after_drain_must_not_be_mistaken_for_finished_voice ... ok
+test service::tests::pcm_boundary::concurrent_service_registration_and_render_preserve_published_pcm ... ok
+test service::tests::pcm_boundary::pool_handles_outlive_service_but_not_through_callback_reference_borrows ... ok
+test service::tests::pcm_boundary::registration_while_mutable_render_borrow_is_live_uses_separate_pool_owner ... ok
+test service::tests::pcm_boundary::shared_pool_disjoint_reads_and_writes_do_not_touch_neighboring_samples ... ok
+test service::tests::suspended_recovery_does_not_need_queue_space ... ok
+test service::tests::suspended_replacement_never_requests_start ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

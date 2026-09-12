@@ -6,7 +6,7 @@ Current assignments and attempt IDs are in [board.json](board.json). The lead ex
 
 | Gate | Owner / dependency | Evidence level at reconciliation | Next executable check or bounded task |
 | --- | --- | --- | --- |
-| E1 audio suspend and recovery | Audio worker; lead device | Original device diagnostic FAIL; recovered fix host-tested, unaccepted | `cargo test --locked -p matterweave-audio`; build/run AAudio diagnostic, repeated suspend/recreate/resume |
+| E1 audio suspend and recovery | Lead accepted | Final `a999fd0`: 49 ARM64 correctness tests and 4 × 20 AAudio lifecycle cycles PASS; independent corrections reviewed | Closed for E1 functional gate; audibility, actual headset disconnect and E7 sample integration remain open |
 | E1 collision observation | Lead accepted | Corrected caller-controlled publication regression; independent reviews resolved; final OnePlus 13 ARM64 11 tests × 3 PASS at `2d024f0` | Closed for this E1 test gate; broader M3 graphics stress remains open |
 | E2 instrumentation/noise | Measurement worker; lead phone | Historical short same-build pairs exist; full qualification open | Validate strict same-build trial contract; collect new matched on/off measurements using independent timing |
 | M2 representation and renderer (R02/R08/R12) | Lead + next renderer/detail workers; E2 | Bounded ray/mesh/hybrid feasibility passed; equivalent quality open | Extend existing renderer comparison fixtures to shared production detail/foliage/edit/orthographic inputs, then matched Android comparison |

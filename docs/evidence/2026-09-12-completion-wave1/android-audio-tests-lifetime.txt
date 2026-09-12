@@ -1,0 +1,7 @@
+
+running 2 tests
+test full_pool_reuse_waits_for_unload_and_stale_handles_cannot_touch_replacement ... ok
+test unregister_silences_only_voices_using_that_clip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

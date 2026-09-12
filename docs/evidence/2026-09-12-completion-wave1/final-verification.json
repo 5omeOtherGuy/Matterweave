@@ -1,0 +1,44 @@
+{
+  "source_commit": "a999fd0",
+  "host_workspace": {
+    "passed": 494,
+    "failed": 0,
+    "ignored": 3
+  },
+  "performance_python": {
+    "passed": 251
+  },
+  "coordination_python": {
+    "passed": 16
+  },
+  "format": "PASS",
+  "strict_workspace_clippy": "PASS",
+  "docs": "PASS",
+  "android_audio": {
+    "runs": 4,
+    "cycles_per_run": 20,
+    "result": "PASS",
+    "source_commit": "a999fd0"
+  },
+  "android_cadence": {
+    "source_commit": "2d024f0",
+    "runs": 3,
+    "tests_per_run": 11,
+    "result": "PASS"
+  },
+  "apk_source": "f07c87c",
+  "apk_sha256": "52a115b4a05e208c5d4c30629bb7e11d66202c856d8518a096457d2c13313506",
+  "apk_build_alignment_signature_install": "PASS",
+  "graphics_current_qualification": "NOT RUN: keyguard showing",
+  "audibility": "NOT RUN",
+  "Miri": "NOT RUN: unavailable",
+  "note": "Functional checkpoint only; no efficiency or engine-complete claim.",
+  "android_audio_correctness": {
+    "passed": 49,
+    "failed": 0,
+    "backend": "mock; native ARM64 on physical phone",
+    "source_commit": "a999fd0"
+  },
+  "independent_audio_reviews": "Muse/Gemini full b58527f plus pause-intent correction a999fd0: resolved, no remaining findings",
+  "independent_collector_reviews": "Muse/Gemini corrective e436634: no findings"
+}

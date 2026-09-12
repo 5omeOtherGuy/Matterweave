@@ -24,9 +24,9 @@ The workspace is at version 0.5.0; v0.5.0 is the latest published prerelease, an
 intermediate engine delivery rather than a finished engine. The tree includes a Rust
 voxel core, fine-detail volumes with automatic selection, an ash/Vulkan renderer with
 direct and bounded diffuse indirect lighting, a Rapier physics adapter, a frame
-pacer, a bounded audio service (the original suspend diagnostic failure has a
-passing device-tested candidate; later lifetime/ownership corrections still require
-final independent review and device reruns) and a native Android explorer. [README.md](../README.md) lists the subsystems;
+pacer, a bounded audio service (final lifetime/ownership and pause-intent corrections
+pass independent reviews, 49 ARM64 correctness checks and 4 × 20 AAudio lifecycle
+cycles; both-sample integration remains open) and a native Android explorer. [README.md](../README.md) lists the subsystems;
 [STATUS.md](STATUS.md) gives the verified state, open gates and the live integration
 branch. M2–M6 remain open.
 
@@ -45,11 +45,11 @@ branch. M2–M6 remain open.
 Use the [engine completion orchestration plan](ENGINE_COMPLETION_PLAN.md) for the
 next dispatch order and M2–M6 closure gates. Reconcile historical ownership before
 starting workers. Preserve the existing device-playable Voxel Relay sample; repair
-the remaining audio ownership/lifetime gates and complete engine acceptance.
+the remaining engine acceptance gates.
 PR #19 contains the current first wave on `codex/engine-completion-wave1-20260912`.
 E1 collision is accepted with final 11-test ARM64 runs passing three times. The
 collector now supports the current generator with 251 host tool tests passing;
-corrective reviews and physical ON/OFF qualification remain open. The connected
+corrective reviews pass; physical ON/OFF qualification remains open. The connected
 OnePlus 13 currently has keyguard showing; graphics collection requires physical
 unlock. Do not confuse the successfully installed APK with a graphics test.
 

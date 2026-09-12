@@ -1,0 +1,37 @@
+{
+  "source_commit": "a999fd0",
+  "device": "OnePlus13 CPH2653 Android16 ARM64",
+  "scope": "native ARM64 backend-mock correctness, concurrent PCM and allocation tests; separate AAudio diagnostic covers real backend",
+  "results": [
+    {
+      "suite": "matterweave_audio",
+      "sha256": "414cc087637ede9bbb1a2ad3df30ac6c5fe74dd174177f8c0593e343a920ddb1",
+      "exit": 0,
+      "passed": 21
+    },
+    {
+      "suite": "lifetime",
+      "sha256": "bbbeb7cce296e9f78ba3007da834afe74aea32601be33163f614873ace641223",
+      "exit": 0,
+      "passed": 2
+    },
+    {
+      "suite": "acceptance",
+      "sha256": "45e6f0f8bc20d5b8341d8f14045c13298a094b9aa538f3b62c1ade56c2f7eafe",
+      "exit": 0,
+      "passed": 21
+    },
+    {
+      "suite": "rt_allocations",
+      "sha256": "e5ef5c8a84ac6ed08a9beb4ee13c9f3d047e08c9a0f4ecfa1c938d9d6d8db5b6",
+      "exit": 0,
+      "passed": 1
+    },
+    {
+      "suite": "recovery",
+      "sha256": "c878768af7fed45372c1bdac943bcae0f8920985768fe357c22478345e70fb0a",
+      "exit": 0,
+      "passed": 4
+    }
+  ]
+}

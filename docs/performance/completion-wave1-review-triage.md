@@ -53,3 +53,17 @@ no findings. Lead full suite: 251 Python tests PASS. Source changes accepted;
 current-build mobile overhead/noise qualification remains NOT RUN, independently
 of that source acceptance. Connected phone keyguard currently blocks graphics
 operation; successful installation is not treated as execution evidence.
+
+Final ownership/lifetime source `b58527f`: independent [Muse](reviews/audio-final-muse-20260912.md)
+and [Gemini](reviews/audio-final-gemini-20260912.md) reviews found no remaining
+PCM/core ownership defect. Gemini identified one additional pause-intent failure:
+`suspend()` returned success when recovery had failed without recording suspension.
+Lead regression failed with “pause intent lost during recovery”; `a999fd0` fixes
+the guard and clears stale Resume bookkeeping on a fresh successful suspension.
+A second regression covers idempotent suspension after a failed resume.
+49 package tests and 494 workspace tests PASS (3 existing ignored gates).
+[Muse narrow corrective review](reviews/audio-pause-muse-20260912.md) has no findings;
+[Gemini narrow review](reviews/audio-pause-gemini-20260912.md) also has no findings.
+Final source `a999fd0`: 49 ARM64 correctness tests and 4 × 20 real AAudio lifecycle
+cycles PASS. Lead accepts E1 audio functional corrections; audibility, actual
+headset disconnect, Miri and both-sample integration remain open.

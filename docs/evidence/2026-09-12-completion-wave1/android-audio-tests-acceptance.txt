@@ -1,0 +1,26 @@
+
+running 21 tests
+test clip_completion_then_silence ... ok
+test clip_limit_enforced_at_32_and_recovers_after_unregister ... ok
+test closing_service_with_active_voices_is_clean ... ok
+test command_queue_full_is_explicit_backpressure_and_recovers ... ok
+test device_loss_fault_injection_recreates_stream_and_continues_voices ... ok
+test gain_scales_output ... ok
+test invalid_clips_are_rejected_atomically ... ok
+test invalid_gains_are_rejected ... ok
+test mono_clip_upmixes_to_both_channels ... ok
+test output_is_always_bounded_and_finite_when_clipping ... ok
+test pcm_budget_enforced_and_recovered_after_unregister ... ok
+test stale_clip_handle_cannot_affect_later_clip ... ok
+test stale_voice_handle_cannot_affect_later_voice ... ok
+test stereo_channel_order_is_preserved ... ok
+test stop_voice_silences_immediately_and_completes_nothing ... ok
+test suspend_does_not_restart_or_replay_stale_sounds ... ok
+test suspend_freezes_clock_and_resume_continues_exactly ... ok
+test suspend_truth_does_not_depend_on_render_callbacks ... ok
+test two_voice_fixture_matches_independent_reference ... ok
+test voice_limit_enforced_at_8_with_no_stealing ... ok
+test voice_saturation_recovery_after_completion ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

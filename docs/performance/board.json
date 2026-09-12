@@ -552,15 +552,15 @@
     },
     "E1-audio-recovery": {
       "attempt": 2,
-      "owner": "w_cf416cb8",
-      "state": "pcm-ownership-repair-running",
+      "owner": "codex-orchestrator",
+      "state": "accepted",
       "base": "704bb4a",
       "workspace": "/mnt/bench/matterweave-dev/worktrees/audio-suspend-fix",
       "run_dir": "/mnt/bench/matterweave-dev/completion-20260912/audio-pcm-boundary-retry",
       "paths": [
         "crates/matterweave-audio/**"
       ],
-      "acceptance": "Command lifetime/error corrections integrated; 43 worker tests PASS. Independent oracle confirms live-core PCM aliasing; ownership repair running. Final independent review and Android rerun pending.",
+      "acceptance": "Independent Muse/Gemini full ownership/lifetime and final pause-intent reviews resolved. Lead494workspace tests,49ARM64 audio tests and4x20AAudio lifecycle cyclesPASS. E1 functional gate accepted; audibility,Miri,actual headset disconnect and E7sample integration NOT RUN.",
       "history": [
         {
           "worker": "w_8b5fb3bc",
@@ -568,7 +568,7 @@
           "reason": "HTTP400 prompt_cache_retention unsupported; no source edits"
         }
       ],
-      "artifact": "da2e4fc"
+      "artifact": "a999fd0"
     },
     "E2-collector": {
       "attempt": 1,
@@ -597,7 +597,7 @@
     "glm": "2026-09-12 HTTP400 before inference: prompt_cache_retention unsupported; stopped and rerouted.",
     "hy4": "Narrow review240s timeout, final-only exact-session continuation120s timeout; no completed review accepted."
   },
-  "orchestration": "Lead integration with paid Muse Contributor, Opus5, Hy4 and GLM5.3 Flash. Bounded Pi leaf workers; live availability overrides historical quota notes.",
+  "orchestration": "One Astra lead; supervised Pi leaves: Muse Free/high, Opus/medium, Astra/medium implementation; independent Muse Free/high and Gemini/high reviews; narrow Astra/xhigh ownership consultation. GLM failed before inference; Hy4 timed out. No active workers after final reviews; no acceptance inferred from completion alone.",
   "reconciliation": {
     "date": "2026-09-12",
     "remote_main": "065ff6edd89eaaf0715978b2d9f30e41527f12bb",

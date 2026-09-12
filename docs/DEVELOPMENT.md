@@ -395,7 +395,7 @@ cargo build --locked --release -p matterweave-audio --example audio_diagnostic \
   --target aarch64-linux-android --no-default-features --features backend-android,diagnostic
 adb push "$CARGO_TARGET_DIR/aarch64-linux-android/release/examples/audio_diagnostic" /data/local/tmp/matterweave-audio-diagnostic
 adb shell chmod 755 /data/local/tmp/matterweave-audio-diagnostic
-adb shell /data/local/tmp/matterweave-audio-diagnostic
+adb shell /data/local/tmp/matterweave-audio-diagnostic --cycles 20
 ```
 
 Record the device model, Android version, negotiated stream properties and the printed

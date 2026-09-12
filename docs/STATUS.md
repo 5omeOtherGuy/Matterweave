@@ -1,61 +1,56 @@
 # Current status
 
-Latest checkpoint: E1 collision regression accepted after both independent reviews
-and final OnePlus 13 ARM64 runs at `2d024f0`: 11 tests PASS in each of three runs
-([manifest](evidence/2026-09-12-completion-wave1/android-cadence-final-manifest.json)).
-Collector generator compatibility and stricter analyzer integrated at `e436634`;
-251 Python tool tests and 16 coordination tests PASS. Corrective reviews running.
-Frozen debug APK SHA-256 `52a115b4a05e208c5d4c30629bb7e11d66202c856d8518a096457d2c13313506`
-(source `f07c87c`, app runtime unchanged) installed successfully. Android reports
-keyguard showing over the app; graphics qualification awaits physical unlock.
-No new overhead, repeatability, audibility or sustained-performance claim.
+Updated: 2026-09-12. Latest published prerelease: **v0.5.0**. M2–M6 remain open.
 
+## Completion execution — wave 1
 
-Execution checkpoint (2026-09-12, PR #19 still draft): integrated command-completion
-acknowledgments and audio failure-invariant repairs at `da2e4fc` (worker 43 tests
-PASS). Independent safety consultation confirms that control-thread PCM registration
-through the live mutable mixer is unsound; ownership repair is running, so audio is
-not accepted. Earlier Android audio passes validate only the earlier revision.
-Collector corrections have 238 passing Python tests; current generator 3 compatibility
-is being repaired before physical qualification. Android debug APK assembly and
-16-KiB library alignment verification passed. CI passed at `f07c87c`; subsequent
-changes still require independent review, relevant device reruns, and CI.
+Current integration branch: `codex/engine-completion-wave1-20260912`, [PR #19](https://github.com/5omeOtherGuy/Matterweave/pull/19).
+Reconciliation preserved existing device evidence (`704bb4a`), completion-plan edits,
+and the recovered audio worktree. Remote main was `065ff6e`; no supervised workers
+or open PRs existed at dispatch. Historical assignments below are not live ownership.
+The [board](performance/board.json) is the live authority; the lead owns the connected
+OnePlus 13 and Android builds. GLM failed before inference on a provider parameter;
+Hy4 timed out without a usable review. Neither is counted as completed participation.
 
+Implemented:
 
-Updated: 2026-09-12
+- Audio separates service suspension from callback observation, preserves pause
+  during recreation and failed recovery, reserves failed-pause compensation capacity,
+  and retries output failures. PCM/voice reuse follows completed FIFO commands;
+  unload targets the live generation. A separate fixed shared PCM allocation and
+  raw mixer owner prevent control access through a live mutable mixer. Final source
+  is `a999fd0`; both independent corrective reviews are resolved and the E1
+  functional gate is accepted.
+- E1 collision regression is accepted: caller-controlled publication, a wall above
+  the autostep height, actual blocking before publication and movement afterward.
+  Independent review findings are resolved; 11 native ARM64 tests pass in each of
+  three final OnePlus 13 runs at `2d024f0`.
+- Measurement tooling source is accepted after independent Muse/Gemini corrective
+  reviews at `e436634`. Same-build ON/OFF collection preserves independent timing
+  sources, validates generator/fixture/full-scene consistency, protects user files,
+  rejects ambiguous or unstable pairs, and handles zero-noise/counterbalanced pairs.
+  Current-build phone overhead and same-build noise remain **NOT RUN**.
 
-Latest published prerelease: **v0.5.0**. The engine objective (M2–M6) remains open.
+Verification is recorded in the [final manifest](evidence/2026-09-12-completion-wave1/final-verification.json)
+and [review triage](performance/completion-wave1-review-triage.md). At final source
+`a999fd0`, 494 workspace tests pass (3 existing ignored gates), as do 49 native
+ARM64 audio correctness checks and 4 × 20 real AAudio lifecycle cycles. Strict
+workspace Clippy and formatting pass. Tool suites pass 251 performance tests and
+16 coordination tests. Documentation checks pass. Muse/Gemini independently
+reviewed the full ownership/lifetime correction and the final pause-intent fix;
+all findings are resolved. PR #19 tracks the delivery revision and CI results.
 
-This file states what is implemented and verified now, the checks actually executed,
-known limitations and explicit non-claims, then the next concrete work. Per-slice
-commands, conditions and artifacts are in the linked `docs/performance/` and
-`docs/evidence/` records. Host results are never device results, and targets are
-never measurements.
+The frozen debug APK (app runtime unchanged by this wave) built, passed native
+16-KiB alignment/signature checks, and installed successfully. Source `f07c87c`,
+SHA-256 `52a115b4a05e208c5d4c30629bb7e11d66202c856d8518a096457d2c13313506`.
+Android reports keyguard covering the app; graphics qualification requires physical
+unlock. Installation is not graphics execution. No human audibility, actual headset
+disconnect, Miri, broader-device or sustained-efficiency claim is made.
 
-## Completion execution — wave 1 active
-
-Reconciled 2026-09-12: remote main `065ff6e`, local device-evidence base `704bb4a`,
-no open PRs and no active supervised workers before dispatch. Current integration
-branch is `codex/engine-completion-wave1-20260912`; older integration-branch and
-phone assignments below are historical. Existing audio suspension work was recovered
-without overwriting it. The OnePlus 13 is connected over Wi-Fi, Android 16; lead
-owns it and all Android builds.
-
-The [live board](performance/board.json) assigns bounded Pi workers to the collision
-pending-window regression, offline measurement qualification and audio recovery.
-GLM failed before inference on an unsupported provider cache parameter; Astra took
-that stopped assignment. Worker completion is not acceptance. The
-[gate ledger](performance/completion-gates-20260912.md) records remaining M2–M6
-ownership, evidence and next checks. Independent Muse/Gemini reviews identified audio lifecycle and command-lifetime
-findings; corrections and re-review are active. Initial integrated source `22070ca`
-passes 477 Rust tests (3 existing ignored gates), strict Clippy, fmt, and 218 Python
-checks. Lead correction `959faab` fixes identical-repeat noise reporting (220 Python
-checks pass). The phone passes 3 × 11 native ARM64 collision cadence tests and
-4 × 20 AAudio paused-recreation/resume/shutdown cycles. These are functional checks,
-not audibility or efficiency evidence, and do not accept later corrections. See
-[review triage](performance/completion-wave1-review-triage.md). The existing collector
-always enables profiling; explicit same-build ON/OFF collection is now assigned,
-so current-build E2 qualification remains NOT RUN.
+Next: qualified ON/OFF phone collection after unlock and E3–E8 under the
+[completion plan](ENGINE_COMPLETION_PLAN.md) and [gate ledger](performance/completion-gates-20260912.md).
+Audio is not yet wired into the samples; M6 shared-service integration remains open.
+The sections below retain earlier per-slice evidence and limitations.
 
 ## Production frame-loop scheduling — integrated and device-checked
 
