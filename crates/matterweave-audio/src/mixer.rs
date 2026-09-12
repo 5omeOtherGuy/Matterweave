@@ -16,6 +16,7 @@ use ringbuf::traits::Consumer;
 
 use crate::command::{queue, Command};
 use crate::config::{MAX_CLIPS, MAX_VOICES};
+use crate::pcm::PcmPool;
 
 /// Shared diagnostics and progress signals written by the render thread with atomics
 /// and read by the control thread. Lives in an `Arc` held by both sides.
@@ -121,9 +122,9 @@ fn clamp_sample(v: f32) -> f32 {
 pub(crate) struct MixerCore {
     /// Consumer half of the bounded command queue.
     pub consumer: crate::command::queue::Consumer,
-    /// The PCM pool. Allocated once; never resized; freed only after the stream that
-    /// references it is closed.
-    pub pool: Box<[f32]>,
+    /// Independent fixed allocation: &mut MixerCore never exclusively borrows PCM.
+    /// Only shared pool metadata and narrow unsafe per-cell reads are accessed.
+    pool: std::sync::Arc<PcmPool>,
     slots: [RtClipSlot; MAX_CLIPS],
     voices: [RtVoice; MAX_VOICES],
     suspended: bool,
@@ -135,7 +136,7 @@ pub(crate) struct MixerCore {
 impl MixerCore {
     /// Create the core for a freshly allocated pool.
     pub(crate) fn new(
-        pool: Box<[f32]>,
+        pool: std::sync::Arc<PcmPool>,
         shared: std::sync::Arc<SharedRt>,
     ) -> (Self, queue::Producer) {
         let (producer, consumer) = queue::split();
@@ -294,11 +295,19 @@ impl MixerCore {
                     // range is never reused while a voice references it).
                     let base =
                         voice.start as usize + voice.cursor as usize * voice.clip_channels as usize;
-                    let (cl, cr) = if voice.clip_channels == 2 {
-                        (self.pool[base], self.pool[base + 1])
-                    } else {
-                        let s = self.pool[base];
-                        (s, s)
+                    // SAFETY: an active voice comes from a FIFO Play following
+                    // registration's completed pool write. The service cannot
+                    // overwrite this range until Unload silences it and our final
+                    // PCM reads precede the released command acknowledgment.
+                    // Bounds are checked inside read(); only values, never inner
+                    // references or a whole-pool mutable borrow, are produced.
+                    let (cl, cr) = unsafe {
+                        if voice.clip_channels == 2 {
+                            (self.pool.read(base), self.pool.read(base + 1))
+                        } else {
+                            let s = self.pool.read(base);
+                            (s, s)
+                        }
                     };
                     voice.cursor += 1;
                     if voice.cursor >= voice.frames {
@@ -355,7 +364,7 @@ mod tests {
     /// command application and sane diagnostics (DoD #6, core-level interleaving).
     #[test]
     fn concurrent_control_and_render_completes_without_deadlock() {
-        let pool = vec![0.0f32; 4096].into_boxed_slice();
+        let pool = std::sync::Arc::new(PcmPool::new(4096));
         let shared = std::sync::Arc::new(SharedRt::default());
         let (core, mut producer) = MixerCore::new(pool, shared.clone());
 

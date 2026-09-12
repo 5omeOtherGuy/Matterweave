@@ -72,8 +72,14 @@ queued commands are never overwritten. A full command queue returns `CommandQueu
 - One render invocation performs no heap allocation or deallocation, no file or network I/O,
   no logging, no blocking locks and no stream shutdown. Control commands travel through a
   bounded `ringbuf` SPSC queue and are applied in FIFO order at the start of an invocation.
-- Clip payloads live in the service-owned pool for the service lifetime, so a render read can
-  never touch freed memory.
+- Clip payloads live in a separate fixed `PcmPool`, shared by service and mixer through
+  `Arc`. Its per-sample `UnsafeCell<f32>` storage is accessed only through private unsafe
+  value reads/range writes; no mutable whole-pool or inner-sample reference is created.
+  Registration writes exclusively owned ranges before FIFO publication. Completed Unload
+  acknowledgment, not `UnsafeCell` itself, excludes readers before range reuse.
+- The mixer Box is converted to raw ownership before callback wiring; the control thread
+  never dereferences it while live. The raw owner reconstructs the Box only after backend
+  shutdown joins callbacks. The service's separate pool Arc remains alive through that drop.
 - `ClipHandle` and `VoiceHandle` are generational. Unregistering a clip or reusing a voice slot
   invalidates older handles; a stale handle is rejected and cannot affect the slot's new owner.
 - Unregistering a clip silences every voice still playing it (rather than detaching it). The
@@ -137,9 +143,11 @@ cargo test -p matterweave-audio --features backend-mock
   separate) and fault-injected device loss with recreation.
 - `tests/recovery.rs` (4 tests) covers device-loss and diagnostic recreation with applied
   and buffered Suspend, no callbacks while paused, and exact PCM continuation.
-- `src/service/tests.rs` and its submodules (14 tests) check paused replacements,
+- `src/service/tests.rs` and its submodules (18 tests) check paused replacements,
   open/start/pause failures, bounded queue recovery, stale/new device errors, and
-  deterministic enqueue-after-drain races for PCM reclamation and voice generations.
+  deterministic enqueue-after-drain races for PCM reclamation and voice generations,
+  registration while a mutable render borrow is live, concurrent disjoint PCM access,
+  2,000 real-thread callbacks during registration, and shared-pool teardown lifetime.
 - `tests/lifetime.rs` (2 tests) verifies selective unregister silencing, full-pool reuse
   only after Unload acknowledgment, and stale clip/voice handle isolation.
 - `tests/rt_allocations.rs` (1 test) is a dedicated allocation detector that reports zero

@@ -42,13 +42,18 @@ fn registration_while_mutable_render_borrow_is_live_uses_separate_pool_owner() {
         });
     }
     assert_eq!(out, [0.25; 2]);
-    service.play(registered.unwrap(), PlayOptions::default()).unwrap();
+    service
+        .play(registered.unwrap(), PlayOptions::default())
+        .unwrap();
     service.mock_render(&mut out).unwrap();
     assert_eq!(out, [0.125; 2]); // original frame 0.375 plus new frame -0.25
     assert_eq!(service.health().rt_rejected_commands, 0);
 }
 
 // Taking CorePtr as a whole keeps the Send wrapper captured, not its raw field.
+/// # Safety
+/// Caller must own the sole render role and keep CoreOwner alive until return;
+/// no backend or other reference may access the core concurrently.
 unsafe fn render_once(ptr: CorePtr, out: &mut [f32]) {
     // SAFETY: caller guarantees the unique callback borrow and allocation lifetime.
     unsafe { (*ptr.0).render(out, 2) };
@@ -68,8 +73,9 @@ fn concurrent_service_registration_and_render_preserve_published_pcm() {
     let start = std::sync::Barrier::new(2);
     let additions = [0.75; 16_384];
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            start.wait();
+        let callback_start = &start;
+        scope.spawn(move || {
+            callback_start.wait();
             let mut out = [0.0; 128];
             for _ in 0..2_000 {
                 // SAFETY: backend is closed; this is the only core dereferencer.
@@ -90,6 +96,8 @@ fn concurrent_service_registration_and_render_preserve_published_pcm() {
 
 #[test]
 fn pool_handles_outlive_service_but_not_through_callback_reference_borrows() {
+    fn assert_send<T: Send>() {}
+    assert_send::<AudioService>(); // derived from the private backend/owner bounds
     let pool = {
         let service = playing();
         assert_eq!(Arc::strong_count(&service.pool), 2); // service and mixer

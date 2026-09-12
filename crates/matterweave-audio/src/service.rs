@@ -7,13 +7,14 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::backend::{self, BackendError, CorePtr, OutputBackend};
+use crate::backend::{self, BackendError, CoreOwner, CorePtr, OutputBackend};
 use crate::clip::ClipSpec;
 use crate::command::{queue, Command};
 use crate::config::{MAX_CLIPS, MAX_GAIN, MAX_PCM_BYTES, MAX_VOICES, SAMPLE_RATE};
 use crate::error::AudioServiceError;
 use crate::handle::{ClipHandle, VoiceHandle};
 use crate::mixer::{MixerCore, SharedRt};
+use crate::pcm::PcmPool;
 
 #[cfg(all(test, feature = "backend-mock"))]
 mod tests;
@@ -182,10 +183,10 @@ struct PoolRange {
 /// callback threads before returning, so no callback can observe the freed core.
 pub struct AudioService {
     backend: Option<Box<dyn OutputBackend>>,
-    core: Option<Box<MixerCore>>,
-    /// Alias of `core`'s contents; handed to output callbacks. Valid while `core` is
-    /// `Some`, which outlives every callback (see drop order above).
-    core_ptr: CorePtr,
+    // Field order matters: backend closes first, then core, then the service's
+    // independent PCM owner. CoreOwner never dereferences a live mixer.
+    core: CoreOwner,
+    pool: Arc<PcmPool>,
     shared: Arc<SharedRt>,
     producer: queue::Producer,
 
@@ -214,10 +215,8 @@ pub struct AudioService {
     stream_recreations: u64,
 }
 
-// SAFETY: the raw core pointer is dereferenced only by output callbacks (which are
-// quiesced before the core drops); everything else is ordinary single-thread state
-// or atomics behind an Arc.
-unsafe impl Send for AudioService {}
+// Send is derived: OutputBackend requires Send, CoreOwner transfers raw ownership
+// without accessing the core, and PcmPool's unsafe cell access contract gates PCM.
 
 impl AudioService {
     /// Create the service and open the platform output stream.
@@ -226,27 +225,27 @@ impl AudioService {
     /// and the mixer core, then opens and starts the output stream. The stream
     /// properties are verified after open.
     pub fn new() -> Result<Self, AudioServiceError> {
-        let pool = vec![0.0f32; MAX_PCM_BYTES / 4].into_boxed_slice();
+        let pool = Arc::new(PcmPool::new(MAX_PCM_BYTES / 4));
         let shared = Arc::new(SharedRt::default());
-        let (core, producer) = MixerCore::new(pool, shared.clone());
-        Self::assemble(Box::new(core), producer, shared)
+        let (core, producer) = MixerCore::new(pool.clone(), shared.clone());
+        Self::assemble(Box::new(core), pool, producer, shared)
     }
 
     fn assemble(
-        mut core: Box<MixerCore>,
+        core: Box<MixerCore>,
+        pool: Arc<PcmPool>,
         producer: queue::Producer,
         shared: Arc<SharedRt>,
     ) -> Result<Self, AudioServiceError> {
-        let core_ptr = CorePtr(&mut *core as *mut MixerCore);
         let mut free_ranges = Vec::with_capacity(256);
         free_ranges.push(PoolRange {
             start: 0,
-            samples: (MAX_PCM_BYTES / 4) as u32,
+            samples: pool.len() as u32,
         });
         let mut service = Self {
             backend: None,
-            core: Some(core),
-            core_ptr,
+            core: CoreOwner::new(core),
+            pool,
             shared,
             producer,
             clip_mirror: core::array::from_fn(|_| ClipMirror::empty()),
@@ -271,7 +270,7 @@ impl AudioService {
     }
 
     fn open_output(&mut self) -> Result<(), AudioServiceError> {
-        let backend = backend::open_backend(self.core_ptr, self.shared.clone())?;
+        let backend = backend::open_backend(self.core.ptr(), self.shared.clone())?;
         self.backend = Some(backend);
         Ok(())
     }
@@ -333,8 +332,11 @@ impl AudioService {
         let generation = next_generation(self.clip_mirror[slot].generation);
         let start = range.start;
         let samples = spec.samples.len();
-        self.core.as_mut().expect("core present").pool[start as usize..start as usize + samples]
-            .copy_from_slice(spec.samples);
+        // SAFETY: take_free_range grants an unpublished range, or one whose
+        // completed Unload acknowledgment was acquired. No callback can read it.
+        // The external source cannot alias our private pool. Publish only after
+        // this write; neither core nor its Box is borrowed by the control thread.
+        unsafe { self.pool.write(start as usize, spec.samples) };
         self.used_samples += samples;
 
         self.push(Command::LoadClip {
@@ -687,7 +689,7 @@ impl AudioService {
         // clearing after open/start could erase a new stream's error callback.
         self.shared.disconnected.store(false, Ordering::Relaxed);
         self.shared.error_code.store(0, Ordering::Relaxed);
-        self.backend = Some(open(self.core_ptr, self.shared.clone())?);
+        self.backend = Some(open(self.core.ptr(), self.shared.clone())?);
         // Opening is not starting: a suspended replacement receives no callbacks.
         // The retained core and its FIFO may contain either an applied or buffered
         // Suspend. Only resume() may arrange Resume and restart output.
@@ -839,7 +841,8 @@ impl Drop for AudioService {
         //    (platform contract) before returning, and drops the callback closures
         //    holding the core pointer.
         self.backend = None;
-        // 2) Only now drop the mixer core (and its PCM pool).
-        self.core = None;
+        // 2) Field destruction now drops CoreOwner (reconstructing its Box only
+        //    after the join), then the service's pool Arc. The mixer held the
+        //    other pool Arc; no callback allocates, clones or drops pool owners.
     }
 }

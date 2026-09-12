@@ -67,6 +67,7 @@ pub mod config;
 pub mod error;
 pub mod handle;
 pub(crate) mod mixer;
+pub(crate) mod pcm;
 pub mod service;
 
 pub use clip::ClipSpec;

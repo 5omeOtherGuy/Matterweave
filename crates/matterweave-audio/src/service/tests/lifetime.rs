@@ -1,16 +1,17 @@
 use super::*;
 
-// MockOutput is synchronous: no backend callback runs while we drive the detached
-// core. The closure models a control operation after FIFO drain, before callback
-// publication. It must not register PCM (the core is temporarily detached).
+// MockOutput is synchronous: only this invocation can borrow the core. The closure
+// models a control operation after FIFO drain, before callback publication; it
+// must not reenter rendering, replace output, or otherwise access the core.
 fn render_with_enqueue(
     service: &mut AudioService,
     after_drain: impl FnOnce(&mut AudioService),
 ) -> [f32; 2] {
-    let mut core = service.core.take().unwrap();
+    let ptr = service.core.ptr();
     let mut out = [0.0; 2];
-    core.render_with_after_drain(&mut out, 2, || after_drain(service));
-    service.core = Some(core);
+    // SAFETY: the mock is synchronous and closure operations only touch separate
+    // control state, atomics, FIFO and independently owned PCM, never the core.
+    unsafe { (*ptr.0).render_with_after_drain(&mut out, 2, || after_drain(service)) };
     out
 }
 
