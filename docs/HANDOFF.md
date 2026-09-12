@@ -1,6 +1,6 @@
 # Implementation handoff
 
-Terrain Lab is now installed and functionally verified on the phone; choose **EXPLORE TERRAIN LAB**. [Controls, review and Android evidence](performance/terrain-lab.md). PR #29 delivery is in progress; detail/audio production integration continues next.
+Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 now passes the repaired Android resume checks; review/CI delivery is in progress and human hearing remains open.
 
 The entry point for a fresh session: what is true now and what is authorized next.
 [STATUS](STATUS.md) owns the dated evidence; where the two differ, STATUS is
@@ -44,12 +44,14 @@ branch. M2–M6 remain open.
 
 ## Next authorized work
 
-Owner transferred development and the phone to this lead after the other session
-merged PRs25/26/27 at `a91f7a0`. Continue the current S2 scaled-terrain consumer and
-Terrain Lab workers, integrate the merged detail/audio runtime modules, and verify
-Android. The coarse derivation core now passes 27 tests on physical ARM64; see
-[coarse terrain evidence](performance/coarse-terrain.md). Do not stop at this core
-slice or describe it as a new playable APK.
+Owner transferred ongoing development, integration and the phone to this lead.
+PRs #28/#29/#31 delivered coarse derivation, Terrain Lab and production wetland
+selection. Deliver PR #32 after its repaired Android resume checks and final CI,
+then integrate the preserved destruction and lighting deliveries. D2.2 PR #33
+belongs to the other session's merge workflow; its graphics-integrated Android
+64-piece/20-cycle gate remains this lead's follow-up. Preserve active worker
+`w_9d03d127` and its D3.1 renderer scope. Reconcile Pi and Git before dispatch.
+Do not start duplicate implementation or treat host checks as device completion.
 
 
 The follow-up delivered opt-in landscape comparison fixtures and a
