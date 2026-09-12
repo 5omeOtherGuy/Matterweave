@@ -137,7 +137,8 @@ impl ApplicationHandler for App {
                     upload_world(r, &self.world);
                     assert!(!r.indirect_enabled());
                     assert!(
-                        r.upload_indirect(&self.cache, &self.world, 0, None).is_err(),
+                        r.upload_indirect(&self.cache, &self.world, 0, None)
+                            .is_err(),
                         "old edit result rejected"
                     );
                 }
@@ -181,7 +182,8 @@ impl ApplicationHandler for App {
                 } else {
                     assert!(sample[0] > 0.02);
                 }
-                r.upload_indirect(&self.cache, &self.world, 0, None).unwrap();
+                r.upload_indirect(&self.cache, &self.world, 0, None)
+                    .unwrap();
                 println!(
                     "phase={phase} cpu_producer_ms={:.3} rays={rays} bytes={} sample={sample:?}",
                     start.elapsed().as_secs_f64() * 1000.,
@@ -212,7 +214,8 @@ impl ApplicationHandler for App {
         }
         if self.frame == 36 {
             // Real light invalidation without publishing another CPU cache.
-            r.upload_indirect(&self.cache, &self.world, 0, None).unwrap();
+            r.upload_indirect(&self.cache, &self.world, 0, None)
+                .unwrap();
             assert!(r.indirect_enabled());
             self.lighting.sun.intensity = 0.;
             let result = r.render_with_lighting(
