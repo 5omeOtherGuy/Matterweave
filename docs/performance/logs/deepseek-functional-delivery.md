@@ -43,6 +43,11 @@ this task) · outcome: Category: review · 2026-09-13 · run:
     the detail branch instead of leaving it unowned.
   - Restored all five owner saves byte-exact from the private backup with the app
     force-stopped; the fixed APK remains installed.
+  - Opened the two scoped PRs: detail
+    [#48](https://github.com/5omeOtherGuy/Matterweave/pull/48) (open, held for the
+    phase-7 fixture repair) and interaction
+    [#49](https://github.com/5omeOtherGuy/Matterweave/pull/49), which merged at
+    `f0da177` after all six checks passed.
 
 - **Issues & Friction:**
   - First action screenshots were pixel-identical to the pre-action frame even
