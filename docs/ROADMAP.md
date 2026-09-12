@@ -19,6 +19,13 @@ Released slices:
 
 ## In progress
 
+The D2.2 rendered destruction slice passes corrected Android functional acceptance:
+64 pieces, 20 reset/load cycles, renderer recreation and real HOME/resume, with
+current user saves unchanged. [Evidence and review](performance/destruction-android.md).
+Shared audio audibility is now confirmed by the owner. These close their named
+functional rows; M3 streaming, M4 lighting, M6 shared services and deferred M5
+measurement remain open.
+
 The [autonomous microvoxel roadmap](AUTONOMOUS_MICROVOXEL_ROADMAP.md) adds the
 owner's visual/world-scale reference and stage-level autonomous swarm mandate.
 It extends the existing M0–M6 work, with technical completion before M5 tuning,

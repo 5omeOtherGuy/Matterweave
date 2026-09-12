@@ -38,8 +38,10 @@ the service contracts and ran the phone reproducer. Earlier integration reviews
 `w_bc601816` and `w_f715246c` found no defects but missed the Android failure;
 hardware testing supplied the decisive evidence.
 
-**Human audibility remains unverified.** Callback counts and mock PCM do not prove
-speaker output. A listening question is pending; this code slice does not close M6,
+**Human audibility is confirmed by the owner:** "Audio works 100% it is all yours."
+This supersedes the earlier brief-sound report while loading the grove. The
+reported app exit overlapped lead installation/diagnostic restarts, and the Android
+crash buffer was empty when checked; no crash diagnosis is inferred. This slice does not close M6,
 physical multitouch/lock-unlock, mute/volume UI, or the engine's remaining gates.
 No performance or thermal claim is made.
 
@@ -48,3 +50,6 @@ tap JUMP, HOME for3seconds, resume for7seconds, tap JUMP again; repeat3times.
 Observe new successful AAudio starts and increasing event callback/frame counters.
 Preserve existing saves before fixture manipulation. Raw device logs, disposable
 fixtures and captures reside under `/mnt/bench/matterweave-dev/coarse-terrain/android-audio/`.
+
+Owner follow-up on 2026-09-12: "Audio works 100% it is all yours." Human
+audibility is confirmed by that report; the phone is released for further tests.
