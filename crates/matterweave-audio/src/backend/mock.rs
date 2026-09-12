@@ -24,6 +24,10 @@ pub enum MockRenderError {
 ///
 /// Render validity: any open stream can be rendered (started or paused), modeling
 /// in-flight callbacks; only a closed stream refuses.
+///
+/// Fault injection is limited to [`MockOutput::inject_device_error`] (reported
+/// device loss) and [`MockOutput::fail_next_start`] (refused start), so the
+/// service's recovery policies are testable deterministically.
 pub struct MockOutput {
     props: StreamProperties,
     core: CorePtr,
@@ -31,6 +35,7 @@ pub struct MockOutput {
     closed: Cell<bool>,
     lost: Cell<bool>,
     xruns: Cell<u32>,
+    fail_next_start: Cell<Option<i32>>,
 }
 
 // Auto-Send: CorePtr is Send by contract, `Arc<SharedRt>` is Send+Sync, the rest are
@@ -61,6 +66,7 @@ impl MockOutput {
             closed: Cell::new(false),
             lost: Cell::new(false),
             xruns: Cell::new(0),
+            fail_next_start: Cell::new(None),
         })
     }
 
@@ -80,6 +86,17 @@ impl MockOutput {
     /// Simulate a device underrun count (diagnostic tests only).
     pub fn set_xruns(&self, count: u32) {
         self.xruns.set(count);
+    }
+
+    /// Arm a one-shot stream-start failure with the code the next `start` reports,
+    /// modeling a stream the platform refuses to start (a stolen stream is AAudio
+    /// -899).
+    ///
+    /// The flag is consumed by [`OutputBackend::start`], so a replacement stream
+    /// opened afterwards starts normally. This is how the failed-resume recovery
+    /// runs against the real service state machine; production paths never arm it.
+    pub fn fail_next_start(&self, code: i32) {
+        self.fail_next_start.set(Some(code));
     }
 
     /// Drive one render invocation synchronously (host equivalent of one data
@@ -124,6 +141,9 @@ impl OutputBackend for MockOutput {
     }
 
     fn start(&mut self) -> Result<(), AudioServiceError> {
+        if let Some(code) = self.fail_next_start.take() {
+            return Err(AudioServiceError::StreamStartFailed { code });
+        }
         if self.closed.get() {
             return Err(AudioServiceError::StreamStartFailed { code: 0 });
         }
