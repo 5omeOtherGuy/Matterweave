@@ -31,7 +31,8 @@ pub const CHUNK_EDGE: i32 = 16;
 pub const CHUNK_VOLUME: usize = 4096;
 pub const FORMAT_VERSION: u32 = 3;
 pub use streaming::{
-    LANDSCAPE_MAX_Y, LANDSCAPE_MIN_Y, STREAM_MAX_Y, STREAM_MIN_Y, STREAM_RADIUS_CHUNKS, WORLD_LIMIT,
+    LANDSCAPE_MAX_Y, LANDSCAPE_MIN_Y, LANDSCAPE_WORLD_LIMIT, STREAM_MAX_Y, STREAM_MIN_Y,
+    STREAM_RADIUS_CHUNKS, WORLD_LIMIT,
 };
 pub const GENERATOR_VERSION: u32 = 1;
 
@@ -60,12 +61,27 @@ impl TerrainSource {
         }
     }
 
+    /// Horizontal half-extent of this source's editable simulation domain, in
+    /// metres. The legacy island is the original sandbox square; the landscape is
+    /// a world you can travel across, so its limit is large enough that the
+    /// distance rings never see a clamped window.
+    pub fn x_limit(self) -> i32 {
+        match self {
+            TerrainSource::LegacyIsland => WORLD_LIMIT,
+            TerrainSource::Landscape => LANDSCAPE_WORLD_LIMIT,
+        }
+    }
+
+    /// Chunk index just past the last resident column on one horizontal axis.
+    pub fn chunk_limit(self) -> i32 {
+        self.x_limit().div_euclid(CHUNK_EDGE)
+    }
+
     /// Whether one cell is inside this source's editable simulation domain.
     pub fn contains_cell(self, [x, y, z]: [i32; 3]) -> bool {
         let (min_y, max_y) = self.y_range();
-        (-WORLD_LIMIT..WORLD_LIMIT).contains(&x)
-            && (-WORLD_LIMIT..WORLD_LIMIT).contains(&z)
-            && (min_y..max_y).contains(&y)
+        let limit = self.x_limit();
+        (-limit..limit).contains(&x) && (-limit..limit).contains(&z) && (min_y..max_y).contains(&y)
     }
 }
 
@@ -149,6 +165,11 @@ impl World {
         self.terrain = source;
         self.revision = next;
         true
+    }
+
+    /// Horizontal half-extent of this world's editable domain, in metres.
+    pub fn stream_x_limit(&self) -> i32 {
+        self.terrain.x_limit()
     }
 
     /// Vertical simulation band of this world's terrain source, in cell metres.

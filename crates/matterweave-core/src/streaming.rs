@@ -4,6 +4,10 @@ use std::sync::Arc;
 
 pub const STREAM_RADIUS_CHUNKS: i32 = 3;
 pub const WORLD_LIMIT: i32 = 256;
+/// Horizontal half-extent of the landscape simulation domain. Large enough that
+/// a travelling player never sees a clamped streaming window; the ring planner
+/// and the save format both accept coordinates inside it.
+pub const LANDSCAPE_WORLD_LIMIT: i32 = 8192;
 /// Vertical band of the original island fixture's window.
 pub const STREAM_MIN_Y: i32 = -16;
 pub const STREAM_MAX_Y: i32 = 32;
@@ -51,9 +55,14 @@ impl World {
 
     /// Window center for an eye position, or `None` for nonfinite input.
     /// One definition serves the synchronous call and background preparation.
-    pub(crate) fn stream_center_of(position: [f32; 3]) -> Option<[i32; 2]> {
+    pub(crate) fn stream_center_of(
+        source: crate::TerrainSource,
+        position: [f32; 3],
+    ) -> Option<[i32; 2]> {
+        let limit = source.chunk_limit();
         position.iter().all(|v| v.is_finite()).then(|| {
-            [position[0], position[2]].map(|v| ((v.floor() as i32).div_euclid(16)).clamp(-16, 15))
+            [position[0], position[2]]
+                .map(|v| ((v.floor() as i32).div_euclid(16)).clamp(-limit, limit - 1))
         })
     }
 
@@ -83,6 +92,7 @@ impl World {
         let low = position.map(|v| (f64::from(v) - f64::from(margin)).floor());
         let high = position.map(|v| (f64::from(v) + f64::from(margin)).floor());
         let (min_y, max_y) = self.stream_y_range();
+        let limit = self.stream_x_limit();
         if !low
             .iter()
             .zip(high)
@@ -91,7 +101,7 @@ impl World {
                 let (min, max) = if axis == 1 {
                     (f64::from(min_y), f64::from(max_y - 1))
                 } else {
-                    (f64::from(-WORLD_LIMIT), f64::from(WORLD_LIMIT - 1))
+                    (f64::from(-limit), f64::from(limit - 1))
                 };
                 low >= min && high <= max
             })
@@ -121,7 +131,7 @@ impl World {
     /// simulation. At revision exhaustion or with nonfinite input residency is
     /// left unchanged.
     pub fn stream_around(&mut self, position: [f32; 3]) -> bool {
-        let Some(center) = Self::stream_center_of(position) else {
+        let Some(center) = Self::stream_center_of(self.terrain, position) else {
             return false;
         };
         let Some(stream) = &self.streaming else {
@@ -134,11 +144,12 @@ impl World {
             return false;
         };
         let mut wanted = BTreeSet::new();
-        for x in
-            (center[0] - STREAM_RADIUS_CHUNKS).max(-16)..=(center[0] + STREAM_RADIUS_CHUNKS).min(15)
+        let limit = self.terrain.chunk_limit();
+        for x in (center[0] - STREAM_RADIUS_CHUNKS).max(-limit)
+            ..=(center[0] + STREAM_RADIUS_CHUNKS).min(limit - 1)
         {
-            for z in (center[1] - STREAM_RADIUS_CHUNKS).max(-16)
-                ..=(center[1] + STREAM_RADIUS_CHUNKS).min(15)
+            for z in (center[1] - STREAM_RADIUS_CHUNKS).max(-limit)
+                ..=(center[1] + STREAM_RADIUS_CHUNKS).min(limit - 1)
             {
                 for y in self.stream_y_chunks() {
                     wanted.insert([x, y, z]);

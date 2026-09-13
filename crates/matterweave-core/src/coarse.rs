@@ -61,10 +61,7 @@
 //! must invalidate on mode change as well as revision change, and own world identity.
 
 use crate::streaming::generated_chunk;
-use crate::{
-    address, Chunk, World, CHUNK_EDGE, CHUNK_VOLUME, GENERATOR_VERSION, STREAM_MAX_Y, STREAM_MIN_Y,
-    WORLD_LIMIT,
-};
+use crate::{address, Chunk, World, CHUNK_EDGE, CHUNK_VOLUME, GENERATOR_VERSION};
 use std::fmt;
 
 /// Coarse cells per tile axis. Every tile is this cubed, so tile material memory is
@@ -235,7 +232,7 @@ impl World {
         let Some(origin) = tile_origin(key, span) else {
             return Err(CoarseError::OutOfRange { level, key });
         };
-        if self.streaming.is_some() && !intersects_simulation_domain(origin, span) {
+        if self.streaming.is_some() && !intersects_simulation_domain(self.terrain, origin, span) {
             return Err(CoarseError::OutsideSupportedDomain { level, key });
         }
         let aggregation = 1 << level;
@@ -353,12 +350,9 @@ fn tile_origin(key: [i32; 3], span: i32) -> Option<[i32; 3]> {
 }
 
 /// Whether the tile's fine box overlaps the editable simulation domain.
-fn intersects_simulation_domain(origin: [i32; 3], span: i32) -> bool {
-    let domain = [
-        (-WORLD_LIMIT, WORLD_LIMIT),
-        (STREAM_MIN_Y, STREAM_MAX_Y),
-        (-WORLD_LIMIT, WORLD_LIMIT),
-    ];
+fn intersects_simulation_domain(source: crate::TerrainSource, origin: [i32; 3], span: i32) -> bool {
+    let limit = source.x_limit();
+    let domain = [(-limit, limit), source.y_range(), (-limit, limit)];
     (0..3).all(|axis| {
         let low = i64::from(origin[axis]);
         let high = low + i64::from(span);

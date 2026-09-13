@@ -258,10 +258,13 @@ impl World {
             .collect();
         world.attachment = snapshot.attachment;
         if let Some(stream) = snapshot.streaming {
+            let column_limit = snapshot.terrain_source.chunk_limit();
             if stream.extension_version != 1
-                || stream
-                    .center
-                    .is_some_and(|center| center.iter().any(|v| !(-16..16).contains(v)))
+                || stream.center.is_some_and(|center| {
+                    center
+                        .iter()
+                        .any(|v| !(-column_limit..column_limit).contains(v))
+                })
                 || world.chunks.len() + stream.empty_overrides.len() > MAX_SAVE_CHUNKS
             {
                 return Err(invalid("invalid streaming metadata"));
