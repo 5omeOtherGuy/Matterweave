@@ -209,11 +209,14 @@ break/place republish, one body-move republish, lifecycle resume.
 
 ### Delivery snapshot
 
-- Repair source commit: recorded in the docs-freeze commit that follows this
-  one (code, tests and this log in a single commit). Branch
-  `engine/wetland-proxy-lighting`, PR54.
+- Repair source commit, frozen for corrective review:
+  `28d30553606f01bdd5d38e6240782d6da552beae` (code, tests and this log in one
+  commit), pushed to `engine/wetland-proxy-lighting`, PR54. This docs-freeze
+  commit is the only commit after it.
 - Frozen review baseline: `76043d394f106d550ebb43588db3a5c1310c9229` + docs
   `beda5ad258de843ff00955e5a2b1449df0099166`.
+- The repair source stays frozen after this handoff; no device, timing or
+  thermal claim is made, and no CI result is awaited or claimed here.
 
 ## Insights
 
