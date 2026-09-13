@@ -97,6 +97,18 @@ impl Experience {
         self.clear_sample_events();
         self.audio.switch_to(arriving);
     }
+    /// Enter the arriving scope for a pending switch: flush the leaving
+    /// sample's one-shot preference change, then retire its audio scope.
+    ///
+    /// [`Self::sync_settings`] normally runs in `about_to_wait`, but a scope
+    /// switch is processed in `window_event`: a toggle, DONE and a launch tap
+    /// can share one event batch. Without this flush the leaving sample is
+    /// dropped with its change unpersisted, mute unapplied and the arriving
+    /// sample stale.
+    fn begin_scope_switch(&mut self, arriving: AudioScope) {
+        self.sync_settings();
+        self.retire_leaving_scope(arriving);
+    }
     /// True while both the lifecycle and the window allow playback.
     fn audio_active(&self) -> bool {
         self.resumed && self.focused
@@ -207,7 +219,7 @@ impl Experience {
     }
     fn switch_if_requested(&mut self, event_loop: &ActiveEventLoop) {
         if self.wetland.as_ref().is_some_and(|w| w.sandbox_requested) {
-            self.retire_leaving_scope(AudioScope::Sandbox);
+            self.begin_scope_switch(AudioScope::Sandbox);
             if let Some(mut wetland) = self.wetland.take() {
                 wetland.suspended(event_loop);
             }
@@ -219,7 +231,7 @@ impl Experience {
             .as_ref()
             .is_some_and(|w| w.voxel_relay_requested)
         {
-            self.retire_leaving_scope(AudioScope::VoxelRelay);
+            self.begin_scope_switch(AudioScope::VoxelRelay);
             if let Some(mut wetland) = self.wetland.take() {
                 wetland.suspended(event_loop);
             }
@@ -232,7 +244,7 @@ impl Experience {
             .as_ref()
             .is_some_and(|w| w.terrain_lab_requested)
         {
-            self.retire_leaving_scope(AudioScope::Sandbox);
+            self.begin_scope_switch(AudioScope::Sandbox);
             if let Some(mut wetland) = self.wetland.take() {
                 wetland.suspended(event_loop);
             }
@@ -241,7 +253,7 @@ impl Experience {
             lab.resumed(event_loop);
             self.terrain_lab = Some(lab);
         } else if self.terrain_lab.as_ref().is_some_and(|t| t.return_to_menu) {
-            self.retire_leaving_scope(AudioScope::Wetland);
+            self.begin_scope_switch(AudioScope::Wetland);
             if let Some(mut lab) = self.terrain_lab.take() {
                 lab.suspended(event_loop);
             }
@@ -251,7 +263,7 @@ impl Experience {
             wetland.resumed(event_loop);
             self.wetland = Some(wetland);
         } else if self.voxel_relay.as_ref().is_some_and(|r| r.return_to_menu) {
-            self.retire_leaving_scope(AudioScope::Wetland);
+            self.begin_scope_switch(AudioScope::Wetland);
             if let Some(mut relay) = self.voxel_relay.take() {
                 relay.suspended(event_loop);
             }
@@ -637,5 +649,95 @@ mod tests {
         experience.retire_leaving_scope(AudioScope::Sandbox);
         assert!(experience.audio.status().muted);
         assert!(experience.settings_path.exists());
+    }
+
+    #[test]
+    fn same_batch_preference_change_survives_the_scope_switch_without_about_to_wait() {
+        // Regression: `switch_if_requested` runs in `window_event`, but
+        // `sync_settings` only ran in `about_to_wait`. A toggle, DONE and a
+        // sample-launch tap can share one event batch, so the leaving sample
+        // was retired and taken with its change still pending: nothing was
+        // persisted, mute was not applied and the arriving sample was stale.
+        let mut experience = experience();
+        experience.audio.resume();
+        let mut relay = VoxelRelayApp::new(temp_path("relay-same-batch.json"), None);
+        relay.set_shared_settings(experience.settings);
+        experience.audio.switch_to(AudioScope::VoxelRelay);
+        experience.voxel_relay = Some(relay);
+
+        // The real HUD path, in one batch with no `about_to_wait`: the SETTINGS
+        // zone opens the panel, the CONTROL SIZE and SOUND rows toggle, DONE
+        // closes the overlay and the MENU zone queues the scope switch.
+        let panel = crate::controls::settings_panel();
+        let center = |rect: [f32; 4]| [rect[0] + rect[2] / 2., rect[1] + rect[3] / 2.];
+        let settings_hit = {
+            let layout = crate::controls::relay_layout(&experience.settings);
+            [layout.settings[0] + 8., layout.settings[1] + 8.]
+        };
+        let menu_hit = {
+            let layout = crate::controls::relay_layout(&experience.settings);
+            [layout.menu[0] + 8., layout.menu[1] + 8.]
+        };
+        {
+            let relay = experience.voxel_relay.as_mut().unwrap();
+            assert_eq!(relay.input.pointer_down(1, settings_hit), Some(5));
+            relay.activate_button(5);
+            assert!(relay.settings_open);
+            relay.settings_click(center(panel.rows[1].0));
+            relay.settings_click(center(panel.rows[2].0));
+            relay.settings_click(center(panel.done));
+            assert!(!relay.settings_open, "DONE closes the overlay");
+            assert_eq!(relay.input.pointer_down(2, menu_hit), Some(4));
+            relay.activate_button(4);
+            assert!(relay.return_to_menu, "the launch tap queues the switch");
+        }
+        // Nothing has synced yet: this is the state the same batch leaves
+        // behind when `switch_if_requested` starts.
+        assert_eq!(experience.settings, SharedSettings::default());
+        assert!(!experience.settings_path.exists());
+        assert!(!experience.audio.status().muted);
+
+        // The production switch prelude must flush the queued change before the
+        // leaving sample can be retired or taken.
+        experience.begin_scope_switch(AudioScope::Wetland);
+        let expected = SharedSettings {
+            large_controls: true,
+            muted: true,
+            ..SharedSettings::default()
+        };
+        assert_eq!(
+            experience.settings, expected,
+            "the owner must take the queued change before the sample leaves"
+        );
+        assert_eq!(
+            SharedSettings::load(&experience.settings_path),
+            expected,
+            "the change must survive a restart through the settings file"
+        );
+        assert!(
+            experience.audio.status().muted,
+            "mute must reach the one audio owner at the switch"
+        );
+        assert_eq!(experience.audio.status().scope, AudioScope::Wetland);
+        assert_eq!(experience.audio.status().counters.device_failures, 0);
+
+        // Every `switch_if_requested` branch installs the arriving sample from
+        // the owner's settings with `set_shared_settings(self.settings)`; a
+        // fresh relay makes the installed preferences observable through its
+        // configured move zone.
+        let expected_layout = crate::controls::relay_layout(&expected);
+        assert_ne!(
+            expected_layout.move_zone,
+            crate::controls::relay_layout(&SharedSettings::default()).move_zone,
+            "the toggled preference must change the layout for this check to bite"
+        );
+        let mut arriving =
+            VoxelRelayApp::for_chooser(&experience.legacy_path, experience.frame_limit);
+        arriving.set_shared_settings(experience.settings);
+        assert_eq!(
+            arriving.input.move_zone(),
+            Some((expected_layout.move_zone, 70.0)),
+            "the arriving sample must receive the flushed preferences, not the stale ones"
+        );
     }
 }
