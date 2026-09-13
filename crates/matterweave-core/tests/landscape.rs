@@ -275,6 +275,60 @@ fn flora_cells_are_deterministic_and_bounded() {
 }
 
 #[test]
+fn material_flora_and_tile_fingerprint_is_stable() {
+    // The column fingerprint cannot see material thresholds, flora density or the
+    // tile builder; this digest pins all three.
+    let mut value = 0xcbf2_9ce4_8422_2325u64;
+    let mut mix = |part: i64| {
+        value ^= part as u64;
+        value = value.wrapping_mul(0x1000_0000_01b3);
+    };
+    for z in -8..8 {
+        for x in -8..8 {
+            let world_x = x * 11;
+            let world_z = z * 11;
+            let column = landscape::column(SEED, world_x, world_z);
+            for y in (column.height - 6).max(MIN_SURFACE_Y)..=column.height {
+                mix(landscape::material_at(SEED, world_x, y, world_z) as i64);
+            }
+            let flora = landscape::flora_cell(SEED, x, z);
+            mix(flora.len() as i64);
+            for site in flora.sites() {
+                mix(site.kind as i64);
+                mix(site.x as i64);
+                mix(site.z as i64);
+                mix(site.scale_eighths as i64);
+            }
+            if let Some(tree) = landscape::tree_cell(SEED, x, z) {
+                mix(tree.kind as i64);
+                mix(tree.x as i64);
+                mix(tree.z as i64);
+                mix(tree.scale_eighths as i64);
+            }
+        }
+    }
+    for (level, key) in [(1, [0, 0]), (2, [1, -1]), (4, [0, 0])] {
+        let mesh = landscape::lod_tile_mesh(SEED, level, key, TileFilter::default());
+        mix(mesh.vertices.len() as i64);
+        mix(mesh.indices.len() as i64);
+        for vertex in &mesh.vertices {
+            for channel in vertex.position {
+                mix((channel * 8.0) as i64);
+            }
+            mix(vertex.normal[1].to_bits() as i64);
+            mix(vertex.color[0].to_bits() as i64);
+        }
+        for index in &mesh.indices {
+            mix(*index as i64);
+        }
+    }
+    assert_eq!(
+        value, 0xa5ee_08d9_33ba_1fc4,
+        "materials, flora or tile output drifted from the recorded generator identity"
+    );
+}
+
+#[test]
 fn lod_vertices_match_the_fine_surface() {
     for level in 0..=landscape::MAX_LOD_LEVEL {
         let step = landscape::lod_cell_m(level);
@@ -337,11 +391,14 @@ fn lod_samples_are_conservative_aggregates() {
     }
 }
 
+/// Heights along one tile edge, keyed by the coordinate that runs *along* that
+/// edge (z for an x-normal edge and vice versa), sorted by that coordinate.
 fn tile_edge_heights(mesh: &Mesh, axis: usize, value: f32) -> Vec<(f32, f32)> {
+    let along = if axis == 0 { 2 } else { 0 };
     let mut heights = Vec::new();
     for vertex in &mesh.vertices {
         if (vertex.position[axis] - value).abs() < 1.0e-3 {
-            heights.push((vertex.position[1 - axis.min(1)], vertex.position[1]));
+            heights.push((vertex.position[along], vertex.position[1]));
         }
     }
     heights.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -371,6 +428,72 @@ fn lod_tiles_share_their_edges_exactly() {
             assert!(
                 (height - other).abs() < 1.0e-3,
                 "tile edge height mismatch at z {z}: {height} vs {other}"
+            );
+        }
+    }
+}
+
+#[test]
+fn lod_tiles_share_their_z_edges_exactly() {
+    // The x pair alone cannot detect a z-row inversion: this is the seam that
+    // caught one.
+    let level = 1;
+    let cell = landscape::lod_cell_m(level);
+    for key_z in [-3, 0, 4] {
+        let north = landscape::lod_tile_mesh(SEED, level, [1, key_z], TileFilter::default());
+        let south = landscape::lod_tile_mesh(SEED, level, [1, key_z + 1], TileFilter::default());
+        assert!(!north.vertices.is_empty() && !south.vertices.is_empty());
+        let edge_z = ((key_z + 1) * landscape::LOD_TILE_CELLS) as f32 * cell as f32;
+        let north_edge = tile_edge_heights(&north, 2, edge_z);
+        let south_edge = tile_edge_heights(&south, 2, edge_z);
+        assert_eq!(north_edge.len(), south_edge.len());
+        for ((x, height), (other_x, other)) in north_edge.iter().zip(&south_edge) {
+            assert!((x - other_x).abs() < 1.0e-3, "edge x mismatch");
+            assert!(
+                (height - other).abs() < 1.0e-3,
+                "tile edge height mismatch at x {x}: {height} vs {other}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tile_vertices_sample_the_generator_at_their_own_coordinate() {
+    // A z-mirrored corner would put a neighbour's height at a grid point; taking
+    // the highest vertex at each grid point catches exactly that.
+    for level in [1, 2, 4] {
+        let cell = landscape::lod_cell_m(level);
+        let key = [1, -1];
+        let mesh = landscape::lod_tile_mesh(SEED, level, key, TileFilter::default());
+        assert!(!mesh.vertices.is_empty());
+        let mut seen = std::collections::BTreeMap::new();
+        for vertex in &mesh.vertices {
+            for (gx, gz) in [(
+                vertex.position[0] as i32 / cell,
+                vertex.position[2] as i32 / cell,
+            )] {
+                if vertex.position[0] as i32 % cell != 0 || vertex.position[2] as i32 % cell != 0 {
+                    continue;
+                }
+                let entry = seen.entry((gx, gz)).or_insert((i32::MIN, 0usize));
+                entry.0 = entry.0.max(vertex.position[1] as i32);
+                entry.1 += 1;
+            }
+        }
+        assert!(!seen.is_empty());
+        for ((gx, gz), (top, count)) in seen {
+            assert!(count > 0);
+            let x = gx * cell;
+            let z = gz * cell;
+            let column = landscape::column(SEED, x, z);
+            let expected = if column.flooded() {
+                SEA_LEVEL
+            } else {
+                column.height
+            };
+            assert_eq!(
+                top, expected,
+                "level {level} grid point ({x}, {z}) must carry its own column height"
             );
         }
     }
