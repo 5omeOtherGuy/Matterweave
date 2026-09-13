@@ -86,6 +86,9 @@ struct Runtime {
     /// Resident derived geometry and the per-frame camera-driven selection;
     /// the renderer indexes the mesh pool it owns.
     detail: WetlandDetail,
+    /// Bounded local GI/reflection for the authored play area; built from the
+    /// installed detail selection and the merged dynamic mesh.
+    proxy_lighting: crate::wetland_lighting::WetlandLighting,
     physics: Physics,
     empty_world: World,
     dynamic: DynamicMeshCache,
@@ -383,6 +386,12 @@ impl WetlandDetail {
     fn instances(&self) -> &[StaticInstance] {
         &self.instances
     }
+
+    /// The selection the renderer accepted at the last successful install. It is
+    /// what a derived representation of the resident scene must be built from.
+    fn installed(&self) -> &[StaticInstance] {
+        &self.installed
+    }
 }
 
 /// Realizes the authoritative `Source` mesh of every prototype, preserving the
@@ -576,6 +585,7 @@ impl Runtime {
         let mut runtime = Self {
             scene,
             detail,
+            proxy_lighting: crate::wetland_lighting::WetlandLighting::new(clearing),
             physics,
             empty_world,
             dynamic: DynamicMeshCache::default(),
@@ -1493,8 +1503,11 @@ impl WetlandApp {
             // geometry, selects a level per instance for this frame's view and
             // reports whether the renderer needs new geometry or only new
             // placements. An unchanged view reprepares nothing.
+            let mut install_state = crate::wetland_lighting::InstallState::Unavailable;
             match r.detail.update(&mut r.scene, &r.camera, size.height as f32) {
-                Ok(StaticUpdate::Current) => {}
+                Ok(StaticUpdate::Current) => {
+                    install_state = crate::wetland_lighting::InstallState::Current;
+                }
                 Ok(update) => {
                     let installed = match update {
                         StaticUpdate::Replace => renderer
@@ -1506,7 +1519,10 @@ impl WetlandApp {
                         StaticUpdate::Current => Ok(()),
                     };
                     match installed {
-                        Ok(()) => r.detail.mark_installed(),
+                        Ok(()) => {
+                            r.detail.mark_installed();
+                            install_state = crate::wetland_lighting::InstallState::Installed;
+                        }
                         Err(error) => {
                             // Keep the last accepted static scene on screen and
                             // retry a full replace next frame rather than
@@ -1536,6 +1552,23 @@ impl WetlandApp {
                 r.dynamic_dirty = false;
             }
             row.dynamic_upload_wall_ms = Some(dynamic_start.elapsed().as_secs_f64() * 1000.);
+            // Bounded local GI/reflection for the authored play area. This runs
+            // after every geometry install and dynamic upload of the frame,
+            // because those are what retire the renderer's publications.
+            let light_source = crate::wetland_lighting::FrameSource {
+                installed: r.detail.installed(),
+                meshes: r.detail.meshes(),
+                dynamic: r.dynamic.mesh(),
+                world: &r.empty_world,
+                sun: r.lighting.sun,
+            };
+            if let Err(error) = r
+                .proxy_lighting
+                .update(renderer, &light_source, install_state)
+            {
+                log::error!("Wetland proxy lighting: {error}");
+                self.status = format!("Proxy lighting: {error}");
+            }
             (&r.camera, r.lighting)
         } else {
             static CAMERA: std::sync::LazyLock<Camera> = std::sync::LazyLock::new(Camera::default);
@@ -1996,6 +2029,7 @@ mod integration_tests {
         Runtime {
             scene,
             detail,
+            proxy_lighting: crate::wetland_lighting::WetlandLighting::new([0.125, 0.125, 0.0]),
             physics,
             empty_world,
             dynamic: DynamicMeshCache::default(),
