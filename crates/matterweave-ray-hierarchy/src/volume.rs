@@ -35,7 +35,7 @@ pub enum HierarchyError {
     CellOutsideVolume { cell: [i32; 3] },
     /// A ray direction was nonfinite, zero or not unit length within 1e-6.
     InvalidDirection { direction: [f64; 3] },
-    /// A ray origin or distance was nonfinite, or the distance left `0..=MAX_RAY_DISTANCE`.
+    /// A ray origin was nonfinite, or the distance was negative or nonfinite.
     InvalidRay { max_distance: f64 },
     /// A fallible allocation failed.
     Allocation { what: &'static str },
@@ -69,11 +69,9 @@ impl fmt::Display for HierarchyError {
                     "direction {direction:?} is not finite, nonzero and unit length"
                 )
             }
-            Self::InvalidRay { max_distance } => write!(
-                f,
-                "ray distance {max_distance} is outside 0..={}",
-                matterweave_core::MAX_RAY_DISTANCE
-            ),
+            Self::InvalidRay { max_distance } => {
+                write!(f, "ray distance {max_distance} is negative or nonfinite")
+            }
             Self::Allocation { what } => write!(f, "allocation of {what} failed"),
         }
     }

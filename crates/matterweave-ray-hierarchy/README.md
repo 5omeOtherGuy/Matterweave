@@ -35,5 +35,8 @@ cargo fmt -p matterweave-ray-hierarchy -- --check
 ```
 
 The differential corpora print their counts with `--nocapture`; the log records the
-observed numbers, including zero measured distance deviation from `World::raycast` and
-the three tied-plane cell resolutions found in the seeded corpus.
+observed numbers, including zero measured distance deviation from `World::raycast`, the
+three tied-plane resolutions and the four crop-boundary ties found in the seeded corpus,
+and the strict geometric classifier that separates those from real errors. The review
+disposition and re-run evidence are in
+[the repair log](../../docs/performance/logs/ray-hierarchy-review-repair.md).

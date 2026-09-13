@@ -10,9 +10,20 @@
 //! the tied distances differently in the last bits, so one side may step one more axis at
 //! that iteration. The retained reference discloses the same class of difference between
 //! accumulated f64 CPU and recomputed f32 WGSL. This module therefore requires an
-//! unclassified disagreement to fail loudly, and classifies a disagreement only when the
-//! two hits are at the same distance and in face-adjacent cells, which is exactly a tie
-//! resolved on either side of one plane. The count is reported, never hidden.
+//! unclassified disagreement to fail loudly. A disagreement is classified only when both
+//! hits are at the same distance, in the same material, in cells one step apart on every
+//! differing axis, with the reported hit point lying on the plane each of those axes
+//! shares — an exact face, edge or corner tie — and with unit axis normals consistent with
+//! the two walks' tie rules. Anything else — a material change, a multi-cell jump, a point
+//! off a shared plane, a non-axis or inconsistent normal — is a real defect and fails. The
+//! count is reported, never hidden.
+//!
+//! A hit/miss difference has disclosed sources of its own at the crop boundary: the
+//! inherited zero-length overlap rule (the crop path rejects a point contact the CPU DDA
+//! answers at distance 0) and an exact tie on the crop's exit face (the accumulated oracle
+//! steps into an in-crop corner cell the recomputed walk exits past). Those cases are
+//! classified and counted separately, and each requires the hit point to lie exactly at
+//! the crop's exit parameter on its cell boundary, so they cannot excuse other mismatches.
 
 use crate::fixtures::{self, sparse_fixture, Rng, StartKind};
 use crate::{
@@ -27,6 +38,11 @@ use matterweave_render::Sun;
 const DISTANCE_TOLERANCE: f64 = 1e-4;
 /// Relative bound for two hits to count as the same point at a tied plane.
 const TIE_DISTANCE_TOLERANCE: f64 = 1e-6;
+/// Exact number of tied-plane resolutions the seeded corpus is allowed, each enumerated
+/// in `docs/performance/logs/ray-hierarchy-experiment.md`.
+const SEEDED_TIE_ARTIFACTS: usize = 3;
+/// Exact number of exact crop-boundary ties and point contacts in the seeded corpus.
+const SEEDED_CROP_BOUNDARY_DEVIATIONS: usize = 4;
 
 const MODES: [TraversalMode; 3] = [
     TraversalMode::Reference,
@@ -54,17 +70,30 @@ struct Comparison {
     misses: usize,
     max_delta: f64,
     tie_artifacts: usize,
+    /// Hit/miss differences explained by an exact tie or point contact on the crop
+    /// boundary, where the oracle's accumulated distances take an in-crop corner cell the
+    /// recomputed walk exits past.
+    crop_boundary_deviations: usize,
     examples: Vec<String>,
+    crop_boundary_examples: Vec<String>,
 }
 
 impl Comparison {
     fn report(&self, label: &str) {
         println!(
-            "{label}: {} hits, {} misses, max distance delta {:e}, {} tied-plane resolutions",
-            self.hits, self.misses, self.max_delta, self.tie_artifacts
+            "{label}: {} hits, {} misses, max distance delta {:e}, {} tied-plane \
+             resolutions, {} crop-boundary ties",
+            self.hits,
+            self.misses,
+            self.max_delta,
+            self.tie_artifacts,
+            self.crop_boundary_deviations
         );
         for example in &self.examples {
             println!("  tie example: {example}");
+        }
+        for example in &self.crop_boundary_examples {
+            println!("  crop-boundary example: {example}");
         }
     }
 }
@@ -82,23 +111,154 @@ fn trace(
         .expect("valid fixture ray")
 }
 
-/// Whether two hits differ only by which side of one tied plane was taken.
-fn is_tied_plane_artifact(candidate: &RayHit, expected: &RayHit) -> bool {
-    let delta = (f64::from(candidate.distance) - f64::from(expected.distance)).abs();
-    if delta > TIE_DISTANCE_TOLERANCE * f64::from(candidate.distance) {
-        return false;
-    }
-    let mut differing = 0usize;
-    for axis in 0..3 {
-        let offset = candidate.cell[axis] - expected.cell[axis];
-        if offset != 0 {
-            if offset.abs() != 1 {
-                return false;
-            }
-            differing += 1;
+/// Whether a hit's normal names a face of its own cell that contains `point`.
+///
+/// A traversal reports `normal = -step` for the face it crossed to enter the cell, so a
+/// negative component names the cell's lower face on that axis and a positive one its
+/// upper face. A zero normal is only the inside-solid start: distance 0, no crossed face,
+/// and the point inside the cell. Anything else is inconsistent geometry.
+fn normal_names_face(hit: &RayHit, point: [f64; 3], tolerance: f64) -> bool {
+    let mut axes = 0;
+    for (axis, &value) in hit.normal.iter().enumerate() {
+        if value == 0 {
+            continue;
+        }
+        if value.abs() != 1 {
+            return false;
+        }
+        axes += 1;
+        let cell_lo = f64::from(hit.cell[axis]);
+        let face = if value > 0 { cell_lo + 1.0 } else { cell_lo };
+        if (point[axis] - face).abs() > tolerance {
+            return false;
         }
     }
-    differing > 0
+    if axes > 0 {
+        return true;
+    }
+    if f64::from(hit.distance) != 0.0 {
+        return false;
+    }
+    (0..3).all(|axis| {
+        let cell_lo = f64::from(hit.cell[axis]);
+        point[axis] >= cell_lo - tolerance && point[axis] <= cell_lo + 1.0 + tolerance
+    })
+}
+
+/// Whether two hits differ only by how the two walks resolved the same exact tie.
+///
+/// The oracle accumulates plane distances; this crate recomputes every crossing from
+/// integer planes and steps every axis whose recomputed crossing is exactly the minimum.
+/// At a tie the two styles can reach the same point with different cells or a different
+/// entry face. Such a disagreement is accepted only when it is fully explained by the
+/// geometry:
+///
+/// - the material and the distance (and therefore the hit point) agree;
+/// - each hit's normal names a face of its own cell containing that point;
+/// - a differing cell is one step away on each differing axis, and the point lies on the
+///   plane the two cells share there — an extra step without a crossing cannot satisfy it.
+///
+/// Everything else — a material change, a multi-cell jump, a point off a shared plane, a
+/// non-axis normal, a normal naming a face the point is not on — is unexplained.
+fn is_tied_plane_artifact(
+    candidate: &RayHit,
+    expected: &RayHit,
+    origin: [f64; 3],
+    direction: [f64; 3],
+) -> bool {
+    if candidate.material != expected.material {
+        return false;
+    }
+    let distance = f64::from(candidate.distance);
+    let tolerance = TIE_DISTANCE_TOLERANCE * f64::max(distance, 1.0);
+    let delta = (f64::from(candidate.distance) - f64::from(expected.distance)).abs();
+    if delta > tolerance {
+        return false;
+    }
+    let point = [
+        origin[0] + direction[0] * distance,
+        origin[1] + direction[1] * distance,
+        origin[2] + direction[2] * distance,
+    ];
+    if !normal_names_face(candidate, point, tolerance)
+        || !normal_names_face(expected, point, tolerance)
+    {
+        return false;
+    }
+    if candidate.cell == expected.cell {
+        // Same cell and point: only the named entry face can be ambiguous.
+        return true;
+    }
+    for (axis, (&candidate_cell, &expected_cell)) in
+        candidate.cell.iter().zip(expected.cell.iter()).enumerate()
+    {
+        let offset = candidate_cell - expected_cell;
+        if offset == 0 {
+            continue;
+        }
+        if offset.abs() != 1 {
+            return false;
+        }
+        // The hit point must lie on the plane the two cells share: the step was a real
+        // plane crossing at exactly the reported distance, not a skipped test.
+        let face = f64::from(candidate_cell.max(expected_cell));
+        if (point[axis] - face).abs() > tolerance {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a hit/miss difference is an exact tie or point contact on the crop boundary,
+/// where the recomputed walk and the oracle legitimately disagree.
+///
+/// Two shapes occur. A point contact at the crop's lower face: the origin lies exactly on
+/// the face, the ray leaves the crop, and the crop path rejects the zero-length overlap
+/// while the DDA reports the origin cell at distance 0. And an exact tie on the crop's
+/// exit face: the oracle's accumulated distances step into an in-crop corner cell that the
+/// recomputed simultaneous-tie walk (and the reference shader) exits past.
+///
+/// Both require the oracle's hit point to lie exactly at the parameter where the ray
+/// leaves the crop *and* on the boundary of its hit cell, on the exiting axis: a
+/// point-only contact the half-open crop does not take. A hit point reached inside the
+/// crop and inside its cell can never be excused this way.
+fn is_crop_boundary_deviation(
+    volume: &HierarchyVolume,
+    expected: &RayHit,
+    origin: [f64; 3],
+    direction: [f64; 3],
+) -> bool {
+    let distance = f64::from(expected.distance);
+    let tolerance = TIE_DISTANCE_TOLERANCE * f64::max(distance, 1.0);
+    let lower = volume.origin();
+    let mut exit = f64::INFINITY;
+    let mut on_cell_boundary = false;
+    for axis in 0..3 {
+        let lo = f64::from(lower[axis]);
+        let hi = lo + f64::from(volume.dimensions()[axis]);
+        if direction[axis] > 0.0 {
+            exit = exit.min((hi - origin[axis]) / direction[axis]);
+        } else if direction[axis] < 0.0 {
+            exit = exit.min((lo - origin[axis]) / direction[axis]);
+        }
+    }
+    if (distance - exit).abs() > tolerance {
+        return false;
+    }
+    let point = [
+        origin[0] + direction[0] * distance,
+        origin[1] + direction[1] * distance,
+        origin[2] + direction[2] * distance,
+    ];
+    for (axis, &coordinate) in point.iter().enumerate() {
+        let cell_lo = f64::from(expected.cell[axis]);
+        if (coordinate - cell_lo).abs() <= tolerance
+            || (coordinate - cell_lo - 1.0).abs() <= tolerance
+        {
+            on_cell_boundary = true;
+        }
+    }
+    on_cell_boundary
 }
 
 fn compare_with_oracle(
@@ -112,6 +272,7 @@ fn compare_with_oracle(
 ) {
     let candidate = trace(volume, mode, origin, raw_direction, max_distance).0;
     let expected = fixtures::oracle(world, origin, raw_direction, max_distance);
+    let direction = fixtures::oracle_direction(raw_direction);
     let context =
         format!("{mode:?} origin {origin:?} direction {raw_direction:?} max {max_distance}");
     match (candidate, expected) {
@@ -128,19 +289,173 @@ fn compare_with_oracle(
                 return;
             }
             assert!(
-                is_tied_plane_artifact(&candidate, &expected),
+                is_tied_plane_artifact(&candidate, &expected, origin, direction),
                 "cell/material/normal disagreement is not a tied-plane resolution: \
                  candidate {candidate:?} oracle {expected:?} at {context}"
             );
             comparison.tie_artifacts += 1;
-            if comparison.examples.len() < 3 {
-                comparison.examples.push(format!(
-                    "candidate {candidate:?} oracle {expected:?} at {context}"
-                ));
+            comparison.examples.push(format!(
+                "candidate {candidate:?} oracle {expected:?} at {context}"
+            ));
+        }
+        (None, Some(expected)) => {
+            assert!(
+                is_crop_boundary_deviation(volume, &expected, origin, direction),
+                "crop path missed where the oracle hit, and not by an exact crop-boundary \
+                 tie or point contact: oracle {expected:?} at {context}"
+            );
+            comparison.crop_boundary_deviations += 1;
+            if comparison.crop_boundary_examples.len() < 5 {
+                comparison
+                    .crop_boundary_examples
+                    .push(format!("oracle {expected:?} at {context}"));
             }
         }
-        _ => panic!("hit/miss mismatch: candidate {candidate:?} oracle {expected:?} at {context}"),
+        (Some(candidate), None) => {
+            panic!("crop path hit where the oracle missed: candidate {candidate:?} at {context}")
+        }
     }
+}
+
+#[test]
+fn tied_plane_classifier_rejects_unexplained_disagreements() {
+    // Geometry for the positive controls: a +x ray from x = -1 whose distance 2 lands
+    // exactly on the plane x = 1 shared by the cells [0, ..] and [1, ..].
+    let face_origin = [-1.0, 0.5, 0.25];
+    let face_direction = [1.0, 0.0, 0.0];
+    let expected = RayHit {
+        cell: [0, 0, 0],
+        normal: [1, 0, 0],
+        distance: 2.0,
+        material: 7,
+    };
+    let stepped = RayHit {
+        cell: [1, 0, 0],
+        normal: [-1, 0, 0],
+        distance: 2.0,
+        material: 7,
+    };
+    // The candidate stepped one cell along x into a cell whose lower x face contains the
+    // point; the oracle reports the previous cell's upper x face. Same point, same
+    // material, same distance.
+    assert!(is_tied_plane_artifact(
+        &stepped,
+        &expected,
+        face_origin,
+        face_direction
+    ));
+    // Geometry for the edge and corner controls: a diagonal +x +y ray from (-1, -1, ..)
+    // whose 2 * sqrt(2) distance lands on the corner (1, 1, 0.25).
+    let diagonal_distance = 8.0f64.sqrt();
+    let diagonal_direction = [2.0 / diagonal_distance, 2.0 / diagonal_distance, 0.0];
+    let diagonal_origin = [-1.0, -1.0, 0.25];
+    let corner = RayHit {
+        cell: [0, 0, 0],
+        normal: [1, 0, 0],
+        distance: diagonal_distance as f32,
+        material: 7,
+    };
+    // Same cell and same point: both the x = 1 and the y = 1 face contain it, so either
+    // entry face is a legitimate answer.
+    let corner_other_face = RayHit {
+        normal: [0, 1, 0],
+        ..corner
+    };
+    assert!(is_tied_plane_artifact(
+        &corner_other_face,
+        &corner,
+        diagonal_origin,
+        diagonal_direction
+    ));
+    // A two-axis cell difference is accepted only because the point is on both shared
+    // planes: this is the exact corner tie the seeded corpus produces.
+    let corner_neighbour = RayHit {
+        cell: [1, 1, 0],
+        normal: [-1, 0, 0],
+        distance: diagonal_distance as f32,
+        material: 7,
+    };
+    assert!(is_tied_plane_artifact(
+        &corner_neighbour,
+        &corner,
+        diagonal_origin,
+        diagonal_direction
+    ));
+    // Negative controls. A different material is never a tie artifact.
+    let different_material = RayHit {
+        material: 8,
+        ..stepped
+    };
+    assert!(!is_tied_plane_artifact(
+        &different_material,
+        &expected,
+        face_origin,
+        face_direction
+    ));
+    // A diagonal neighbour with the same material and a valid normal, but the hit point
+    // is inside both cells rather than on the y plane they share: the extra y step had no
+    // crossing at the reported distance.
+    let diagonal_neighbour = RayHit {
+        cell: [1, 1, 0],
+        normal: [-1, 0, 0],
+        distance: 2.0,
+        material: 7,
+    };
+    assert!(!is_tied_plane_artifact(
+        &diagonal_neighbour,
+        &expected,
+        face_origin,
+        face_direction
+    ));
+    // Two cells along one axis: no tie can step that far.
+    let double_step = RayHit {
+        cell: [2, 0, 0],
+        normal: [-1, 0, 0],
+        distance: 2.0,
+        material: 7,
+    };
+    assert!(!is_tied_plane_artifact(
+        &double_step,
+        &expected,
+        face_origin,
+        face_direction
+    ));
+    // Same cells and material, but the hit distance is not the face crossing: the named
+    // normal does not contain the point.
+    let off_face = RayHit {
+        distance: 1.5,
+        ..stepped
+    };
+    assert!(!is_tied_plane_artifact(
+        &off_face,
+        &expected,
+        face_origin,
+        face_direction
+    ));
+    // A normal that is not one unit axis vector.
+    let skewed_normal = RayHit {
+        normal: [-1, -1, 0],
+        ..stepped
+    };
+    assert!(!is_tied_plane_artifact(
+        &skewed_normal,
+        &expected,
+        face_origin,
+        face_direction
+    ));
+    // A normal that points at the wrong face of its own cell.
+    let inconsistent_sign = RayHit {
+        cell: [1, 0, 0],
+        normal: [1, 0, 0],
+        distance: 2.0,
+        material: 7,
+    };
+    assert!(!is_tied_plane_artifact(
+        &inconsistent_sign,
+        &expected,
+        face_origin,
+        face_direction
+    ));
 }
 
 /// One targeted fixture and the rays cast against it. Origins are strictly inside the
@@ -273,11 +588,14 @@ fn seeded_corpus_matches_the_world_oracle() {
         let volume = fixture.snapshot(BlockShape::TALL_4_4_8);
         let mut rng = Rng::new(0xE0 + seed);
         for index in 0..16 {
-            // Origins stay strictly inside the crop: entry clipping is covered by the
-            // mode comparison, where the crop semantics are the subject.
-            let start = match index % 2 {
+            // All four start classes, including origins outside the crop: entry clipping,
+            // slab-plane snapping and the tied crossing at entry face the oracle here too,
+            // not only in the reference-free mode comparison.
+            let start = match index % 4 {
                 0 => StartKind::Center,
-                _ => StartKind::Quarter,
+                1 => StartKind::Integer,
+                2 => StartKind::Quarter,
+                _ => StartKind::Outside,
             };
             let (origin, raw, max) = fixtures::random_ray(&mut rng, &fixture, start);
             compare_with_oracle(
@@ -293,13 +611,49 @@ fn seeded_corpus_matches_the_world_oracle() {
     }
     assert!(comparison.hits > 40, "hits {}", comparison.hits);
     assert!(comparison.misses > 40, "misses {}", comparison.misses);
-    assert!(
-        comparison.tie_artifacts * 50 < comparison.hits + comparison.misses,
-        "tied-plane resolutions must stay rare: {} of {}",
-        comparison.tie_artifacts,
-        comparison.hits + comparison.misses
-    );
     comparison.report("seeded oracle corpus");
+    // Both classes are pinned exactly and enumerated in the log, so a new disagreement
+    // cannot hide behind a percentage budget.
+    assert_eq!(
+        comparison.tie_artifacts, SEEDED_TIE_ARTIFACTS,
+        "tied-plane resolutions (see the log's enumeration)"
+    );
+    assert_eq!(
+        comparison.crop_boundary_deviations, SEEDED_CROP_BOUNDARY_DEVIATIONS,
+        "crop-boundary ties (see the log's enumeration)"
+    );
+}
+
+#[test]
+fn max_distance_domain_matches_the_world_oracle() {
+    let mut world = World::new(31);
+    assert!(world.set([0, 0, 0], 3));
+    assert!(world.set([2, 0, 0], 4));
+    let volume = fixtures::snapshot(&world, BlockShape::TALL_4_4_8, [0, 0, 0], [4, 4, 4]);
+    let mut comparison = Comparison::default();
+    // Zero-length queries and ranges above the cap: both sides must answer the same.
+    for max in [0.0, 1.0e7, 4096.0] {
+        for (origin, direction) in [
+            ([0.25, 0.25, 0.75], [1.0, 0.0, 0.0]),
+            ([1.5, 0.5, 0.5], [1.0, 0.0, 0.0]),
+        ] {
+            for mode in MODES {
+                compare_with_oracle(
+                    &world,
+                    &volume,
+                    mode,
+                    origin,
+                    direction,
+                    max,
+                    &mut comparison,
+                );
+            }
+        }
+    }
+    comparison.report("max-distance domain");
+    assert!(comparison.hits >= 9, "hits {}", comparison.hits);
+    assert_eq!(comparison.tie_artifacts, 0);
+    assert_eq!(comparison.crop_boundary_deviations, 0);
 }
 
 #[test]

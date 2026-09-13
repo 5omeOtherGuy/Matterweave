@@ -7,7 +7,7 @@
 //! `dims.x + dims.y + dims.z + 1`. See the crate documentation for the exact list of
 //! inherited and deviating behaviors.
 
-use crate::occupancy::OccupancyGrid;
+use crate::occupancy::{BlockShape, OccupancyGrid, MAX_BLOCK_BITS};
 use crate::{HierarchyError, HierarchyVolume};
 use matterweave_core::RayHit;
 
@@ -18,8 +18,9 @@ pub enum TraversalMode {
     /// Dense per-cell DDA over the crop's material words, reading one material word per
     /// visited cell: the reference lineage this experiment is compared against.
     Reference,
-    /// Per-cell DDA where packed block occupancy decides memory access: an empty block
-    /// costs one word load and no material reads, and a set bit gates each material read.
+    /// Per-cell DDA where packed block occupancy decides memory access: one block fetch
+    /// per block entry (all of its words), then no material reads inside an empty block
+    /// and one gated material read per cell whose bit is set.
     BlockMask,
     /// [`TraversalMode::BlockMask`] plus a coarse step over empty blocks: one outer
     /// iteration replaces the fine steps through an empty block, paid for with an exact
@@ -41,7 +42,7 @@ pub struct TraversalStats {
     pub catch_up_planes: u64,
     /// Occupancy inspections at block granularity.
     pub blocks_checked: u64,
-    /// Occupancy word loads that missed the cached block.
+    /// Occupancy words fetched into the block cache: `words_per_block` per block entry.
     pub occupancy_word_loads: u64,
     /// Cells inspected individually, by bit test or material read.
     pub cells_examined: u64,
@@ -53,6 +54,9 @@ pub struct TraversalStats {
 
 impl HierarchyVolume {
     /// Traverses without returning counters.
+    ///
+    /// An exhausted iteration cap and a crop miss both report `None`; use
+    /// [`Self::trace_stats`] when a caller must distinguish them.
     pub fn trace(
         &self,
         mode: TraversalMode,
@@ -69,8 +73,10 @@ impl HierarchyVolume {
     /// `origin` and `direction` are world space. `direction` must be finite and unit
     /// length within 1e-6; the reference derives it by normalizing an unprojection
     /// segment, so a caller with a segment normalizes it the same way before calling.
-    /// `max_distance` is the clipped segment length and must be inside
-    /// `0..=MAX_RAY_DISTANCE`. A miss decided by the crop clip returns zeroed counters.
+    /// `max_distance` is the clipped segment length: it must be finite and non-negative,
+    /// a finite value above `MAX_RAY_DISTANCE` is clamped like `World::raycast`, and `0`
+    /// answers the inside-solid query with the distance-0 hit. A miss decided by the
+    /// crop clip returns zeroed counters.
     pub fn trace_stats(
         &self,
         mode: TraversalMode,
@@ -99,7 +105,7 @@ struct Walk<'a> {
     materials: &'a [u32],
     lower: [i32; 3],
     dims: [u32; 3],
-    shape: [u32; 3],
+    shape: BlockShape,
     bound: u64,
     origin: [f64; 3],
     direction: [f64; 3],
@@ -110,6 +116,11 @@ struct Walk<'a> {
     normal: [i32; 3],
     sentinel: f64,
     cached_block: Option<usize>,
+    /// Words of `cached_block`, fetched once per block entry and reused by every cell
+    /// the ray visits inside that block.
+    cached_words: [u32; MAX_BLOCK_BITS / 32],
+    /// Cached `block_occupied` answer, maintained by [`Self::refill_block`].
+    cached_any: bool,
     stats: TraversalStats,
 }
 
@@ -128,14 +139,16 @@ impl<'a> Walk<'a> {
         if !origin.iter().all(|v| v.is_finite()) {
             return Err(HierarchyError::InvalidRay { max_distance });
         }
-        let limit = f64::from(matterweave_core::MAX_RAY_DISTANCE);
-        if !max_distance.is_finite() || max_distance <= 0.0 || max_distance > limit {
+        if !max_distance.is_finite() || max_distance < 0.0 {
             return Err(HierarchyError::InvalidRay { max_distance });
         }
+        // A finite range above the cap is clamped, as `World::raycast` does; this is
+        // also the traversal's own work bound.
+        let limit = max_distance.min(f64::from(matterweave_core::MAX_RAY_DISTANCE));
         let lower = volume.origin();
         let dims = volume.dimensions();
         let mut entry = 0.0f64;
-        let mut exit = max_distance;
+        let mut exit = limit;
         let mut slab_near = [-1.0f64; 3];
         for axis in 0..3 {
             let lo = f64::from(lower[axis]);
@@ -154,10 +167,6 @@ impl<'a> Walk<'a> {
                 exit = exit.min(a.max(b));
             }
         }
-        // Zero-length overlap is not geometry, including corner-only contact.
-        if entry >= exit {
-            return Ok(None);
-        }
         let step = direction.map(|v| {
             if v > 0.0 {
                 1
@@ -171,6 +180,14 @@ impl<'a> Walk<'a> {
             origin[axis] >= f64::from(lower[axis])
                 && origin[axis] < f64::from(lower[axis]) + f64::from(dims[axis])
         });
+        // Zero-length overlap is not geometry, including corner-only contact. The one
+        // exception is the caller's explicit zero-length query (`max_distance == 0`)
+        // from inside the crop: `World::raycast` answers it with the origin cell at
+        // distance 0 and a zero normal, and this crate follows the oracle there. The
+        // reference shader discards a zero-length segment and cannot express the query.
+        if entry >= exit && !(max_distance == 0.0 && starts_inside) {
+            return Ok(None);
+        }
         // Snap only known slab-entry planes, never bias the whole ray.
         let mut local = [0.0f64; 3];
         for axis in 0..3 {
@@ -210,7 +227,7 @@ impl<'a> Walk<'a> {
             materials: volume.materials(),
             lower,
             dims,
-            shape: volume.occupancy().shape().dims(),
+            shape: volume.occupancy().shape(),
             bound: volume.max_iterations(),
             origin,
             direction,
@@ -219,8 +236,10 @@ impl<'a> Walk<'a> {
             distance: entry,
             exit,
             normal,
-            sentinel: max_distance + 1.0,
+            sentinel: limit + 1.0,
             cached_block: None,
+            cached_words: [0; MAX_BLOCK_BITS / 32],
+            cached_any: false,
             stats: TraversalStats::default(),
         }))
     }
@@ -240,19 +259,22 @@ impl<'a> Walk<'a> {
                 self.cell[2] as u32,
             ];
             if let Some(grid) = self.grid {
-                let [sx, sy, sz] = self.shape;
+                let [sx, sy, sz] = self.shape.dims();
                 let block = [cell[0] / sx, cell[1] / sy, cell[2] / sz];
-                let block_index = grid.block_index(block)?;
+                let Some(block_index) = grid.block_index(block) else {
+                    // An in-range cell always maps to an in-range block. Keep the miss
+                    // in release builds and fail loudly under test.
+                    debug_assert!(false, "cell {cell:?} maps outside the occupancy grid");
+                    return None;
+                };
                 self.stats.blocks_checked += 1;
                 if self.cached_block != Some(block_index) {
-                    // The whole block stays cached across the cells it covers.
-                    self.cached_block = Some(block_index);
-                    self.stats.occupancy_word_loads += 1;
+                    self.refill_block(grid, block_index);
                 }
-                if grid.block_occupied(block_index) {
+                if self.cached_any {
                     let local = [cell[0] % sx, cell[1] % sy, cell[2] % sz];
                     self.stats.cells_examined += 1;
-                    if grid.cell_occupied(block_index, local) {
+                    if self.cell_occupied(local) {
                         self.stats.material_reads += 1;
                         let material = self.material_word(cell);
                         if material != 0 {
@@ -284,6 +306,28 @@ impl<'a> Walk<'a> {
         // unbounded loop rather than a silent hang.
         self.stats.exhausted = true;
         None
+    }
+
+    /// Fetches the words of one block into the cache.
+    ///
+    /// This is the only occupancy word read a traversal performs: `words_per_block`
+    /// words per block entry, reused by every cell the ray visits inside that block.
+    fn refill_block(&mut self, grid: &OccupancyGrid, block_index: usize) {
+        let words = grid
+            .block_words(block_index)
+            .expect("block index came from this grid");
+        self.cached_words[..words.len()].copy_from_slice(words);
+        self.cached_any = words.iter().any(|&word| word != 0);
+        self.stats.occupancy_word_loads += words.len() as u64;
+        self.cached_block = Some(block_index);
+    }
+
+    /// Bit test against the cached block words; `local` is in block coordinates and
+    /// inside the shape, so the bit always addresses a cached word.
+    fn cell_occupied(&self, local: [u32; 3]) -> bool {
+        debug_assert!(self.cached_block.is_some());
+        let bit = self.shape.bit_index(local);
+        self.cached_words[bit / 32] & (1u32 << (bit % 32)) != 0
     }
 
     /// Fine step: recompute every crossing from integer planes instead of accumulating.
@@ -326,8 +370,12 @@ impl<'a> Walk<'a> {
     /// simultaneous tie rule: a block exit jumps to the new block's entry cell, while a
     /// colliding interior plane steps one cell and can supply the normal.
     fn skip_empty_block(&mut self, grid: &OccupancyGrid, block_index: usize) -> bool {
-        debug_assert!(!grid.block_occupied(block_index));
-        let shape = self.shape.map(i64::from);
+        debug_assert!(!self.cached_any);
+        debug_assert!(
+            !grid.block_occupied(block_index),
+            "the cached block words agree with the grid"
+        );
+        let shape = self.shape.dims().map(i64::from);
         let mut crossed = [0i64; 3];
         let mut entry_cell = [0i64; 3];
         let mut plane_t = [self.sentinel; 3];

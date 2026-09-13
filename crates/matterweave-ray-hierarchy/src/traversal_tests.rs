@@ -237,7 +237,7 @@ fn invalid_ray_inputs_are_rejected_before_traversal() {
         volume.trace(TraversalMode::BlockMask, [f64::NAN, 0.5, 0.5], unit, 4.0),
         Err(HierarchyError::InvalidRay { .. })
     ));
-    for bad in [0.0, -1.0, 4096.5] {
+    for bad in [-1.0, -0.5] {
         assert_eq!(
             volume.trace(TraversalMode::BlockMask, [0.5; 3], unit, bad),
             Err(HierarchyError::InvalidRay { max_distance: bad })
@@ -256,6 +256,53 @@ fn invalid_ray_inputs_are_rejected_before_traversal() {
     assert!(volume
         .trace(TraversalMode::Reference, [0.5; 3], unit, 4096.0)
         .is_ok());
+    // A finite range above the cap is clamped, exactly like the oracle's cap.
+    assert_eq!(
+        volume.trace(TraversalMode::BlockMask, [0.5; 3], unit, 1.0e9),
+        volume.trace(TraversalMode::BlockMask, [0.5; 3], unit, 4096.0)
+    );
+}
+
+#[test]
+fn zero_length_query_and_clamped_range_follow_the_oracle() {
+    let world = world_with(&[([0, 0, 0], 3), ([2, 0, 0], 4)]);
+    let volume = fixtures::snapshot(&world, BlockShape::CUBE4, [0, 0, 0], [4, 4, 4]);
+    // `max_distance == 0` from inside solid is the oracle's distance-0 hit: the origin
+    // cell, zero normal. The crop path answers it instead of rejecting the segment.
+    let hit = assert_modes_agree(&volume, [0.25, 0.25, 0.75], [1.0, 0.0, 0.0], 0.0).unwrap();
+    assert_eq!(hit.cell, [0, 0, 0]);
+    assert_eq!(hit.normal, [0, 0, 0]);
+    assert_eq!(hit.distance, 0.0);
+    assert_eq!(hit.material, 3);
+    assert_eq!(
+        fixtures::oracle(&world, [0.25, 0.25, 0.75], [1.0, 0.0, 0.0], 0.0),
+        Some(hit)
+    );
+    // From air there is nothing to report within a zero-length segment.
+    for mode in MODES {
+        assert_eq!(
+            trace(&volume, mode, [1.5, 0.5, 0.5], [1.0, 0.0, 0.0], 0.0).0,
+            None
+        );
+    }
+    assert_eq!(
+        fixtures::oracle(&world, [1.5, 0.5, 0.5], [1.0, 0.0, 0.0], 0.0),
+        None
+    );
+    // A finite range above `MAX_RAY_DISTANCE` behaves exactly like the cap, in every
+    // mode and in the oracle, which clamps the same value.
+    let expected = fixtures::oracle(&world, [1.5, 0.5, 0.5], [1.0, 0.0, 0.0], 1.0e7);
+    assert_eq!(
+        expected.map(|hit| (hit.cell, hit.normal, hit.distance, hit.material)),
+        Some(([2, 0, 0], [-1, 0, 0], 0.5, 4))
+    );
+    for mode in MODES {
+        assert_eq!(
+            trace(&volume, mode, [1.5, 0.5, 0.5], [1.0, 0.0, 0.0], 1.0e7).0,
+            expected,
+            "mode {mode:?} clamps the range"
+        );
+    }
 }
 
 #[test]
@@ -333,7 +380,16 @@ fn counts_separate_material_traffic_from_occupancy_traffic() {
             mask.cells_examined <= reference.material_reads,
             "the candidate examines a subset of the reference's cells"
         );
-        assert!(mask.occupancy_word_loads <= mask.blocks_checked);
+        let words = BlockShape::TALL_4_4_8.words_per_block() as u64;
+        assert_eq!(
+            mask.occupancy_word_loads % words,
+            0,
+            "whole blocks are fetched"
+        );
+        assert!(
+            mask.occupancy_word_loads / words <= mask.blocks_checked,
+            "at most one fetch per block entry"
+        );
         assert_eq!(reference.cells_examined, reference.material_reads);
         saved_materials += reference.material_reads - mask.material_reads;
     }
@@ -357,8 +413,8 @@ fn counts_separate_material_traffic_from_occupancy_traffic() {
 }
 
 #[test]
-fn cached_block_avoids_repeated_occupancy_word_loads() {
-    // One block only: the ray crosses four cells of the same block before the hit.
+fn cached_block_words_are_fetched_once_per_block_entry() {
+    // One CUBE4 block: the ray crosses four of its cells, then reads one material word.
     let world = world_with(&[([3, 3, 3], 21)]);
     let volume = fixtures::snapshot(&world, BlockShape::CUBE4, [0, 0, 0], [4, 4, 4]);
     assert_eq!(volume.occupancy().blocks(), 1);
@@ -376,13 +432,34 @@ fn cached_block_avoids_repeated_occupancy_word_loads() {
         "each cell of the occupied block is tested"
     );
     assert_eq!(
-        stats.occupancy_word_loads, 1,
-        "the block word is fetched once"
+        stats.occupancy_word_loads,
+        BlockShape::CUBE4.words_per_block() as u64,
+        "the block's two words are fetched exactly once"
     );
     assert_eq!(
         stats.material_reads, 1,
         "only the solid cell reads a material word"
     );
+    // Two blocks along x: one fetch per block entry, and the cache is reused inside
+    // each block instead of re-reading a word per cell.
+    let world = world_with(&[([7, 0, 0], 22)]);
+    let volume = fixtures::snapshot(&world, BlockShape::CUBE4, [0, 0, 0], [8, 4, 4]);
+    assert_eq!(volume.occupancy().blocks(), 2);
+    let (hit, stats) = trace(
+        &volume,
+        TraversalMode::BlockMask,
+        [0.5, 0.5, 0.5],
+        [1.0, 0.0, 0.0],
+        12.0,
+    );
+    assert_eq!(hit.map(|hit| hit.cell), Some([7, 0, 0]));
+    assert_eq!(stats.blocks_checked, 8, "one inspection per visited cell");
+    assert_eq!(
+        stats.occupancy_word_loads,
+        2 * BlockShape::CUBE4.words_per_block() as u64,
+        "one fetch per block entry, four cells reused per block"
+    );
+    assert_eq!(stats.material_reads, 1);
 }
 
 #[test]
@@ -457,22 +534,36 @@ fn block_shape_scales_occupancy_cost_not_hits() {
                 .collect::<Vec<_>>()
         );
         let mut loads = [0u64; 3];
+        let mut entries = [0u64; 3];
         for _ in 0..24 {
             let start = rng.pick(&[StartKind::Center, StartKind::Integer, StartKind::Outside]);
             let (origin, raw, max) = fixtures::random_ray(&mut rng, &fixture, start);
             let mut hits = Vec::new();
             for (index, volume) in volumes.iter().enumerate() {
                 let (hit, stats) = trace(volume, TraversalMode::BlockStep, origin, raw, max);
+                let words = shapes[index].words_per_block() as u64;
+                assert_eq!(stats.occupancy_word_loads % words, 0);
                 loads[index] += stats.occupancy_word_loads;
+                entries[index] += stats.occupancy_word_loads / words;
                 hits.push(hit);
             }
             fixtures::assert_same_hit(hits[0], hits[1], "cube4 vs 4x4x8");
             fixtures::assert_same_hit(hits[0], hits[2], "cube4 vs cube8");
         }
-        // Block grids are nested, so coarser blocks cannot be entered more often.
+        // Block grids are nested, so a ray cannot enter more coarse blocks than fine
+        // ones; the fetch cost is `words_per_block` per entry, so a coarser shape is not
+        // automatically cheaper in words read.
         assert!(
-            loads[2] <= loads[1] && loads[1] <= loads[0],
-            "block word loads {loads:?}"
+            entries[2] <= entries[1] && entries[1] <= entries[0],
+            "block entries {entries:?}"
         );
+        for (index, shape) in shapes.iter().enumerate() {
+            assert_eq!(
+                loads[index],
+                entries[index] * shape.words_per_block() as u64,
+                "{shape:?} fetches whole blocks only"
+            );
+        }
+        println!("shape entries: {entries:?}");
     }
 }

@@ -28,6 +28,10 @@
 //! - tied axes step simultaneously and the lowest crossed axis supplies the normal;
 //! - crossing distances are recomputed from integer planes every step in `f64`, which is
 //!   the host analogue of the shader's f32 recomputation;
+//! - `max_distance`: finite ranges above `MAX_RAY_DISTANCE` are clamped and a zero-length
+//!   query from inside the crop reports the origin cell at distance 0 with a zero normal,
+//!   both as in `World::raycast` (the reference shader discards a zero-length segment and
+//!   has no equivalent query);
 //! - outer iteration cap `dims.x + dims.y + dims.z + 1`;
 //! - inside-solid starts report distance 0 and a zero normal.
 //!
@@ -41,7 +45,8 @@
 //!   crop. Where the crop is irrelevant, hits agree exactly on cell, material and normal,
 //!   and agree on distance up to the accumulated-vs-recomputed difference, which the
 //!   differential tests bound. Crop exclusion and the zero-length-overlap rule are the
-//!   two intentional differences and both are asserted explicitly.
+//!   two intentional differences and both are asserted explicitly; a caller asking for
+//!   `max_distance == 0` is not one of them, because that query follows the oracle.
 //! - The reference writes projected depth; here depth is derived from the same hit
 //!   distance by [`clip_depth`], the host mirror of that fragment arithmetic.
 //!
@@ -49,8 +54,9 @@
 //!
 //! [`TraversalMode::Reference`] is the dense reference lineage: one material word read per
 //! visited cell, no occupancy data. [`TraversalMode::BlockMask`] runs the same per-cell
-//! DDA but consults packed block occupancy for memory access: an empty block costs one
-//! word load and no material reads, and a set bit gates each material read.
+//! DDA but consults packed block occupancy for memory access: it fetches a block's words
+//! once per block entry, reads no material word inside an empty block, and gates each
+//! material read on the cached bit.
 //! [`TraversalMode::BlockStep`] adds a coarse step over empty blocks with an exact
 //! fine-plane catch-up.
 //!
