@@ -40,8 +40,10 @@ jobs:
           timeout 300s xvfb-run -a cargo run --locked -p matterweave-explorer -- --landscape --smoke-frames 120 --save "$RUNNER_TEMP/landscape/world.json" 2>&1 | tee artifacts/landscape-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error|VUID-' artifacts/landscape-smoke.log; then exit 1; fi
           grep 'LANDSCAPE SMOKE PASS' artifacts/landscape-smoke.log
-          # The rings must actually be resident, not merely planned.
-          grep -E 'LANDSCAPE COUNTERS: .* tiles resident 1[0-9][0-9] declared 136' artifacts/landscape-smoke.log
+          # The rings must actually be resident, not merely planned. The exact
+          # ring set is a tuning choice, so this asserts hundreds of resident and
+          # declared tiles rather than one plan size.
+          grep -E 'LANDSCAPE COUNTERS: .* tiles resident [1-9][0-9][0-9] declared [1-9][0-9][0-9]' artifacts/landscape-smoke.log
           timeout 300s xvfb-run -a cargo run --locked -p matterweave-explorer -- --landscape-exercise --smoke-frames 120 --save "$RUNNER_TEMP/landscape-exercise/world.json" 2>&1 | tee artifacts/landscape-exercise.log
           if grep -E 'Vulkan validation ERROR|Validation Error|VUID-' artifacts/landscape-exercise.log; then exit 1; fi
           # Camera motion has to exercise eviction, not just first-fill.

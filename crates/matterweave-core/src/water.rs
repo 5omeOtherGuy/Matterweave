@@ -127,8 +127,16 @@ impl World {
     }
 
     /// Whether one column holds water at the sea level plane.
+    ///
+    /// The scan starts from the top of the column only when an edit could have
+    /// placed solid material there. For an unedited landscape column the
+    /// generator's own surface is the top, so an open-water column costs a few
+    /// reads instead of one per metre of empty sky above it. Edits are detected
+    /// per column stack through the streaming overrides, which is the same
+    /// authority `World::get` reads.
     fn column_is_flooded(&self, x: i32, z: i32, min_y: i32, max_y: i32) -> bool {
-        let mut y = max_y - 1;
+        let top = self.column_scan_start(x, z, min_y, max_y);
+        let mut y = top;
         while y >= SEA_LEVEL {
             if material::is_solid(self.get([x, y, z])) {
                 return false;
@@ -143,6 +151,29 @@ impl World {
             y -= 1;
         }
         false
+    }
+
+    /// Highest cell a flooded-column scan has to inspect.
+    ///
+    /// A generated column cannot be higher than the generator says unless it was
+    /// edited, so an unedited column starts one metre above its generated
+    /// surface (clamped to the sea level when that is already lower than sea
+    /// level, which skips the above-sea scan entirely).
+    fn column_scan_start(&self, x: i32, z: i32, min_y: i32, max_y: i32) -> i32 {
+        let ceiling = max_y - 1;
+        if self.terrain != crate::TerrainSource::Landscape {
+            return ceiling;
+        }
+        let edited = self.streaming.as_ref().is_some_and(|stream| {
+            let cell = [x, 0, z];
+            let key = crate::address(cell).0;
+            self.stream_y_chunks()
+                .any(|chunk_y| stream.overrides.contains_key(&[key[0], chunk_y, key[2]]))
+        });
+        if edited {
+            return ceiling;
+        }
+        (crate::landscape::height_at(self.seed, x, z) + 1).clamp(min_y, ceiling)
     }
 }
 

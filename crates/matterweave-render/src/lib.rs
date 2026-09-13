@@ -468,6 +468,7 @@ struct Swapchain {
     pass: vk::RenderPass,
     layout: vk::PipelineLayout,
     world: vk::Pipeline,
+    water: vk::Pipeline,
     hud: vk::Pipeline,
 }
 impl Drop for Swapchain {
@@ -479,6 +480,7 @@ impl Drop for Swapchain {
                 self.device.raw.destroy_framebuffer(f, None);
             }
             self.device.raw.destroy_pipeline(self.world, None);
+            self.device.raw.destroy_pipeline(self.water, None);
             self.device.raw.destroy_pipeline(self.hud, None);
             self.device.raw.destroy_pipeline_layout(self.layout, None);
             self.device.raw.destroy_render_pass(self.pass, None);
@@ -512,6 +514,7 @@ impl Swapchain {
             pass: vk::RenderPass::null(),
             layout: vk::PipelineLayout::null(),
             world: vk::Pipeline::null(),
+            water: vk::Pipeline::null(),
             hud: vk::Pipeline::null(),
         };
         // SAFETY: surface/window and selected present queue are alive. Each created handle is
@@ -680,6 +683,7 @@ impl Swapchain {
                 )
                 .map_err(err)?;
             out.world = pipeline(&out.device, out.layout, out.pass, PipelineKind::World)?;
+            out.water = pipeline(&out.device, out.layout, out.pass, PipelineKind::Water)?;
             out.hud = pipeline(&out.device, out.layout, out.pass, PipelineKind::Hud)?;
             for image in out.api.get_swapchain_images(out.raw).map_err(err)? {
                 let view = d
@@ -727,6 +731,9 @@ impl Swapchain {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PipelineKind {
     World,
+    /// Derived water surfaces: the world vertex stage and shading, with the
+    /// water fragment entry, depth writes off and alpha blending on.
+    Water,
     Hud,
     Shadow,
 }
@@ -738,6 +745,8 @@ fn pipeline(
 ) -> Result<vk::Pipeline> {
     let hud = kind == PipelineKind::Hud;
     let shadow = kind == PipelineKind::Shadow;
+    let water = kind == PipelineKind::Water;
+    let fragment_entry: &std::ffi::CStr = if water { c"fs_water" } else { c"fs_main" };
     let (vs, fs): (&[u8], &[u8]) = if hud {
         (
             include_bytes!(concat!(env!("OUT_DIR"), "/hud.vs_main.spv")),
@@ -747,6 +756,11 @@ fn pipeline(
         (
             include_bytes!(concat!(env!("OUT_DIR"), "/shadow.vs_main.spv")),
             &[],
+        )
+    } else if water {
+        (
+            include_bytes!(concat!(env!("OUT_DIR"), "/world.vs_main.spv")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/world.fs_water.spv")),
         )
     } else {
         (
@@ -782,7 +796,7 @@ fn pipeline(
                         vk::PipelineShaderStageCreateInfo::default()
                             .stage(vk::ShaderStageFlags::FRAGMENT)
                             .module(modules[1])
-                            .name(c"fs_main"),
+                            .name(fragment_entry),
                     );
                 }
                 let mut bindings = vec![vk::VertexInputBindingDescription {
@@ -861,10 +875,12 @@ fn pipeline(
                     .rasterization_samples(vk::SampleCountFlags::TYPE_1);
                 let depth = vk::PipelineDepthStencilStateCreateInfo::default()
                     .depth_test_enable(!hud)
-                    .depth_write_enable(!hud)
+                    // Water is translucent: it tests against opaque depth but does
+                    // not write, so a second surface behind it still draws.
+                    .depth_write_enable(!hud && !water)
                     .depth_compare_op(vk::CompareOp::LESS);
                 let attachments = [vk::PipelineColorBlendAttachmentState::default()
-                    .blend_enable(hud)
+                    .blend_enable(hud || water)
                     .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
                     .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
                     .color_blend_op(vk::BlendOp::ADD)
@@ -996,6 +1012,14 @@ pub type TerrainTileKey = (u32, [i32; 2]);
 /// planner from growing the cache without limit.
 pub const MAX_TERRAIN_TILES: usize = 1024;
 
+/// Honest accounting of the resident derived water surfaces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WaterStats {
+    pub resident: usize,
+    pub visible: usize,
+    pub bytes: usize,
+}
+
 /// Far-terrain tile residency for one frame. `bytes` is allocated vertex/index
 /// buffer capacity, not driver-side residency.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1025,6 +1049,13 @@ fn tile_drawable(
 
 /// Whether a new key may enter a bounded tile cache. Replacing a resident tile
 /// is always allowed; only growth past the bound is refused.
+/// Whether an upload must be dropped because a newer mesh for the same key is
+/// already cached. Equal revisions are accepted: an upload that rebuilds the
+/// same revision is what recovers a key whose mesh was empty.
+fn superseded_revision(cached: Option<u64>, incoming: u64) -> bool {
+    cached.is_some_and(|revision| revision > incoming)
+}
+
 fn tile_admitted(resident: usize, already_cached: bool, bound: usize) -> bool {
     already_cached || resident < bound
 }
@@ -1160,6 +1191,10 @@ pub struct Renderer {
     submissions: u64,
     legacy: Option<GpuMesh>,
     chunks: BTreeMap<[i32; 3], GpuMesh>,
+    /// Derived water surfaces, one per chunk that has any. Separate from the
+    /// opaque chunk cache because they draw with their own blended pipeline.
+    water: BTreeMap<[i32; 3], GpuMesh>,
+    water_visible: usize,
     terrain: BTreeMap<TerrainTileKey, GpuMesh>,
     terrain_declared: usize,
     terrain_visible: usize,
@@ -1385,6 +1420,8 @@ impl Renderer {
             submissions: 0,
             legacy: None,
             chunks: BTreeMap::new(),
+            water: BTreeMap::new(),
+            water_visible: 0,
             terrain: BTreeMap::new(),
             terrain_declared: 0,
             terrain_visible: 0,
@@ -1431,10 +1468,7 @@ impl Renderer {
     /// retain their revision so occluded chunks are not rebuilt every frame.
     /// Older revisions are ignored. A successful upload switches off legacy mesh.
     pub fn upload_chunk(&mut self, key: [i32; 3], mesh: &Mesh) -> Result<()> {
-        if self
-            .chunk_revision(key)
-            .is_some_and(|revision| revision > mesh.revision)
-        {
+        if superseded_revision(self.chunk_revision(key), mesh.revision) {
             return Ok(());
         }
         let wait = self.upload_waits.timed_begin();
@@ -1495,6 +1529,53 @@ impl Renderer {
             self.retire_terrain_publication();
         }
         Ok(())
+    }
+
+    /// Derived water surface of one chunk, or an empty mesh to clear it. Uses the
+    /// same fenced lifecycle as the opaque chunk cache; an empty mesh keeps the
+    /// key resident so a later edit can refill it without a rebuild decision.
+    pub fn upload_water_chunk(&mut self, key: [i32; 3], mesh: &Mesh) -> Result<()> {
+        if superseded_revision(self.water_revision(key), mesh.revision) {
+            return Ok(());
+        }
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
+        self.water.insert(key, replacement);
+        self.update_counters();
+        Ok(())
+    }
+
+    pub fn water_revision(&self, key: [i32; 3]) -> Option<u64> {
+        self.water.get(&key).map(|mesh| mesh.revision)
+    }
+
+    /// Forget water meshes whose chunk is no longer resident, after the frame
+    /// fence. Returns whether anything was dropped.
+    pub fn retain_water_chunks(&mut self, keys: &[[i32; 3]]) -> Result<bool> {
+        let keep: std::collections::BTreeSet<_> = keys.iter().copied().collect();
+        if self.water.keys().all(|key| keep.contains(key)) {
+            return Ok(false);
+        }
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        self.water.retain(|key, _| keep.contains(key));
+        self.update_counters();
+        Ok(true)
+    }
+
+    pub fn water_stats(&self) -> WaterStats {
+        WaterStats {
+            resident: self.water.len(),
+            visible: self.water_visible.min(self.water.len()),
+            bytes: self
+                .water
+                .values()
+                .map(GpuMesh::allocated_bytes)
+                .sum::<usize>(),
+        }
     }
 
     pub fn terrain_tile_stats(&self) -> TerrainTileStats {
@@ -1681,6 +1762,20 @@ impl Renderer {
     /// Honest accounting of the currently resident flora scene, if any.
     pub fn flora_scene_stats(&self) -> Option<StaticSceneStats> {
         self.flora_scene.as_ref().map(|scene| scene.stats())
+    }
+
+    /// Drop every derived water surface: a whole-world upload or a world change
+    /// invalidates them all. Retained through the caller's fence.
+    pub fn clear_water(&mut self) -> Result<()> {
+        if self.water.is_empty() {
+            return Ok(());
+        }
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        self.water.clear();
+        self.water_visible = 0;
+        Ok(())
     }
 
     fn update_counters(&mut self) {
@@ -2180,6 +2275,28 @@ impl Renderer {
                     scene.record_batches(d, cmd, Some(&frustum));
                 }
             }
+            // Derived water: translucent, drawn after every opaque surface so the
+            // bed is already in the depth buffer, never writing depth itself.
+            self.water_visible = self
+                .water
+                .values()
+                .filter(|mesh| {
+                    self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
+                })
+                .count();
+            if self.water_visible > 0 {
+                d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.water);
+                let visible = self.water.values().filter(|mesh| {
+                    self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
+                });
+                for mesh in visible {
+                    if let (Some(v), Some(i)) = (&mesh.vertices, &mesh.indices) {
+                        d.cmd_bind_vertex_buffers(cmd, 0, &[v.raw], &[0]);
+                        d.cmd_bind_index_buffer(cmd, i.raw, 0, vk::IndexType::UINT32);
+                        d.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+                    }
+                }
+            }
             if hud_count > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.hud);
                 d.cmd_bind_vertex_buffers(
@@ -2260,8 +2377,8 @@ impl Drop for Renderer {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_present, tile_admitted, tiles_need_eviction, Frustum, PresentOutcome,
-        TerrainTileKey, TerrainTileStats, WaitTally, MAX_TERRAIN_TILES,
+        classify_present, superseded_revision, tile_admitted, tiles_need_eviction, Frustum,
+        PresentOutcome, TerrainTileKey, TerrainTileStats, WaitTally, MAX_TERRAIN_TILES,
     };
     use ash::vk;
     use std::collections::BTreeSet;
@@ -2299,6 +2416,20 @@ mod tests {
         assert!(!super::tile_drawable(behind, 96, true, &frustum));
         assert!(!super::tile_drawable(tile, 0, true, &frustum));
         assert!(!super::tile_drawable(tile, 96, false, &frustum));
+    }
+
+    #[test]
+    fn only_newer_revisions_supersede_a_cached_mesh() {
+        assert!(
+            !superseded_revision(None, 7),
+            "an absent key always uploads"
+        );
+        assert!(
+            !superseded_revision(Some(7), 7),
+            "the same revision recovers an empty mesh"
+        );
+        assert!(!superseded_revision(Some(7), 8));
+        assert!(superseded_revision(Some(8), 7));
     }
 
     #[test]

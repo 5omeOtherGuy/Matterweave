@@ -594,6 +594,28 @@ fn lod_tiles_are_well_formed_and_respect_their_filter() {
 }
 
 #[test]
+fn the_landscape_domain_is_wide_and_the_island_domain_is_not() {
+    // The rings render 8 km, so the editable domain has to let a player travel
+    // that far; the legacy island keeps the sandbox square it was authored in.
+    let landscape = World::landscape(SEED);
+    assert_eq!(
+        landscape.stream_x_limit(),
+        matterweave_core::LANDSCAPE_WORLD_LIMIT
+    );
+    assert!(landscape.contains_stream_cell([8000, 4, -8000]));
+    assert!(!landscape.contains_stream_cell([9000, 4, 0]));
+    assert!(!landscape.contains_stream_cell([0, 400, 0]));
+    let legacy = World::generate(SEED);
+    assert_eq!(legacy.stream_x_limit(), matterweave_core::WORLD_LIMIT);
+    assert!(legacy.contains_stream_cell([200, 0, 0]));
+    assert!(!legacy.contains_stream_cell([300, 0, 0]));
+    // A window published far from the origin is still the full 7x7 x 13 band.
+    let mut far = World::landscape(SEED);
+    assert!(far.stream_around([7000.0, 40.0, -7000.0]));
+    assert_eq!(far.stream_resident_chunks().unwrap().len(), 49 * 13);
+}
+
+#[test]
 fn streaming_landscape_uses_the_generator_and_the_wide_band() {
     let mut world = World::landscape(SEED);
     assert_eq!(world.terrain_source(), TerrainSource::Landscape);
@@ -723,7 +745,40 @@ fn included_cells(tile: &RingTile) -> Vec<Clip> {
             }
         }
     }
-    cells
+    // A ring finer than the claim block (the 2 m ring) is merged into
+    // CLAIM_BLOCK_M squares, so one claim still covers whole blocks. Every claim
+    // boundary is block-aligned, so a block is uniformly included or excluded.
+    let factor = (CLAIM_BLOCK_M / cell_m).max(1);
+    if factor == 1 {
+        return cells;
+    }
+    let mut merged = Vec::new();
+    let mut seen = BTreeSet::new();
+    for cell in &cells {
+        let origin = [
+            cell.min[0].div_euclid(CLAIM_BLOCK_M) * CLAIM_BLOCK_M,
+            cell.min[1].div_euclid(CLAIM_BLOCK_M) * CLAIM_BLOCK_M,
+        ];
+        if !seen.insert(origin) {
+            continue;
+        }
+        // All `factor x factor` members must be present; the alignment guarantee
+        // above is what makes this an assertion rather than an assumption.
+        for dz in 0..factor {
+            for dx in 0..factor {
+                let member = [origin[0] + dx * cell_m, origin[1] + dz * cell_m];
+                assert!(
+                    cells.iter().any(|cell| cell.min == member),
+                    "block {origin:?} is only partially included"
+                );
+            }
+        }
+        merged.push(Clip {
+            min: origin,
+            max: [origin[0] + CLAIM_BLOCK_M, origin[1] + CLAIM_BLOCK_M],
+        });
+    }
+    merged
 }
 
 #[test]
@@ -739,9 +794,13 @@ fn rings_cover_the_visible_square_exactly_once() {
             assert_eq!(edge.rem_euclid(CLAIM_BLOCK_M), 0, "fine edge {edge}");
         }
         for tile in &plan {
-            assert_eq!(
-                landscape::lod_cell_m(tile.level).rem_euclid(CLAIM_BLOCK_M),
-                0
+            // The grid runs at CLAIM_BLOCK_M; a coarser cell is a whole number of
+            // blocks and a finer one is merged up to a block by `included_cells`.
+            let cell_m = landscape::lod_cell_m(tile.level);
+            assert!(
+                cell_m >= CLAIM_BLOCK_M || CLAIM_BLOCK_M % cell_m == 0,
+                "level {} cells of {cell_m} m cannot be represented on a {CLAIM_BLOCK_M} m grid",
+                tile.level
             );
             let bound = tile.filter.bound.expect("a ring tile is always bounded");
             let hole = tile.filter.hole.expect("a ring tile always has a hole");
@@ -810,8 +869,21 @@ fn ring_plans_are_deterministic_and_bounded() {
             landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS),
             "the same eye must plan the same tiles in the same order"
         );
-        // 8x8 + 6x6 + 6x6 tiles: the plan size is a property of the ring set.
-        assert_eq!(plan.len(), 64 + 36 + 36);
+        // A ring whose half-extent is a whole number of its tiles can plan at most
+        // `(2h / tile + 1)^2` tiles; tiles wholly inside the ring's hole are dropped
+        // by the sample. The bound is the budget property worth pinning.
+        let bound: usize = LANDSCAPE_RINGS
+            .iter()
+            .map(|config| {
+                let side = 2 * config.half_extent / config.tile_size_m() + 1;
+                (side * side) as usize
+            })
+            .sum();
+        assert!(
+            plan.len() <= bound && plan.len() >= LANDSCAPE_RINGS.len() * 8,
+            "plan of {} tiles is outside 8..={bound} per ring set",
+            plan.len()
+        );
         let unique: BTreeSet<_> = plan.iter().map(|tile| (tile.level, tile.key)).collect();
         assert_eq!(unique.len(), plan.len(), "a tile must be planned once");
         // Rings are emitted finest first, which is also the draw order.
@@ -841,7 +913,8 @@ fn ring_tiles_are_stable_while_the_eye_stays_in_one_tile() {
         .iter()
         .map(|tile| (tile.level, tile.key))
         .collect();
-    for step in [0.0, 0.5, 1.0, 15.9, 16.0, 64.0, 127.0, 127.99] {
+    let last = (finest_tile - 1) as f32;
+    for step in [0.0, 0.5, 1.0, 15.9, 16.0, last / 2.0, last] {
         let eye = [base + step, 40.0, base + step];
         let plan = landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS);
         let moved: Vec<_> = plan.iter().map(|tile| (tile.level, tile.key)).collect();
