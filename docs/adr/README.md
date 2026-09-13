@@ -38,4 +38,4 @@ For an accepted ADR, append implementation/evidence notes without rewriting its 
 
 ## Current decision order
 
-Apply accepted 0014/0015 and preserve the implemented M0/M1 baseline; complete its outstanding physical-device checks. Use 0006/0007 for focused M2 experiments and the [component-selection procedure](../COMPONENT_SELECTION.md) for substantial reuse/custom-development decisions. Lighting and physics proposals must not delay the native baseline. If hardware is absent, record a provisional engineering choice without inventing mobile performance evidence and continue independent development.
+Apply accepted 0014/0015 and preserve the implemented M0/M1 baseline; complete its outstanding physical-device checks. Use 0006/0007 for focused M2 experiments and the component-selection procedure for substantial reuse/custom-development decisions. Lighting and physics proposals must not delay the native baseline. If hardware is absent, record a provisional engineering choice without inventing mobile performance evidence and continue independent development.

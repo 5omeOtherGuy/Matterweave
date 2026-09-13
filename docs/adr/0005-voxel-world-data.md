@@ -29,12 +29,12 @@ M1 tests coordinates, occupancy/material queries, edits and serialization agains
 
 ## References
 
-[Architecture](../ARCHITECTURE.md), [rendering selection](0006-rendering-path-selection.md), [benchmarks](../BENCHMARKS.md).
+[Architecture](../ARCHITECTURE.md), [rendering selection](0006-rendering-path-selection.md), benchmarks.
 
 ## M1 implementation evidence — 2026-09-07
 
-The host-testable reference uses sparse 16³ byte-material chunks, checked world revisions, bounded DDA queries, synchronous derived surface meshes and validated versioned JSON snapshots. Tests cover negative coordinates, seams, winding, ray edges, malformed saves, round trips and revision exhaustion. See [core notes](../../crates/matterweave-core/README.md) and [STATUS](../STATUS.md). This establishes the M1 reference; production representation, object volumes, streaming and asynchronous publication remain proposed until M2/M3 evidence.
+The host-testable reference uses sparse 16³ byte-material chunks, checked world revisions, bounded DDA queries, synchronous derived surface meshes and validated versioned JSON snapshots. Tests cover negative coordinates, seams, winding, ray edges, malformed saves, round trips and revision exhaustion. See [core notes](../../crates/matterweave-core/README.md) and STATUS. This establishes the M1 reference; production representation, object volumes, streaming and asynchronous publication remain proposed until M2/M3 evidence.
 
 ## Dense wetland implementation evidence — 2026-09-08
 
-The detail crate stores sparse fine voxel prototypes and authoritative quarter-turn placements, with source resolutions of 6.25/12.5 cm flora and 25 cm terrain. Fine-source collision uses shared Rapier compounds independently of visual meshes. The full-map app regression covers capsule placement, jumping, source-cell removal, isolated edit journals and saved-pose/cell reload; Generator2 prevents old placement IDs from silently changing the meaning of edits. See [STATUS](../STATUS.md) for the exact host/native/phone and release distinctions. This is evidence for the experimental sparse-source path; comparative ray/mesh/hybrid selection and full streaming/edit-latency gates remain open.
+The detail crate stores sparse fine voxel prototypes and authoritative quarter-turn placements, with source resolutions of 6.25/12.5 cm flora and 25 cm terrain. Fine-source collision uses shared Rapier compounds independently of visual meshes. The full-map app regression covers capsule placement, jumping, source-cell removal, isolated edit journals and saved-pose/cell reload; Generator2 prevents old placement IDs from silently changing the meaning of edits. See STATUS for the exact host/native/phone and release distinctions. This is evidence for the experimental sparse-source path; comparative ray/mesh/hybrid selection and full streaming/edit-latency gates remain open.

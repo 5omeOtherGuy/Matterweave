@@ -27,7 +27,7 @@ recreates and uploads the current world on resume.
 Dependencies are pinned exactly in `Cargo.toml`. `ash` 0.38.0, `ash-window` 0.13.0,
 `raw-window-handle` 0.6.2, `winit` 0.30.12, `Naga` 24.0.0, `bytemuck` 1.23.2, `font8x8` 0.3.1
 and `glam` 0.30.9 supply Vulkan access, surface glue, build-time WGSL→SPIR-V compilation,
-explicit upload layout, HUD glyphs and matrix math. [DEPENDENCIES](../../docs/DEPENDENCIES.md)
+explicit upload layout, HUD glyphs and matrix math. DEPENDENCIES
 records source, version and upstream license; the lockfile records checksums. Existing
 ash-window glue and Naga avoid custom platform bindings and a separate C++ shader compiler
 build. wgpu was assessed as a viable alternative; no measured speed advantage over wgpu is
@@ -230,11 +230,11 @@ asynchronous indirect preparation (`async_indirect`) and the ray reference
 (`ray_reference_vulkan`). Host lavapipe values are correctness evidence only.
 
 Workspace commands and actual validation results belong to
-[DEVELOPMENT](../../docs/DEVELOPMENT.md) and [STATUS](../../docs/STATUS.md). Physical Android
+[DEVELOPMENT](../../docs/DEVELOPMENT.md) and STATUS. Physical Android
 lifecycle, rotation, driver behavior and sustained performance require device evidence;
 desktop/lavapipe runs do not establish those properties. Engine notes and measurements are in
-[ray reference](../../docs/performance/ray-reference.md),
-[indirect light](../../docs/performance/indirect-light-engine.md),
-[reflections](../../docs/performance/reflections-engine.md),
-[async indirect](../../docs/performance/async-indirect.md) and
-[shadow reuse](../../docs/performance/shadow-reuse.md).
+ray reference,
+indirect light,
+reflections,
+async indirect and
+shadow reuse.

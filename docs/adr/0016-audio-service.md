@@ -44,12 +44,12 @@ Games get sound effects through a small handle-based API with explicit backpress
 
 ## References
 
-- [REQUIREMENTS](../REQUIREMENTS.md) R11, R13, R17, R18 and [ROADMAP](../ROADMAP.md) M6.
+- [REQUIREMENTS](../REQUIREMENTS.md) R11, R13, R17, R18 and ROADMAP M6.
 - [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md) (Rust, modularity, reuse policy) and [ADR-0015](0015-rust-native-foundation.md) (native Android foundation).
-- [Component selection](../COMPONENT_SELECTION.md) procedure.
+- Component selection procedure.
 - ndk 0.9.0 source (`src/audio.rs`) callback and stream lifetime contracts; AAudio developer documentation for `AAudioStream_close` callback joining and error-callback threading rules.
 - ringbuf 0.5.1 source (`try_push`/`try_pop` fetch-before-fail semantics).
-- Initial trial report in `eval/glm-audio`; subsequent corrective reviews and device evidence are linked from [STATUS](../STATUS.md).
+- Initial trial report in `eval/glm-audio`; subsequent corrective reviews and device evidence are linked from STATUS.
 
 ## Validation
 
@@ -66,7 +66,7 @@ compensation, unload generation, completed-command lifetime acknowledgment, and
 live-core PCM aliasing. Package tests: 49 PASS on host and as native ARM64 phone binaries; allocation detector covers
 10,000 callback invocations. On OnePlus 13 / Android 16, the real AAudio diagnostic
 passes four runs of 20 suspend/recreate/resume/shutdown cycles at that source
-([manifest](../evidence/2026-09-12-completion-wave1/android-audio-final-manifest.json)).
+(manifest).
 Independent Muse/Gemini corrective reviews pass at this checkpoint. No human audibility,
 actual headset-disconnect or Miri result is claimed. Proposed status remains: M6
 both-sample service integration/reuse and broader acceptance are still open.

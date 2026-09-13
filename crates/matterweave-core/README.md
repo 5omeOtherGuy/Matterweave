@@ -44,7 +44,7 @@ interface.
   private writable data directory.
 - Streaming is opt-in; `World::new` stays empty and `generate` retains the original reference
   fixture. `stream_around` synchronously publishes a radius-three chunk window (at most
-  7×7×3 chunks), clipped to x/z [−256, 256), y [−16, 32). Only resident cells inside that
+  7×7×3 chunks), clipped to x/z −256, 256), y [−16, 32). Only resident cells inside that
   domain accept edits. The original x/z [−32, 32) square remains snapshot-authoritative:
   missing legacy chunks mean air, including fully removed chunks. Saved chunks outside the
   domain remain in the override archive and are preserved on save, although they cannot be
@@ -99,7 +99,7 @@ interface.
   snapshot bytes.
 - `World` holds no asynchronous jobs; `AsyncWorld` is a separate, explicitly polled owner.
 - No `unsafe` code in the crate. Dependencies are pinned exactly in `Cargo.toml`; see
-  [DEPENDENCIES](../../docs/DEPENDENCIES.md) for source, version and upstream license. Those
+  [DEPENDENCIES for source, version and upstream license. Those
   are dependency licenses, not a project-license choice.
 - [block-mesh 0.2.0](https://docs.rs/block-mesh/0.2.0/block_mesh/) is adopted for greedy
   quad extraction after inspecting its padded-volume contract, merge-value support, face

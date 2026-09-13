@@ -6,6 +6,7 @@ fn main() {
         "hud",
         "shadow",
         "ray_reference",
+        "ray_hierarchy_gpu",
         "comparison_raster",
     ] {
         let source = format!("src/{name}.wgsl");

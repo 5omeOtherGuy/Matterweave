@@ -25,7 +25,7 @@ Thermal, memory, pacing and total workload costs matter alongside image quality.
 
 ## Validation
 
-Use actual-device sustained results and matched image quality under [the benchmark protocol](../BENCHMARKS.md). Record adopted and deferred capabilities honestly. Proposed numeric budgets are not owner-approved promises.
+Use actual-device sustained results and matched image quality under the benchmark protocol. Record adopted and deferred capabilities honestly. Proposed numeric budgets are not owner-approved promises.
 
 ## References
 
