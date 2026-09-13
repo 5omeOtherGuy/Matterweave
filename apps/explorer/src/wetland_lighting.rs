@@ -67,18 +67,25 @@
 //! - **Continuous cell-crossing body motion withdraws GI until convergence.**
 //!   Every drawn-vertex change rebuilds the proxy, and every footprint change
 //!   retires the publication; while a body keeps crossing cell boundaries the
-//!   footprint keeps changing, so indirect radiance is off for the whole
-//!   duration of the motion and stays off until the fixed `UPDATE_BUDGET` has
-//!   reconverged after it stops. The digest gate absorbs camera and LOD churn,
-//!   not body motion, and the same budget dominates the frames after a single
-//!   crossing. Continuous moving-cell/body GI continuity is an open functional
-//!   requirement, not part of this slice and not Phase B cost/thermal work.
+//!   footprint keeps changing, so indirect radiance is off while the volume
+//!   recomputes and stays off until the fixed `UPDATE_BUDGET` has finished it.
+//!   The digest gate absorbs camera and LOD churn, not body motion.
+//!   Dependency retention (`INDIRECT_DEPENDENCY_BYTES`) shortens that recompute:
+//!   an edit invalidates only the completed faces whose recorded proxy cells
+//!   changed, so convergence is bounded by the invalidated set instead of the
+//!   box. It does not make a partially recomputed volume publishable —
+//!   complete-only publication is unchanged — so a moving body still turns GI
+//!   off for the frames its recompute needs. Continuous moving-cell/body GI
+//!   continuity is an open functional requirement, not part of this slice and
+//!   not Phase B cost/thermal work.
 //! - **No performance claim.** The per-frame budget is a bounded CPU work slice
 //!   over bounded volumes; nothing here is a device measurement.
 
 use matterweave_core::{Mesh, World};
 use matterweave_detail::{material, material_color};
-use matterweave_render::indirect::{IndirectVolume, MeshGeometry, MeshProxy, UpdateBudget};
+use matterweave_render::indirect::{
+    IndirectVolume, MeshGeometry, MeshProxy, ProxyEdit, UpdateBudget,
+};
 use matterweave_render::reflection::{MaterialTable, ReflectionVolume, DEFAULT_TRACE_STEPS};
 use matterweave_render::{Renderer, StaticInstance, Sun};
 use std::collections::hash_map::DefaultHasher;
@@ -110,6 +117,15 @@ const UPDATE_BUDGET: UpdateBudget = UpdateBudget {
     rays: 1024,
     work: 8192,
 };
+/// Memory cap for opt-in exact indirect dependency tracking, in bytes. The
+/// tracker records the proxy cells each completed face depends on, so a body
+/// move or edit recomputes only the faces whose recorded cells changed instead
+/// of the whole 4000-cell box. Bitsets are allocated lazily per sampled face
+/// under this cap: a face that does not fit is recomputed on every edit instead
+/// of being retained, so the cap bounds memory and degrades retention, never
+/// correctness. One face bitset is `ceil(4000 / 64) * 8 = 504` bytes, so this
+/// cap covers roughly twelve thousand sampled faces.
+const INDIRECT_DEPENDENCY_BYTES: usize = 6 * 1024 * 1024;
 /// Replacement epoch of the authoritative world. The wetland world is created
 /// once per session and never edited (all edits are detail-scene edits), so the
 /// session's epoch is constant; a new [`Runtime`] builds a new scheduler.
@@ -240,6 +256,14 @@ pub(crate) struct Summary {
     pub(crate) digest: Option<u64>,
     /// Upper bound on remaining indirect work units for the current key.
     pub(crate) pending_work: usize,
+    /// Completed indirect faces this frame's proxy edit retained unchanged.
+    pub(crate) retained_faces: usize,
+    /// Completed indirect faces this frame's proxy edit invalidated.
+    pub(crate) invalidated_faces: usize,
+    /// Face slots the current key still has to resolve.
+    pub(crate) dirty_faces: usize,
+    /// Resident bytes of the attached volume's dependency tracker.
+    pub(crate) dependency_bytes: usize,
     /// Wall time of this call's proxy build on the calling thread.
     pub(crate) rebuild_ms: f64,
 }
@@ -382,6 +406,12 @@ impl WetlandLighting {
             proxy_pool_meshes: self.attached_pool_meshes,
             digest: self.volume.as_ref().and_then(IndirectVolume::mesh_digest),
             pending_work: self.volume.as_ref().map_or(0, IndirectVolume::pending_work),
+            dirty_faces: self.volume.as_ref().map_or(0, IndirectVolume::dirty_faces),
+            dependency_bytes: self
+                .volume
+                .as_ref()
+                .and_then(IndirectVolume::retention_status)
+                .map_or(0, |status| status.resident_bytes),
             ..Summary::default()
         }
     }
@@ -418,27 +448,34 @@ impl WetlandLighting {
             let cells = built.proxy.occupied_cells();
             let pool_meshes = built.pool_meshes;
             let millis = built.millis;
-            if let Err(error) = self.attach(sink, source, built) {
-                // An attach failure breaks the same contract as a failed build:
-                // the renderer holds the newly installed geometry, so the
-                // superseded representation must not survive to be republished
-                // by the no-rebuild path. Drop it and withhold until the next
-                // accepted install.
-                self.volume = None;
-                self.palette_dynamic = None;
-                self.reflection = None;
-                self.reflection_stale = false;
-                self.attached_cells = 0;
-                self.attached_pool_meshes = 0;
-                self.build_failed = true;
-                return Err(error);
-            }
+            let edit = match self.attach(sink, source, built) {
+                Ok(edit) => edit,
+                Err(error) => {
+                    // An attach failure breaks the same contract as a failed build:
+                    // the renderer holds the newly installed geometry, so the
+                    // superseded representation must not survive to be republished
+                    // by the no-rebuild path. Drop it and withhold until the next
+                    // accepted install.
+                    self.volume = None;
+                    self.palette_dynamic = None;
+                    self.reflection = None;
+                    self.reflection_stale = false;
+                    self.attached_cells = 0;
+                    self.attached_pool_meshes = 0;
+                    self.build_failed = true;
+                    return Err(error);
+                }
+            };
             self.build_failed = false;
             self.built_dynamic = Some(dynamic_fingerprint);
             self.proxy_rebuilds = self.proxy_rebuilds.saturating_add(1);
             self.attached_cells = cells;
             self.attached_pool_meshes = pool_meshes;
             summary.proxy_rebuilt = true;
+            summary.retained_faces = edit.retained_faces;
+            summary.invalidated_faces = edit.invalidated_faces;
+            summary.dirty_faces = edit.dirty_faces;
+            summary.dependency_bytes = edit.dependency_bytes;
             summary.rebuild_ms = millis;
         } else if self.build_failed {
             // A rebuild failed and the source has not moved since: nothing may
@@ -473,6 +510,10 @@ impl WetlandLighting {
         summary.proxy_pool_meshes = self.attached_pool_meshes;
         summary.digest = digest;
         summary.pending_work = pending_work;
+        summary.dirty_faces = volume.dirty_faces();
+        if let Some(status) = volume.retention_status() {
+            summary.dependency_bytes = status.resident_bytes;
+        }
         summary.indirect_live = sink.indirect_live();
         summary.reflection_live = sink.reflection_live();
         if !summary.reflection_live {
@@ -556,12 +597,19 @@ impl WetlandLighting {
     /// Attach a freshly built proxy and pack its matching reflection source.
     /// A footprint change retires both publications: the cached indirect values
     /// and the packed mirror grid describe the previous representation.
+    ///
+    /// The indirect volume replaces its proxy through exact dependency
+    /// retention, so only the completed faces whose recorded proxy cells changed
+    /// are recomputed. Publication is unchanged: the volume still uploads only a
+    /// complete key, so the retire-then-reconverge sequence is the same and the
+    /// retained values only shorten it. `Ok(ProxyEdit::default())` means the
+    /// footprint did not change and nothing was attached.
     fn attach(
         &mut self,
         sink: &mut impl Publication,
         source: &FrameSource<'_>,
         built: Built,
-    ) -> Result<(), String> {
+    ) -> Result<ProxyEdit, String> {
         let palette_dynamic = built.dynamic_color;
         if self.volume.is_none() || self.palette_dynamic != palette_dynamic {
             // The palette is fixed at construction, so the reserved dynamic
@@ -577,6 +625,12 @@ impl WetlandLighting {
                 GATHER_DISTANCE_M,
                 palette(palette_dynamic),
             )?);
+            if let Some(volume) = self.volume.as_mut() {
+                // Opt in to bounded exact dependency retention for this volume.
+                // A failure here is an attach failure like every other: the
+                // caller drops the superseded representation and withholds.
+                volume.enable_proxy_retention(INDIRECT_DEPENDENCY_BYTES)?;
+            }
             self.palette_dynamic = palette_dynamic;
             self.published_sun = None;
         }
@@ -613,12 +667,16 @@ impl WetlandLighting {
             )?);
             self.reflection_stale = false;
         }
+        let mut edit = ProxyEdit::default();
         if changed {
             if let Some(volume) = self.volume.as_mut() {
-                volume.set_mesh_proxy(Some(built.proxy));
+                // Exact dependency retention: only the completed faces whose
+                // recorded proxy cells changed are recomputed. The representation
+                // identity and every publication check are unchanged.
+                edit = volume.replace_mesh_proxy(Some(built.proxy));
             }
         }
-        Ok(())
+        Ok(edit)
     }
 
     /// One host-visible line per publication-state change, rate limited so a
@@ -640,13 +698,18 @@ impl WetlandLighting {
         self.last_reported = Some(state);
         self.last_report_at = self.updates;
         eprintln!(
-            "WETLAND PROXY LIGHTING: gi={} reflection={} cells={} pool_meshes={} digest={:?} pending={} rebuild_ms={:.2}",
+            "WETLAND PROXY LIGHTING: gi={} reflection={} cells={} pool_meshes={} digest={:?} \
+pending={} retained={} invalidated={} dirty={} dependency_kib={} rebuild_ms={:.2}",
             summary.indirect_live,
             summary.reflection_live,
             summary.proxy_cells,
             summary.proxy_pool_meshes,
             summary.digest,
             summary.pending_work,
+            summary.retained_faces,
+            summary.invalidated_faces,
+            summary.dirty_faces,
+            summary.dependency_bytes / 1024,
             summary.rebuild_ms,
         );
     }
@@ -1290,22 +1353,51 @@ mod tests {
         assert!(summary.indirect_live && summary.reflection_live);
         assert_eq!(sink.withdraw_calls, withdraws);
 
-        // A move that crosses a cell boundary changes the footprint: the stale
-        // publication is retired and only a completed recomputation publishes.
+        // A move that crosses a cell boundary changes the footprint: the
+        // publication that describes the previous representation is retired.
+        // Exact dependency retention recomputes only the faces the move can
+        // affect, and this fixture's invalidated set (6 faces, measured
+        // 2026-09-13: `indirect_live = true`, `dirty_faces = 0`,
+        // `pending_work = 0`, one new upload after the retirement) drains
+        // inside one `UPDATE_BUDGET`, so the volume reconverges and publishes a
+        // complete, current volume within the same frame. The assertion below
+        // is unconditional: a retirement that left the volume dark would fail
+        // it rather than be accepted.
         let moved = vec![placed(0, [3.2, 0.2, 3.2])];
         let moved_source = FrameSource {
             installed: &moved,
             ..source
         };
+        let calls = sink.indirect_calls;
         let summary = lighting
             .update(&mut sink, &moved_source, InstallState::Installed)
             .expect("cell move");
         assert_ne!(summary.digest, Some(digest));
         assert!(
-            !summary.indirect_live,
-            "a changed representation must retire the stale GI publication"
+            sink.withdraw_calls > withdraws,
+            "a changed representation must retire the previous publication"
         );
-        assert!(sink.withdraw_calls > withdraws);
+        assert!(
+            summary.invalidated_faces > 0,
+            "the moved object's own faces must be invalidated: {summary:?}"
+        );
+        assert!(
+            summary.indirect_live,
+            "the invalidated set must drain inside one budget and republish in the same frame: \
+             {summary:?}"
+        );
+        assert!(
+            sink.indirect_calls > calls,
+            "a live indirect publication must have been uploaded after the retirement"
+        );
+        assert_eq!(
+            summary.pending_work, 0,
+            "a live publication must be complete"
+        );
+        assert_eq!(
+            summary.dirty_faces, 0,
+            "the invalidated set must be fully drained, not partly recomputed: {summary:?}"
+        );
         assert!(
             summary.reflection_live,
             "the mirror bake of the new representation is immediately valid"
@@ -1319,6 +1411,92 @@ mod tests {
         );
         assert!(summary.indirect_live && summary.reflection_live);
         assert_ne!(summary.digest, Some(digest));
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    #[test]
+    fn a_body_cell_move_retains_the_untouched_gi_faces() {
+        let fixture = Fixture::new();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        // A physics body resting in the receiver's cell, drawn from the merged
+        // dynamic mesh and represented through the proxy.
+        let body = |x: f32| {
+            let mut mesh = pebble(material::MOSS_TURF);
+            for vertex in &mut mesh.vertices {
+                vertex.position = [
+                    vertex.position[0] + x,
+                    vertex.position[1],
+                    vertex.position[2] + 0.2,
+                ];
+            }
+            mesh
+        };
+        let resting = body(0.2);
+        let resting_source = FrameSource {
+            dynamic: &resting,
+            ..fixture.source()
+        };
+        settle(
+            &mut lighting,
+            &mut sink,
+            &resting_source,
+            InstallState::Installed,
+        );
+
+        // One cell in +X: the merged mesh crosses a cell boundary, so the proxy
+        // footprint changes and exact dependency retention decides what is
+        // recomputed instead of clearing the whole volume.
+        let moved = body(1.2);
+        let moved_source = FrameSource {
+            dynamic: &moved,
+            ..fixture.source()
+        };
+        let summary = lighting
+            .update(&mut sink, &moved_source, InstallState::Current)
+            .expect("body cell move");
+        assert!(summary.proxy_rebuilt);
+        assert!(
+            summary.invalidated_faces > 0,
+            "the move must invalidate the faces it can change: {summary:?}"
+        );
+        assert!(
+            summary.retained_faces > summary.invalidated_faces,
+            "a one-cell body move must retain most completed faces: {summary:?}"
+        );
+        // The invalidated set is small enough to recompute inside this frame's
+        // `UPDATE_BUDGET`, so the withdrawn publication is replaced by a
+        // complete, current one in the same step instead of staying dark.
+        assert_eq!(summary.dirty_faces, 0, "the dirty set drains this frame");
+        assert!(
+            summary.indirect_live && summary.pending_work == 0,
+            "a completed, current volume must be live again: {summary:?}"
+        );
+        assert!(
+            summary.dependency_bytes > 0 && summary.dependency_bytes <= INDIRECT_DEPENDENCY_BYTES,
+            "the tracker must be bounded by its cap: {summary:?}"
+        );
+        println!(
+            "[wetland retention] cells={} retained={} invalidated={} dirty={} pending={} \
+dependency_kib={} gi_live={}",
+            summary.proxy_cells,
+            summary.retained_faces,
+            summary.invalidated_faces,
+            summary.dirty_faces,
+            summary.pending_work,
+            summary.dependency_bytes / 1024,
+            summary.indirect_live,
+        );
+
+        let summary = settle(
+            &mut lighting,
+            &mut sink,
+            &moved_source,
+            InstallState::Current,
+        );
+        assert!(summary.indirect_live && summary.reflection_live);
+        assert_eq!(summary.pending_work, 0, "the retained volume must converge");
+        assert_eq!(summary.dirty_faces, 0);
         assert!(sink.violations.is_empty(), "{:?}", sink.violations);
     }
 
