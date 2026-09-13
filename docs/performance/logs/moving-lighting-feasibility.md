@@ -33,7 +33,7 @@ it before the delivery commit.
   `apps/explorer/src/wetland_lighting.rs` (`BOX_DIMENSIONS` 20x10x20 = 4000
   cells, `SAMPLES = 16`, `UPDATE_BUDGET {rays: 1024, work: 8192}`,
   `GATHER_DISTANCE_M = 24.0`).
-- Added `crates/matterweave-render/src/moving_lighting_probe.rs` (818 lines,
+- Added `crates/matterweave-render/src/moving_lighting_probe.rs` (819 lines,
   `#[cfg(test)]` only) with three evidence paths, all through the shipped code
   (`MeshProxy::build`, `IndirectVolume::new/set_mesh_proxy/update/sample`):
   1. the geometry/work table for `R` in `{1, 2, 4, 8, 24}` on empty, sparse and
@@ -210,7 +210,8 @@ sparse edge 13/301 (4.3 %), sparse center 13/718 (1.8 %), dense edge 24/583
 
 - Probe: `cargo test --locked -p matterweave-render --lib
   moving_lighting_probe -- --nocapture`
-  -> `2 passed; 0 failed; 107 filtered out` in 0.46 s, 76 `[probe]` lines.
+  -> `2 passed; 0 failed; 107 filtered out` (about half a second; 0.43-0.49 s
+  across runs), 76 `[probe]` lines.
 - Full render lib suite: `cargo test --locked -p matterweave-render --lib`
   -> `109 passed; 0 failed; 0 ignored` (107 pre-existing plus 2 new).
 - Scoped clippy: `cargo clippy --locked -p matterweave-render --all-targets --
@@ -299,8 +300,9 @@ one.
   `fae6173a6d8519bc28cd7e21b2f0fa5510ba60f7` (module, `lib.rs` registration
   and this log in one commit). Branch `engine/moving-lighting-probe`, stacked on
   `engine/wetland-proxy-lighting` (`3d33c4f`, PR #54 head) with PR base set to
-  that branch until #54 merges; rebase onto `main` after #54, preserving every
-  parent change.
+  that branch until #54 merges (opened as PR
+  [#57](https://github.com/5omeOtherGuy/Matterweave/pull/57)); rebase onto `main`
+  after #54, preserving every parent change.
 - Independently reviewable without a device: 2 probe tests and 109 render lib
   tests pass on this commit, clippy `-D warnings` and `rustfmt --check` are
   clean, and `check_docs.py` passes; the probe output quoted above was produced
