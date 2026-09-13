@@ -594,6 +594,28 @@ fn lod_tiles_are_well_formed_and_respect_their_filter() {
 }
 
 #[test]
+fn the_landscape_domain_is_wide_and_the_island_domain_is_not() {
+    // The rings render 8 km, so the editable domain has to let a player travel
+    // that far; the legacy island keeps the sandbox square it was authored in.
+    let landscape = World::landscape(SEED);
+    assert_eq!(
+        landscape.stream_x_limit(),
+        matterweave_core::LANDSCAPE_WORLD_LIMIT
+    );
+    assert!(landscape.contains_stream_cell([8000, 4, -8000]));
+    assert!(!landscape.contains_stream_cell([9000, 4, 0]));
+    assert!(!landscape.contains_stream_cell([0, 400, 0]));
+    let legacy = World::generate(SEED);
+    assert_eq!(legacy.stream_x_limit(), matterweave_core::WORLD_LIMIT);
+    assert!(legacy.contains_stream_cell([200, 0, 0]));
+    assert!(!legacy.contains_stream_cell([300, 0, 0]));
+    // A window published far from the origin is still the full 7x7 x 13 band.
+    let mut far = World::landscape(SEED);
+    assert!(far.stream_around([7000.0, 40.0, -7000.0]));
+    assert_eq!(far.stream_resident_chunks().unwrap().len(), 49 * 13);
+}
+
+#[test]
 fn streaming_landscape_uses_the_generator_and_the_wide_band() {
     let mut world = World::landscape(SEED);
     assert_eq!(world.terrain_source(), TerrainSource::Landscape);

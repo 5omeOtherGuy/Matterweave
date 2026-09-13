@@ -28,7 +28,7 @@ use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
 };
-use matterweave_core::{AsyncWorld, World, WORLD_LIMIT};
+use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
     Atmosphere, FrameResult, Hud, LightingSettings, Renderer, Sun, TerrainTileKey,
     MAX_TERRAIN_TILES,
@@ -77,7 +77,9 @@ const FLY_SPEED: f32 = 90.0;
 /// Camera limits. The horizontal clamp keeps the eye inside the simulation
 /// domain, which is where the ring planner's coverage contract holds and where
 /// the streaming window is a full 7x7 square.
-const MAX_EYE_XZ: f32 = (WORLD_LIMIT - 8) as f32;
+/// The eye stays a window's width inside the landscape domain, so the streaming
+/// window and the ring planner never see a clamped square.
+const MAX_EYE_XZ: f32 = (matterweave_core::LANDSCAPE_WORLD_LIMIT - 64) as f32;
 const MIN_EYE_Y: f32 = -30.0;
 const MAX_EYE_Y: f32 = 420.0;
 
@@ -255,8 +257,8 @@ pub fn plan_tile_work(
 /// few metres above the sea with the shore and the mountains beyond it: the view
 /// the near water pass, the distance rings and the haze are for.
 fn spawn_camera() -> Camera {
-    for gz in (-3..=3).rev() {
-        for gx in -3..=3 {
+    for gz in (-24..24).rev() {
+        for gx in -24..24 {
             let (x, z) = (gx * 64, gz * 64);
             let depth = landscape::height_at(SEED, x, z);
             if depth > -8 {

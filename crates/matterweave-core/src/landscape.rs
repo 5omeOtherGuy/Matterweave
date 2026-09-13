@@ -46,7 +46,7 @@
 use crate::hash;
 use crate::material;
 use crate::mesh::{Mesh, Vertex};
-use crate::{CHUNK_EDGE, STREAM_RADIUS_CHUNKS, WORLD_LIMIT};
+use crate::{CHUNK_EDGE, STREAM_RADIUS_CHUNKS};
 
 /// Identity of this generator's output. Bump for any change to the columns,
 /// materials or flora population it produces.
@@ -1077,7 +1077,9 @@ fn snap(value: i32, size: i32) -> i32 {
 /// world. Its edges are chunk-aligned, hence aligned to every ring's cell size,
 /// and it is the hole the innermost ring is cut with.
 pub fn fine_clip(eye: [f32; 3]) -> Clip {
-    let limit = WORLD_LIMIT / CHUNK_EDGE;
+    // The ring planner serves the landscape source, whose domain is much wider
+    // than the legacy sandbox: a camera anywhere in it still gets a full window.
+    let limit = crate::LANDSCAPE_WORLD_LIMIT / CHUNK_EDGE;
     let centre =
         [eye[0], eye[2]].map(|v| eye_metre(v).div_euclid(CHUNK_EDGE).clamp(-limit, limit - 1));
     let low = centre.map(|c| (c - STREAM_RADIUS_CHUNKS).max(-limit) * CHUNK_EDGE);

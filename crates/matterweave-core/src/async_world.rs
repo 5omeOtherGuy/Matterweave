@@ -275,7 +275,7 @@ impl AsyncWorld {
     /// streaming and a window that is already published are refused. A newer
     /// request replaces a pending older one; only the latest center is publishable.
     pub fn request_stream(&mut self, world: &World, eye: [f32; 3]) -> bool {
-        let Some(center) = World::stream_center_of(eye) else {
+        let Some(center) = World::stream_center_of(world.terrain_source(), eye) else {
             return false;
         };
         let previous = self.requested_center;
@@ -397,7 +397,7 @@ impl AsyncWorld {
     /// changed. A failed rewindow (for example revision exhaustion) keeps the
     /// count so the caller retries cheaply next frame instead of spinning.
     pub fn sync_fallback_if_stalled(&mut self, world: &mut World, eye: [f32; 3]) -> bool {
-        let Some(center) = World::stream_center_of(eye) else {
+        let Some(center) = World::stream_center_of(world.terrain_source(), eye) else {
             return false;
         };
         {
@@ -708,7 +708,7 @@ fn run_job(shared: &Shared, job: Job) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CHUNK_EDGE, STREAM_RADIUS_CHUNKS, WORLD_LIMIT};
+    use crate::{TerrainSource, CHUNK_EDGE, STREAM_RADIUS_CHUNKS, WORLD_LIMIT};
 
     impl AsyncWorld {
         /// Test-only controller with no background worker. The queue stays live so a
@@ -777,7 +777,7 @@ mod tests {
     /// The declared residency window for an eye position: a 7x7x3 chunk span around
     /// the stream centre, clamped to the world limits.
     fn window_keys(eye: [f32; 3]) -> Vec<[i32; 3]> {
-        let center = World::stream_center_of(eye).expect("finite eye");
+        let center = World::stream_center_of(TerrainSource::LegacyIsland, eye).expect("finite eye");
         let limit = WORLD_LIMIT / CHUNK_EDGE;
         let mut keys = BTreeSet::new();
         for x in (center[0] - STREAM_RADIUS_CHUNKS).max(-limit)
@@ -843,8 +843,8 @@ mod tests {
         let world = streamed(8712, [0.0, 4.0, 0.0]);
         let eye_a = [120.0, 4.0, 0.0];
         let eye_b = [-120.0, 4.0, 0.0];
-        let center_a = World::stream_center_of(eye_a).unwrap();
-        let center_b = World::stream_center_of(eye_b).unwrap();
+        let center_a = World::stream_center_of(TerrainSource::LegacyIsland, eye_a).unwrap();
+        let center_b = World::stream_center_of(TerrainSource::LegacyIsland, eye_b).unwrap();
         assert_ne!(center_a, center_b);
 
         let mut jobs = AsyncWorld::manual();
@@ -948,7 +948,10 @@ mod tests {
             jobs.poll_stream(&mut world),
             "latest requested buffered window was lost"
         );
-        assert_eq!(world.stream_center(), World::stream_center_of(a));
+        assert_eq!(
+            world.stream_center(),
+            World::stream_center_of(world.terrain_source(), a)
+        );
     }
 
     #[test]
@@ -992,7 +995,7 @@ mod tests {
         let slow_eye = [-120.0, 4.0, 0.0];
         let settled_eye = [40.0, 4.0, 0.0];
         let edit = [0, 20, 0];
-        let origin = World::stream_center_of(origin_eye).unwrap();
+        let origin = World::stream_center_of(TerrainSource::LegacyIsland, origin_eye).unwrap();
         let mut world = streamed(SEED, origin_eye);
         assert_eq!(world.get(edit), 0);
         let mut jobs = AsyncWorld::manual();
@@ -1241,7 +1244,7 @@ mod tests {
         assert!(stats.within_bounds(), "{stats:?}");
         assert_eq!(
             jobs.shared.lock().stream.as_ref().map(|job| job.center),
-            World::stream_center_of([-120.0, 4.0, 0.0]),
+            World::stream_center_of(TerrainSource::LegacyIsland, [-120.0, 4.0, 0.0]),
             "the pending window is not the latest request"
         );
         let job = take_job(&mut jobs.shared.lock());
