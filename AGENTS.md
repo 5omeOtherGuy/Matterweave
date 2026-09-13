@@ -4,7 +4,7 @@
 
 Build Matterweave: a native Android voxel engine and reusable game framework with high visual fidelity, complex interactive physics and measured efficiency. Start with [docs/HANDOFF.md](docs/HANDOFF.md), [docs/STATUS.md](docs/STATUS.md), [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), then [docs/adr/README.md](docs/adr/README.md) and [docs/ROADMAP.md](docs/ROADMAP.md). Read the relevant implementation files before changing them.
 
-This repository is the durable project context. Preserve decisions, evidence, useful failures and reproducible commands here. Do not depend on prior conversations, personal memory, external agent mailboxes or another project's files.
+This repository is the durable project context: the code, the tests, the ADRs and the pull request history. Record a decision when a future reader would otherwise repeat a mistake, and record it in the smallest durable place — a code comment, a test name, an ADR, or a PR description. Do not depend on prior conversations, personal memory, external agent mailboxes or another project's files. Working notes, transcripts and per-attempt narration are not project context and do not belong in this repository.
 
 ## Authority and autonomy
 
@@ -41,7 +41,11 @@ This repository is the durable project context. Preserve decisions, evidence, us
 
 ## Completion and handoff
 
-Before handing off, run relevant checks, inspect the diff, and update [docs/STATUS.md](docs/STATUS.md) with exact accomplishments, commands/results, unresolved risks and next actions. Update affected ADRs and the roadmap. A fresh session must be able to resume from the repository alone.
+Before handing off, run relevant checks and inspect the diff. Put what you did in the pull request description: what changed, what was tested, what is still open. GitHub keeps that next to the diff, where the next reader is already looking.
+
+Do not create a per-task, per-worker or per-review file. Do not append a dated entry to [docs/STATUS.md](docs/STATUS.md) for routine work. Update a document only when the change makes something already written **wrong**, and then edit that document in place rather than adding a new one beside it. Deleting a stale paragraph is worth more than adding a correct one next to it.
+
+A fresh session resumes from the code, the tests and recent pull requests. If that is not enough, fix the code or the tests — not by writing more prose about them.
 
 Document the device/OS/driver, scene, seed, build configuration, commit and test conditions for performance claims. Keep large binary evidence in appropriate repository release/workflow artifacts with durable references and checksums; keep small manifests and summaries in Git.
 
