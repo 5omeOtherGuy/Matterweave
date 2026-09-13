@@ -255,9 +255,6 @@ fn landscape_stacks(
         for x in chunk_x * 16..chunk_x * 16 + 16 {
             for z in chunk_z * 16..chunk_z * 16 + 16 {
                 let column = landscape::column(seed, x, z);
-                if column.height < LANDSCAPE_MIN_Y {
-                    continue;
-                }
                 for (slot, &chunk_y) in layers.iter().enumerate() {
                     let bottom = chunk_y * 16;
                     let floor = bottom.max(LANDSCAPE_MIN_Y);
