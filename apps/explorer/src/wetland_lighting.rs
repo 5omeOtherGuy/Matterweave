@@ -32,11 +32,15 @@
 //!   the proxy's occupied cells — a sub-cell move, a LOD swap that keeps the
 //!   cells — discards the freshly built proxy and keeps the cached volume, so
 //!   camera-driven churn cannot starve convergence. A changed footprint retires
-//!   the stale publication before the volume recomputes.
+//!   the stale publication before the volume recomputes. This gate absorbs
+//!   camera and LOD churn only; body motion that crosses cell boundaries is a
+//!   changed footprint and is disclosed in "Scope and limitations".
 //! - The volume advances by a fixed work/ray budget per frame, and a partially
 //!   accumulated key is never published.
-//! - Any build, update or upload error withdraws indirect and reflection and is
-//!   reported once; the session keeps running without them.
+//! - Any build, attach, update or upload error withdraws indirect and reflection
+//!   and is reported once; the session keeps running without them. A failed
+//!   attach drops the superseded representation, so the withdrawn state cannot
+//!   republish geometry the renderer has already retired.
 //!
 //! # Scope and limitations
 //!
@@ -60,6 +64,15 @@
 //!   a sub-cell move that keeps every triangle inside the cells it already
 //!   occupied leaves it unchanged, and cached radiance for that identical
 //!   representation stays valid.
+//! - **Continuous cell-crossing body motion withdraws GI until convergence.**
+//!   Every drawn-vertex change rebuilds the proxy, and every footprint change
+//!   retires the publication; while a body keeps crossing cell boundaries the
+//!   footprint keeps changing, so indirect radiance is off for the whole
+//!   duration of the motion and stays off until the fixed `UPDATE_BUDGET` has
+//!   reconverged after it stops. The digest gate absorbs camera and LOD churn,
+//!   not body motion, and the same budget dominates the frames after a single
+//!   crossing. Moving-body lighting is an open functional requirement (Phase B),
+//!   not part of this slice.
 //! - **No performance claim.** The per-frame budget is a bounded CPU work slice
 //!   over bounded volumes; nothing here is a device measurement.
 
@@ -73,9 +86,12 @@ use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 /// Half extents in cells of the one coverage box this slice publishes. Cells are
-/// the world's own 1 m voxel grid, so the box is 20x10x20 m and 4000 cells: the
-/// largest axis-aligned box that fits the indirect volume's 6-face-per-cell
-/// residency cap. A test pins the box against both engine caps.
+/// the world's own 1 m voxel grid, so the box is 20x10x20 m and 4000 cells: an
+/// authored aspect ratio that matches the clearing, not the largest box either
+/// engine cap allows. The indirect volume's 6-face-per-cell residency cap
+/// (24,576 face slots) permits 4096 cells, and the reflection volume allows 64
+/// cells per axis, so a 16x16x16 box (also 4096) fits both. A test pins this box
+/// against both caps.
 const BOX_HALF_EXTENT: [i32; 3] = [10, 5, 10];
 const BOX_DIMENSIONS: [u32; 3] = [
     (BOX_HALF_EXTENT[0] * 2) as u32,
@@ -237,13 +253,15 @@ pub(crate) struct WetlandLighting {
     palette_dynamic: Option<[f32; 3]>,
     /// Packed reflection source of the attached representation.
     reflection: Option<ReflectionVolume>,
-    /// The stored pack no longer matches the current source; rebuild it with
-    /// the next proxy build.
+    /// The stored pack no longer matches the current source. The next proxy
+    /// build repacks it from that build's proxy and clears this flag, so a
+    /// stale pack whose digest is unchanged clears instead of forcing a rebuild
+    /// every frame.
     reflection_stale: bool,
     /// Dynamic-mesh fingerprint of the last successful build.
     built_dynamic: Option<u64>,
-    /// A build failed; retry on the next accepted install or dynamic change
-    /// instead of every frame.
+    /// A build or attach failed; retry on the next accepted install instead of
+    /// every frame, and never publish the withheld representation in between.
     build_failed: bool,
     attached_cells: usize,
     attached_pool_meshes: usize,
@@ -255,6 +273,33 @@ pub(crate) struct WetlandLighting {
     last_error: Option<String>,
     last_reported: Option<(bool, bool, Option<u64>)>,
     last_report_at: u64,
+    /// Test-only fault armed by a regression to fail the next attach step; see
+    /// [`AttachFault`]. Production builds compile the field and its checks out.
+    #[cfg(test)]
+    armed_attach_fault: Option<AttachFault>,
+}
+
+/// Test-only failure injection for the two `attach` steps that can fail in
+/// production only on allocation or pack errors. A regression arms one, so the
+/// state transition after a failed attach is exercised deterministically without
+/// an allocator fault.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AttachFault {
+    /// `IndirectVolume::new` fails before a superseded volume is replaced.
+    Volume,
+    /// `ReflectionVolume::pack_with_mesh` fails after the footprint change.
+    Reflection,
+}
+
+#[cfg(test)]
+impl AttachFault {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Volume => "injected indirect volume allocation failure",
+            Self::Reflection => "injected reflection pack failure",
+        }
+    }
 }
 
 impl WetlandLighting {
@@ -280,6 +325,8 @@ impl WetlandLighting {
             last_error: None,
             last_reported: None,
             last_report_at: 0,
+            #[cfg(test)]
+            armed_attach_fault: None,
         }
     }
 
@@ -368,14 +415,31 @@ impl WetlandLighting {
                     return Err(error);
                 }
             };
+            let cells = built.proxy.occupied_cells();
+            let pool_meshes = built.pool_meshes;
+            let millis = built.millis;
+            if let Err(error) = self.attach(sink, source, built) {
+                // An attach failure breaks the same contract as a failed build:
+                // the renderer holds the newly installed geometry, so the
+                // superseded representation must not survive to be republished
+                // by the no-rebuild path. Drop it and withhold until the next
+                // accepted install.
+                self.volume = None;
+                self.palette_dynamic = None;
+                self.reflection = None;
+                self.reflection_stale = false;
+                self.attached_cells = 0;
+                self.attached_pool_meshes = 0;
+                self.build_failed = true;
+                return Err(error);
+            }
             self.build_failed = false;
             self.built_dynamic = Some(dynamic_fingerprint);
             self.proxy_rebuilds = self.proxy_rebuilds.saturating_add(1);
-            self.attached_cells = built.proxy.occupied_cells();
-            self.attached_pool_meshes = built.pool_meshes;
+            self.attached_cells = cells;
+            self.attached_pool_meshes = pool_meshes;
             summary.proxy_rebuilt = true;
-            summary.rebuild_ms = built.millis;
-            self.attach(sink, source, built)?;
+            summary.rebuild_ms = millis;
         } else if self.build_failed {
             // A rebuild failed and the source has not moved since: nothing may
             // be published from the superseded representation, and retrying now
@@ -502,6 +566,10 @@ impl WetlandLighting {
         if self.volume.is_none() || self.palette_dynamic != palette_dynamic {
             // The palette is fixed at construction, so the reserved dynamic
             // entry changing colour means a new volume.
+            #[cfg(test)]
+            if self.armed_attach_fault == Some(AttachFault::Volume) {
+                return Err(AttachFault::Volume.message().into());
+            }
             self.volume = Some(IndirectVolume::new(
                 self.origin,
                 BOX_DIMENSIONS,
@@ -525,7 +593,14 @@ impl WetlandLighting {
             self.published_sun = None;
             self.reflection = None;
         }
-        if self.reflection.is_none() {
+        if self.reflection.is_none() || self.reflection_stale {
+            // The pack is a bake of the current proxy: repack whenever the
+            // stored one is missing or marked stale, including a stale pack
+            // whose digest is unchanged (the footprint survived a world edit).
+            #[cfg(test)]
+            if self.armed_attach_fault == Some(AttachFault::Reflection) {
+                return Err(AttachFault::Reflection.message().into());
+            }
             let table = mirror_table(palette(self.palette_dynamic))?;
             self.reflection = Some(ReflectionVolume::pack_with_mesh(
                 source.world,
@@ -851,6 +926,21 @@ mod tests {
         mesh
     }
 
+    /// A half-metre physics body with every vertex painted `color`, placed so
+    /// its local origin sits at `translation` in world space.
+    fn body_at(translation: [f32; 3], color: [f32; 3]) -> Mesh {
+        let mut mesh = pebble(material::MOSS_TURF);
+        for vertex in &mut mesh.vertices {
+            vertex.color = color;
+            vertex.position = [
+                vertex.position[0] + translation[0],
+                vertex.position[1] + translation[1],
+                vertex.position[2] + translation[2],
+            ];
+        }
+        mesh
+    }
+
     fn placed(prototype: usize, translation: [f32; 3]) -> StaticInstance {
         StaticInstance {
             prototype,
@@ -927,6 +1017,10 @@ mod tests {
         withdraw_calls: usize,
         fail_indirect: bool,
         fail_reflection: bool,
+        /// A representation digest the renderer has already retired. Publishing
+        /// it again is a state-machine violation: the engine geometry installs
+        /// reject the superseded proxy.
+        retired_digest: Option<u64>,
         epoch: u64,
         sun: Sun,
         violations: Vec<String>,
@@ -942,6 +1036,7 @@ mod tests {
                 withdraw_calls: 0,
                 fail_indirect: false,
                 fail_reflection: false,
+                retired_digest: None,
                 epoch: SOURCE_EPOCH,
                 sun,
                 violations: Vec::new(),
@@ -978,6 +1073,10 @@ mod tests {
                 self.violations
                     .push("published without a matching proxy".into());
             }
+            if mesh_digest.is_some() && mesh_digest == self.retired_digest {
+                self.violations
+                    .push("republished a retired representation".into());
+            }
             if self.fail_indirect {
                 return Err("forced indirect failure".into());
             }
@@ -996,6 +1095,10 @@ mod tests {
             if !volume.valid_for_scene(world, source_epoch, mesh_digest) {
                 self.violations
                     .push("published a stale reflection pack".into());
+            }
+            if mesh_digest.is_some() && mesh_digest == self.retired_digest {
+                self.violations
+                    .push("republished a retired representation".into());
             }
             if self.fail_reflection {
                 return Err("forced reflection failure".into());
@@ -1585,6 +1688,172 @@ mod tests {
         assert_eq!(summary.digest, body_digest);
         assert_eq!(sink.withdraw_calls, withdraws);
         assert!(summary.indirect_live && summary.reflection_live);
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    #[test]
+    fn an_attach_allocation_failure_never_republishes_the_superseded_proxy() {
+        let fixture = Fixture::new();
+        let body = body_at([1.2, 0.2, 1.2], [0.9, 0.43, 0.15]);
+        let source = FrameSource {
+            dynamic: &body,
+            ..fixture.source()
+        };
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        let summary = settle(&mut lighting, &mut sink, &source, InstallState::Installed);
+        let digest = summary.digest.expect("digest");
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+
+        // The body crosses a cell boundary and changes colour, so the accepted
+        // install needs both a new footprint and a new volume palette, and the
+        // volume allocation fails.
+        let moved = body_at([3.2, 0.2, 3.2], [0.2, 0.6, 0.9]);
+        let moved_source = FrameSource {
+            dynamic: &moved,
+            ..fixture.source()
+        };
+        sink.retired_digest = Some(digest);
+        lighting.armed_attach_fault = Some(AttachFault::Volume);
+        let error = lighting
+            .update(&mut sink, &moved_source, InstallState::Installed)
+            .expect_err("a failed attach must be reported");
+        assert!(
+            error.contains("injected indirect volume allocation failure"),
+            "{error}"
+        );
+        assert!(!sink.indirect_live() && !sink.reflection_live());
+        let calls = sink.indirect_calls;
+
+        // The renderer already holds the new geometry, so the superseded
+        // representation is gone: the next frame may not publish it, and the
+        // failed attach is not retried every frame.
+        let summary = lighting
+            .update(&mut sink, &moved_source, InstallState::Current)
+            .expect("the session continues after a failed attach");
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+        assert_eq!(
+            sink.indirect_calls, calls,
+            "retired geometry must not republish"
+        );
+        assert!(!summary.indirect_live && !summary.reflection_live);
+        assert_eq!(summary.digest, None, "no representation stays attached");
+
+        // The transient clears; the next accepted install builds and publishes
+        // the representation the renderer now holds.
+        lighting.armed_attach_fault = None;
+        let summary = settle(
+            &mut lighting,
+            &mut sink,
+            &moved_source,
+            InstallState::Installed,
+        );
+        assert!(summary.indirect_live && summary.reflection_live);
+        assert_ne!(summary.digest, Some(digest));
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    #[test]
+    fn an_attach_pack_failure_never_republishes_the_superseded_proxy() {
+        let mut fixture = Fixture::new();
+        fixture.meshes = vec![pebble(material::MOSS_TURF)];
+        fixture.instances = vec![placed(0, [1.2, 0.2, 1.2])];
+        let source = fixture.source();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        let summary = settle(&mut lighting, &mut sink, &source, InstallState::Installed);
+        let digest = summary.digest.expect("digest");
+
+        // The pebble crosses a cell boundary: the footprint change retires the
+        // cached publication before the mirror bake runs, and the bake fails.
+        let moved = vec![placed(0, [3.2, 0.2, 3.2])];
+        let moved_source = FrameSource {
+            installed: &moved,
+            ..source
+        };
+        sink.retired_digest = Some(digest);
+        lighting.armed_attach_fault = Some(AttachFault::Reflection);
+        let error = lighting
+            .update(&mut sink, &moved_source, InstallState::Installed)
+            .expect_err("a failed attach must be reported");
+        assert!(
+            error.contains("injected reflection pack failure"),
+            "{error}"
+        );
+        assert!(!sink.indirect_live() && !sink.reflection_live());
+        let calls = sink.indirect_calls;
+
+        let summary = lighting
+            .update(&mut sink, &moved_source, InstallState::Current)
+            .expect("the session continues after a failed attach");
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+        assert_eq!(
+            sink.indirect_calls, calls,
+            "retired geometry must not republish"
+        );
+        assert!(!summary.indirect_live && !summary.reflection_live);
+        assert_eq!(summary.digest, None, "no representation stays attached");
+
+        lighting.armed_attach_fault = None;
+        let summary = settle(
+            &mut lighting,
+            &mut sink,
+            &moved_source,
+            InstallState::Installed,
+        );
+        assert!(summary.indirect_live && summary.reflection_live);
+        assert_ne!(summary.digest, Some(digest));
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    #[test]
+    fn a_stale_pack_with_an_unchanged_digest_repacks_without_perpetual_rebuilds() {
+        let mut fixture = Fixture::new();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        let digest = {
+            let source = fixture.source();
+            settle(&mut lighting, &mut sink, &source, InstallState::Installed)
+                .digest
+                .expect("digest")
+        };
+        let rebuilds = lighting.proxy_rebuilds;
+
+        // A future editable world: the authoritative revision moves without
+        // changing the proxy footprint, and the renderer retires both
+        // publications. The retained pack is stale for the same digest.
+        fixture.world.set([64, 0, 64], 1);
+        sink.renderer_install();
+        let source = fixture.source();
+        let summary = lighting
+            .update(&mut sink, &source, InstallState::Current)
+            .expect("world-edit frame");
+        assert_eq!(summary.digest, Some(digest));
+        assert_eq!(
+            lighting.proxy_rebuilds, rebuilds,
+            "observing the staleness does not rebuild by itself"
+        );
+
+        // The stale pack is repacked by exactly one rebuild, and the repacked
+        // bake is valid for the new revision immediately.
+        let summary = lighting
+            .update(&mut sink, &source, InstallState::Current)
+            .expect("repack frame");
+        assert_eq!(lighting.proxy_rebuilds, rebuilds + 1);
+        assert!(
+            summary.reflection_live,
+            "the repacked bake must be valid for the current source"
+        );
+
+        // GI reconverges under the new revision without any further proxy
+        // rebuild: the stale flag cleared with the repack.
+        let summary = settle(&mut lighting, &mut sink, &source, InstallState::Current);
+        assert!(summary.indirect_live && summary.reflection_live);
+        assert_eq!(
+            lighting.proxy_rebuilds,
+            rebuilds + 1,
+            "a stale unchanged digest must clear without rebuilding every frame"
+        );
         assert!(sink.violations.is_empty(), "{:?}", sink.violations);
     }
 }
