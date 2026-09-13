@@ -103,7 +103,7 @@ attributed to the old source as recorded below.
   A detail install (camera/LOD/edit) retries the build; a body-only move does
   not, the same suppression the frozen code applied to failed builds. The
   motion-withdrawal disclosure covers the user-visible consequence until the
-  Phase B moving-body requirement lands.
+  moving-body functional requirement lands.
 - **A stale pack with an unchanged digest is repacked from the rebuilt proxy.**
   `IndirectVolume` keeps its `MeshProxy` private, so a correct repack needs the
   freshly built proxy; that is one proxy rebuild that clears the flag, instead of
@@ -205,7 +205,8 @@ break/place republish, one body-move republish, lifecycle resume.
   capture the `Wetland proxy lighting:` line and the surrounding memory state.
 - **Open follow-up functional requirement.** Continuous moving-body lighting
   (publication that survives per-frame footprint churn, or a smaller
-  republish interval) remains open Phase B work. This repair does not close M4.
+  republish interval) remains an open functional requirement, not Phase B work.
+  This repair does not close M4.
 
 ### Delivery snapshot
 
@@ -237,4 +238,5 @@ break/place republish, one body-move republish, lifecycle resume.
   bake with one build instead of a rebuild loop.
 - The disclosed motion cost is the same budget that makes the feature cheap:
   bounding per-frame work is what turns a body move into many frames of
-  withdrawal. This is a product trade-off for Phase B, not a tuning accident.
+  withdrawal. This is a product trade-off for the open moving-body requirement,
+  not a tuning accident.

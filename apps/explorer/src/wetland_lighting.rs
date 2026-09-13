@@ -71,8 +71,8 @@
 //!   duration of the motion and stays off until the fixed `UPDATE_BUDGET` has
 //!   reconverged after it stops. The digest gate absorbs camera and LOD churn,
 //!   not body motion, and the same budget dominates the frames after a single
-//!   crossing. Moving-body lighting is an open functional requirement (Phase B),
-//!   not part of this slice.
+//!   crossing. Continuous moving-cell/body GI continuity is an open functional
+//!   requirement, not part of this slice and not Phase B cost/thermal work.
 //! - **No performance claim.** The per-frame budget is a bounded CPU work slice
 //!   over bounded volumes; nothing here is a device measurement.
 
