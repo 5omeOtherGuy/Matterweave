@@ -593,10 +593,10 @@ pub fn material_in_column(seed: u64, column: &Column, x: i32, y: i32, z: i32) ->
     }
     if y >= column.height - column.sub_depth {
         // Ore pockets inside rock layers add variety without changing the surface.
-        if column.sub_surface == material::STONE || column.sub_surface == material::GRAVEL {
-            if (hash3(seed ^ SALT_ORE, x, z) >> 40) & 0x3F < 2 {
-                return material::MINERAL;
-            }
+        if (column.sub_surface == material::STONE || column.sub_surface == material::GRAVEL)
+            && ((hash3(seed ^ SALT_ORE, x, z) >> 40) & 0x3F) < 2
+        {
+            return material::MINERAL;
         }
         return column.sub_surface;
     }
