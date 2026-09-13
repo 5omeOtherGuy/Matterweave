@@ -1356,9 +1356,13 @@ mod tests {
         // A move that crosses a cell boundary changes the footprint: the
         // publication that describes the previous representation is retired.
         // Exact dependency retention recomputes only the faces the move can
-        // affect, so the volume can reconverge and publish a complete, current
-        // volume within the same frame; the sink's own checks reject a partial
-        // or stale upload, and a same-frame publication must be a new one.
+        // affect, and this fixture's invalidated set (6 faces, measured
+        // 2026-09-13: `indirect_live = true`, `dirty_faces = 0`,
+        // `pending_work = 0`, one new upload after the retirement) drains
+        // inside one `UPDATE_BUDGET`, so the volume reconverges and publishes a
+        // complete, current volume within the same frame. The assertion below
+        // is unconditional: a retirement that left the volume dark would fail
+        // it rather than be accepted.
         let moved = vec![placed(0, [3.2, 0.2, 3.2])];
         let moved_source = FrameSource {
             installed: &moved,
@@ -1377,21 +1381,23 @@ mod tests {
             summary.invalidated_faces > 0,
             "the moved object's own faces must be invalidated: {summary:?}"
         );
-        if summary.indirect_live {
-            assert!(
-                sink.indirect_calls > calls,
-                "a live indirect publication must have been uploaded after the retirement"
-            );
-            assert_eq!(
-                summary.pending_work, 0,
-                "a live publication must be complete"
-            );
-        } else {
-            assert!(
-                summary.pending_work > 0,
-                "a retired volume is still recomputing"
-            );
-        }
+        assert!(
+            summary.indirect_live,
+            "the invalidated set must drain inside one budget and republish in the same frame: \
+             {summary:?}"
+        );
+        assert!(
+            sink.indirect_calls > calls,
+            "a live indirect publication must have been uploaded after the retirement"
+        );
+        assert_eq!(
+            summary.pending_work, 0,
+            "a live publication must be complete"
+        );
+        assert_eq!(
+            summary.dirty_faces, 0,
+            "the invalidated set must be fully drained, not partly recomputed: {summary:?}"
+        );
         assert!(
             summary.reflection_live,
             "the mirror bake of the new representation is immediately valid"

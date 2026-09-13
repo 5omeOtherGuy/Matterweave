@@ -623,7 +623,8 @@ pub struct IndirectVolume {
     sum: Vec3,
     mesh: Option<MeshProxy>,
     /// Opt-in exact dependency tracking; `None` until
-    /// [`IndirectVolume::enable_proxy_retention`].
+    /// [`IndirectVolume::enable_proxy_retention`]. Its whole resident footprint
+    /// (bitsets, fixed arrays and its own state) is bounded by the cap.
     tracking: Option<dependency::MeshDependencies>,
     /// Per-face `done` bits for the current key: set as the scan resolves a
     /// face, either by writing a completed value or by testing its exposure and
@@ -641,9 +642,11 @@ pub struct RetentionStatus {
     pub face_slots: usize,
     /// Cells in the dependency index space (the volume's coverage box).
     pub bits_per_face: usize,
-    /// Caller cap after clamping to [`MAX_DEPENDENCY_BYTES`].
+    /// Caller cap after clamping to [`MAX_DEPENDENCY_BYTES`], including the
+    /// tracker's own state. `resident_bytes` is always at most this value.
     pub cap_bytes: usize,
-    /// Resident bytes of the tracker's arrays.
+    /// Resident bytes of the tracker's arrays and its own state; never more
+    /// than `cap_bytes`.
     pub resident_bytes: usize,
     /// Faces whose dependency bitset is allocated.
     pub tracked_faces: usize,
@@ -658,8 +661,9 @@ pub struct RetentionStatus {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProxyEdit {
     /// Whether exact dependency tracking decided the invalidation. `false`
-    /// means the representation changed outside the tracked index space and the
-    /// volume used its clear-all semantics.
+    /// means the representation changed outside the tracked index space (a
+    /// changed cell outside the coverage box, a proxy attached or detached, or a
+    /// changed proxy coverage box) and the volume used its clear-all semantics.
     pub tracked: bool,
     /// Cells whose proxy material (including presence) differs.
     pub changed_cells: usize,
@@ -733,8 +737,9 @@ impl IndirectVolume {
     ///
     /// Records, per completed face, the proxy cells its value was computed from
     /// and lets [`IndirectVolume::replace_mesh_proxy`] retain completed faces
-    /// whose dependencies did not change. `max_bytes` caps the tracker's memory
-    /// and is clamped to [`MAX_DEPENDENCY_BYTES`]; bitsets are allocated lazily
+    /// whose dependencies did not change. `max_bytes` caps the tracker's total
+    /// memory - bitsets, fixed arrays and the tracker's own state - and is
+    /// clamped to [`MAX_DEPENDENCY_BYTES`]; bitsets are allocated lazily
     /// per face from that cap, and a face that does not fit is recomputed on
     /// every edit instead of being retained (`untracked_faces`).
     ///
@@ -807,7 +812,10 @@ impl IndirectVolume {
     ///
     /// A changed cell outside the volume's coverage box cannot be represented in
     /// the bounded dependency index space, so it falls back to the clear-all
-    /// semantics and reports `tracked = false`.
+    /// semantics and reports `tracked = false`. The same fallback applies when
+    /// the edit attaches or detaches the proxy (`None` <-> `Some`) or changes the
+    /// proxy's `origin` or `dimensions`: a recorded dependency is the read set of
+    /// the box it was recorded under, so a box change invalidates every record.
     pub fn replace_mesh_proxy(&mut self, mesh: Option<MeshProxy>) -> ProxyEdit {
         let completed = self.values.iter().filter(|value| value[3] != 0.0).count();
         let slots = self.values.len();

@@ -34,6 +34,14 @@
 //! recorded changed, it was never read in the completed state, and reading it
 //! requires traversing a recorded cell first - which is invalidated.
 //!
+//! That argument is relative to one coverage box. The recorder walks the same
+//! `segment_exit`-clipped segment `MeshProxy::raycast` reads, and a face
+//! completed with no proxy records only its exposure cells, so a bitset is the
+//! read set only of the box and representation it was recorded under. Attaching
+//! or detaching the proxy, or moving or resizing its box, therefore changes what
+//! a recorded segment could have read and is a coverage change as well: no
+//! recorded bitset covers the newly reachable (or newly unreachable) cells.
+//!
 //! The exposure test also reads the face's own cell and its outward neighbor;
 //! both are recorded with the ray cells when a face starts sampling, and the
 //! edit path additionally expands every changed cell over its closed
@@ -45,7 +53,10 @@
 //! The bitset index space is the volume's own coverage box (`cells <=
 //! MAX_FACE_SLOTS / 6`), so one face costs `ceil(cells / 64) * 8` bytes: at
 //! most 512 bytes. Bitsets are allocated lazily, once per face, from an arena
-//! capped by the caller's `max_bytes`. When the cap is reached (or the arena
+//! capped by the caller's `max_bytes`. The cap bounds the tracker's whole
+//! resident footprint - the arena, the fixed arrays and this struct - so
+//! `resident_bytes() <= cap_bytes()` holds without an unaccounted overshoot.
+//! When the cap is reached (or the arena
 //! cannot grow), that face is marked [`UNTRACKED`]: it keeps a correct value
 //! but is recomputed on every proxy edit instead of being retained. The status
 //! reports tracked, untracked and outside-cell counts so the cost and the
@@ -54,9 +65,11 @@
 //! A changed cell outside the index space cannot be represented, so such an
 //! edit is a coverage change: [`invalidate_edit`] reports `tracked: false` and
 //! the caller clears every value, the same conservative behavior as replacing
-//! the representation. Recording a cell outside the index space is ignored for
-//! the same reason: under the coverage rule it holds air in every attached
-//! proxy, so it cannot change without triggering that fallback.
+//! the representation. A `None` <-> `Some` proxy transition and any change to
+//! the proxy's `origin` or `dimensions` are coverage changes for the same
+//! reason (see above), with the same fallback. Recording a cell outside the index
+//! space is ignored for the same reason: under the coverage rule it holds air in
+//! every attached proxy, so it cannot change without triggering that fallback.
 
 use crate::indirect::MeshProxy;
 use matterweave_core::MAX_RAY_DISTANCE;
@@ -80,8 +93,10 @@ pub(crate) struct MeshDependencies {
     words: usize,
     /// Face slots (`cells * 6`).
     slots: usize,
-    /// Arena budget in bytes; the offsets array and the changed mask are already
-    /// deducted, so this bounds the bitsets themselves.
+    /// Arena budget in bytes; the offsets array, the changed mask and this
+    /// struct are already deducted, so this bounds the bitsets themselves. That
+    /// makes [`Self::cap_bytes`] an upper bound on [`Self::resident_bytes`]
+    /// rather than a bound on the arrays alone.
     arena_cap_bytes: usize,
     /// Arena word offset per face slot, or [`NO_BITS`] / [`UNTRACKED`].
     offsets: Vec<u32>,
@@ -102,7 +117,7 @@ pub(crate) struct MeshDependencies {
 impl MeshDependencies {
     /// Validates the index space and allocates the per-face offset and changed
     /// mask arrays. `cap_bytes` is clamped to the engine maximum by the caller
-    /// and must cover those arrays plus at least one face bitset.
+    /// and must cover those arrays, this struct and at least one face bitset.
     pub(crate) fn new(
         origin: [i32; 3],
         dimensions: [u32; 3],
@@ -125,13 +140,18 @@ impl MeshDependencies {
         let fixed = offsets_bytes
             .checked_add(changed_bytes)
             .ok_or("Dependency tracking size overflow")?;
+        // The cap bounds the whole tracker, this struct included, so that
+        // `resident_bytes() <= cap_bytes()` holds exactly. Every byte of the cap
+        // is charged here rather than left as an implicit overshoot.
+        let struct_bytes = std::mem::size_of::<Self>();
         let arena_cap_bytes = cap_bytes
             .checked_sub(fixed)
+            .and_then(|free| free.checked_sub(struct_bytes))
             .filter(|&free| free >= per_face_bytes)
             .ok_or_else(|| {
                 format!(
                     "Dependency tracking needs at least {} bytes for {slots} faces of {cells} cells",
-                    fixed + per_face_bytes
+                    fixed + struct_bytes + per_face_bytes
                 )
             })?;
         let mut offsets = Vec::new();
@@ -177,10 +197,14 @@ impl MeshDependencies {
         self.slots
     }
 
+    /// Caller cap after clamping to the engine maximum (`MAX_DEPENDENCY_BYTES`),
+    /// including this struct. [`Self::resident_bytes`] is always at most this
+    /// value.
     pub(crate) fn cap_bytes(&self) -> usize {
         self.arena_cap_bytes
             + self.offsets.len() * std::mem::size_of::<u32>()
             + self.changed.len() * std::mem::size_of::<u64>()
+            + std::mem::size_of::<Self>()
     }
 
     pub(crate) fn tracked_faces(&self) -> usize {
@@ -332,6 +356,15 @@ pub(crate) struct EditCounts {
 /// conservative. Every changed cell is expanded over its closed neighborhood so
 /// the exposure tests of those faces are reconsidered, and every tracked face
 /// whose recorded segment cells intersect the changed set is invalidated.
+///
+/// A recorded bitset is the read set only for the coverage box it was recorded
+/// under, because the recorder walks the same `segment_exit`-clipped segment the
+/// DDA reads and a face completed with no proxy records only its exposure cells.
+/// Attaching or detaching the proxy (`None` <-> `Some`), or moving or resizing
+/// its box, therefore changes what a recorded segment could have read; that is a
+/// coverage change ([`EditCounts::tracked`] `= false`) and the caller clears
+/// every value instead of comparing bitsets it cannot trust.
+///
 pub(crate) fn invalidate_edit(
     deps: &mut MeshDependencies,
     old: Option<&MeshProxy>,
@@ -340,6 +373,10 @@ pub(crate) fn invalidate_edit(
     done: &mut [u64],
 ) -> EditCounts {
     deps.changed.fill(0);
+    // `None` vs `Some`, or any change to the box: see the note above. The
+    // `None`/`None` case (no proxy either side) is not a change.
+    let coverage_changed = old.map(|proxy| (proxy.origin(), proxy.dimensions()))
+        != new.map(|proxy| (proxy.origin(), proxy.dimensions()));
     let mut changed_cells = 0usize;
     let mut outside = false;
     let mut old_cells = old.map(MeshProxy::cells).into_iter().flatten().peekable();
@@ -382,9 +419,11 @@ pub(crate) fn invalidate_edit(
             None => outside = true,
         }
     }
-    if outside {
-        // A changed cell outside the index space cannot be represented exactly.
-        // Report the diff and let the caller apply its full-clear semantics.
+    if outside || coverage_changed {
+        // A changed cell outside the index space cannot be represented exactly,
+        // and a changed coverage box makes every recorded bitset a read set for
+        // a different box. Report the diff and let the caller apply its
+        // full-clear semantics.
         return EditCounts {
             changed_cells,
             tracked: false,
@@ -1108,6 +1147,150 @@ mod tests {
         );
     }
 
+    /// A `None` -> `Some` proxy transition is a coverage change, not a cell
+    /// edit. A face completed with no proxy records only its own cell and
+    /// outward neighbor, because no proxy segment exists to trace; that bitset
+    /// is *not* the read set of the same face under a proxy. Treating the
+    /// addition as an ordinary cell diff therefore retains faces whose values
+    /// the new proxy changes as soon as they are more than one cell from the
+    /// newly occupied cell (the exposure rule's closed neighborhood).
+    ///
+    /// Same geometry as `far_occluder_second_segment_is_invalidated_exactly`:
+    /// receiver `[4,1,8]` face 4 (`+Z`) is six cells along `z` from the body at
+    /// `[3,1,14]`, so only its recorded hit-to-sun segment can see the body, and
+    /// a `None`-era bitset does not contain the body cell.
+    ///
+    /// RED-first, observed with the coverage rule disabled: the completed volume
+    /// differed from `fresh_reference(...)` at three of its 6 000 faces, all
+    /// `+Y` floor faces diagonal to the added cell and therefore outside the
+    /// closed-neighborhood rule - `[3,0,15]` and `[4,0,15]` (retained
+    /// `0.0` vs fresh `0.09805807`) and `[2,0,16]` (retained `0.0` vs fresh
+    /// `0.049029034`). The comparison runs before the `tracked` flag is asserted
+    /// so the RED failure is the stale value itself, not the flag.
+    #[test]
+    fn none_to_some_proxy_transition_is_a_coverage_change() {
+        const CX_ORIGIN: [i32; 3] = [0, 0, 0];
+        const CX_DIMENSIONS: [u32; 3] = [10, 5, 20];
+        const CX_RADIUS_M: f32 = 4.0;
+        const RECEIVER: [i32; 3] = [4, 1, 8];
+        const RECEIVER_FACE: usize = 4;
+        const BODY_BEFORE: [i32; 3] = [3, 1, 14];
+        let mut world = World::new(47);
+        for cell in cells_in(CX_ORIGIN, CX_DIMENSIONS) {
+            if cell[1] == 0 {
+                world.set(cell, FLOOR_MATERIAL);
+            }
+        }
+        world.set(RECEIVER, ROCK_MATERIAL);
+        let body = |cell: [i32; 3]| proxy(CX_ORIGIN, CX_DIMENSIONS, &[(cell, BODY_MATERIAL)]);
+        let mut measured = retained_volume(CX_ORIGIN, CX_DIMENSIONS, CX_RADIUS_M);
+        // Complete the retained volume with no proxy at all, then attach one.
+        measured.set_mesh_proxy(None);
+        complete(&mut measured, &world, SUN);
+        let lit = measured.sample(RECEIVER, RECEIVER_FACE);
+        assert!(lit[0] > 0.0, "fixture: the receiver must gather the floor");
+
+        let before = snapshot(&measured);
+        let edit = measured.replace_mesh_proxy(Some(body(BODY_BEFORE)));
+        assert_eq!(edit.changed_cells, 1, "the body is a new proxy cell");
+        assert_retention_invariants(&before, &measured, &edit, "none to some");
+        complete(&mut measured, &world, SUN);
+        let fresh = fresh_reference(
+            CX_ORIGIN,
+            CX_DIMENSIONS,
+            CX_RADIUS_M,
+            &world,
+            SUN,
+            body(BODY_BEFORE),
+        );
+        assert_matches_fresh(&measured, &fresh, CX_ORIGIN, CX_DIMENSIONS, "none to some");
+        assert!(
+            !edit.tracked,
+            "a None <-> Some transition changes which cells a recorded segment could \
+             have read, so it is a coverage change: {edit:?}"
+        );
+        assert_eq!(
+            edit.retained_faces, 0,
+            "no value may survive the transition"
+        );
+    }
+
+    /// Growing the proxy's coverage box is a coverage change too, even when no
+    /// occupied cell changes and the only new cell is inside the dependency
+    /// index space. A recorded segment is clipped to the box it was recorded
+    /// under (`MeshProxy::segment_exit`), so a face whose old segment stopped at
+    /// the old box boundary never recorded a cell in the newly reachable region;
+    /// the new cell is then a changed cell that its bitset cannot intersect, and
+    /// the exposure rule does not reach it either.
+    ///
+    /// RED-first, observed with the coverage rule disabled: the completed volume
+    /// differed from `fresh_reference(...)` at three faces - the in-box receiver
+    /// `[4,1,10]` face 0 (`+X`), whose segment was clipped at the old box's
+    /// `x = 6` boundary (retained `0.0330946` vs fresh `0.08212363`), plus the
+    /// `+Y` floor faces `[6,0,11]` and `[7,0,11]` at the old boundary (retained
+    /// `0.0` vs fresh `0.049029034`). The sun's `-X` component is what makes a
+    /// hit on the new cell's `-X` face contribute, so the in-box face is the
+    /// one that exposes the clipping rather than a grazing zero-cosine hit.
+    #[test]
+    fn proxy_box_growth_is_a_coverage_change() {
+        const BOX: [i32; 3] = [0, 0, 0];
+        const VOLUME_DIMENSIONS: [u32; 3] = [12, 5, 20];
+        // The old proxy box stops at `x = 6`; the segment is clipped there.
+        const SMALL_BOX: [u32; 3] = [6, 5, 20];
+        const RADIUS_M: f32 = 4.0;
+        const RECEIVER: [i32; 3] = [4, 1, 10];
+        const RECEIVER_FACE: usize = 0;
+        const NEW_CELL: [i32; 3] = [8, 2, 10];
+        // A sun with a `-X` component: the receiver's `+X` face reaches the new
+        // cell through its `-X` face, whose normal then faces the sun.
+        const X_SUN: Sun = Sun {
+            direction_to_sun: [-5.0, 1.0, 0.0],
+            intensity: 1.0,
+        };
+        let mut world = World::new(0);
+        for cell in cells_in(BOX, VOLUME_DIMENSIONS) {
+            if cell[1] == 0 {
+                world.set(cell, FLOOR_MATERIAL);
+            }
+        }
+        world.set(RECEIVER, ROCK_MATERIAL);
+        let mut measured = retained_volume(BOX, VOLUME_DIMENSIONS, RADIUS_M);
+        // An empty proxy in the small box: every recorded segment is clipped at
+        // `x = 6`, so no bitset can contain a cell at `x = 8`.
+        measured.set_mesh_proxy(Some(proxy(BOX, SMALL_BOX, &[])));
+        complete(&mut measured, &world, X_SUN);
+        let lit = measured.sample(RECEIVER, RECEIVER_FACE);
+        assert!(
+            lit[0] > 0.0,
+            "fixture: the receiver's +X face must gather the floor"
+        );
+
+        let before = snapshot(&measured);
+        let grown = proxy(BOX, VOLUME_DIMENSIONS, &[(NEW_CELL, BODY_MATERIAL)]);
+        let edit = measured.replace_mesh_proxy(Some(grown));
+        assert_eq!(edit.changed_cells, 1, "the new cell is the only change");
+        assert_retention_invariants(&before, &measured, &edit, "box growth");
+        complete(&mut measured, &world, X_SUN);
+        let fresh = fresh_reference(
+            BOX,
+            VOLUME_DIMENSIONS,
+            RADIUS_M,
+            &world,
+            X_SUN,
+            proxy(BOX, VOLUME_DIMENSIONS, &[(NEW_CELL, BODY_MATERIAL)]),
+        );
+        assert_matches_fresh(&measured, &fresh, BOX, VOLUME_DIMENSIONS, "box growth");
+        assert!(
+            !edit.tracked,
+            "a changed coverage box changes the recorded read set, so it is a \
+             coverage change: {edit:?}"
+        );
+        assert_eq!(
+            edit.retained_faces, 0,
+            "no value may survive the box change"
+        );
+    }
+
     /// An edit that encloses a sampled face changes its exposure, not just its
     /// rays: the face must be zeroed immediately (never left stale) and the
     /// completed volume must match the fresh reference without that face.
@@ -1533,8 +1716,10 @@ checked={} bytes={}",
         let words = probe.bits_per_face.div_ceil(64);
         let per_face = words * 8;
         let fixed = probe.face_slots * 4 + words * 8;
-        // Room for the fixed arrays and eight face bitsets only.
-        let cap = fixed + 8 * per_face;
+        // Room for the fixed arrays, the tracker struct itself and eight face
+        // bitsets only. The cap covers the whole tracker, so the struct is
+        // charged before the bitsets.
+        let cap = fixed + std::mem::size_of::<MeshDependencies>() + 8 * per_face;
         let status = volume
             .enable_proxy_retention(cap)
             .expect("small tracking cap");
@@ -1550,7 +1735,7 @@ checked={} bytes={}",
         );
         assert!(live.tracked_faces < completed, "most faces stay untracked");
         assert!(
-            live.resident_bytes <= cap + 1024,
+            live.resident_bytes <= cap,
             "resident {} over cap {cap}",
             live.resident_bytes
         );
