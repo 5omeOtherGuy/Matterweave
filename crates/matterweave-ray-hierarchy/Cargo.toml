@@ -11,3 +11,6 @@ matterweave-render = { path = "../matterweave-render" }
 
 [dev-dependencies]
 glam = "=0.30.9"
+# The native functional example is the only target that uses these two.
+ash = "=0.38.0"
+bytemuck = "=1.23.2"
