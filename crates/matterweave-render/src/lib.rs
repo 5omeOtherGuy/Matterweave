@@ -8,6 +8,7 @@ mod indirect_edge_tests;
 #[cfg(test)]
 mod indirect_tests;
 mod lighting;
+pub mod ray_hierarchy_gpu;
 pub mod ray_reference;
 pub mod reflection;
 pub mod shader_contract;

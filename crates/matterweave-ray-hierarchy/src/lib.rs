@@ -68,13 +68,20 @@
 //!
 //! # Limits
 //!
-//! CPU only. No GPU pipeline, no Android execution, no measured performance claim, and no
-//! multi-level tree or DAG: one block level over a fixed bounded crop. Counters in
-//! [`TraversalStats`] are buffer-access counts that describe structure, not timings.
+//! The library is CPU only: one block level over a fixed bounded crop, no multi-level
+//! tree or DAG, no Android execution and no measured performance claim. Counters in
+//! [`TraversalStats`] are buffer-access counts that describe structure, not timings. The
+//! optional `ray_hierarchy_gpu` example exercises the equivalent GPU candidate through
+//! `matterweave_render::ray_hierarchy_gpu`; it is a standalone native comparison tool,
+//! not a renderer path.
 
 mod occupancy;
 mod traverse;
 mod volume;
+
+/// Deterministic fixture generator, shared by the focused tests and the optional native
+/// GPU example so both compare the same bounded corpora.
+pub mod fixtures;
 
 pub use matterweave_core::RayHit;
 pub use occupancy::{BitUpdate, BlockShape, OccupancyGrid, MAX_BLOCK_BITS};
@@ -86,8 +93,6 @@ pub use volume::{
 
 #[cfg(test)]
 mod differential_tests;
-#[cfg(test)]
-mod fixtures;
 #[cfg(test)]
 mod occupancy_tests;
 #[cfg(test)]
