@@ -819,3 +819,503 @@ fn r_only_expansion_misses_a_sun_occluder_that_the_two_r_bound_covers() {
         missed.len(),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Continuous-motion fixture (issue 47)
+// ---------------------------------------------------------------------------
+
+/// Production-shaped continuous-motion fixture. The wetland's authored clearing
+/// sits at `[0.125, 0.125, 0.0]` m, so `box_origin` rounds it to this origin
+/// (`apps/explorer/src/wetland.rs`) and the production coverage box is
+/// 20 x 10 x 20 cells with the ground plane at cell level `y = 0` and five
+/// metres of air below it.
+const MOTION_ORIGIN: [i32; 3] = [-10, -5, -10];
+const MOTION_DIMENSIONS: [u32; 3] = [20, 10, 20];
+const MOTION_GROUND_Y: i32 = 0;
+const MOTION_BODY_Y: i32 = 1;
+const MOTION_Z: i32 = -6;
+/// The body path bounces along +X between these two cells, so every frame of a
+/// sustained run moves a body cell while staying inside the coverage box.
+const MOTION_PATH_START_X: i32 = -8;
+const MOTION_PATH_SPAN: i32 = 15;
+/// The three suns the production wetland cycles through (`Action::Sun` in
+/// `apps/explorer/src/lib.rs`), intensity included: the low-angle sun is the one
+/// whose shadow segment reaches farthest, and the overhead sun is the one whose
+/// shadow segment reaches least.
+const MOTION_SUNS: [(&str, Sun); 3] = [
+    (
+        "afternoon",
+        Sun {
+            direction_to_sun: [0.4, 0.85, 0.3],
+            intensity: 0.8,
+        },
+    ),
+    (
+        "low",
+        Sun {
+            direction_to_sun: [-0.8, 0.35, 0.3],
+            intensity: 0.8,
+        },
+    ),
+    (
+        "overhead",
+        Sun {
+            direction_to_sun: [0.2, 1.0, -0.5],
+            intensity: 0.8,
+        },
+    ),
+];
+/// The wetland app's own dependency cap.
+const MOTION_RETENTION_BYTES: usize = 6 * 1024 * 1024;
+const GROUND_MATERIAL: u8 = 13;
+
+/// Authored props on the ground plate: single cells and a two-cell pillar, the
+/// debris the clearing carries. None of them is on the body path.
+const MOTION_PROPS: [[i32; 3]; 9] = [
+    [-7, 1, -2],
+    [-3, 1, -9],
+    [0, 1, -4],
+    [4, 1, -8],
+    [6, 1, -3],
+    [-5, 1, 3],
+    [2, 1, 5],
+    [-1, 1, -7],
+    [-1, 2, -7],
+];
+
+/// One proxy with one prototype per material.
+fn proxy_of(cells: &[([i32; 3], u8)], origin: [i32; 3], dimensions: [u32; 3]) -> MeshProxy {
+    let mut meshes = Vec::new();
+    let mut materials = Vec::new();
+    let mut instances = Vec::new();
+    for &(cell, material) in cells {
+        let prototype = match materials.iter().position(|&known| known == material) {
+            Some(index) => index,
+            None => {
+                meshes.push(unit_cube());
+                materials.push(material);
+                meshes.len() - 1
+            }
+        };
+        instances.push(StaticInstance {
+            prototype,
+            translation: cell.map(|value| value as f32),
+            yaw_quarters: 0,
+        });
+    }
+    MeshProxy::build(
+        &MeshGeometry {
+            meshes: &meshes,
+            instances: &instances,
+            materials: &materials,
+        },
+        origin,
+        dimensions,
+    )
+    .expect("motion proxy build")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionScene {
+    /// The clearing: ground plate plus the authored props above.
+    Clearing,
+    /// The same ground with a two-cell pillar field every third cell, so most
+    /// gather and shadow segments end on geometry instead of on the sky.
+    Debris,
+}
+
+fn motion_scene_cells(scene: MotionScene) -> Vec<([i32; 3], u8)> {
+    let mut cells: Vec<([i32; 3], u8)> = cells_of(MOTION_ORIGIN, MOTION_DIMENSIONS)
+        .filter(|cell| cell[1] == MOTION_GROUND_Y)
+        .map(|cell| (cell, GROUND_MATERIAL))
+        .collect();
+    match scene {
+        MotionScene::Clearing => {
+            for cell in MOTION_PROPS {
+                cells.push((cell, ROCK_MATERIAL));
+            }
+        }
+        MotionScene::Debris => {
+            for x in (MOTION_ORIGIN[0]..MOTION_ORIGIN[0] + MOTION_DIMENSIONS[0] as i32).step_by(3) {
+                for z in
+                    (MOTION_ORIGIN[2]..MOTION_ORIGIN[2] + MOTION_DIMENSIONS[2] as i32).step_by(3)
+                {
+                    // Keep the body path's own row clear.
+                    if z == MOTION_Z || (x - MOTION_ORIGIN[0]) % 3 == 2 {
+                        continue;
+                    }
+                    cells.push(([x, MOTION_BODY_Y, z], ROCK_MATERIAL));
+                    cells.push(([x, MOTION_BODY_Y + 1, z], ROCK_MATERIAL));
+                }
+            }
+        }
+    }
+    cells
+}
+
+/// How many cells one physics body occupies. A body resting on the clearing's
+/// ground spans one cell in `y`; the question is how many cells its footprint
+/// grazes horizontally, because a body straddling cell boundaries changes twice
+/// as many cells per step as an aligned one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionBody {
+    /// One aligned cell (the app's half-metre pebble at a cell-centred
+    /// translation): one step changes the vacated and the occupied cell.
+    Aligned,
+    /// A 2 x 2 footprint (the same pebble at a boundary-straddling translation):
+    /// one step changes four cells, the largest footprint a body resting on the
+    /// ground can have.
+    Straddle,
+}
+
+impl MotionBody {
+    fn offsets(self) -> &'static [[i32; 3]] {
+        match self {
+            Self::Aligned => &[[0, 0, 0]],
+            Self::Straddle => &[[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]],
+        }
+    }
+
+    fn cells(self, body: [i32; 3]) -> impl Iterator<Item = [i32; 3]> {
+        self.offsets().iter().map(move |offset| {
+            [
+                body[0] + offset[0],
+                body[1] + offset[1],
+                body[2] + offset[2],
+            ]
+        })
+    }
+}
+
+fn motion_proxy(scene: MotionScene, body: MotionBody, at: [i32; 3]) -> MeshProxy {
+    let mut cells = motion_scene_cells(scene);
+    for cell in body.cells(at) {
+        cells.push((cell, BODY_MATERIAL));
+    }
+    proxy_of(&cells, MOTION_ORIGIN, MOTION_DIMENSIONS)
+}
+
+/// Triangular path: `span` cells out, `span` cells back, inside the box.
+fn motion_body(step: i32) -> [i32; 3] {
+    let period = 2 * MOTION_PATH_SPAN;
+    let phase = step.rem_euclid(period);
+    let x = if phase <= MOTION_PATH_SPAN {
+        MOTION_PATH_START_X + phase
+    } else {
+        MOTION_PATH_START_X + period - phase
+    };
+    [x, MOTION_BODY_Y, MOTION_Z]
+}
+
+/// One frame of a continuous-motion path, in engine work units.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MotionFrame {
+    step: i32,
+    /// Whether the volume is complete and current for this frame's proxy, i.e.
+    /// whether the production scheduler could publish it in this frame.
+    live: bool,
+    retained: usize,
+    invalidated: usize,
+    dirty: usize,
+    pending: usize,
+    rays: usize,
+    work: usize,
+    /// Slots that differed from a fresh recomputation for this frame's proxy,
+    /// checked only on checkpoint frames.
+    stale_slots: usize,
+}
+
+/// One continuous-motion run: the per-frame frames, the tracker's own cost, and
+/// what the fresh-reference checkpoints found.
+struct MotionReport {
+    frames: Vec<MotionFrame>,
+    /// Frames at which a fresh volume was recomputed and compared.
+    checked_frames: usize,
+    /// Face slots that differed from the fresh reference, summed over the
+    /// checkpoints. Nonzero means a stale or partial publication was reachable.
+    stale_slots: usize,
+    tracked_faces: usize,
+    untracked_faces: usize,
+    dependency_bytes: usize,
+}
+
+impl MotionReport {
+    fn live_fraction(&self) -> f64 {
+        self.frames.iter().filter(|frame| frame.live).count() as f64 / self.frames.len() as f64
+    }
+
+    fn longest_dark_run(&self) -> usize {
+        let mut longest = 0;
+        let mut dark = 0;
+        for frame in &self.frames {
+            dark = if frame.live { 0 } else { dark + 1 };
+            longest = longest.max(dark);
+        }
+        longest
+    }
+
+    fn max_rays(&self) -> usize {
+        self.frames
+            .iter()
+            .map(|frame| frame.rays)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn max_work(&self) -> usize {
+        self.frames
+            .iter()
+            .map(|frame| frame.work)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn max_invalidated(&self) -> usize {
+        self.frames
+            .iter()
+            .map(|frame| frame.invalidated)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn sum(&self, pick: fn(&MotionFrame) -> usize) -> usize {
+        self.frames.iter().map(pick).sum()
+    }
+}
+
+/// Drive a body `speed` cells per frame along the motion path for `moves` body
+/// cells, one production budget slice per frame, through the shipped retention
+/// path: `replace_mesh_proxy` for the new footprint, then `update`.
+///
+/// `check_every > 0` compares the live volume bit-for-bit against a freshly
+/// recomputed volume for the current proxy every that many frames.
+fn run_motion_path(
+    scene: MotionScene,
+    body: MotionBody,
+    sun: Sun,
+    speed: i32,
+    moves: i32,
+    check_every: i32,
+) -> MotionReport {
+    let world = World::new(47);
+    let mut volume = IndirectVolume::new(
+        MOTION_ORIGIN,
+        MOTION_DIMENSIONS,
+        SAMPLES,
+        GATHER_RADII[4],
+        probe_palette(),
+    )
+    .expect("motion volume");
+    volume
+        .enable_proxy_retention(MOTION_RETENTION_BYTES)
+        .expect("motion retention");
+    volume.set_mesh_proxy(Some(motion_proxy(scene, body, motion_body(0))));
+    loop {
+        let stats = volume
+            .update(&world, 0, sun, UPDATE_BUDGET)
+            .expect("motion warmup");
+        if stats.complete {
+            break;
+        }
+    }
+    let mut report = MotionReport {
+        frames: Vec::new(),
+        checked_frames: 0,
+        stale_slots: 0,
+        tracked_faces: 0,
+        untracked_faces: 0,
+        dependency_bytes: 0,
+    };
+    let mut step = 0;
+    let mut index = 0;
+    while step < moves {
+        step += speed;
+        let frame_index = index;
+        index += 1;
+        let at = motion_body(step);
+        let edit = volume.replace_mesh_proxy(Some(motion_proxy(scene, body, at)));
+        let stats = volume
+            .update(&world, 0, sun, UPDATE_BUDGET)
+            .expect("motion update");
+        let live = volume.valid_for(&world, 0, sun);
+        let mut frame = MotionFrame {
+            step,
+            live,
+            retained: edit.retained_faces,
+            invalidated: edit.invalidated_faces,
+            dirty: volume.dirty_faces(),
+            pending: volume.pending_work(),
+            rays: stats.rays,
+            work: stats.work,
+            stale_slots: 0,
+        };
+        if check_every > 0 && frame_index % check_every == 0 && live {
+            let fresh = fresh_volume(
+                MOTION_ORIGIN,
+                MOTION_DIMENSIONS,
+                GATHER_RADII[4],
+                sun,
+                &world,
+                motion_proxy(scene, body, at),
+                "motion reference",
+            );
+            report.checked_frames += 1;
+            for cell in cells_of(MOTION_ORIGIN, MOTION_DIMENSIONS) {
+                for face in 0..6 {
+                    if volume.sample(cell, face) != fresh.volume.sample(cell, face) {
+                        frame.stale_slots += 1;
+                    }
+                }
+            }
+            report.stale_slots += frame.stale_slots;
+        }
+        report.frames.push(frame);
+    }
+    if let Some(status) = volume.retention_status() {
+        report.tracked_faces = status.tracked_faces;
+        report.untracked_faces = status.untracked_faces;
+        report.dependency_bytes = status.resident_bytes;
+    }
+    report
+}
+
+fn report_motion(label: &str, report: &MotionReport, verbose: bool) {
+    println!(
+        "[probe] motion {label}: frames={} live={} live_fraction={:.3} longest_dark_run={} \
+         retained={} invalidated={} max_invalidated={} dirty_end={} rays={} work={} max_rays={} \
+         max_work={} checkpoints={} stale_slots={} tracked={} untracked={} dependency_kib={}",
+        report.frames.len(),
+        report.frames.iter().filter(|frame| frame.live).count(),
+        report.live_fraction(),
+        report.longest_dark_run(),
+        report.sum(|frame| frame.retained),
+        report.sum(|frame| frame.invalidated),
+        report.max_invalidated(),
+        report.frames.last().map_or(0, |frame| frame.dirty),
+        report.sum(|frame| frame.rays),
+        report.sum(|frame| frame.work),
+        report.max_rays(),
+        report.max_work(),
+        report.checked_frames,
+        report.stale_slots,
+        report.tracked_faces,
+        report.untracked_faces,
+        report.dependency_bytes / 1024,
+    );
+    if verbose {
+        for frame in &report.frames {
+            println!(
+                "[probe] motion {label} step={} live={} retained={} invalidated={} dirty={} \
+                 pending={} rays={} work={} stale_slots={}",
+                frame.step,
+                frame.live,
+                frame.retained,
+                frame.invalidated,
+                frame.dirty,
+                frame.pending,
+                frame.rays,
+                frame.work,
+                frame.stale_slots,
+            );
+        }
+    }
+}
+
+/// Continuous motion at several rates, over both scene shapes and all three
+/// production suns. Every frame runs exactly one production budget slice, and
+/// every live checkpoint volume is compared bit-for-bit against a fresh recompute
+/// for its own proxy: a stale or partial publication would show up as a nonzero
+/// `stale_slots`.
+#[test]
+fn continuous_motion_live_fraction_is_measured() {
+    // One cell per frame is the sustained body motion the open requirement names
+    // (a walking or rolling body changes its footprint every frame or two). The
+    // higher rates are probes: they give the body fewer frames per cell, so they
+    // change the same number of cells per step and are not a larger invalidated
+    // set - the boundary probe for a larger set is the boundary-straddling
+    // footprint, which changes four cells per step instead of two.
+    let mut summary = Vec::new();
+    // Every configuration is measured and printed before anything is asserted,
+    // so a run against a build whose retention did not hold still reports the
+    // whole table rather than only the first failing line.
+    let mut reports = Vec::new();
+    let mut worst_rays = 0usize;
+    let mut worst_label = String::new();
+    for (sun_label, sun) in MOTION_SUNS {
+        for scene in [MotionScene::Clearing, MotionScene::Debris] {
+            for (body, rates) in [
+                (MotionBody::Aligned, &[1, 2, 4, 8, 16][..]),
+                (MotionBody::Straddle, &[1, 2, 4][..]),
+            ] {
+                for speed in rates {
+                    // The two healing configurations the pre-change code never
+                    // kept live (a low sun over a pillar field) are checked on
+                    // every single frame; the rest on frames spread over the
+                    // path. The moving volume is live on every frame, so a
+                    // checkpoint is skipped only for a frame that stayed dark.
+                    let dense = sun_label == "low"
+                        && scene == MotionScene::Debris
+                        && body == MotionBody::Aligned;
+                    let frames_total = 30 / *speed;
+                    let check_every = if dense { 1 } else { (frames_total / 2).max(1) };
+                    let report = run_motion_path(scene, body, sun, *speed, 30, check_every);
+                    let label = format!("{sun_label}/{scene:?}/{body:?}/{speed}cells");
+                    report_motion(&label, &report, false);
+                    if report.max_rays() > worst_rays {
+                        worst_rays = report.max_rays();
+                        worst_label = label.clone();
+                    }
+                    summary.push((
+                        label,
+                        report.live_fraction(),
+                        report.max_rays(),
+                        report.max_work(),
+                        report.max_invalidated(),
+                    ));
+                    reports.push(report);
+                }
+            }
+        }
+    }
+    for (label, fraction, max_rays, max_work, max_invalidated) in &summary {
+        println!(
+            "[probe] motion summary {label} live_fraction={fraction:.3} max_rays={max_rays} \
+             max_work={max_work} max_invalidated={max_invalidated}"
+        );
+    }
+    println!(
+        "[probe] motion worst case: {worst_label} max_rays={worst_rays} of {} budget rays",
+        UPDATE_BUDGET.rays
+    );
+    for (index, (label, _, _, _, _)) in summary.iter().enumerate() {
+        let report = &reports[index];
+        assert!(
+            report.stale_slots == 0,
+            "{label}: a published volume differed from the fresh reference at {} of {} \
+             checkpoints",
+            report.stale_slots,
+            report.checked_frames
+        );
+        assert!(
+            report.checked_frames > 0,
+            "{label}: no live checkpoint was checked"
+        );
+        assert_eq!(
+            report.longest_dark_run(),
+            0,
+            "{label}: indirect lighting went dark for {} frames",
+            report.longest_dark_run()
+        );
+        assert_eq!(
+            report.live_fraction(),
+            1.0,
+            "{label}: {} of {} frames stayed live",
+            report.frames.iter().filter(|frame| frame.live).count(),
+            report.frames.len()
+        );
+    }
+    assert!(
+        worst_rays <= UPDATE_BUDGET.rays,
+        "the worst measured frame exceeded the production ray budget"
+    );
+}
