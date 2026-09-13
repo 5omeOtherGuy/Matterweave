@@ -10,9 +10,9 @@ unit is now the *quadrature sample* rather than the face.
 
 Measured on the identical fixture at the stacked base commit `8692e39` and at
 this slice's code commit, the production-shaped motion matrix goes from **34 of
-48 configurations blanking GT (minimum live fraction 0.000)** to **48 of 48 at a
-live fraction of 1.000, with 177 fresh-reference checkpoints and zero stale
-slots**. The two-segment counterexample and the coverage-change rule are intact,
+48 configurations going dark at least once (minimum live fraction 0.000, 16 of
+them dark on every frame)** to **48 of 48 at a live fraction of 1.000, with 177
+fresh-reference checkpoints and zero stale slots**. The two-segment counterexample and the coverage-change rule are intact,
 and `GATHER_DISTANCE_M = 24.0`, `SAMPLES = 16`, `UPDATE_BUDGET {rays: 1024, work:
 8192}` and every cap are unchanged.
 
@@ -293,8 +293,8 @@ budget is 1 024; a capped value means the frame did not drain).
 | overhead/Debris/Straddle/4cells | 0.000 | 1.000 | 1024 | 897 | 96 | 128 |
 
 Summary of the same run: **before** 34 of 48 configurations below 1.000, minimum
-0.000, every failing configuration pinned at the 1 024-ray cap and never
-draining; **after** 0 of 48 below 1.000, minimum 1.000, 177 checkpoints compared
+0.000, every failing configuration sitting at the ray cap (1 023 or 1 024 rays)
+and never draining; **after** 0 of 48 below 1.000, minimum 1.000, 177 checkpoints compared
 against fresh references with 0 differing slots, 0 faces left `UNTRACKED`, and a
 worst single-frame spend of 1 023 rays (`low/Debris/Straddle/4cells`) and 2 866
 work units (`low/Debris/Aligned/8cells`, budget 8 192).
@@ -398,7 +398,7 @@ step=30 live=true retained=1186 invalidated=88  dirty=0 pending=0 rays=532 work=
 | cell changed mask (scratch) | 63 words = 504 B | the exposure rule's index space |
 | block changed mask (scratch) | 8 words = 64 B | the sample rule's index space |
 | per-face records | 16 × (64 B bitsets + 12 B contribution) = 1 216 B | lazily allocated per sampled face |
-| measured, aligned run | 1 347 faces tracked, 1 692 KiB resident | `RetentionStatus::resident_bytes` |
+| measured, aligned run | 1 347 faces tracked, 1 694 KiB resident | `RetentionStatus::resident_bytes` |
 | measured, straddle run | 1 392 faces tracked, 1 747 KiB resident | app cap 6 MiB, engine clamp 16 MiB |
 
 A face that does not fit the cap is `UNTRACKED` and recomputed on every edit, so
@@ -495,7 +495,7 @@ names).
 - **Failure is a cliff, not a dip.** When a frame's invalidated set does not fit
   the ray budget, the next move invalidates more before the volume finishes, so
   the set never drains and GI stays dark for the whole walk. In the baseline
-  matrix 34 of 48 configurations blanked and 20 of those were dark for *every*
+  matrix 34 of 48 configurations went dark and 16 of those were dark for *every*
   frame. That is why a partial improvement (a shorter off window) could never
   have satisfied this requirement, and why the earlier slice's own conclusion
   ("partial publication alone does not achieve usable motion") pointed at the
@@ -505,7 +505,7 @@ names).
   a boundary-straddling footprint at 4 cells per frame under the low sun in the
   pillar field, i.e. 8 changed cells per frame - uses 1 023 of the 1 024 budget
   rays. At the rate the requirement actually names (one cell per frame) the worst
-  configuration uses 888 of 1 024, and an *aligned* body at that rate uses 544 to
+  configuration uses 888 of 1 024, and an *aligned* body at that rate uses 509 to
   796. The mechanism is what changed; the budget is unchanged and is now the
   binding limit, which is the number a future slice should move if the real
   wetland scene turns out to be denser than this fixture.
