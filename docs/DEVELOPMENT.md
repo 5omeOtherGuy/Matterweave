@@ -342,6 +342,29 @@ The default remains 16 runs; the opt-in suite has 24. GPU-free fixture contracts
 Set `CARGO_TARGET_DIR` and `MATTERWEAVE_COMPARISON_OUT` beneath `/mnt/bench`.
 See [landscape fixture evidence](performance/landscape-functional-fixtures.md).
 
+### Optional packed-occupancy ray candidate (issue 42)
+
+Standalone native Vulkan functional comparison of the `BlockMask` traversal kernel
+(`crates/matterweave-render/src/ray_hierarchy_gpu.wgsl`, module `ray_hierarchy_gpu`),
+against the CPU reference lineage in `matterweave-ray-hierarchy`. It is not a renderer
+path and makes no performance claim. Exit `2` means no Vulkan 1.1 device was found
+(checks NOT RUN).
+
+```sh
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  cargo run --locked -p matterweave-ray-hierarchy --example ray_hierarchy_gpu
+# with the validation layer and synchronization validation:
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT \
+  cargo run --locked -p matterweave-ray-hierarchy --example ray_hierarchy_gpu
+```
+
+CPU-only classifier controls and layout contracts:
+`cargo test -p matterweave-ray-hierarchy --example ray_hierarchy_gpu` and
+`cargo test -p matterweave-render --lib ray_hierarchy_gpu`. Evidence, tolerances and
+the Android gate are in [the GPU log](performance/logs/ray-hierarchy-gpu.md).
+
 ### Full wetland integration checks
 
 The complete map remains a separate native app mode, entered through the ordinary
