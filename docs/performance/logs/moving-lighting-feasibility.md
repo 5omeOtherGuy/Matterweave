@@ -293,6 +293,52 @@ dependency tracking (ray-path -> slot indexing) could cut the dirty set by the
 1.8-4.3 % ratio above; the engine has no such index and the probe did not build
 one.
 
+## Delivery snapshot
+
+- Source commit under review:
+  `fae6173a6d8519bc28cd7e21b2f0fa5510ba60f7` (module, `lib.rs` registration
+  and this log in one commit). Branch `engine/moving-lighting-probe`, stacked on
+  `engine/wetland-proxy-lighting` (`3d33c4f`, PR #54 head) with PR base set to
+  that branch until #54 merges; rebase onto `main` after #54, preserving every
+  parent change.
+- Independently reviewable without a device: 2 probe tests and 109 render lib
+  tests pass on this commit, clippy `-D warnings` and `rustfmt --check` are
+  clean, and `check_docs.py` passes; the probe output quoted above was produced
+  from this commit.
+
+### Review brief (for the independent Opus reviewer)
+
+Test these four claims against the frozen commit, not the prose:
+
+1. `ceil(2R) + 1`, not `ceil(R)`: the probe's counterexample shows a completed
+   volume changing `0.06618919 -> 0.05515766` (delta `0.011032 = 0.9 *
+   0.196116 / 16`) at `[4,1,8] +Z`, which is 5 Chebyshev cells from the new body
+   cell and a lower-bound `4.031 m` from the face's sample origin while
+   `R = 4`; the reversed-sun control is bit-identical. Check the fixture and the
+   distance helper, and check that the generic dense mid-box fixture also shows
+   8 changed faces outside the `R`-only bound at `R = 4`.
+2. No omissions: 30 before/after volume pairs (3 scenes x 2 positions x 5
+   radii) with every actually changed face inside the conservative bound
+   (`outside_conservative == 0`), and every changed face exposed in one of the
+   two placements. Look for a scene, radius or position where the bound could
+   miss a change, and for a way a value could change without any ray touching a
+   changed cell.
+3. No invented frame claim: the empty scene's conservative bound at `R = 4`
+   drains inside one 8192-work slice (8010 at the edge position), and no
+   assertion encodes `frames > 1`; the frames printed are budget slices from
+   ceilings, and the only real frame counters are the measured restarts. Check
+   that the ceilings are computed from the exposure conventions the code
+   documents (`touched` vs `rays_for`) and that no number is presented as
+   latency.
+4. Production unchanged: the diff is the new test-only module, two `cfg(test)`
+   lines in `lib.rs` and the log. `GATHER_DISTANCE_M = 24.0`, `UPDATE_BUDGET`,
+   `indirect.rs`, the shaders, the app and `docs/STATUS.md` are untouched, and
+   no `R` is adopted.
+
+Review input to challenge: the recommendation (partial publication as the next
+implementation slice, with `ceil(2R) + 1` dirty sets as a later complement) and
+its separation from the unmeasured exact-tracking hypothesis.
+
 ## Open gates (not run, not claimed)
 
 Independent Opus review of the frozen source; any Android/device behaviour; any
