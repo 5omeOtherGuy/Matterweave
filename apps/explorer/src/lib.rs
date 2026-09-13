@@ -12,6 +12,7 @@ mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
 mod reflection_check;
+mod settings;
 mod terrain_lab;
 pub mod voxel_relay;
 mod wetland;
