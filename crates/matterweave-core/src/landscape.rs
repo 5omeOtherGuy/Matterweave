@@ -1007,22 +1007,39 @@ impl RingConfig {
     }
 }
 
-/// The shipped ring set: 4 m cells to 512 m, 16 m cells to 1536 m and 64 m cells
-/// to 6144 m. Each half-extent is a whole number of that ring's tiles, and each
-/// ring's edges are a multiple of the next ring's cell size, so a ring boundary
-/// always falls on a cell boundary of the ring that cuts it out.
-pub const LANDSCAPE_RINGS: [RingConfig; 3] = [
+/// The shipped ring set: a geometric cascade that doubles the cell size at every
+/// step, 2 m cells from the streaming window out to 256 m, then 4, 8, 16, 32 and
+/// 64 m cells out to 8192 m. Doubling keeps the near field fine (a 4x jump from a
+/// 1 m window straight to 4 m cells makes the first ring read as stair-steps under
+/// the camera) and holds the triangle count of every ring roughly constant.
+///
+/// Each half-extent is a whole number of that ring's tiles, and each ring's edges
+/// are a multiple of the next ring's cell size, so a ring boundary always falls on
+/// a cell boundary of the ring that cuts it out.
+pub const LANDSCAPE_RINGS: [RingConfig; 6] = [
+    RingConfig {
+        level: 1,
+        half_extent: 256,
+    },
     RingConfig {
         level: 2,
         half_extent: 512,
     },
     RingConfig {
+        level: 3,
+        half_extent: 1024,
+    },
+    RingConfig {
         level: 4,
-        half_extent: 1536,
+        half_extent: 2048,
+    },
+    RingConfig {
+        level: 5,
+        half_extent: 4096,
     },
     RingConfig {
         level: 6,
-        half_extent: 6144,
+        half_extent: 8192,
     },
 ];
 

@@ -75,7 +75,7 @@ const MAX_EYE_XZ: f32 = (WORLD_LIMIT - 8) as f32;
 const MIN_EYE_Y: f32 = -30.0;
 const MAX_EYE_Y: f32 = 420.0;
 
-/// Far plane. The outermost ring reaches 6144 m from the eye, plus the diagonal
+/// Far plane. The outermost ring reaches its half-extent from the eye, plus the diagonal
 /// of its own square, so the frustum has to hold about 9 km.
 const FAR_PLANE: f32 = 9500.0;
 
@@ -413,7 +413,13 @@ impl LandscapeSample {
             resident: BTreeMap::new(),
             tiles: TileCounters::default(),
             profile,
-            status: "Fly the landscape. Rings reach 6 km.".into(),
+            status: format!(
+                "Fly the landscape. Rings reach {} km.",
+                landscape::LANDSCAPE_RINGS
+                    .last()
+                    .map_or(0, |ring| ring.half_extent)
+                    / 1000
+            ),
             frames: 0,
             frame_limit,
             last_frame: Instant::now(),
