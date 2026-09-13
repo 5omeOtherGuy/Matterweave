@@ -132,9 +132,9 @@ const INDIRECT_DEPENDENCY_BYTES: usize = 6 * 1024 * 1024;
 const SOURCE_EPOCH: u64 = 0;
 /// Detail catalogue materials that own a drawn colour. A test fails if the
 /// catalogue gains or loses an id without this list following it.
-const CATALOGUE_MATERIALS: [u8; 27] = [
+const CATALOGUE_MATERIALS: [u8; 40] = [
     10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-    46, 47, 48,
+    46, 47, 48, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
 ];
 /// Palette id reserved for the merged physics mesh. It is outside the detail
 /// catalogue, never assigned to a detail pool entry (the reverse palette lookup
