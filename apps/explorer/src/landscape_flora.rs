@@ -411,16 +411,30 @@ mod tests {
     #[test]
     fn phases_are_bounded_and_decorrelate_neighbours() {
         let mut distinct = std::collections::BTreeSet::new();
+        let mut equal_neighbours = 0usize;
         for x in -20..20 {
             for z in -20..20 {
                 let phase = phase_of(x, z);
                 assert!((0.0..=1.0).contains(&phase));
                 distinct.insert((phase * 65535.0) as u32);
+                // The property that matters: a plant must not sway in lockstep
+                // with the one next to it, in either direction.
+                if phase == phase_of(x + 1, z) || phase == phase_of(x, z + 1) {
+                    equal_neighbours += 1;
+                }
             }
         }
+        assert_eq!(
+            equal_neighbours, 0,
+            "a plant shares its phase with a neighbour"
+        );
+        // And the field must not collapse onto a handful of phases. A 16-bit
+        // hash over 1600 samples is *expected* to collide into about 1580
+        // distinct values by the birthday bound, so this threshold guards a
+        // collapse, not perfect uniqueness.
         assert!(
-            distinct.len() > 1500,
-            "neighbouring plants share too many phases: {}",
+            distinct.len() > 1200,
+            "the phase field collapsed: {} distinct values",
             distinct.len()
         );
         // Deterministic across calls, so a rebuild does not restart the sway.

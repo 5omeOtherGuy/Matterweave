@@ -169,11 +169,19 @@ impl Shadow {
                 .iter()
                 .enumerate()
                 .map(|(i, &ty)| {
+                    // Binding 0 is the frame uniform: the wind displacement added
+                    // for flora reads it from the vertex stage, so the layout has
+                    // to admit both stages or the pipeline is invalid.
+                    let stages = if i == 0 {
+                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT
+                    } else {
+                        vk::ShaderStageFlags::FRAGMENT
+                    };
                     vk::DescriptorSetLayoutBinding::default()
                         .binding(i as u32)
                         .descriptor_type(ty)
                         .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                        .stage_flags(stages)
                 })
                 .collect();
             out.set_layout = d
