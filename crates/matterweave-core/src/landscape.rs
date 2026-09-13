@@ -4,9 +4,11 @@
 //! nothing on the sampling path, reads no world state and has no platform
 //! dependency, so the same seed and generator version produce byte-identical
 //! columns on every target. All arithmetic is integer or fixed point; no
-//! `f32`/`f64` operation participates in a result. That is deliberate: a stored
-//! world must regenerate exactly what it was saved from, and ARM64 and x86-64
-//! must not drift.
+//! `f32`/`f64` operation participates in a generated column, material, flora site
+//! or distance sample. The derived tile mesh is render output and does use floats
+//! for its vertices and normals; no float value flows back into a generated
+//! result. That is deliberate: a stored world must regenerate exactly what it was
+//! saved from, and ARM64 and x86-64 must not drift.
 //!
 //! # Fields
 //!
@@ -340,6 +342,18 @@ fn hash3(seed: u64, x: i32, y: i32) -> u64 {
     value ^ (value >> 32)
 }
 
+/// Deterministic four-input mixing for voxel-level detail (ore and deep rock),
+/// where folding one coordinate into another would repeat patterns along a diagonal.
+fn hash4(seed: u64, x: i32, y: i32, z: i32) -> u64 {
+    let mut value = seed
+        ^ (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+        ^ (z as u64).wrapping_mul(0xd6e8_feb8_6659_fd93);
+    value = (value ^ (value >> 32)).wrapping_mul(0xd6e8_feb8_6659_fd93);
+    value = (value ^ (value >> 29)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^ (value >> 32)
+}
+
 /// Lattice value in `0..=65535`.
 fn lattice(seed: u64, salt: u64, x: i32, z: i32) -> i32 {
     ((hash(seed ^ salt, x, z) >> 24) as i32) & 0xFFFF
@@ -448,7 +462,7 @@ fn fields(seed: u64, x: i32, z: i32) -> Fields {
     let masked = ramp(continent, 38000, 49000);
     // ridge and masked are both fixed point, so the product carries two units of
     // fraction beyond metres: divide by 65536 * 256 (shift 24) to scale the ridge
-    // to the 0..112 m mountain range.
+    // to the 0..111 m mountain range.
     let mountain = ((ridge as i64 * masked as i64 * 112) >> 24) as i32;
     Fields {
         continent,
@@ -479,7 +493,8 @@ fn biome_of(fields: &Fields, height: i32) -> Biome {
     let hot = fields.temperature > 41000;
     let wet = fields.humidity > 43000;
     let dry = fields.humidity < 26000;
-    // Snow line falls with temperature: about 116 m cold, 74 m warm.
+    // Snow line rises with temperature: about 109 m in the coldest regions and
+    // 129 m in the warmest, never below 72 m.
     let snow_line = (118 + ((fields.temperature - 32768) as i64 * 46 / 32768) as i32).max(72);
     if height >= snow_line {
         return Biome::Snow;
@@ -593,16 +608,17 @@ pub fn material_in_column(seed: u64, column: &Column, x: i32, y: i32, z: i32) ->
         return column.surface;
     }
     if y >= column.height - column.sub_depth {
-        // Ore pockets inside rock layers add variety without changing the surface.
+        // Ore pockets are sampled in three dimensions, so a pocket stays a pocket
+        // instead of becoming a full-height column of ore at one (x, z).
         if (column.sub_surface == material::STONE || column.sub_surface == material::GRAVEL)
-            && ((hash3(seed ^ SALT_ORE, x, z) >> 40) & 0x3F) < 2
+            && ((hash4(seed ^ SALT_ORE, x, y, z) >> 40) & 0x3F) < 2
         {
             return material::MINERAL;
         }
         return column.sub_surface;
     }
     // Deep rock keeps a deterministic vein pattern so deep cuts are not flat.
-    if (hash3(seed ^ SALT_ROCK, x * 7 + y, z) >> 44) & 0x3F < 3 {
+    if (hash4(seed ^ SALT_ROCK, x, y, z) >> 44) & 0x3F < 3 {
         material::MINERAL
     } else {
         material::STONE
@@ -650,7 +666,7 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
                 y: column.height,
                 z,
                 yaw_quarters: ((roll >> 12) & 3) as u8,
-                scale_eighths: (4 + ((roll >> 16) & 7)) as u8,
+                scale_eighths: (4 + ((roll >> 16) % 9)) as u8,
             };
             cell.count += 1;
         };
@@ -715,7 +731,7 @@ pub fn tree_cell(seed: u64, cell_x: i32, cell_z: i32) -> Option<FloraSite> {
         y: column.height,
         z,
         yaw_quarters: ((roll >> 12) & 3) as u8,
-        scale_eighths: (5 + ((roll >> 16) & 6)) as u8,
+        scale_eighths: (4 + ((roll >> 16) % 9)) as u8,
     })
 }
 
@@ -796,6 +812,13 @@ pub fn lod_tile_mesh(seed: u64, level: u32, key: [i32; 2], filter: TileFilter) -
     let level = level.min(MAX_LOD_LEVEL);
     let cell_m = lod_cell_m(level);
     let edge = LOD_TILE_CELLS + 1;
+    debug_assert!(
+        (key[0] as i64 * LOD_TILE_CELLS as i64 + LOD_TILE_CELLS as i64) * cell_m as i64
+            <= i32::MAX as i64
+            && (key[0] as i64 * LOD_TILE_CELLS as i64 + LOD_TILE_CELLS as i64) * cell_m as i64
+                >= i32::MIN as i64,
+        "tile key {key:?} leaves the representable metre range at level {level}"
+    );
     let mut mesh = Mesh::default();
     let mut included = [[false; LOD_TILE_CELLS as usize]; LOD_TILE_CELLS as usize];
     let mut any = false;
@@ -856,18 +879,22 @@ pub fn lod_tile_mesh(seed: u64, level: u32, key: [i32; 2], filter: TileFilter) -
             let z1 = z0 + cell_m;
             let base = mesh.vertices.len() as u32;
             // Winding follows the core mesher: cross(U, V) points outward (+Y),
-            // with U = +x and V = -z.
+            // with U = +x and V = -z. Each corner's height comes from the grid row
+            // its own z coordinate names: row `cz` is z0, row `cz + 1` is z1.
             let corners = [
-                ([x0, heights[cz as usize][cx as usize], z1], (cx, cz + 1)),
                 (
-                    [x1, heights[cz as usize][cx as usize + 1], z1],
+                    [x0, heights[cz as usize + 1][cx as usize], z1],
+                    (cx, cz + 1),
+                ),
+                (
+                    [x1, heights[cz as usize + 1][cx as usize + 1], z1],
                     (cx + 1, cz + 1),
                 ),
                 (
-                    [x1, heights[cz as usize + 1][cx as usize + 1], z0],
+                    [x1, heights[cz as usize][cx as usize + 1], z0],
                     (cx + 1, cz),
                 ),
-                ([x0, heights[cz as usize + 1][cx as usize], z0], (cx, cz)),
+                ([x0, heights[cz as usize][cx as usize], z0], (cx, cz)),
             ];
             for (position, (gx, gz)) in corners {
                 mesh.vertices.push(Vertex {
