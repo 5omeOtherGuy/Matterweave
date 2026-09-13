@@ -1,11 +1,11 @@
 //! Landscape generator acceptance: determinism, relief, biomes, water, tiles,
 //! flora population and the authoritative streaming path that uses them.
 use matterweave_core::landscape::{
-    self, Biome, Clip, TileFilter, FLORA_CELL_M, LANDSCAPE_GENERATOR_VERSION, MAX_SURFACE_Y,
-    MIN_SURFACE_Y, SEA_LEVEL,
+    self, Biome, Clip, RingTile, TileFilter, FLORA_CELL_M, LANDSCAPE_GENERATOR_VERSION,
+    LANDSCAPE_RINGS, LOD_TILE_CELLS, MAX_SURFACE_Y, MIN_SURFACE_Y, SEA_LEVEL,
 };
 use matterweave_core::{material, Mesh, TerrainSource, World, CHUNK_EDGE};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const SEED: u64 = 20260913;
 
@@ -639,6 +639,304 @@ fn streaming_landscape_uses_the_generator_and_the_wide_band() {
 
 fn world_surface(world: &World) -> f32 {
     landscape::height_at(world.seed(), 8, 8) as f32
+}
+
+// -- Distance rings ----------------------------------------------------------
+
+/// Eye positions used for the ring proofs: the origin, two non-tile-aligned
+/// positions with negative coordinates, and one against the world edge. All are
+/// inside the simulation domain, which is where the planner's coverage contract
+/// holds and where the sample keeps its camera.
+const RING_EYES: [[f32; 3]; 4] = [
+    [0.0, 40.0, 0.0],
+    [-137.5, 62.25, -201.25],
+    [67.75, 18.0, 250.9],
+    [-255.0, 30.0, 12.0],
+];
+
+/// Claim counter over the outermost ring square, at the granularity every claim
+/// boundary is aligned to. The test asserts that alignment separately, so one
+/// block stands for its 16 metre cells rather than sampling them.
+const CLAIM_BLOCK_M: i32 = 4;
+
+struct ClaimGrid {
+    origin: [i32; 2],
+    side: usize,
+    counts: Vec<u8>,
+}
+
+impl ClaimGrid {
+    fn new(square: Clip) -> Self {
+        let side = ((square.max[0] - square.min[0]) / CLAIM_BLOCK_M) as usize;
+        Self {
+            origin: square.min,
+            side,
+            counts: vec![0; side * side],
+        }
+    }
+
+    /// Count one claim over `rect`. Returns the number of blocks that fell
+    /// outside the grid, which must be zero for a nested plan.
+    fn claim(&mut self, rect: Clip) -> usize {
+        let mut outside = 0;
+        let low = [0, 1].map(|axis| (rect.min[axis] - self.origin[axis]).div_euclid(CLAIM_BLOCK_M));
+        let high =
+            [0, 1].map(|axis| (rect.max[axis] - self.origin[axis]).div_euclid(CLAIM_BLOCK_M));
+        for z in low[1]..high[1] {
+            for x in low[0]..high[0] {
+                if x < 0 || z < 0 || x as usize >= self.side || z as usize >= self.side {
+                    outside += 1;
+                    continue;
+                }
+                let slot = &mut self.counts[z as usize * self.side + x as usize];
+                *slot = slot.saturating_add(1);
+            }
+        }
+        outside
+    }
+}
+
+/// The cells one planned tile actually meshes, as world-metre rectangles. This
+/// mirrors `lod_tile_mesh`'s own inclusion rule; `ring_tiles_agree_with_their_meshes`
+/// checks the two stay in step.
+fn included_cells(tile: &RingTile) -> Vec<Clip> {
+    let cell_m = landscape::lod_cell_m(tile.level);
+    let mut cells = Vec::new();
+    for cz in 0..LOD_TILE_CELLS {
+        for cx in 0..LOD_TILE_CELLS {
+            let x0 = (tile.key[0] * LOD_TILE_CELLS + cx) * cell_m;
+            let z0 = (tile.key[1] * LOD_TILE_CELLS + cz) * cell_m;
+            let centre = [x0 + cell_m / 2, z0 + cell_m / 2];
+            let in_hole = tile
+                .filter
+                .hole
+                .is_some_and(|hole| hole.contains_centre(centre));
+            let in_bound = tile
+                .filter
+                .bound
+                .is_none_or(|bound| bound.contains_centre(centre));
+            if !in_hole && in_bound {
+                cells.push(Clip {
+                    min: [x0, z0],
+                    max: [x0 + cell_m, z0 + cell_m],
+                });
+            }
+        }
+    }
+    cells
+}
+
+#[test]
+fn rings_cover_the_visible_square_exactly_once() {
+    for eye in RING_EYES {
+        let fine = landscape::fine_clip(eye);
+        let plan = landscape::ring_plan(eye, fine, &LANDSCAPE_RINGS);
+        assert!(!plan.is_empty());
+
+        // Premise of the block granularity: every claim boundary is a multiple
+        // of CLAIM_BLOCK_M, so a block is claimed as a whole or not at all.
+        for edge in [fine.min[0], fine.min[1], fine.max[0], fine.max[1]] {
+            assert_eq!(edge.rem_euclid(CLAIM_BLOCK_M), 0, "fine edge {edge}");
+        }
+        for tile in &plan {
+            assert_eq!(
+                landscape::lod_cell_m(tile.level).rem_euclid(CLAIM_BLOCK_M),
+                0
+            );
+            let bound = tile.filter.bound.expect("a ring tile is always bounded");
+            let hole = tile.filter.hole.expect("a ring tile always has a hole");
+            for edge in [bound.min[0], bound.min[1], bound.max[0], bound.max[1]] {
+                assert_eq!(edge.rem_euclid(landscape::lod_cell_m(tile.level)), 0);
+            }
+            for edge in [hole.min[0], hole.min[1], hole.max[0], hole.max[1]] {
+                assert_eq!(edge.rem_euclid(landscape::lod_cell_m(tile.level)), 0);
+            }
+        }
+
+        let outer = plan
+            .last()
+            .and_then(|tile| tile.filter.bound)
+            .expect("the coarsest ring is planned last");
+        let mut grid = ClaimGrid::new(outer);
+        // The fine streaming window must be nested inside the innermost ring,
+        // otherwise it could claim a cell a ring also claims.
+        let inner = plan[0].filter.bound.unwrap();
+        assert!(
+            inner.min[0] <= fine.min[0]
+                && inner.min[1] <= fine.min[1]
+                && inner.max[0] >= fine.max[0]
+                && inner.max[1] >= fine.max[1],
+            "fine window {fine:?} escaped the innermost ring {inner:?} at eye {eye:?}"
+        );
+        assert_eq!(
+            grid.claim(fine),
+            0,
+            "the fine window left the visible square"
+        );
+        for tile in &plan {
+            for cell in included_cells(tile) {
+                assert_eq!(
+                    grid.claim(cell),
+                    0,
+                    "tile {:?} meshed {cell:?} outside the visible square",
+                    (tile.level, tile.key)
+                );
+            }
+        }
+        let mut unclaimed = 0usize;
+        let mut overlapped = 0usize;
+        for count in &grid.counts {
+            match count {
+                0 => unclaimed += 1,
+                1 => {}
+                _ => overlapped += 1,
+            }
+        }
+        assert_eq!(
+            (unclaimed, overlapped),
+            (0, 0),
+            "eye {eye:?}: {unclaimed} blocks of the visible square are drawn by nobody \
+             and {overlapped} are drawn more than once"
+        );
+    }
+}
+
+#[test]
+fn ring_plans_are_deterministic_and_bounded() {
+    for eye in RING_EYES {
+        let plan = landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS);
+        assert_eq!(
+            plan,
+            landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS),
+            "the same eye must plan the same tiles in the same order"
+        );
+        // 8x8 + 6x6 + 6x6 tiles: the plan size is a property of the ring set.
+        assert_eq!(plan.len(), 64 + 36 + 36);
+        let unique: BTreeSet<_> = plan.iter().map(|tile| (tile.level, tile.key)).collect();
+        assert_eq!(unique.len(), plan.len(), "a tile must be planned once");
+        // Rings are emitted finest first, which is also the draw order.
+        let levels: Vec<u32> = plan.iter().map(|tile| tile.level).collect();
+        assert!(levels.windows(2).all(|pair| pair[0] <= pair[1]));
+        for config in LANDSCAPE_RINGS {
+            assert!(
+                plan.iter().any(|tile| tile.level == config.level),
+                "ring {config:?} planned no tiles"
+            );
+        }
+    }
+}
+
+#[test]
+fn ring_tiles_are_stable_while_the_eye_stays_in_one_tile() {
+    let finest_tile = LANDSCAPE_RINGS[0].tile_size_m();
+    // A tile the eye can cross inside the world, sampled at metre and sub-metre
+    // offsets including the first and last position inside it.
+    let base = -finest_tile as f32;
+    let reference = landscape::ring_plan(
+        [base, 40.0, base],
+        landscape::fine_clip([base, 40.0, base]),
+        &LANDSCAPE_RINGS,
+    );
+    let keys: Vec<_> = reference
+        .iter()
+        .map(|tile| (tile.level, tile.key))
+        .collect();
+    for step in [0.0, 0.5, 1.0, 15.9, 16.0, 64.0, 127.0, 127.99] {
+        let eye = [base + step, 40.0, base + step];
+        let plan = landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS);
+        let moved: Vec<_> = plan.iter().map(|tile| (tile.level, tile.key)).collect();
+        assert_eq!(
+            moved, keys,
+            "the tile set changed at {eye:?}, still inside the same {finest_tile} m tile"
+        );
+        if step < 16.0 {
+            // Inside one chunk the hole does not move either, so nothing at all
+            // has to be rebuilt.
+            assert_eq!(plan, reference, "the plan changed inside one chunk");
+        }
+    }
+    // Leaving the tile must move the set, otherwise the rings would not follow.
+    let outside = [base + finest_tile as f32, 40.0, base];
+    let plan = landscape::ring_plan(outside, landscape::fine_clip(outside), &LANDSCAPE_RINGS);
+    let moved: Vec<_> = plan.iter().map(|tile| (tile.level, tile.key)).collect();
+    assert_ne!(
+        moved, keys,
+        "the rings must follow the eye across a tile edge"
+    );
+}
+
+#[test]
+fn fine_clip_matches_the_published_streaming_window() {
+    for eye in [
+        [0.0, 40.0, 0.0],
+        [-137.5, 62.25, -201.25],
+        [250.0, 30.0, -255.9],
+    ] {
+        let mut world = World::landscape(SEED);
+        assert!(world.stream_around(eye));
+        let resident = world.stream_resident_chunks().expect("streaming world");
+        let published_x = (
+            resident.iter().map(|key| key[0]).min().unwrap(),
+            resident.iter().map(|key| key[0]).max().unwrap(),
+        );
+        let published_z = (
+            resident.iter().map(|key| key[2]).min().unwrap(),
+            resident.iter().map(|key| key[2]).max().unwrap(),
+        );
+        let fine = landscape::fine_clip(eye);
+        assert_eq!(
+            (
+                fine.min[0].div_euclid(CHUNK_EDGE),
+                fine.max[0].div_euclid(CHUNK_EDGE) - 1
+            ),
+            published_x,
+            "fine clip {fine:?} does not match the published window at {eye:?}"
+        );
+        assert_eq!(
+            (
+                fine.min[1].div_euclid(CHUNK_EDGE),
+                fine.max[1].div_euclid(CHUNK_EDGE) - 1
+            ),
+            published_z,
+            "fine clip {fine:?} does not match the published window at {eye:?}"
+        );
+    }
+}
+
+#[test]
+fn ring_tiles_agree_with_their_meshes() {
+    let eye = [67.75, 18.0, -201.25];
+    let plan = landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS);
+    // Meshing every planned tile would sample millions of columns; a spread of
+    // tiles covering fully-inside, hole-cut and bound-cut cases is enough to
+    // show the planner's filter and the mesher's filter agree.
+    for tile in plan.iter().step_by(17) {
+        let cells = included_cells(tile);
+        let mesh = landscape::lod_tile_mesh(SEED, tile.level, tile.key, tile.filter);
+        assert_eq!(
+            cells.is_empty(),
+            mesh.vertices.is_empty(),
+            "tile {:?} has {} cells but {} vertices",
+            (tile.level, tile.key),
+            cells.len(),
+            mesh.vertices.len()
+        );
+        let cell_m = landscape::lod_cell_m(tile.level) as f32;
+        for vertex in &mesh.vertices {
+            let inside = cells.iter().any(|cell| {
+                vertex.position[0] >= cell.min[0] as f32 - 0.5
+                    && vertex.position[0] <= cell.max[0] as f32 + 0.5
+                    && vertex.position[2] >= cell.min[1] as f32 - 0.5
+                    && vertex.position[2] <= cell.max[1] as f32 + 0.5
+            });
+            assert!(
+                inside,
+                "vertex {:?} of tile {:?} ({cell_m} m cells) lies outside every included cell",
+                vertex.position,
+                (tile.level, tile.key)
+            );
+        }
+    }
 }
 
 #[test]

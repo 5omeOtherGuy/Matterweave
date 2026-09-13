@@ -26,6 +26,9 @@ pub const WORLD_FRAGMENT_SPIRV: &[u8] =
 /// `indirect_dimensions.w` and `reflection_dimensions.w` are enable flags: a zero
 /// disables the corresponding effect without touching the other bindings.
 /// `reflection_params` is (trace step bound, surface offset, 0, 0).
+/// `atmosphere` is (sky rgb, fog density per metre): the colour distance fades
+/// to, which is also the colour a reflected ray terminates against and the
+/// colour the frame is cleared to.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct LightingUniform {
@@ -37,9 +40,10 @@ pub struct LightingUniform {
     pub reflection_origin: [i32; 4],
     pub reflection_dimensions: [u32; 4],
     pub reflection_params: [f32; 4],
+    pub atmosphere: [f32; 4],
 }
 
-pub const LIGHTING_UNIFORM_BYTES: usize = 176;
+pub const LIGHTING_UNIFORM_BYTES: usize = 192;
 
 #[cfg(test)]
 mod tests {
@@ -58,6 +62,7 @@ mod tests {
         assert_eq!(offset_of!(LightingUniform, reflection_origin), 128);
         assert_eq!(offset_of!(LightingUniform, reflection_dimensions), 144);
         assert_eq!(offset_of!(LightingUniform, reflection_params), 160);
+        assert_eq!(offset_of!(LightingUniform, atmosphere), 176);
         // Every binding index is distinct and contiguous from zero.
         let bindings = [
             BINDING_LIGHTING,

@@ -46,6 +46,7 @@
 use crate::hash;
 use crate::material;
 use crate::mesh::{Mesh, Vertex};
+use crate::{CHUNK_EDGE, STREAM_RADIUS_CHUNKS, WORLD_LIMIT};
 
 /// Identity of this generator's output. Bump for any change to the columns,
 /// materials or flora population it produces.
@@ -989,9 +990,232 @@ fn add_skirts(
     }
 }
 
+// -- Distance rings ----------------------------------------------------------
+
+/// One nested distance ring: a coarse level and the half-extent in metres of the
+/// square it covers around the eye.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingConfig {
+    pub level: u32,
+    pub half_extent: i32,
+}
+
+impl RingConfig {
+    /// Metre edge of one tile at this ring's level.
+    pub fn tile_size_m(&self) -> i32 {
+        LOD_TILE_CELLS * lod_cell_m(self.level)
+    }
+}
+
+/// The shipped ring set: 4 m cells to 512 m, 16 m cells to 1536 m and 64 m cells
+/// to 6144 m. Each half-extent is a whole number of that ring's tiles, and each
+/// ring's edges are a multiple of the next ring's cell size, so a ring boundary
+/// always falls on a cell boundary of the ring that cuts it out.
+pub const LANDSCAPE_RINGS: [RingConfig; 3] = [
+    RingConfig {
+        level: 2,
+        half_extent: 512,
+    },
+    RingConfig {
+        level: 4,
+        half_extent: 1536,
+    },
+    RingConfig {
+        level: 6,
+        half_extent: 6144,
+    },
+];
+
+/// One tile the renderer should have resident this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingTile {
+    pub level: u32,
+    pub key: [i32; 2],
+    pub filter: TileFilter,
+}
+
+/// Largest world metre a `f32` eye coordinate is folded into. Far beyond the
+/// simulation domain, but finite, so a runaway camera cannot overflow the plan.
+const EYE_LIMIT: f32 = 1.0e9;
+
+fn eye_metre(value: f32) -> i32 {
+    if value.is_finite() {
+        value.clamp(-EYE_LIMIT, EYE_LIMIT).floor() as i32
+    } else {
+        0
+    }
+}
+
+/// Largest multiple of `size` not greater than `value`.
+fn snap(value: i32, size: i32) -> i32 {
+    let size = size.max(1);
+    size * value.div_euclid(size)
+}
+
+/// The authoritative streaming window around `eye`, in world metres.
+///
+/// This is the [`STREAM_RADIUS_CHUNKS`] square of chunks centred on the eye's
+/// chunk, clamped to the world square, so it is exactly the square
+/// [`crate::World::stream_resident_chunks`] publishes for any eye inside the
+/// world. Its edges are chunk-aligned, hence aligned to every ring's cell size,
+/// and it is the hole the innermost ring is cut with.
+pub fn fine_clip(eye: [f32; 3]) -> Clip {
+    let limit = WORLD_LIMIT / CHUNK_EDGE;
+    let centre =
+        [eye[0], eye[2]].map(|v| eye_metre(v).div_euclid(CHUNK_EDGE).clamp(-limit, limit - 1));
+    let low = centre.map(|c| (c - STREAM_RADIUS_CHUNKS).max(-limit) * CHUNK_EDGE);
+    let high = centre.map(|c| ((c + STREAM_RADIUS_CHUNKS).min(limit - 1) + 1) * CHUNK_EDGE);
+    Clip {
+        min: low,
+        max: high,
+    }
+}
+
+/// Plan the resident far-terrain tiles for one eye position.
+///
+/// Ring `i` covers its bound square minus ring `i-1`'s bound square; the
+/// innermost ring is cut with `fine`. Every ring's square is centred on the eye
+/// snapped to that ring's tile size, so the tile set is stable while the camera
+/// moves inside one tile, and the same eye and configuration always produce the
+/// same ordered list. Together with the fine window the rings cover every
+/// surface cell inside the outermost square exactly once for an eye inside the
+/// world; outside the world the fine window is clamped to the world square and
+/// is no longer nested inside the innermost ring, which the sample avoids by
+/// keeping the camera inside the simulation domain.
+///
+/// `rings` must be ordered from finest to coarsest with nested squares;
+/// [`LANDSCAPE_RINGS`] is that set.
+pub fn ring_plan(eye: [f32; 3], fine: Clip, rings: &[RingConfig]) -> Vec<RingTile> {
+    let mut plan = Vec::new();
+    ring_plan_into(eye, fine, rings, &mut plan);
+    plan
+}
+
+/// [`ring_plan`] writing into a caller-owned buffer. The buffer is cleared, not
+/// reallocated, so a frame loop that keeps one plan buffer allocates nothing
+/// after the first frame.
+pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mut Vec<RingTile>) {
+    plan.clear();
+    let centre_x = eye_metre(eye[0]);
+    let centre_z = eye_metre(eye[2]);
+    let mut hole = fine;
+    for config in rings {
+        let level = config.level.min(MAX_LOD_LEVEL);
+        let tile_size = LOD_TILE_CELLS * lod_cell_m(level);
+        let half_extent = config.half_extent.max(tile_size);
+        let centre = [snap(centre_x, tile_size), snap(centre_z, tile_size)];
+        let bound = Clip {
+            min: [centre[0] - half_extent, centre[1] - half_extent],
+            max: [centre[0] + half_extent, centre[1] + half_extent],
+        };
+        debug_assert!(
+            hole == fine
+                || (bound.min[0] <= hole.min[0]
+                    && bound.min[1] <= hole.min[1]
+                    && bound.max[0] >= hole.max[0]
+                    && bound.max[1] >= hole.max[1]),
+            "ring squares must nest: {bound:?} does not contain {hole:?}"
+        );
+        let filter = TileFilter {
+            hole: Some(hole),
+            bound: Some(bound),
+        };
+        let first = [
+            bound.min[0].div_euclid(tile_size),
+            bound.min[1].div_euclid(tile_size),
+        ];
+        let last = [
+            (bound.max[0] - 1).div_euclid(tile_size),
+            (bound.max[1] - 1).div_euclid(tile_size),
+        ];
+        for key_z in first[1]..=last[1] {
+            for key_x in first[0]..=last[0] {
+                plan.push(RingTile {
+                    level,
+                    key: [key_x, key_z],
+                    filter,
+                });
+            }
+        }
+        hole = bound;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring_squares_nest_and_align_to_the_next_cell() {
+        for eye in [
+            [0.0, 0.0, 0.0],
+            [37.5, 12.0, -913.25],
+            [-5000.0, 0.0, 4096.0],
+        ] {
+            let plan = ring_plan(eye, fine_clip(eye), &LANDSCAPE_RINGS);
+            let mut previous: Option<Clip> = None;
+            for config in LANDSCAPE_RINGS {
+                let bound = plan
+                    .iter()
+                    .find(|tile| tile.level == config.level)
+                    .and_then(|tile| tile.filter.bound)
+                    .expect("every ring emits tiles");
+                let cell = lod_cell_m(config.level);
+                for edge in [bound.min[0], bound.min[1], bound.max[0], bound.max[1]] {
+                    assert_eq!(edge.rem_euclid(config.tile_size_m()), 0, "{edge}");
+                    assert_eq!(edge.rem_euclid(cell), 0, "{edge}");
+                }
+                if let Some(inner) = previous {
+                    assert!(bound.min[0] <= inner.min[0] && bound.max[0] >= inner.max[0]);
+                    assert!(bound.min[1] <= inner.min[1] && bound.max[1] >= inner.max[1]);
+                    // The inner square's edges must fall on this ring's cell grid.
+                    for edge in [inner.min[0], inner.min[1], inner.max[0], inner.max[1]] {
+                        assert_eq!(edge.rem_euclid(cell), 0, "hole edge {edge} at cell {cell}");
+                    }
+                }
+                previous = Some(bound);
+            }
+        }
+    }
+
+    #[test]
+    fn ring_plan_reuses_its_buffer() {
+        let mut plan = Vec::new();
+        ring_plan_into(
+            [0.0, 0.0, 0.0],
+            fine_clip([0.0; 3]),
+            &LANDSCAPE_RINGS,
+            &mut plan,
+        );
+        let capacity = plan.capacity();
+        let length = plan.len();
+        assert!(length > 0);
+        for step in 0..64 {
+            let eye = [step as f32 * 13.0, 20.0, step as f32 * -7.0];
+            ring_plan_into(eye, fine_clip(eye), &LANDSCAPE_RINGS, &mut plan);
+            assert_eq!(
+                plan.len(),
+                length,
+                "the plan size must not depend on the eye"
+            );
+        }
+        assert_eq!(
+            plan.capacity(),
+            capacity,
+            "a warm plan buffer must not grow"
+        );
+    }
+
+    #[test]
+    fn nonfinite_eyes_plan_like_the_origin() {
+        let origin = ring_plan([0.0, 0.0, 0.0], fine_clip([0.0; 3]), &LANDSCAPE_RINGS);
+        for eye in [
+            [f32::NAN, 0.0, 0.0],
+            [f32::INFINITY, 0.0, f32::NEG_INFINITY],
+        ] {
+            assert_eq!(ring_plan(eye, fine_clip(eye), &LANDSCAPE_RINGS), origin);
+        }
+    }
 
     #[test]
     fn value_noise_stays_inside_its_range() {

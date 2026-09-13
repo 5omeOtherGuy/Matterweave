@@ -679,6 +679,7 @@ impl VoxelRelayApp {
             },
             shadows: true,
             shadow_map_size: 1024,
+            ..Default::default()
         };
 
         let Some(renderer) = self.renderer.as_mut() else {

@@ -339,6 +339,7 @@ impl Shadow {
         settings: &LightingSettings,
         bounds: &[[[f32; 3]; 2]],
     ) -> Result<()> {
+        settings.atmosphere.validate()?;
         self.camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
         let sun = self.camera.direction;
         if self.indirect_sun != Some(crate::indirect::light_key(settings.sun)?) {
@@ -356,6 +357,12 @@ impl Shadow {
                 reflection_origin: self.reflection_origin,
                 reflection_dimensions: self.reflection_dimensions,
                 reflection_params: [self.reflection_steps, SURFACE_OFFSET, 0., 0.],
+                atmosphere: [
+                    settings.atmosphere.sky[0],
+                    settings.atmosphere.sky[1],
+                    settings.atmosphere.sky[2],
+                    settings.atmosphere.fog_density,
+                ],
                 sun: [sun[0], sun[1], sun[2], settings.sun.intensity],
                 // World-space bias preserves its scale when the fitted depth span changes.
                 params: [

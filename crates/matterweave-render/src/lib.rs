@@ -21,7 +21,7 @@ use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
 use frustum::Frustum;
 pub use hud::Hud;
-pub use lighting::{LightingSettings, Sun};
+pub use lighting::{Atmosphere, LightingSettings, Sun, DEFAULT_FOG_DENSITY, DEFAULT_SKY};
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use shadow::Shadow;
@@ -974,6 +974,57 @@ impl Drop for Commands {
 /// API call boundaries, not GPU execution time, and never a presentation
 /// (scanout) timestamp. Absent values mean the boundary was not reached or
 /// diagnostics are disabled.
+/// Cache key of one far-terrain tile: its distance level and its tile key.
+pub type TerrainTileKey = (u32, [i32; 2]);
+
+/// Hard bound on resident far-terrain tiles. The shipped ring set declares 136
+/// tiles; the bound leaves room for a deeper ring set while keeping a runaway
+/// planner from growing the cache without limit.
+pub const MAX_TERRAIN_TILES: usize = 1024;
+
+/// Far-terrain tile residency for one frame. `bytes` is allocated vertex/index
+/// buffer capacity, not driver-side residency.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerrainTileStats {
+    /// Tiles holding geometry on the GPU.
+    pub resident: usize,
+    /// Tiles that survived frustum culling in the last recorded draw.
+    pub visible: usize,
+    /// Tiles the last [`Renderer::retain_terrain_tiles`] call declared.
+    pub declared: usize,
+    pub bytes: usize,
+}
+
+/// Whether one cached tile is drawn this frame.
+///
+/// Culling uses the tile's own bounds. A 2 km tile is two orders of magnitude
+/// larger than a chunk, so a chunk-sized proxy box at the tile origin would cull
+/// tiles that fill the screen.
+fn tile_drawable(
+    bounds: [[f32; 3]; 2],
+    index_count: u32,
+    world_visible: bool,
+    frustum: &Frustum,
+) -> bool {
+    world_visible && index_count > 0 && frustum.intersects(bounds)
+}
+
+/// Whether a new key may enter a bounded tile cache. Replacing a resident tile
+/// is always allowed; only growth past the bound is refused.
+fn tile_admitted(resident: usize, already_cached: bool, bound: usize) -> bool {
+    already_cached || resident < bound
+}
+
+/// Whether any resident tile is absent from the declared set, i.e. whether the
+/// frame fence has to be waited on before the cache can be trimmed.
+fn tiles_need_eviction<'a>(
+    resident: impl Iterator<Item = &'a TerrainTileKey>,
+    declared: &std::collections::BTreeSet<TerrainTileKey>,
+) -> bool {
+    let mut resident = resident;
+    resident.any(|key| !declared.contains(key))
+}
+
 /// Timing and payload of one reflection publication. Wall-clock CPU measurements
 /// only: they cover preparation hand-off and the CPU upload, never GPU execution
 /// or presentation, which are reported separately by [`ReflectionState`].
@@ -1095,6 +1146,9 @@ pub struct Renderer {
     submissions: u64,
     legacy: Option<GpuMesh>,
     chunks: BTreeMap<[i32; 3], GpuMesh>,
+    terrain: BTreeMap<TerrainTileKey, GpuMesh>,
+    terrain_declared: usize,
+    terrain_visible: usize,
     dynamic: Option<GpuMesh>,
     static_scene: Option<StaticScene>,
     // One zeroed instance record: identity transform for non-instanced draws.
@@ -1106,7 +1160,9 @@ pub struct Renderer {
     reflection_presented: Option<u64>,
     pub mesh_revision: Option<u64>,
     pub capabilities: String,
-    /// Allocated vertex/index buffer capacity; excludes HUD, depth and driver overhead.
+    /// Allocated vertex/index buffer capacity of the chunk, legacy, dynamic and
+    /// static-scene geometry; excludes HUD, depth, driver overhead and the
+    /// far-terrain tiles, which are accounted in [`TerrainTileStats`].
     pub mesh_bytes: usize,
     pub visible_chunks: usize,
     pub resident_chunks: usize,
@@ -1310,6 +1366,9 @@ impl Renderer {
             submissions: 0,
             legacy: None,
             chunks: BTreeMap::new(),
+            terrain: BTreeMap::new(),
+            terrain_declared: 0,
+            terrain_visible: 0,
             dynamic: None,
             static_scene: None,
             identity,
@@ -1371,6 +1430,73 @@ impl Renderer {
 
     pub fn chunk_revision(&self, key: [i32; 3]) -> Option<u64> {
         self.chunks.get(&key).map(|mesh| mesh.revision)
+    }
+
+    /// One far-terrain tile of derived surface geometry, drawn in the opaque
+    /// main pass with the world pipeline (the vertex format is identical to a
+    /// chunk's). Tiles are deliberately *not* shadow casters: the shadow map
+    /// covers a bounded square around the eye and every tile the planner keeps
+    /// is either outside it or duplicated by the authoritative chunks inside it.
+    ///
+    /// Lifecycle matches the chunk cache: the frame fence completes before the
+    /// previous buffer for this key is replaced. An empty mesh is accepted and
+    /// costs no buffer; callers normally skip those.
+    pub fn upload_terrain_tile(&mut self, level: u32, key: [i32; 2], mesh: &Mesh) -> Result<()> {
+        if !tile_admitted(
+            self.terrain.len(),
+            self.terrain.contains_key(&(level, key)),
+            MAX_TERRAIN_TILES,
+        ) {
+            return Err(format!(
+                "Terrain tile cache is bounded to {MAX_TERRAIN_TILES} tiles"
+            ));
+        }
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        let replacement = GpuMesh::new(self.device.clone(), mesh, false)?;
+        self.terrain.insert((level, key), replacement);
+        self.retire_terrain_publication();
+        Ok(())
+    }
+
+    /// Declare the tiles the plan wants resident and drop the rest, after all
+    /// draws referencing them complete. The declared count is reported by
+    /// [`Renderer::terrain_tile_stats`] so a caller can see residency lagging
+    /// behind its own plan.
+    pub fn retain_terrain_tiles(&mut self, keys: &[TerrainTileKey]) -> Result<()> {
+        let keep: std::collections::BTreeSet<_> = keys.iter().copied().collect();
+        self.terrain_declared = keep.len();
+        if tiles_need_eviction(self.terrain.keys(), &keep) {
+            let wait = self.upload_waits.timed_begin();
+            self.commands.wait()?;
+            self.upload_waits.record(wait);
+            self.terrain.retain(|key, _| keep.contains(key));
+            self.retire_terrain_publication();
+        }
+        Ok(())
+    }
+
+    pub fn terrain_tile_stats(&self) -> TerrainTileStats {
+        TerrainTileStats {
+            resident: self.terrain.len(),
+            visible: self.terrain_visible.min(self.terrain.len()),
+            declared: self.terrain_declared,
+            bytes: self
+                .terrain
+                .values()
+                .map(GpuMesh::allocated_bytes)
+                .sum::<usize>(),
+        }
+    }
+
+    /// Terrain tiles change the main pass but never the shadow pass, so the
+    /// cached shadow map stays valid across tile streaming. The reflection
+    /// publication identity is tied to drawn geometry and is retired.
+    fn retire_terrain_publication(&mut self) {
+        self.reflection_published = None;
+        self.reflection_presented = None;
+        self.terrain_visible = self.terrain_visible.min(self.terrain.len());
     }
 
     /// Forget evicted chunks only after all draws referencing them complete.
@@ -1839,10 +1965,13 @@ impl Renderer {
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 1);
             }
+            // The background is the same colour distance fades to, so the
+            // horizon and the end of the world are indistinguishable.
+            let sky = lighting.atmosphere.sky;
             let clear = [
                 vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [0.16, 0.24, 0.29, 1.0],
+                        float32: [sky[0], sky[1], sky[2], 1.0],
                     },
                 },
                 vk::ClearValue {
@@ -1915,7 +2044,26 @@ impl Renderer {
             let visible = self.chunks.values().filter(|mesh| {
                 self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
             });
-            for mesh in self.legacy.iter().chain(visible).chain(self.dynamic.iter()) {
+            // Far-terrain tiles share the world pipeline and the identity
+            // instance record bound above; each is culled against its own
+            // bounds, which span a whole tile rather than a chunk.
+            self.terrain_visible = self
+                .terrain
+                .values()
+                .filter(|mesh| {
+                    tile_drawable(mesh.bounds, mesh.index_count, self.world_visible, &frustum)
+                })
+                .count();
+            let tiles = self.terrain.values().filter(|mesh| {
+                tile_drawable(mesh.bounds, mesh.index_count, self.world_visible, &frustum)
+            });
+            for mesh in self
+                .legacy
+                .iter()
+                .chain(visible)
+                .chain(tiles)
+                .chain(self.dynamic.iter())
+            {
                 if !self.world_visible || mesh.index_count == 0 {
                     continue;
                 }
@@ -2012,9 +2160,96 @@ impl Drop for Renderer {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_present, PresentOutcome, WaitTally};
+    use super::{
+        classify_present, tile_admitted, tiles_need_eviction, Frustum, PresentOutcome,
+        TerrainTileKey, TerrainTileStats, WaitTally, MAX_TERRAIN_TILES,
+    };
     use ash::vk;
+    use std::collections::BTreeSet;
     use std::time::Instant;
+
+    /// Looking down -Z from the origin with a 90 degree field of view.
+    fn forward_view() -> [[f32; 4]; 4] {
+        let projection =
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 20_000.0);
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::ZERO,
+            glam::Vec3::new(0.0, 0.0, -1.0),
+            glam::Vec3::Y,
+        );
+        (projection * view).to_cols_array_2d()
+    }
+
+    #[test]
+    fn far_tiles_are_culled_by_their_own_bounds_not_a_chunk_box() {
+        let frustum = Frustum::new(forward_view());
+        // A 2 km tile off to the left: its near corner is outside the 90 degree
+        // view, but the tile itself covers a large part of the screen. A
+        // chunk-sized proxy box at that corner would cull a visible tile.
+        let tile = [[-4096.0, -60.0, -4096.0], [-2048.0, 160.0, -2048.0]];
+        let chunk_proxy = [[-4096.0, -60.0, -2064.0], [-4080.0, -44.0, -2048.0]];
+        assert!(super::tile_drawable(tile, 96, true, &frustum));
+        assert!(
+            !super::tile_drawable(chunk_proxy, 96, true, &frustum),
+            "the proxy box must be the thing that is wrong, not the frustum"
+        );
+        // A tile entirely behind the camera is culled, an empty one is never
+        // drawn, and a hidden world draws nothing at all.
+        let behind = [[-1024.0, -60.0, 2048.0], [1024.0, 160.0, 4096.0]];
+        assert!(frustum.intersects(tile) && !frustum.intersects(chunk_proxy));
+        assert!(!super::tile_drawable(behind, 96, true, &frustum));
+        assert!(!super::tile_drawable(tile, 0, true, &frustum));
+        assert!(!super::tile_drawable(tile, 96, false, &frustum));
+    }
+
+    #[test]
+    fn the_tile_cache_is_bounded_but_always_allows_replacement() {
+        assert!(tile_admitted(0, false, MAX_TERRAIN_TILES));
+        assert!(tile_admitted(
+            MAX_TERRAIN_TILES - 1,
+            false,
+            MAX_TERRAIN_TILES
+        ));
+        assert!(
+            !tile_admitted(MAX_TERRAIN_TILES, false, MAX_TERRAIN_TILES),
+            "a full cache must refuse a new key rather than grow"
+        );
+        assert!(
+            tile_admitted(MAX_TERRAIN_TILES, true, MAX_TERRAIN_TILES),
+            "re-uploading a resident tile does not grow the cache"
+        );
+    }
+
+    #[test]
+    fn eviction_waits_only_when_a_resident_tile_was_dropped_from_the_plan() {
+        let resident: Vec<TerrainTileKey> = vec![(2, [0, 0]), (2, [1, 0]), (4, [0, 0])];
+        let declared: BTreeSet<TerrainTileKey> = resident.iter().copied().collect();
+        assert!(
+            !tiles_need_eviction(resident.iter(), &declared),
+            "an unchanged plan must not stall on the frame fence"
+        );
+        // A plan that adds tiles evicts nothing; one that drops a tile does.
+        let mut grown = declared.clone();
+        grown.insert((6, [-1, 3]));
+        assert!(!tiles_need_eviction(resident.iter(), &grown));
+        let mut shrunk = declared.clone();
+        shrunk.remove(&(2, [1, 0]));
+        assert!(tiles_need_eviction(resident.iter(), &shrunk));
+        assert!(tiles_need_eviction(resident.iter(), &BTreeSet::new()));
+    }
+
+    #[test]
+    fn tile_stats_start_empty() {
+        assert_eq!(
+            TerrainTileStats::default(),
+            TerrainTileStats {
+                resident: 0,
+                visible: 0,
+                declared: 0,
+                bytes: 0,
+            }
+        );
+    }
 
     #[test]
     fn disabled_wait_tally_takes_no_clock_and_reports_nothing() {

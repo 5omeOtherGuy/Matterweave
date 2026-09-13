@@ -374,6 +374,7 @@ impl TerrainLab {
                 },
                 shadows: true,
                 shadow_map_size: 1024,
+                ..Default::default()
             },
             mode: Mode::Fine,
             mesh_revision: 0,

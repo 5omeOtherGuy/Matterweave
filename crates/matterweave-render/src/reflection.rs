@@ -74,9 +74,13 @@ pub const REFLECTION_PALETTE_BYTES: usize = 256 * 16;
 /// value packed into `reflection_params.y`.
 pub const SURFACE_OFFSET: f32 = 0.001;
 /// Colour a reflected ray terminates against; identical to the fog colour.
-pub const BACKGROUND: [f32; 3] = [0.16, 0.24, 0.29];
-/// Distance fog density, mirroring `world.wgsl`.
-pub const FOG_DENSITY: f32 = 0.013;
+///
+/// This CPU reference path models the *default* atmosphere
+/// ([`crate::Atmosphere`]). A caller that renders with a different sky or fog
+/// density must not compare its image against this path.
+pub const BACKGROUND: [f32; 3] = crate::DEFAULT_SKY;
+/// Distance fog density, mirroring `world.wgsl` with the default atmosphere.
+pub const FOG_DENSITY: f32 = crate::DEFAULT_FOG_DENSITY;
 
 /// Per-material linear reflectance and mirror strength. Material zero is air and
 /// is always nonreflective.

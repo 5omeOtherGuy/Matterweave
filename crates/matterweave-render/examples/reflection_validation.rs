@@ -1424,6 +1424,7 @@ fn main() {
                         1,
                     ],
                     reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
+                    atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
                 };
                 let on = probe_harness
                     .render(&mesh, &camera, &lighting, true)
@@ -1527,6 +1528,7 @@ fn main() {
                     1,
                 ],
                 reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
+                atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
             };
             let pixel = probe_harness
                 .render(&mesh, &camera, &lighting, true)
@@ -1671,6 +1673,7 @@ fn main() {
                         1,
                     ],
                     reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
+                    atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
                 };
                 let pixel = probe_harness
                     .render(&mesh, &camera, &lighting, true)
@@ -1756,6 +1759,7 @@ fn main() {
                 1,
             ],
             reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
+            atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
         };
         let mesh = scene_mesh(&world, &t);
         let camera_on = camera(projection * view, eye);
