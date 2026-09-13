@@ -16,6 +16,7 @@ mod settings;
 mod terrain_lab;
 pub mod voxel_relay;
 mod wetland;
+mod wetland_lighting;
 mod wetland_metrics;
 mod wetland_replay;
 mod wetland_state;
