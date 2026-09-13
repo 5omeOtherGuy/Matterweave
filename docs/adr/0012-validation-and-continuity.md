@@ -29,4 +29,4 @@ The setup validator checks local documentation links, ADR structure/status index
 
 ## References
 
-[Agent instructions](../../AGENTS.md), [development guide](../DEVELOPMENT.md), [benchmark protocol](../BENCHMARKS.md), [handoff](../HANDOFF.md).
+[Agent instructions](../../AGENTS.md), [development guide](../DEVELOPMENT.md), benchmark protocol, handoff.

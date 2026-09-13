@@ -4,14 +4,14 @@ The workspace contains `matterweave-core`, `matterweave-detail`, `matterweave-re
 (ash/Vulkan), `matterweave-physics` (Rapier), `matterweave-audio` and
 `matterweave-pacing`, plus the `matterweave-explorer` sample in `apps/explorer`.
 Android NativeActivity loads the explorer shared library; a desktop executable
-supplies supporting integration tests. See [MVP scope](MVP.md) and [status](STATUS.md)
+supplies supporting integration tests. See MVP scope and status
 for implemented behavior and actual evidence.
 
 ## Environment setup
 
 Use Linux x86_64, Python 3.11+, Rustup, JDK 21, unzip, and network access to the
 pinned upstream sources. The docs validator alone still supports Python 3.10+.
-Dependencies and build tools are listed in [the component record](DEPENDENCIES.md).
+Dependencies and build tools are listed in the component record.
 
 ```sh
 git clone https://github.com/5omeOtherGuy/Matterweave.git
@@ -62,7 +62,7 @@ disables it. Missing layers are reported in the capabilities line.
 cargo run --locked -p matterweave-explorer -- --save /tmp/matterweave-world.json
 ```
 
-Desktop controls are listed in [v0.2](V0.2.md#touch-controls). The desktop launcher is
+Desktop controls are listed in v0.2. The desktop launcher is
 supporting evidence; Android remains the product platform.
 
 For a headless integration run on Linux, install Xvfb, xauth, Mesa Vulkan drivers and
@@ -135,7 +135,7 @@ of `adb`. Save files live at `internal_data_path()/world.json`; no network,
 external-storage permission, cloud account or service is required.
 
 Touch and keyboard controls for walking, flight, terrain edits and physical object
-interaction are listed in [v0.2](V0.2.md#touch-controls). Edits save immediately;
+interaction are listed in v0.2. Edits save immediately;
 terrain, object state, camera and control preferences share one atomic snapshot.
 Existing v0.1 saves migrate automatically. Back exits the activity; HOME inside the app
 respawns the player. These are distinct from the phone's Home navigation action.
@@ -155,14 +155,14 @@ Physical-device checklist (record each result, do not infer from host tests):
    application does not render while suspended. Test low-memory behavior where feasible;
    preserve any failure logs.
 6. Record model, OS/API, driver, build commit, APK checksum, seed, resolution and
-   conditions in a new evidence report. Follow [BENCHMARKS](BENCHMARKS.md) before making
+   conditions in a new evidence report. Follow BENCHMARKS before making
    performance claims; host/emulator timings do not select a mobile renderer.
 
 ## Native and device gates
 
 ### Opt-in native detail/flora viewer
 
-See [gallery mode](performance/p03/native-gallery.md) for marker grammar, strict
+See gallery mode for marker grammar, strict
 user-save isolation and remaining device/quality limits. `flora source` loads the
 reviewed 84-plant fixture once; it does not select an accepted full-map showcase.
 
@@ -262,7 +262,7 @@ Run `cargo run --locked -p matterweave-explorer -- --detail-check --save /tmp/un
 and require `PASS detail` in `/tmp/detail-check-report.txt`. On Android the same
 one-shot mechanism above accepts `detail` and writes `detail-check-report.txt`. The 9
 phases exercise retained geometry with automatic perspective/orthographic LOD, an edit,
-zero extent and recreation. See [evidence and limits](performance/detail-native-check.md).
+zero extent and recreation. See evidence and limits.
 
 ### Frame-pacing gate
 
@@ -278,7 +278,7 @@ actually measured, so a device that cannot place its cost in the window a phase 
 reports `INCONCLUSIVE`; it never reports `PASS`. Phases also report `over_budget_frames`,
 the frames whose real render already exceeded the requested cost so no synthetic cost
 could be added. This is a scheduling correctness gate, not a throughput, power or
-thermal measurement. See [frame pacing](performance/frame-pacing.md).
+thermal measurement. See frame pacing.
 
 ### Background indirect-light check
 
@@ -287,7 +287,7 @@ and require `PASS async indirect` in `/tmp/async-engine-check-report.txt`. Andro
 accepts the one-shot marker value `indirect-async`. The fixture presents direct-only
 frames during CPU preparation, then uploads completed matching radiance. Reports
 separate owner request/upload time from request-to-poll latency. See
-[controller evidence and limits](performance/async-indirect.md).
+controller evidence and limits.
 
 The standalone correctness check compares all cells/faces of an open, closed and reopened
 enclosure against synchronous lighting:
@@ -327,20 +327,20 @@ seconds, with at least six route changes. CI executes the short gate. Cross-comp
 check, push it under `/data/local/tmp`, and run it with
 `600 /data/local/tmp/matterweave-stream-new.json` for a ten-minute gate. Record exact
 source/binary checksum, device and build configuration alongside stdout and health
-observations. See [streaming stress](performance/stream-stress.md).
+observations. See streaming stress.
 
 ### Renderer comparison
 
 Full-image ray/raster/shared-depth hybrid correctness:
 `cargo run --locked -p matterweave-render --example renderer_comparison`. See
-[comparison protocol](performance/renderer-comparison.md) for tolerances, artifacts and
+comparison protocol for tolerances, artifacts and
 Android evidence. Opt-in landscape correctness adds near vegetation/distant terrain
 and negative-coordinate orthographic edits:
 `cargo run --locked -p matterweave-render --example renderer_comparison -- --landscape`.
 The default remains 16 runs; the opt-in suite has 24. GPU-free fixture contracts:
 `cargo test --locked -p matterweave-render --example renderer_comparison`.
 Set `CARGO_TARGET_DIR` and `MATTERWEAVE_COMPARISON_OUT` beneath `/mnt/bench`.
-See [landscape fixture evidence](performance/landscape-functional-fixtures.md).
+See landscape fixture evidence.
 
 ### Optional packed-occupancy ray candidate (issue 42)
 
@@ -363,7 +363,7 @@ VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT \
 CPU-only classifier controls and layout contracts:
 `cargo test -p matterweave-ray-hierarchy --example ray_hierarchy_gpu` and
 `cargo test -p matterweave-render --lib ray_hierarchy_gpu`. Evidence, tolerances and
-the Android gate are in [the GPU log](performance/logs/ray-hierarchy-gpu.md).
+the Android gate are in the GPU log.
 
 ### Full wetland integration checks
 
@@ -393,8 +393,8 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json MATTERWEAVE_VALIDATION=1 p
 
 The request advances the normal simulation, then the explicit 25-frame smoke exit must
 record terminal CANCEL. This is not a full route pass. Phone requests and isolated
-fixture requirements are in [route replay](performance/showcase/route-replay.md). The
-[paired collector](performance/p02-phone-runner.md) records fresh readiness, serialized
+fixture requirements are in route replay. The
+paired collector records fresh readiness, serialized
 installs and actual compositor/app evidence; its `--help` is safe to run without a
 phone. Only one collector/device owner may run at a time.
 
@@ -442,7 +442,7 @@ new timestamped `frame-profile-*.csv` opens successfully. Captures never overwri
 existing file, stop at the requested count and flush on suspend or exit. Invalid
 requests remain for correction. Normal runs create no frame log.
 
-The current development branch writes [typed schema v2](performance/measurement-v2.md)
+The current development branch writes typed schema v2
 to `frame-profile-v2-*.csv`; the shipped v0.3 APK writes the historical v1 format. Do
 not parse either format as the other. V2 records exact draw/submission/completion IDs
 and renderer epochs, main-thread CPU busy time where supported, stage walls, separate
@@ -465,7 +465,7 @@ cargo test --locked -p matterweave-core --test performance_replay
 
 `tools/performance/check_handoff.py BOARD_JSON SUBMISSION_JSON ARTIFACT` validates a
 frozen patch admission against the sole lead-written board; see
-[the handoff contract](performance/README.md). It is not a process supervisor.
+the handoff contract. It is not a process supervisor.
 `tools/performance/validate_conditions.py HEALTH_JSONL` checks two-minute **idle
 readiness**, not app performance. Rows use actual `elapsed_s` and `data.battery` /
 `data.thermalservice` raw dumps; current HAL skin readings, actual power-state fields
@@ -479,10 +479,10 @@ Coordination startup/recovery checks:
 python3 -m unittest discover -s tools/coordination -p 'test_*.py' -v
 ```
 
-See the [board operations guide](../tools/coordination/README.md) and
-[v0.3 protocol](V0.3.md) for bounded worker reads and ownership rules.
+See the board operations guide and
+v0.3 protocol for bounded worker reads and ownership rules.
 
-Offline paired summaries use the [analysis tool](performance/p02-analysis.md):
+Offline paired summaries use the analysis tool:
 
 ```sh
 python3 tools/performance/analyze_wetland_pairs.py --input /absolute/completed-or-partial-batch --out /absolute/fresh-analysis
@@ -542,4 +542,4 @@ existing one-shot `files/engine-check.txt` request accepts `destruction`; launch
 `files/destruction-check-report.txt` through `run-as`. Remove only a stale diagnostic
 report before a fresh run. Preserve gameplay saves. A complete run reports 25
 phase summaries, six presented frames per phase on host or 60 on Android, followed
-by one final restored frame. See [evidence and limitations](performance/destruction-android.md).
+by one final restored frame. See evidence and limitations.

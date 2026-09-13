@@ -123,7 +123,7 @@ types; no Rapier, window or Vulkan handle escapes.
   operations leave prior state and bodies unchanged.
 - No `unsafe` code in the crate. `rapier3d 0.32.0` (Apache-2.0) is pinned from
   [crates.io](https://crates.io/crates/rapier3d/0.32.0); the lockfile records transitive
-  revisions and checksums. See [DEPENDENCIES](../../docs/DEPENDENCIES.md) for the selection
+  revisions and checksums. See DEPENDENCIES for the selection
   record.
 
 ## Limits and what it does not do
@@ -164,4 +164,4 @@ background path.
 
 The physics selection and evidence record is in
 [ADR-0010](../../docs/adr/0010-physics-and-editing.md) and
-[DEPENDENCIES](../../docs/DEPENDENCIES.md).
+DEPENDENCIES.

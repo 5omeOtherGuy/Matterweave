@@ -29,4 +29,4 @@ M4 tests motion, edits, camera cuts and disocclusion with matched captures. M5 c
 
 ## References
 
-[Arm ASR generic library](https://github.com/arm/accuracy-super-resolution-generic-library), [benchmark protocol](../BENCHMARKS.md), [advanced research](0013-advanced-hardware-and-research.md).
+[Arm ASR generic library](https://github.com/arm/accuracy-super-resolution-generic-library), benchmark protocol, [advanced research](0013-advanced-hardware-and-research.md).

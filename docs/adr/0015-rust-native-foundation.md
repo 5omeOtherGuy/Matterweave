@@ -45,12 +45,12 @@ The first backend uses ash 0.38.0 with ash-window 0.13.0. winit 0.30.12 and
 android-activity 0.6.0 provide a consistent NativeActivity implementation.
 No Java/Kotlin app source, GameActivity glue, CMake or physics library is required.
 Naga 24.0.0 validates WGSL and generates SPIR-V at build time. Dependency locks,
-checksums, licenses and alternatives are in [DEPENDENCIES](../DEPENDENCIES.md).
+checksums, licenses and alternatives are in DEPENDENCIES.
 
 The development APK builds; native ARM64 exports, system-library dependencies,
 signing and 16 KiB ELF/ZIP alignment are inspected. Host tests and an ash/Vulkan
 smoke exercise verify editing, persistence, resize and renderer recreation.
-[STATUS](../STATUS.md) records the exact results and unexecuted physical-device
+STATUS records the exact results and unexecuted physical-device
 gates. Engineering acceptance does not claim physical Android execution or mobile
 performance. Rendering selection beyond this reference remains ADR-0006/M2 work.
 
@@ -61,5 +61,5 @@ repeat launches. The activity is now singleTask and handles logical Back explici
 A narrowly [vendored winit patch](../../vendor/winit/MATTERWEAVE-PATCH.md) handles
 Destroy and sequential event-loop recreation, retaining single-live-loop exclusion.
 Three same-process Back/relaunch cycles and both landscape orientations passed;
-see [device evidence](../evidence/2026-09-07-v0.2.md). Rust/native architecture and
+see device evidence. Rust/native architecture and
 the Vulkan profile remain unchanged. Store signing remains outside this prerelease.

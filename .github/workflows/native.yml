@@ -27,7 +27,6 @@ jobs:
           cargo test --workspace --locked
           cargo run --locked -p matterweave-render --example async_indirect
           cargo run --locked -p matterweave-core --example stream_stress -- 1 "$RUNNER_TEMP/stream-stress.json"
-          python3 -m unittest discover -s tools/performance -p 'test_*.py'
           python3 tools/check_docs.py
       - name: Native Vulkan smoke
         run: |

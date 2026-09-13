@@ -122,7 +122,7 @@ queued commands are never overwritten. A full command queue returns `CommandQueu
 
 - Resampling and compressed audio formats. Clips must be 48 kHz f32 mono/stereo, and a device
   that cannot negotiate that fails open explicitly.
-- An on-device run: [STATUS](../../docs/STATUS.md) records the reserved-device diagnostic as
+- An on-device run: STATUS records the reserved-device diagnostic as
   NOT RUN. The Android backend compiles for `aarch64-linux-android` and links `libaaudio`, but
   on-device audibility, format negotiation and real device-loss recovery are unverified.
   ADR-0016 is Proposed.
@@ -162,5 +162,5 @@ negotiated properties, frame progress, suspend/resume, controlled recreation and
 open/play/suspend/recreate-while-suspended/resume/stop/close cycles. Each progress check has
 an asserted two-second deadline. Paused counters are checked only after recreation has
 closed the old stream, not immediately after the asynchronous pause request. It is silent by design and is not device evidence. The executed
-host and cross-compilation results are recorded in [STATUS](../../docs/STATUS.md) and
+host and cross-compilation results are recorded in STATUS and
 [ADR-0016](../../docs/adr/0016-audio-service.md).

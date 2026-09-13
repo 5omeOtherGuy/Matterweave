@@ -1,48 +1,59 @@
-# Instructions for agents and contributors
+# Working in this repository
 
-## Mission and reading order
+Matterweave is a native Android voxel engine and reusable game framework. The
+engine is the product; the sample games exist to validate it. Android-native
+delivery is what counts — a desktop or host build is a development aid, never
+evidence that something works.
 
-Build Matterweave: a native Android voxel engine and reusable game framework with high visual fidelity, complex interactive physics and measured efficiency. Start with [docs/HANDOFF.md](docs/HANDOFF.md), [docs/STATUS.md](docs/STATUS.md), [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), then [docs/adr/README.md](docs/adr/README.md) and [docs/ROADMAP.md](docs/ROADMAP.md). Read the relevant implementation files before changing them.
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layout,
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) to build and test, and
+[docs/adr/README.md](docs/adr/README.md) for decisions already made and why.
+Then read the code you are about to change.
 
-This repository is the durable project context. Preserve decisions, evidence, useful failures and reproducible commands here. Do not depend on prior conversations, personal memory, external agent mailboxes or another project's files.
+## Rules
 
-## Authority and autonomy
+**Don't claim what you didn't run.** A green host test says nothing about the
+phone. A successful APK build says nothing about the app working. Target
+budgets, synthetic traces and unexecuted commands are not results. Say "not
+run" — it is always an acceptable answer and never a failure.
 
-- Use subagents for bounded independent tasks. The coordinating agent owns integration, consistency and verification. Avoid overlapping edits; communicate concrete deliverables and shared interface changes.
-- Advance through working implementation and relevant verification. Do not stop after planning, scaffolding or creating a backlog when the authorized implementation task can proceed.
-- Resolve ordinary engineering choices with evidence and record them. Proposed ADRs permit experiments; they are not automatic requests for owner approval. Follow the decision process in the ADR index.
-- Preserve explicit owner requirements. Ask only when an actual missing owner decision, inaccessible capability or irreversible action prevents the next necessary step. Continue independent work and state precisely what remains blocked.
-- The owner authorizes the normal delivery workflow: commit completed work on a branch, push it, open a pull request, resolve actionable review/CI findings, and merge after the relevant checks pass. Do not stop at a local commit or an unmerged PR, and do not ask for repeated permission for these steps. Preserve branch protections and shared history; report any access or required-review blocker.
-- Do not infer authority to purchase hardware/services, change repository visibility or access controls, select the owner's license, publish a store release, or overwrite others' work. Follow the active session's Git and integration authorization; do not force-push shared history.
+**Measurements need their conditions.** Device, OS, driver, scene, seed, build
+configuration and commit, or it is not a measurement. Never infer phone
+behaviour from desktop or emulator numbers.
 
-## Scope and decision integrity
+**World data is authoritative.** Render, lighting and collision structures are
+derived and versioned. A change to visual detail must never silently move a
+wall or change a game rule.
 
-- Android-native delivery is mandatory. A web preview or desktop executable is supporting evidence only.
-- The engine is the reusable product. Genre examples are validation scenarios, not instructions to implement a Pokémon game, copy assets or import rules from an unrelated project.
-- The earlier browser/site demo constraints were explicitly replaced. A serene alien forest is an optional showcase, not a fixed art direction or a world-size limit.
-- Voxels are required as meaningful world/object data. Ray rendering is an important candidate, but ray-only rendering was not re-established as a mandatory constraint after the scope reset. Preserve the rendering comparison in ADR-0006.
-- Lumen-like lighting and Nanite-like detail are requirements at the outcome level. Proposed algorithms and libraries are not approved results, shipped features or performance guarantees.
-- Separate accepted requirements, working engineering decisions, hypotheses and measurements. Never mark an ADR accepted on the owner's behalf if it changes product intent.
+**Keep the layers apart.** Android lifecycle, engine core, and game rules stay
+separate. Vulkan and physics types do not leak through gameplay interfaces.
 
-## Engineering and verification
+**Smallest slice that works.** Build the vertical slice the current goal needs.
+No editor, plugin system or general framework ahead of a working native path.
 
-- Follow accepted [ADR-0014](docs/adr/0014-rust-modularity-and-evidence-led-reuse.md): Rust wherever feasible without material detriment, explicit modularity and reuse of viable alternatives meeting strict criteria. Use [component selection](docs/COMPONENT_SELECTION.md) for substantial decisions. The former C++ default is superseded by accepted [ADR-0015](docs/adr/0015-rust-native-foundation.md).
-- Inspect suitable existing solutions before substantial custom implementation. New technology, tools and Rust hardware interfaces are authorized where necessary or significantly advantageous. Prototype credible improvements, then validate before claiming or adopting a performance advantage. Do not rewrite adequate dependencies solely for language uniformity.
-- Evaluate suitable Rust physics first. Jolt is eligible only for major workload-relevant advantages after binding, data conversion, build and maintenance costs. No physics package is selected by policy alone.
-- Keep unsafe/FFI/GPU contracts narrow and explicit. Logical modularity need not impose runtime plugins, a permanent ABI, large copies or dynamic dispatch in inner loops. Missing Rust bindings are engineering tasks; new wrappers do not create hardware capabilities or privileged device access.
-- Prefer the smallest complete vertical slice that resolves the current milestone. Introduce abstractions for actual requirements; avoid building an editor, plugin ecosystem or general rendering framework before the native slice works.
-- Pin adopted dependencies and build tools; record source, revision, license and integration rationale. Avoid floating dependency branches in reproducible builds.
-- Keep Android UI/lifecycle, engine core and game-specific rules separate. Do not leak Vulkan or physics-library types through every public gameplay interface.
-- Treat world data as authoritative; render, lighting and collision representations are derived and versioned. Changes to visual LOD must not silently change game rules or remove physical walls.
-- Account for CPU/GPU synchronization, staging buffers, shared-memory pressure, edit invalidation and thermal behavior. More threads, RAM allocation or accelerator usage is not proof of better performance.
-- Verify meaningful risks: data round trips, chunk boundaries, negative coordinates, stale asynchronous jobs, edits, resource lifetimes, lifecycle recovery, collision updates and visual temporal stability. Avoid tests that only mirror implementation details.
-- Keep baseline workloads and comparison settings reproducible. Never infer mobile performance from desktop/emulator numbers. Record unavailable hardware tests as not run.
-- Do not present synthetic traces, target budgets or unexecuted commands as measured results. A successful APK build is not proof of successful device operation.
+**Rust, and reuse before writing.** Check for an existing crate before building
+your own; pin what you adopt. See ADR-0014 and ADR-0015.
 
-## Completion and handoff
+## Delivery
 
-Before handing off, run relevant checks, inspect the diff, and update [docs/STATUS.md](docs/STATUS.md) with exact accomplishments, commands/results, unresolved risks and next actions. Update affected ADRs and the roadmap. A fresh session must be able to resume from the repository alone.
+Branch, commit, push, open a PR, fix what CI and review find, merge. That is
+pre-authorized — don't stop at a local commit and don't ask again each time.
+Never force-push shared history.
 
-Document the device/OS/driver, scene, seed, build configuration, commit and test conditions for performance claims. Keep large binary evidence in appropriate repository release/workflow artifacts with durable references and checksums; keep small manifests and summaries in Git.
+Ask the owner only for a decision that is genuinely theirs: hardware, licensing,
+repository access, a store release, or anything irreversible. Anything needing
+the physical phone is theirs too. State what is blocked and keep working on the
+rest.
 
-For documentation changes, run `python3 tools/check_docs.py`. Add native build/test/CI commands to [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) as they become real.
+## Writing things down
+
+Put what you did in the PR description, next to the diff.
+
+Do not add a file per task, per worker or per review. Do not write status,
+handoff or progress documents. If a change makes existing text wrong, edit that
+text — deleting a stale paragraph beats adding a correct one beside it.
+
+This repository once carried 225 markdown files and 26,000 lines of prose for
+seven days of work, most of it written once and never read. The code, the tests
+and the PR history are the durable record. If they are not enough to resume
+from, fix them rather than writing prose about them.

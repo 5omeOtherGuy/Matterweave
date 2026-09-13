@@ -5,10 +5,10 @@ hierarchical voxel ray traversal with packed block occupancy, compared against t
 retained dense reference.
 
 Not a production renderer path and not a performance result. See
-[the CPU engineering log](../../docs/performance/logs/ray-hierarchy-experiment.md) for the
+the CPU engineering log for the
 measured CPU comparison, the prior-art assessment, the disclosed limits and the
 integration handoff, and
-[the GPU log](../../docs/performance/logs/ray-hierarchy-gpu.md) for the optional native
+the GPU log for the optional native
 Vulkan functional comparison of the `BlockMask` kernel (issue 42). The library itself
 stays CPU-only; the GPU candidate is a standalone example that borrows the crate's
 snapshots and fixtures.
@@ -52,4 +52,4 @@ observed numbers, including zero measured distance deviation from `World::raycas
 three tied-plane resolutions and the four crop-boundary ties found in the seeded corpus,
 and the strict geometric classifier that separates those from real errors. The review
 disposition and re-run evidence are in
-[the repair log](../../docs/performance/logs/ray-hierarchy-review-repair.md).
+the repair log.
