@@ -722,7 +722,9 @@ fn invalidate_slot(values: &mut [[f32; 4]], done: &mut [u64], slot: usize) -> us
     1
 }
 
-/// Documented `IndirectVolume` face order: `+X, -X, +Y, -Y, +Z, -Z`.
+/// `IndirectVolume`'s face-slot order (`+X, -X, +Y, -Y, +Z, -Z`), repeated here
+/// because the exposure rule writes face slots directly; pinned against the
+/// volume's own table by `dependency_face_order_matches_the_volume_slot_order`.
 const FACE_NORMALS: [[i32; 3]; 6] = [
     [1, 0, 0],
     [-1, 0, 0],
@@ -2088,6 +2090,15 @@ checked={} bytes={}",
             );
         }
         let _ = world;
+    }
+
+    /// The dependency module indexes face slots directly (`index * 6 + face`)
+    /// from its own normal table, so that table must be `IndirectVolume`'s slot
+    /// order. A mismatch would clear the wrong face's completed bit and leave
+    /// the face that actually changed holding a stale value.
+    #[test]
+    fn dependency_face_order_matches_the_volume_slot_order() {
+        assert_eq!(FACE_NORMALS, crate::indirect::NORMALS);
     }
 
     /// The budget fills a *sample*, not a face. A one-cell body move crosses the
