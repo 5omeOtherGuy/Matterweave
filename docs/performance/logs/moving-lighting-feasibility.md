@@ -180,7 +180,8 @@ floor about 1.6 m ahead, and the moving body at `[3,1,14]` (before) /
 
 - The body's own cells are `6` and `5` Chebyshev cells from the receiver, so a
   tracker that expands by `ceil(R) = 4` never marks it; the conservative `9`
-  does. The receiver's sample origin is a lower-bound `4.031 m` from the nearest
+  does. The receiver's sample origin is `4.031 m` (±0.001 for the dropped
+  `EPSILON` origin term, never a strict lower bound) from the nearest
   body cell (`5.025 m` for the far placement), so no gather ray of `R = 4` can
   reach either body cell: only the hit-to-sun segment can see the change.
 - The completed volumes differ by `0.011032`, exactly one 16-sample
@@ -194,13 +195,17 @@ floor about 1.6 m ahead, and the moving body at `[3,1,14]` (before) /
 
 ### Fresh-volume differences against the conservative bound
 
-For every scene, both body positions and all five radii (30 pairs, 60 completed
-volumes), every face whose published value changed was inside the
-`ceil(2R) + 1` bound: **0 omissions**. Changed faces outside the `ceil(R)` bound:
+For every scene, both body positions and all five radii (30 combinations; the 10
+empty-scene pairs change no face, so the omission evidence is 20 non-vacuous
+pairs / 40 completed volumes), every face whose published value changed was
+inside the `ceil(2R) + 1` bound: **0 omissions**. Changed faces outside the
+`ceil(R)` bound:
 8 combinations had 0, dense mid-box had 6 at `R = 2` and 8 at `R = 4`, the
 counterexample had 2. Every changed face is exposed in one of the two
 placements, and the empty scene changed no face at all (a lone body in a void
-carries no radiance).
+carries no radiance). The `outside_r_only > 0` discriminator therefore rests on
+the deterministic dense mid-box fixture plus the separate engineered
+counterexample, not on float inequality in general.
 
 Actual changed-value counts against the conservative `touched` count at `R = 4`:
 sparse edge 13/301 (4.3 %), sparse center 13/718 (1.8 %), dense edge 24/583
@@ -223,10 +228,27 @@ sparse edge 13/301 (4.3 %), sparse center 13/718 (1.8 %), dense edge 24/583
 | Criterion | Verification method | Owner | Result |
 | --- | --- | --- | --- |
 | Dependency counterexample | Actual GI update proves the `R` bound misses a sun-occluder case | this worker | **PASS (host)** — `[4,1,8] +Z` changes `0.06618919 -> 0.05515766` at Chebyshev 5/6 with origin distance 4.031/5.025 > `R = 4`; reversed-sun control bit-identical; 2 changed faces outside `ceil(R)`, 0 outside `ceil(2R)+1` |
-| Feasibility table | Deterministic fixtures, face/ray/work counts, correct ceiling bounds | this worker | **PASS (host)** — 3 scenes x 2 positions x 5 radii; 0 omissions across 30 volume pairs; counts in the table above |
+| Feasibility table | Deterministic fixtures, face/ray/work counts, correct ceiling bounds | this worker | **PASS (host)** — 3 scenes x 2 positions x 5 radii; 0 omissions across the 20 non-vacuous volume pairs (10 empty-scene pairs are vacuous); counts in the table above |
 | Production unchanged | Scoped experimental file diff, quality 24 preserved | this worker | **PASS** — test-only module + `#[cfg(test)]` registration + this log; `GATHER_DISTANCE_M = 24.0`, `UPDATE_BUDGET`, `indirect.rs`, shaders, app and STATUS untouched |
 | Delivery | Focused checks, log, commit/push/PR, frozen review SHA | this worker | **PASS** — see Delivery snapshot |
-| Independent review | Opus medium reviews proof + next recommendation | Codex dispatch | **NOT RUN** — outside this writer's scope |
+| Independent review | Opus medium reviews proof + next recommendation | Codex dispatch | **PASS** — `w_4c9f3d5e` (opus-medium) ACCEPT at `fae6173a` + docs `ba181f0`; three non-blocking comment/log precision findings, applied on this branch (see below) with no logic change |
+
+### Post-review precision corrections (comment/log only)
+
+Applied after `w_4c9f3d5e` accepted the frozen source; the probe logic and every
+assertion are byte-identical.
+
+- The `face_origin_to_cell_min_distance` doc no longer calls itself a lower
+  bound: dropping the origin `EPSILON` moves the real origin 0.001 along the
+  face normal, so the helper is accurate to ±0.001 and over-estimates for
+  targets in front of the face. The decisive inequality clears that margin by
+  far (4.031 vs `R = 4`).
+- The fresh-volume evidence is now stated as **20 non-vacuous pairs**: the 10
+  empty-scene combinations change no face, so they carry no omission
+  information.
+- The `outside_r_only > 0` discriminator is recorded as resting on the
+  deterministic dense mid-box fixture plus the separate engineered
+  counterexample, not on float inequality in general.
 
 ## Insights
 
@@ -315,14 +337,19 @@ Test these four claims against the frozen commit, not the prose:
 1. `ceil(2R) + 1`, not `ceil(R)`: the probe's counterexample shows a completed
    volume changing `0.06618919 -> 0.05515766` (delta `0.011032 = 0.9 *
    0.196116 / 16`) at `[4,1,8] +Z`, which is 5 Chebyshev cells from the new body
-   cell and a lower-bound `4.031 m` from the face's sample origin while
+   cell and `4.031 m` (±0.001 for the dropped origin epsilon) from the face's
+   sample origin while
    `R = 4`; the reversed-sun control is bit-identical. Check the fixture and the
    distance helper, and check that the generic dense mid-box fixture also shows
    8 changed faces outside the `R`-only bound at `R = 4`.
-2. No omissions: 30 before/after volume pairs (3 scenes x 2 positions x 5
+2. No omissions: 30 combinations (3 scenes x 2 positions x 5
    radii) with every actually changed face inside the conservative bound
    (`outside_conservative == 0`), and every changed face exposed in one of the
-   two placements. Look for a scene, radius or position where the bound could
+   two placements. The 10 empty-scene combinations change no face, so the
+   informative evidence is 20 non-vacuous before/after pairs; the
+   `outside_r_only` count additionally depends on the deterministic dense
+   mid-box fixture and the separate counterexample. Look for a scene, radius or
+   position where the bound could
    miss a change, and for a way a value could change without any ray touching a
    changed cell.
 3. No invented frame claim: the empty scene's conservative bound at `R = 4`

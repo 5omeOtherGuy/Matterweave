@@ -400,9 +400,11 @@ fn outside_bound(bound: &[[i32; 3]], faces: &[([i32; 3], usize)]) -> Vec<([i32; 
         .collect()
 }
 
-/// Lower bound on the distance from a face's sample origin to a target cell,
-/// using the documented `cell + 0.5 + n * (0.5 + eps)` origin with `eps` dropped
-/// (the real origin is a further 0.001 out, so this under-estimates).
+/// Distance from a face's sample origin to a target cell using the documented
+/// `cell + 0.5 + n * (0.5 + eps)` origin with `eps` dropped. Dropping `eps`
+/// moves the real origin 0.001 along the face normal, so this is accurate to
+/// ±0.001 rather than a strict lower bound (it over-estimates for targets in
+/// front of the face); the decisive inequality clears that margin by far.
 fn face_origin_to_cell_min_distance(cell: [i32; 3], face: usize, target: [i32; 3]) -> f32 {
     let normal = FACE_NORMALS[face];
     let origin: [f32; 3] =
