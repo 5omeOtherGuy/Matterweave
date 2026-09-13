@@ -1,4 +1,5 @@
-use crate::{Chunk, World, CHUNK_VOLUME, FORMAT_VERSION, GENERATOR_VERSION};
+use crate::landscape::LANDSCAPE_GENERATOR_VERSION;
+use crate::{Chunk, TerrainSource, World, CHUNK_VOLUME, FORMAT_VERSION, GENERATOR_VERSION};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -21,10 +22,26 @@ struct Snapshot {
     seed: u64,
     revision: u64,
     chunks: Vec<SavedChunk>,
+    /// Absent in format 1 and 2, which only ever held the legacy island.
+    #[serde(default, skip_serializing_if = "is_legacy_source")]
+    terrain_source: TerrainSource,
+    /// Landscape generator identity, zero for the legacy island. A mismatch is
+    /// rejected so a version bump cannot silently mix old stored chunks with
+    /// regenerated terrain from a new generator.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    landscape_generator_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     streaming: Option<SavedStreaming>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     attachment: Option<serde_json::Value>,
+}
+
+fn is_legacy_source(source: &TerrainSource) -> bool {
+    *source == TerrainSource::LegacyIsland
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize, Deserialize)]
@@ -110,6 +127,11 @@ impl World {
             seed: self.seed,
             revision: self.revision,
             chunks,
+            terrain_source: self.terrain,
+            landscape_generator_version: match self.terrain {
+                TerrainSource::LegacyIsland => 0,
+                TerrainSource::Landscape => LANDSCAPE_GENERATOR_VERSION,
+            },
             streaming,
             attachment,
         };
@@ -177,6 +199,12 @@ impl World {
         let snapshot: Snapshot = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
         if !(1..=FORMAT_VERSION).contains(&snapshot.format_version)
             || snapshot.generator_version != GENERATOR_VERSION
+            || (snapshot.format_version < 3
+                && snapshot.terrain_source != TerrainSource::LegacyIsland)
+            || (snapshot.terrain_source == TerrainSource::Landscape
+                && snapshot.landscape_generator_version != LANDSCAPE_GENERATOR_VERSION)
+            || (snapshot.terrain_source == TerrainSource::LegacyIsland
+                && snapshot.landscape_generator_version != 0)
             || (snapshot.format_version == 1
                 && (snapshot.streaming.is_some() || snapshot.attachment.is_some()))
         {
@@ -186,6 +214,9 @@ impl World {
             return Err(invalid("save exceeds 512-chunk limit"));
         }
         let mut world = Self::new(snapshot.seed);
+        // The terrain source and its vertical band must be in place before any
+        // override is validated or residency is reconstructed.
+        world.terrain = snapshot.terrain_source;
         for chunk in snapshot.chunks {
             if chunk.voxels.len() != CHUNK_VOLUME {
                 return Err(invalid("chunk must contain 4096 materials"));
@@ -237,7 +268,7 @@ impl World {
             }
             world.enable_streaming();
             for key in stream.empty_overrides {
-                if !World::contains_stream_cell(key.map(|v| v.saturating_mul(16)))
+                if !world.contains_stream_cell(key.map(|v| v.saturating_mul(16)))
                     || world
                         .streaming
                         .as_mut()

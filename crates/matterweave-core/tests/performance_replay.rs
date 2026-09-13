@@ -117,7 +117,7 @@ fn parse_fixture_strict(text: &str) -> Result<Fixture, String> {
                 let cell = step.cell.ok_or("set step needs cell")?;
                 step.material.ok_or("set step needs material")?;
                 step.expect_applied.ok_or("set step needs expect_applied")?;
-                if !World::contains_stream_cell(cell) {
+                if !matterweave_core::TerrainSource::LegacyIsland.contains_cell(cell) {
                     return Err(format!("set cell {cell:?} outside editable domain"));
                 }
             }

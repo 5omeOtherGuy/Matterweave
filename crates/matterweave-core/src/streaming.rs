@@ -4,8 +4,14 @@ use std::sync::Arc;
 
 pub const STREAM_RADIUS_CHUNKS: i32 = 3;
 pub const WORLD_LIMIT: i32 = 256;
+/// Vertical band of the original island fixture's window.
 pub const STREAM_MIN_Y: i32 = -16;
 pub const STREAM_MAX_Y: i32 = 32;
+/// Vertical band of the landscape generator: it produces surfaces from
+/// [`crate::landscape::MIN_SURFACE_Y`] to [`crate::landscape::MAX_SURFACE_Y`],
+/// so the window has to cover that span plus one chunk of headroom above peaks.
+pub const LANDSCAPE_MIN_Y: i32 = -48;
+pub const LANDSCAPE_MAX_Y: i32 = 160;
 pub(crate) const MAX_OVERRIDES: usize = 512;
 
 #[derive(Clone)]
@@ -39,10 +45,8 @@ impl World {
     }
 
     /// Legal editable simulation domain. Streaming additionally requires residency.
-    pub fn contains_stream_cell([x, y, z]: [i32; 3]) -> bool {
-        (-WORLD_LIMIT..WORLD_LIMIT).contains(&x)
-            && (-WORLD_LIMIT..WORLD_LIMIT).contains(&z)
-            && (STREAM_MIN_Y..STREAM_MAX_Y).contains(&y)
+    pub fn contains_stream_cell(&self, cell: [i32; 3]) -> bool {
+        self.terrain.contains_cell(cell)
     }
 
     /// Window center for an eye position, or `None` for nonfinite input.
@@ -78,13 +82,14 @@ impl World {
         }
         let low = position.map(|v| (f64::from(v) - f64::from(margin)).floor());
         let high = position.map(|v| (f64::from(v) + f64::from(margin)).floor());
+        let (min_y, max_y) = self.stream_y_range();
         if !low
             .iter()
             .zip(high)
             .enumerate()
             .all(|(axis, (&low, high))| {
                 let (min, max) = if axis == 1 {
-                    (f64::from(STREAM_MIN_Y), f64::from(STREAM_MAX_Y - 1))
+                    (f64::from(min_y), f64::from(max_y - 1))
                 } else {
                     (f64::from(-WORLD_LIMIT), f64::from(WORLD_LIMIT - 1))
                 };
@@ -110,9 +115,11 @@ impl World {
         true
     }
 
-    /// Synchronously publish a bounded 7x7x3 window. No stale background jobs exist;
-    /// callers synchronize render/collision revisions before advancing simulation.
-    /// At revision exhaustion or with nonfinite input residency is left unchanged.
+    /// Synchronously publish a bounded `7 x 7` window centered on `position`,
+    /// covering the terrain source's vertical band. No stale background jobs
+    /// exist; callers synchronize render/collision revisions before advancing
+    /// simulation. At revision exhaustion or with nonfinite input residency is
+    /// left unchanged.
     pub fn stream_around(&mut self, position: [f32; 3]) -> bool {
         let Some(center) = Self::stream_center_of(position) else {
             return false;
@@ -133,7 +140,7 @@ impl World {
             for z in (center[1] - STREAM_RADIUS_CHUNKS).max(-16)
                 ..=(center[1] + STREAM_RADIUS_CHUNKS).min(15)
             {
-                for y in -1..2 {
+                for y in self.stream_y_chunks() {
                     wanted.insert([x, y, z]);
                 }
             }
@@ -152,15 +159,23 @@ impl World {
         );
         self.chunks.retain(|key, _| wanted.contains(key));
         self.chunk_revisions.retain(|key, _| wanted.contains(key));
+        let terrain = self.terrain;
+        let seed = self.seed;
+        let mut missing = BTreeSet::new();
         for &key in wanted.difference(&stream.resident) {
-            let chunk = match stream.overrides.get(&key) {
-                Some(value) => value.clone(),
-                None if (-2..2).contains(&key[0]) && (-2..2).contains(&key[2]) => None,
-                None => generated_chunk(self.seed, key),
-            };
-            if let Some(chunk) = chunk {
-                self.chunks.insert(key, chunk);
+            if let Some(value) = stream.overrides.get(&key) {
+                if let Some(chunk) = value {
+                    self.chunks.insert(key, chunk.clone());
+                }
+            } else if !(terrain == crate::TerrainSource::LegacyIsland
+                && (-2..2).contains(&key[0])
+                && (-2..2).contains(&key[2]))
+            {
+                missing.insert(key);
             }
+        }
+        for (key, chunk) in generated_chunks(seed, terrain, &missing, self.stream_y_chunks()) {
+            self.chunks.insert(key, chunk);
         }
         self.revision = revision;
         for key in changed {
@@ -179,7 +194,99 @@ impl World {
     }
 }
 
-pub(crate) fn generated_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
+pub(crate) fn generated_chunk(
+    seed: u64,
+    source: crate::TerrainSource,
+    key: [i32; 3],
+) -> Option<Chunk> {
+    match source {
+        crate::TerrainSource::LegacyIsland => legacy_chunk(seed, key),
+        crate::TerrainSource::Landscape => {
+            let mut missing = BTreeSet::new();
+            missing.insert(key);
+            landscape_stacks(seed, &missing, key[1]..key[1] + 1)
+                .into_iter()
+                .map(|(_, chunk)| chunk)
+                .next()
+        }
+    }
+}
+
+/// Generate every requested chunk that is not already stored.
+///
+/// The landscape source groups requests by their `(x, z)` chunk column and
+/// samples each metre-column once for the whole vertical band, then fills every
+/// requested layer from that one sample. Sampling per chunk instead would repeat
+/// the whole noise stack once per 16 m layer. The legacy fixture is a low, shallow
+/// island whose window has three layers, so per-chunk generation stays correct
+/// and cheap for it.
+fn generated_chunks(
+    seed: u64,
+    source: crate::TerrainSource,
+    missing: &BTreeSet<[i32; 3]>,
+    y_chunks: std::ops::Range<i32>,
+) -> Vec<([i32; 3], Chunk)> {
+    match source {
+        crate::TerrainSource::LegacyIsland => missing
+            .iter()
+            .filter_map(|&key| legacy_chunk(seed, key).map(|chunk| (key, chunk)))
+            .collect(),
+        crate::TerrainSource::Landscape => landscape_stacks(seed, missing, y_chunks),
+    }
+}
+
+fn landscape_stacks(
+    seed: u64,
+    missing: &BTreeSet<[i32; 3]>,
+    y_chunks: std::ops::Range<i32>,
+) -> Vec<([i32; 3], Chunk)> {
+    use crate::landscape;
+    let layers_supported = y_chunks.len();
+    let mut by_column: BTreeMap<[i32; 2], Vec<i32>> = BTreeMap::new();
+    for key in missing {
+        by_column.entry([key[0], key[2]]).or_default().push(key[1]);
+    }
+    let mut generated = Vec::new();
+    for ([chunk_x, chunk_z], mut layers) in by_column {
+        layers.sort_unstable();
+        debug_assert!(layers.len() <= layers_supported);
+        let mut voxels = vec![[0u8; CHUNK_VOLUME]; layers.len()];
+        let mut solid = vec![0usize; layers.len()];
+        for x in chunk_x * 16..chunk_x * 16 + 16 {
+            for z in chunk_z * 16..chunk_z * 16 + 16 {
+                let column = landscape::column(seed, x, z);
+                for (slot, &chunk_y) in layers.iter().enumerate() {
+                    let bottom = chunk_y * 16;
+                    let floor = bottom.max(LANDSCAPE_MIN_Y);
+                    let mut y = (bottom + 15).min(column.height);
+                    while y >= floor {
+                        let material = landscape::material_in_column(seed, &column, x, y, z);
+                        if material != 0 {
+                            voxels[slot][address([x, y, z]).1] = material;
+                            solid[slot] += 1;
+                        }
+                        y -= 1;
+                    }
+                }
+            }
+        }
+        for (slot, payload) in voxels.into_iter().enumerate() {
+            if solid[slot] == 0 {
+                continue;
+            }
+            generated.push((
+                [chunk_x, layers[slot], chunk_z],
+                Chunk {
+                    voxels: Arc::new(payload),
+                    solid: solid[slot],
+                },
+            ));
+        }
+    }
+    generated
+}
+
+fn legacy_chunk(seed: u64, key: [i32; 3]) -> Option<Chunk> {
     let mut chunk = Chunk {
         voxels: Arc::new([0; CHUNK_VOLUME]),
         solid: 0,

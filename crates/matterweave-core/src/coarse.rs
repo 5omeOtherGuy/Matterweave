@@ -297,7 +297,7 @@ impl World {
         };
         // Procedural generation is defined only inside the simulation domain. Cells
         // outside it contribute air, even when a stored override covers them.
-        if !Self::contains_stream_cell(key.map(|v| v * CHUNK_EDGE)) {
+        if !self.contains_stream_cell(key.map(|v| v * CHUNK_EDGE)) {
             return None;
         }
         match stream.overrides.get(&key) {
@@ -306,8 +306,13 @@ impl World {
             Some(chunk) => chunk.as_ref().map(FineSource::Stored),
             // Mirrors `stream_around`: a missing chunk in the legacy square is
             // snapshot-authoritative air, including deletions.
-            None if (-2..2).contains(&key[0]) && (-2..2).contains(&key[2]) => None,
-            None => generated_chunk(self.seed, key).map(FineSource::Generated),
+            None if self.terrain == crate::TerrainSource::LegacyIsland
+                && (-2..2).contains(&key[0])
+                && (-2..2).contains(&key[2]) =>
+            {
+                None
+            }
+            None => generated_chunk(self.seed, self.terrain, key).map(FineSource::Generated),
         }
     }
 }
