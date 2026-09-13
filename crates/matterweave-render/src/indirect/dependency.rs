@@ -1,126 +1,182 @@
-//! Bounded exact dependency tracking for retained mesh-proxy edits.
+//! Bounded dependency tracking for retained mesh-proxy edits, at sample
+//! granularity.
 //!
-//! `IndirectVolume` publishes only a complete volume for one key, so when a
-//! mesh proxy moves or is edited the whole volume is normally recomputed. That
-//! is correct but wastes work: a one-cell body move cannot change most face
-//! values. This module records, per completed face, the proxy cells the face's
-//! value actually depends on, and answers the one question the retention path
-//! needs: which completed faces does an old/new proxy diff invalidate?
+//! `IndirectVolume` publishes only a complete volume for one key, so when a mesh
+//! proxy moves or is edited the whole volume is normally recomputed. That is
+//! correct but wastes work: a one-cell body move cannot change most face values.
+//! This module records, per completed *quadrature sample*, the proxy cells that
+//! sample's value was computed from, keeps the sample's contribution, and
+//! answers the two questions the retention path needs:
+//!
+//! 1. which (face, sample) pairs does an old/new proxy diff invalidate, and
+//! 2. what is a retained sample's contribution?
+//!
+//! Faces are the wrong unit for the first question. A moved body cell usually
+//! crosses the gather or shadow segment of one or two of a face's `samples`
+//! quadrature rays, so a face-level answer must recompute the whole 16-sample
+//! loop to refresh those one or two rays. Measuring the production-shaped motion
+//! fixture (`moving_lighting_probe`) put the shipped wetland budget (rays 1024)
+//! on the wrong side of that: a one-cell move in a debris field invalidates more
+//! faces than one budget slice can resample, so the volume never finishes and
+//! indirect lighting stays off for the whole walk. A sample is the smallest unit
+//! whose completeness is independently decidable and whose value can be kept, so
+//! it is the unit this module tracks.
 //!
 //! # What is recorded, and why it is exact
 //!
-//! A face value is a deterministic function of the world (constant for one
-//! revision/epoch key), the sun, the quadrature, the face's own cell and its
-//! outward neighbor (the exposure test), and the *segments* the sample loop
-//! traces: a gather segment of up to `distance` from the face origin, then a
-//! hit-to-sun segment of up to `distance` from the gather hit point. Both
-//! segments are `trace_scene`, so they read `World` cells and proxy cells.
+//! A face value is `sum(contributions) / samples`, added in ascending sample
+//! order. Sample `i`'s contribution is a deterministic function of the world
+//! (constant inside one key), the sun, the quadrature (face normal and `i`), the
+//! face's own cell and its outward neighbor (the exposure test), and the
+//! *segments* the sample loop traces: a gather segment of up to `distance` from
+//! the face origin, then, when that hit faces the sun, a hit-to-sun segment of
+//! up to `distance` from the gather hit point. Both segments are `trace_scene`,
+//! so they read `World` cells and proxy cells.
 //!
 //! World cells are constant inside one key: any world revision or replacement
 //! epoch change clears the whole volume in `IndirectVolume::update`. Only proxy
-//! cells can change without a key change, so only proxy cells are recorded
-//! here. For each traced segment [`walk_segment`] visits exactly the cells
+//! cells can change without a key change, so only proxy cells are recorded here.
+//! For each traced segment [`walk_segment`] visits exactly the cells
 //! `matterweave_core::World::raycast` reads - the DDA path is purely geometric
 //! until it stops, so the cells read are the from-origin cells up to and
 //! including the first solid one, or every cell up to the traversal limit when
 //! nothing is hit. Empty cells on the path are recorded too: a later occluder
-//! inserted on a previously empty ray must invalidate the face, and a removed
-//! first hit must also invalidate it (the cells behind that hit were never
-//! read and are therefore not recorded, but the removed hit cell itself is).
+//! inserted on a previously empty ray must invalidate the sample, and a removed
+//! first hit must also invalidate it (the cells behind that hit were never read
+//! and are therefore not recorded, but the removed hit cell itself is).
 //!
-//! Exactness follows: if none of the recorded cells changed, every recorded
-//! cell holds the same material, so the DDA reads the same cells, stops at the
-//! same hit and the sample values are bit-identical. If a cell that is not
-//! recorded changed, it was never read in the completed state, and reading it
-//! requires traversing a recorded cell first - which is invalidated.
+//! Exactness is preserved by recording a *superset* of each sample's read set.
+//! The index space is the volume's coverage box coarsened to [`BLOCK_AXIS`]
+//! blocks (two cells per axis): a recorded cell marks its whole block, and a
+//! changed cell marks its whole block, so a sample whose recorded blocks are
+//! disjoint from the changed blocks provably read no changed cell, and its
+//! contribution is bit-identical to a fresh recomputation. The coarsening only
+//! ever invalidates *more* samples than the exact cell set would, which costs
+//! rays and never correctness. The same argument makes adding up retained and
+//! recomputed contributions bit-exact: the stored contribution is exactly the
+//! `f32` vector that was added to the running sum, so replaying them in
+//! ascending sample order reproduces the shipped accumulation order.
+//!
+//! A face is retained only when *all* of its samples are retained, so a
+//! partially retained face is recomputed from its retained contributions in
+//! order and its stored value is written once, at the end, exactly as before.
+//!
+//! The exposure test also reads the face's own cell and its outward neighbor;
+//! the own cell is recorded with every sample that runs, the outward neighbor
+//! with the first, and the edit path additionally expands every changed cell
+//! over its six axis neighbors' facing faces independently of the recorded
+//! samples, so a face whose exposure changed is always invalidated even when it
+//! has no recorded samples at all (an enclosed face records nothing).
 //!
 //! That argument is relative to one coverage box. The recorder walks the same
 //! `segment_exit`-clipped segment `MeshProxy::raycast` reads, and a face
-//! completed with no proxy records only its exposure cells, so a bitset is the
-//! read set only of the box and representation it was recorded under. Attaching
-//! or detaching the proxy, or moving or resizing its box, therefore changes what
-//! a recorded segment could have read and is a coverage change as well: no
-//! recorded bitset covers the newly reachable (or newly unreachable) cells.
-//!
-//! The exposure test also reads the face's own cell and its outward neighbor;
-//! both are recorded with the ray cells when a face starts sampling, and the
-//! edit path additionally expands every changed cell over its closed
-//! neighborhood independently of the bitsets, so a face whose exposure changed
-//! is always invalidated even if a bitset is missing or partial.
+//! completed with no proxy records only its exposure cells, so a recorded set is
+//! the read set only of the box and representation it was recorded under.
+//! Attaching or detaching the proxy, or moving or resizing its box, therefore
+//! changes what a recorded segment could have read and is a coverage change as
+//! well: no recorded set covers the newly reachable (or newly unreachable)
+//! cells.
 //!
 //! # Bounds
 //!
-//! The bitset index space is the volume's own coverage box (`cells <=
-//! MAX_FACE_SLOTS / 6`), so one face costs `ceil(cells / 64) * 8` bytes: at
-//! most 512 bytes. Bitsets are allocated lazily, once per face, from an arena
-//! capped by the caller's `max_bytes`. The cap bounds the tracker's whole
-//! resident footprint - the arena, the fixed arrays and this struct - so
-//! `resident_bytes() <= cap_bytes()` holds without an unaccounted overshoot.
-//! When the cap is reached (or the arena
-//! cannot grow), that face is marked [`UNTRACKED`]: it keeps a correct value
-//! but is recomputed on every proxy edit instead of being retained. The status
-//! reports tracked, untracked and outside-cell counts so the cost and the
-//! degradation are visible, never silent.
+//! One sampled face costs `samples * ceil(blocks / 64) * 8` dependency bytes
+//! plus `samples * 12` contribution bytes: with the production `samples = 16`,
+//! the 20 x 10 x 20 wetland box coarsens to 10 x 5 x 10 = 500 blocks (8 words,
+//! 64 bytes per sample), so a face costs 16 * 64 + 16 * 12 = 1 216 bytes and the
+//! app's 6 MiB cap covers about five thousand sampled faces. Faces are allocated
+//! lazily, once per face, from an arena capped by the caller's `max_bytes`. The
+//! cap bounds the tracker's whole resident footprint - the arena, the fixed
+//! arrays and this struct - so `resident_bytes() <= cap_bytes()` holds without
+//! an unaccounted overshoot. When the cap is reached (or the arena cannot grow),
+//! that face is marked [`UNTRACKED`]: it keeps a correct value but is recomputed
+//! on every proxy edit instead of being retained. The status reports tracked,
+//! untracked and outside-cell counts so the cost and the degradation are
+//! visible, never silent.
 //!
-//! A changed cell outside the index space cannot be represented, so such an
-//! edit is a coverage change: [`invalidate_edit`] reports `tracked: false` and
-//! the caller clears every value, the same conservative behavior as replacing
-//! the representation. A `None` <-> `Some` proxy transition and any change to
-//! the proxy's `origin` or `dimensions` are coverage changes for the same
-//! reason (see above), with the same fallback. Recording a cell outside the index
-//! space is ignored for the same reason: under the coverage rule it holds air in
-//! every attached proxy, so it cannot change without triggering that fallback.
+//! A changed cell outside the index space cannot be represented, so such an edit
+//! is a coverage change: [`invalidate_edit`] reports `tracked: false` and the
+//! caller clears every value, the same conservative behavior as replacing the
+//! representation. A `None` <-> `Some` proxy transition and any change to the
+//! proxy's `origin` or `dimensions` are coverage changes for the same reason
+//! (see above), with the same fallback. Recording a cell outside the index space
+//! is ignored for the same reason: under the coverage rule it holds air in every
+//! attached proxy, so it cannot change without triggering that fallback.
 
 use crate::indirect::MeshProxy;
 use matterweave_core::MAX_RAY_DISTANCE;
 use std::cmp::Ordering;
 
-/// The face has no dependency bitset yet (never sampled) or had one and lost it
-/// to a coverage fallback. Faces without a bitset are never retained on their
-/// bits, but only faces that hold a completed value must be invalidated.
+/// The face has no dependency storage yet (never sampled) or had one and lost it
+/// to a coverage fallback. Faces without storage are never retained, but only
+/// faces that hold a completed value must be invalidated.
 const NO_BITS: u32 = u32::MAX;
-/// The face's bitset could not be allocated within the tracking memory cap. It
-/// is recomputed on every proxy edit.
+/// The face's dependency storage could not be allocated within the tracking
+/// memory cap. It is recomputed on every proxy edit.
 const UNTRACKED: u32 = u32::MAX - 1;
+/// Cells per dependency index-space block along each axis. One means the index
+/// space is the coverage box at cell resolution and one sampled face costs
+/// `samples * ceil(cells / 64) * 8` bytes (8 KiB for the wetland box at the
+/// production sample count, which no reasonable cap can cover for a box-sized
+/// scene); two keeps a per-sample record at roughly one block per ray step and a
+/// sampled face inside a few hundred bytes, at the cost of invalidating a sample
+/// whose ray crossed another cell of the same 2 x 2 x 2 block as a changed cell.
+const BLOCK_AXIS: i32 = 2;
 
-/// Per-face proxy-cell dependency bitsets for one coverage box.
+/// Per-(face, sample) proxy-cell dependency records and retained contributions
+/// for one coverage box.
 pub(crate) struct MeshDependencies {
     origin: [i32; 3],
     dimensions: [u32; 3],
-    /// Cells in the index space.
+    /// Cells in the coverage box (the cell-resolution changed mask's space).
     cells: usize,
-    /// `u64` words per face bitset.
+    /// Blocks per axis of the dependency index space.
+    blocks: [usize; 3],
+    /// Blocks in the dependency index space.
+    block_cells: usize,
+    /// `u64` words in one sample's bitset.
     words: usize,
+    /// Quadrature samples per face: bitsets and contributions a face owns.
+    samples: usize,
     /// Face slots (`cells * 6`).
     slots: usize,
-    /// Arena budget in bytes; the offsets array, the changed mask and this
-    /// struct are already deducted, so this bounds the bitsets themselves. That
-    /// makes [`Self::cap_bytes`] an upper bound on [`Self::resident_bytes`]
-    /// rather than a bound on the arrays alone.
+    /// Bytes one sampled face spends: its sample bitsets and contributions.
+    per_face_bytes: usize,
+    /// Arena budget in bytes for the bitsets and contributions of every tracked
+    /// face. The offsets array, the changed masks and this struct are already
+    /// deducted, so this bounds the arenas themselves. That makes
+    /// [`Self::cap_bytes`] an upper bound on [`Self::resident_bytes`] rather than
+    /// a bound on the arrays alone.
     arena_cap_bytes: usize,
-    /// Arena word offset per face slot, or [`NO_BITS`] / [`UNTRACKED`].
+    /// Arena face index per slot, or [`NO_BITS`] / [`UNTRACKED`].
     offsets: Vec<u32>,
-    /// Face-major packed bitsets.
-    arena: Vec<u64>,
-    /// Scratch mask of cells whose proxy material differs in the current edit.
-    changed: Vec<u64>,
+    /// Face-major sample bitsets: `samples * words` words per arena face.
+    bits: Vec<u64>,
+    /// Face-major retained contributions: `samples` vectors per arena face.
+    contributions: Vec<[f32; 3]>,
     tracked_faces: usize,
     untracked_faces: usize,
     /// Recorded segment cells outside the index space, reported for honesty.
     outside_cells: usize,
-    /// Face slot currently recording, set by [`Self::begin_face`].
+    /// Scratch, cell resolution: cells whose proxy material differs in the
+    /// current edit. Used for the exposure rule.
+    changed_cells: Vec<u64>,
+    /// Scratch, block resolution: blocks containing a changed cell. Used to
+    /// invalidate samples.
+    changed_blocks: Vec<u64>,
+    /// Face slot currently recording, set by [`Self::begin_sample`].
     active: Option<usize>,
-    /// The active face's bitset must be zeroed before the next bit is set.
-    clear_active: bool,
+    /// Sample index currently recording.
+    active_sample: usize,
 }
 
 impl MeshDependencies {
     /// Validates the index space and allocates the per-face offset and changed
     /// mask arrays. `cap_bytes` is clamped to the engine maximum by the caller
-    /// and must cover those arrays, this struct and at least one face bitset.
+    /// and must cover those arrays, this struct and one face's records.
     pub(crate) fn new(
         origin: [i32; 3],
         dimensions: [u32; 3],
+        samples: u32,
         slots: usize,
         cap_bytes: usize,
     ) -> Result<Self, String> {
@@ -129,16 +185,27 @@ impl MeshDependencies {
             .try_fold(1usize, |n, &d| n.checked_mul(d as usize))
             .filter(|&n| n > 0 && n * 6 == slots)
             .ok_or("Dependency tracking requires one face slot per coverage cell face")?;
-        let words = cells.div_ceil(64);
+        let samples = samples.max(1) as usize;
+        let blocks: [usize; 3] =
+            std::array::from_fn(|axis| (dimensions[axis] as usize).div_ceil(BLOCK_AXIS as usize));
+        let block_cells = blocks
+            .iter()
+            .try_fold(1usize, |n, &d| n.checked_mul(d))
+            .filter(|&n| n > 0)
+            .ok_or("Dependency tracking block space overflow")?;
+        let words = block_cells.div_ceil(64);
+        let cell_words = cells.div_ceil(64);
+        let per_face_bytes = samples
+            .checked_mul(words)
+            .and_then(|bits| bits.checked_mul(std::mem::size_of::<u64>()))
+            .and_then(|bits| bits.checked_add(samples * std::mem::size_of::<[f32; 3]>()))
+            .ok_or("Dependency tracking per-face size overflow")?;
         let offsets_bytes = slots
             .checked_mul(std::mem::size_of::<u32>())
             .ok_or("Dependency tracking offsets overflow")?;
-        let changed_bytes = words
-            .checked_mul(std::mem::size_of::<u64>())
-            .ok_or("Dependency tracking mask overflow")?;
-        let per_face_bytes = words * std::mem::size_of::<u64>();
         let fixed = offsets_bytes
-            .checked_add(changed_bytes)
+            .checked_add(cell_words * std::mem::size_of::<u64>())
+            .and_then(|fixed| fixed.checked_add(words * std::mem::size_of::<u64>()))
             .ok_or("Dependency tracking size overflow")?;
         // The cap bounds the whole tracker, this struct included, so that
         // `resident_bytes() <= cap_bytes()` holds exactly. Every byte of the cap
@@ -150,7 +217,8 @@ impl MeshDependencies {
             .filter(|&free| free >= per_face_bytes)
             .ok_or_else(|| {
                 format!(
-                    "Dependency tracking needs at least {} bytes for {slots} faces of {cells} cells",
+                    "Dependency tracking needs at least {} bytes for {slots} faces of {cells} \
+                     cells at {samples} samples",
                     fixed + struct_bytes + per_face_bytes
                 )
             })?;
@@ -159,38 +227,62 @@ impl MeshDependencies {
             .try_reserve_exact(slots)
             .map_err(|e| format!("Dependency tracking offsets allocation: {e}"))?;
         offsets.resize(slots, NO_BITS);
-        let mut changed = Vec::new();
-        changed
+        let mut changed_cells = Vec::new();
+        changed_cells
+            .try_reserve_exact(cell_words)
+            .map_err(|e| format!("Dependency tracking cell mask allocation: {e}"))?;
+        changed_cells.resize(cell_words, 0);
+        let mut changed_blocks = Vec::new();
+        changed_blocks
             .try_reserve_exact(words)
-            .map_err(|e| format!("Dependency tracking mask allocation: {e}"))?;
-        changed.resize(words, 0);
+            .map_err(|e| format!("Dependency tracking block mask allocation: {e}"))?;
+        changed_blocks.resize(words, 0);
         Ok(Self {
             origin,
             dimensions,
             cells,
+            blocks,
+            block_cells,
             words,
+            samples,
             slots,
+            per_face_bytes,
             arena_cap_bytes,
             offsets,
-            arena: Vec::new(),
-            changed,
+            bits: Vec::new(),
+            contributions: Vec::new(),
             tracked_faces: 0,
             untracked_faces: 0,
             outside_cells: 0,
+            changed_cells,
+            changed_blocks,
             active: None,
-            clear_active: false,
+            active_sample: 0,
         })
     }
 
     pub(crate) fn resident_bytes(&self) -> usize {
         self.offsets.len() * std::mem::size_of::<u32>()
-            + self.arena.len() * std::mem::size_of::<u64>()
-            + self.changed.len() * std::mem::size_of::<u64>()
+            + self.bits.len() * std::mem::size_of::<u64>()
+            + self.contributions.len() * std::mem::size_of::<[f32; 3]>()
+            + self.changed_cells.len() * std::mem::size_of::<u64>()
+            + self.changed_blocks.len() * std::mem::size_of::<u64>()
             + std::mem::size_of::<Self>()
     }
 
-    pub(crate) fn bits_per_face(&self) -> usize {
-        self.cells
+    /// Dependency cells (index-space blocks): one bit of every `(face, sample)`
+    /// dependency set maps to one of them.
+    pub(crate) fn dependency_cells(&self) -> usize {
+        self.block_cells
+    }
+
+    /// Cells per dependency index-space block along each axis.
+    pub(crate) fn block_axis(&self) -> u32 {
+        BLOCK_AXIS as u32
+    }
+
+    pub(crate) fn samples(&self) -> usize {
+        self.samples
     }
 
     pub(crate) fn face_slots(&self) -> usize {
@@ -203,7 +295,8 @@ impl MeshDependencies {
     pub(crate) fn cap_bytes(&self) -> usize {
         self.arena_cap_bytes
             + self.offsets.len() * std::mem::size_of::<u32>()
-            + self.changed.len() * std::mem::size_of::<u64>()
+            + self.changed_cells.len() * std::mem::size_of::<u64>()
+            + self.changed_blocks.len() * std::mem::size_of::<u64>()
             + std::mem::size_of::<Self>()
     }
 
@@ -219,89 +312,160 @@ impl MeshDependencies {
         self.outside_cells
     }
 
-    /// Start recording the dependency of `slot`. The bitset is zeroed lazily, at
-    /// the first recorded cell, so a face that records nothing costs no arena.
-    pub(crate) fn begin_face(&mut self, slot: usize) {
-        if slot < self.slots {
-            self.active = Some(slot);
-            self.clear_active = true;
-        }
-    }
-
-    /// Forget a face's recorded cells without starting a sample loop. A face
-    /// whose exposure test just failed traces no ray, so its only dependencies
-    /// are its own cell and its neighbor - recorded again the next time it
-    /// samples - and stale bits from an older placement must not keep
-    /// invalidating it.
-    pub(crate) fn reset_face(&mut self, slot: usize) {
-        if slot >= self.slots {
-            return;
-        }
+    /// Drop every recorded sample and contribution, keeping the allocated
+    /// capacity. The caller uses this whenever the volume's values are cleared:
+    /// a retained contribution is only meaningful for the value it was added
+    /// into, so a cleared volume must never replay one.
+    pub(crate) fn reset(&mut self) {
+        self.offsets.fill(NO_BITS);
+        self.bits.clear();
+        self.contributions.clear();
+        self.changed_cells.fill(0);
+        self.changed_blocks.fill(0);
+        self.tracked_faces = 0;
+        self.untracked_faces = 0;
         self.active = None;
-        self.clear_active = false;
-        if let NO_BITS | UNTRACKED = self.offsets[slot] {
-            return;
-        }
-        let offset = self.offsets[slot] as usize;
-        self.arena[offset..offset + self.words].fill(0);
     }
 
-    /// Record that the given world cell was read while computing the active
-    /// face. Cells outside the index space are counted and ignored; see the
+    /// Arena face index of one slot, or `None` when it has no records.
+    fn face_base(&self, slot: usize) -> Option<usize> {
+        match self.offsets.get(slot).copied() {
+            Some(NO_BITS) | Some(UNTRACKED) | None => None,
+            Some(offset) => Some(offset as usize),
+        }
+    }
+
+    /// Start recording sample `sample` of `slot`. The sample's bitset and stored
+    /// contribution are cleared, and `origin` (the face's own cell, which the
+    /// exposure test reads and every traced sample starts in) is recorded, so a
+    /// recorded sample's bitset is never empty. A sample whose bitset is empty
+    /// therefore means "not recorded" and is recomputed: see
+    /// [`Self::retained_contribution`].
+    pub(crate) fn begin_sample(&mut self, slot: usize, sample: usize, origin: [i32; 3]) {
+        self.active = None;
+        if slot >= self.slots || sample >= self.samples {
+            return;
+        }
+        let base = match self.offsets[slot] {
+            NO_BITS => match self.allocate(slot) {
+                Some(base) => base,
+                None => return,
+            },
+            UNTRACKED => return,
+            offset => offset as usize,
+        };
+        let start = base * self.samples * self.words + sample * self.words;
+        self.bits[start..start + self.words].fill(0);
+        self.contributions[base * self.samples + sample] = [0.; 3];
+        self.active = Some(slot);
+        self.active_sample = sample;
+        self.record_cell(origin);
+    }
+
+    /// Forget a face's recorded samples and contributions without starting a
+    /// sample loop. A face whose exposure test just failed traces no ray, so its
+    /// records are stale and must not keep invalidating it.
+    pub(crate) fn reset_face(&mut self, slot: usize) {
+        self.active = None;
+        let Some(base) = self.face_base(slot) else {
+            return;
+        };
+        let start = base * self.samples * self.words;
+        self.bits[start..start + self.samples * self.words].fill(0);
+        let contributions = base * self.samples;
+        self.contributions[contributions..contributions + self.samples].fill([0.; 3]);
+    }
+
+    /// Record that the given proxy cell was read while computing the active
+    /// sample. Cells outside the index space are counted and ignored; see the
     /// module docs for why that is exact under the coverage rule.
     pub(crate) fn record_cell(&mut self, cell: [i32; 3]) {
-        let Some(index) = self.index_of(cell) else {
+        let Some(index) = self.block_of(cell) else {
             self.outside_cells = self.outside_cells.saturating_add(1);
             return;
         };
         let Some(slot) = self.active else {
             return;
         };
-        if self.clear_active {
-            self.clear_active = false;
-            let offset = match self.offsets[slot] {
-                NO_BITS => match self.allocate(slot) {
-                    Some(offset) => offset,
-                    None => return,
-                },
-                UNTRACKED => return,
-                offset => offset,
-            };
-            let start = offset as usize;
-            self.arena[start..start + self.words].fill(0);
-        }
-        let offset = match self.offsets[slot] {
-            NO_BITS | UNTRACKED => return,
-            offset => offset,
-        } as usize;
-        let word = offset + index / 64;
-        self.arena[word] |= 1u64 << (index % 64);
+        let Some(base) = self.face_base(slot) else {
+            return;
+        };
+        let offset = base * self.samples * self.words + self.active_sample * self.words;
+        self.bits[offset + index / 64] |= 1u64 << (index % 64);
     }
 
-    /// Arena offset for a new bitset, or `None` when the cap or the allocator
+    /// The retained contribution of one sample, or `None` when the sample has no
+    /// recorded dependency set and must be recomputed. A recorded sample always
+    /// contains at least its face's own cell (see [`Self::begin_sample`]), so an
+    /// empty bitset means "not recorded" rather than "read nothing".
+    pub(crate) fn retained_contribution(&self, slot: usize, sample: usize) -> Option<[f32; 3]> {
+        if sample >= self.samples {
+            return None;
+        }
+        let base = self.face_base(slot)?;
+        let start = base * self.samples * self.words + sample * self.words;
+        if self.bits[start..start + self.words]
+            .iter()
+            .all(|&word| word == 0)
+        {
+            return None;
+        }
+        Some(self.contributions[base * self.samples + sample])
+    }
+
+    /// Store the contribution of a sample that was just traced, so a later edit
+    /// that keeps this sample can replay it bit-for-bit.
+    pub(crate) fn store_contribution(&mut self, slot: usize, sample: usize, value: [f32; 3]) {
+        if sample >= self.samples {
+            return;
+        }
+        if let Some(base) = self.face_base(slot) {
+            self.contributions[base * self.samples + sample] = value;
+        }
+    }
+
+    /// Arena face index for a new face, or `None` when the cap or the allocator
     /// refuses. Either way the face becomes [`UNTRACKED`] and is always
-    /// recomputed, so a missing bitset can never retain a stale value.
-    fn allocate(&mut self, slot: usize) -> Option<u32> {
-        let offset = self.arena.len();
-        let required = (offset + self.words) * std::mem::size_of::<u64>();
+    /// recomputed, so missing records can never retain a stale value.
+    fn allocate(&mut self, slot: usize) -> Option<usize> {
+        let base = self.bits.len() / (self.samples * self.words);
+        let required = (base + 1) * self.per_face_bytes;
         if required > self.arena_cap_bytes {
             self.offsets[slot] = UNTRACKED;
             self.untracked_faces = self.untracked_faces.saturating_add(1);
             return None;
         }
-        if self.arena.try_reserve_exact(self.words).is_err() {
+        debug_assert_eq!(base * self.samples, self.contributions.len());
+        if self
+            .bits
+            .try_reserve_exact(self.samples * self.words)
+            .is_err()
+            || self.contributions.try_reserve_exact(self.samples).is_err()
+        {
             self.offsets[slot] = UNTRACKED;
             self.untracked_faces = self.untracked_faces.saturating_add(1);
             return None;
         }
-        self.arena.resize(offset + self.words, 0);
-        let offset = offset as u32;
-        self.offsets[slot] = offset;
+        self.bits.resize((base + 1) * self.samples * self.words, 0);
+        self.contributions
+            .resize((base + 1) * self.samples, [0.; 3]);
+        self.offsets[slot] = base as u32;
         self.tracked_faces = self.tracked_faces.saturating_add(1);
-        Some(offset)
+        Some(base)
     }
 
-    /// Face-slot index space offset of a cell, or `None` outside the box.
+    /// Dependency block of a cell, or `None` outside the coverage box.
+    pub(crate) fn block_of(&self, cell: [i32; 3]) -> Option<usize> {
+        let local: [i64; 3] =
+            std::array::from_fn(|a| i64::from(cell[a]) - i64::from(self.origin[a]));
+        if (0..3).any(|a| local[a] < 0 || local[a] >= i64::from(self.dimensions[a])) {
+            return None;
+        }
+        let block: [usize; 3] = std::array::from_fn(|a| local[a] as usize / BLOCK_AXIS as usize);
+        Some(block[0] + self.blocks[0] * (block[1] + self.blocks[1] * block[2]))
+    }
+
+    /// Cell-slot index space offset of a cell, or `None` outside the box.
     pub(crate) fn index_of(&self, cell: [i32; 3]) -> Option<usize> {
         let local: [i64; 3] =
             std::array::from_fn(|a| i64::from(cell[a]) - i64::from(self.origin[a]));
@@ -312,20 +476,41 @@ impl MeshDependencies {
         Some(x + self.dimensions[0] as usize * (y + self.dimensions[1] as usize * z))
     }
 
-    /// Whether a face's recorded proxy cells intersect the current changed mask.
-    /// An [`UNTRACKED`] face always intersects: it must be recomputed.
-    fn intersects_changed(&self, slot: usize) -> bool {
-        match self.offsets[slot] {
-            NO_BITS => false,
-            UNTRACKED => true,
-            offset => {
-                let start = offset as usize;
-                self.arena[start..start + self.words]
-                    .iter()
-                    .zip(&self.changed)
-                    .any(|(bits, changed)| bits & changed != 0)
+    /// Zero every sample of `slot` whose recorded blocks intersect the current
+    /// changed blocks, and report whether any was zeroed. An [`UNTRACKED`] face
+    /// has no records and is always invalidated by the caller.
+    fn invalidate_samples(&mut self, slot: usize) -> bool {
+        let Some(base) = self.face_base(slot) else {
+            return false;
+        };
+        let (samples, words) = (self.samples, self.words);
+        let mut invalidated = false;
+        for sample in 0..samples {
+            let start = base * samples * words + sample * words;
+            let intersects = self.bits[start..start + words]
+                .iter()
+                .zip(&self.changed_blocks)
+                .any(|(bits, changed)| bits & changed != 0);
+            if intersects {
+                self.bits[start..start + words].fill(0);
+                self.contributions[base * samples + sample] = [0.; 3];
+                invalidated = true;
             }
         }
+        invalidated
+    }
+
+    fn cell_of(&self, index: usize) -> Option<[i32; 3]> {
+        if index >= self.cells {
+            return None;
+        }
+        let dx = self.dimensions[0] as usize;
+        let dy = self.dimensions[1] as usize;
+        Some([
+            self.origin[0] + (index % dx) as i32,
+            self.origin[1] + ((index / dx) % dy) as i32,
+            self.origin[2] + (index / (dx * dy)) as i32,
+        ])
     }
 }
 
@@ -343,28 +528,30 @@ pub(crate) struct EditCounts {
     pub(crate) dirty_faces: usize,
     /// Lowest dirty slot, so the caller can resume its scan there.
     pub(crate) first_dirty: Option<usize>,
-    /// Whether exact dependency tracking decided the invalidation. `false` means
-    /// a coverage change: the caller must clear every value.
+    /// Whether dependency tracking decided the invalidation. `false` means a
+    /// coverage change: the caller must clear every value.
     pub(crate) tracked: bool,
 }
 
-/// Invalidate the completed faces an old/new proxy diff can change.
+/// Invalidate the completed faces an old/new proxy diff can change, at sample
+/// granularity.
 ///
 /// The diff is over proxy cells only: the union material changed at a cell whose
 /// proxy material changed (the world is constant for one key), and a cell whose
 /// proxy material changed under world-solid geometry over-invalidates, which is
-/// conservative. Every changed cell is expanded over its closed neighborhood so
-/// the exposure tests of those faces are reconsidered, and every tracked face
-/// whose recorded segment cells intersect the changed set is invalidated.
+/// conservative. Every changed cell expands over the faces whose exposure test
+/// reads it - its own six and the six facing it from its axis neighbors - so an
+/// exposure change is caught even when a face has no recorded samples at all.
+/// Every sample whose recorded blocks intersect the changed blocks is dropped,
+/// which leaves its face dirty while its other samples stay replayable.
 ///
-/// A recorded bitset is the read set only for the coverage box it was recorded
+/// A recorded set is the read set only for the coverage box it was recorded
 /// under, because the recorder walks the same `segment_exit`-clipped segment the
-/// DDA reads and a face completed with no proxy records only its exposure cells.
-/// Attaching or detaching the proxy (`None` <-> `Some`), or moving or resizing
-/// its box, therefore changes what a recorded segment could have read; that is a
-/// coverage change ([`EditCounts::tracked`] `= false`) and the caller clears
-/// every value instead of comparing bitsets it cannot trust.
-///
+/// DDA reads and a sample's bitset marks blocks, not cells. Attaching or
+/// detaching the proxy (`None` <-> `Some`), or moving or resizing its box,
+/// therefore changes what a recorded segment could have read; that is a coverage
+/// change ([`EditCounts::tracked`] `= false`) and the caller clears every value
+/// instead of comparing records it cannot trust.
 pub(crate) fn invalidate_edit(
     deps: &mut MeshDependencies,
     old: Option<&MeshProxy>,
@@ -372,7 +559,8 @@ pub(crate) fn invalidate_edit(
     values: &mut [[f32; 4]],
     done: &mut [u64],
 ) -> EditCounts {
-    deps.changed.fill(0);
+    deps.changed_cells.fill(0);
+    deps.changed_blocks.fill(0);
     // `None` vs `Some`, or any change to the box: see the note above. The
     // `None`/`None` case (no proxy either side) is not a change.
     let coverage_changed = old.map(|proxy| (proxy.origin(), proxy.dimensions()))
@@ -414,16 +602,21 @@ pub(crate) fn invalidate_edit(
             continue;
         }
         changed_cells += 1;
-        match deps.index_of(cell) {
-            Some(index) => deps.changed[index / 64] |= 1u64 << (index % 64),
-            None => outside = true,
+        let index = deps.index_of(cell);
+        let block = deps.block_of(cell);
+        match (index, block) {
+            (Some(index), Some(block)) => {
+                deps.changed_cells[index / 64] |= 1u64 << (index % 64);
+                deps.changed_blocks[block / 64] |= 1u64 << (block % 64);
+            }
+            _ => outside = true,
         }
     }
     if outside || coverage_changed {
         // A changed cell outside the index space cannot be represented exactly,
-        // and a changed coverage box makes every recorded bitset a read set for
-        // a different box. Report the diff and let the caller apply its
-        // full-clear semantics.
+        // and a changed coverage box makes every recorded set a read set for a
+        // different box. Report the diff and let the caller apply its full-clear
+        // semantics.
         return EditCounts {
             changed_cells,
             tracked: false,
@@ -431,34 +624,38 @@ pub(crate) fn invalidate_edit(
         };
     }
     let mut invalidated = 0usize;
-    // Independent of the recorded bitsets: every closed neighborhood of a
-    // changed cell has its six faces invalidated, so an exposure change is
-    // caught even when a face has no bitset or a partial one.
-    for index in set_bits(&deps.changed) {
+    // Independent of the recorded samples: every face whose exposure test reads a
+    // changed cell is invalidated, so an exposure change is caught even when the
+    // face recorded no sample at all.
+    for index in set_bits(&deps.changed_cells) {
         let Some(cell) = deps.cell_of(index) else {
             continue;
         };
-        for neighbor in NEIGHBORHOOD {
-            let probe = [
-                cell[0] + neighbor[0],
-                cell[1] + neighbor[1],
-                cell[2] + neighbor[2],
+        for normal in FACE_NORMALS {
+            // The face `cell` owns in that direction, and the face its `normal`
+            // axis neighbor owns looking back: exactly the faces whose exposure
+            // test reads `cell`.
+            let owner = [
+                cell[0] - normal[0],
+                cell[1] - normal[1],
+                cell[2] - normal[2],
             ];
-            let Some(probe_index) = deps.index_of(probe) else {
-                continue;
-            };
-            let base = probe_index * 6;
-            for face in 0..6 {
-                invalidated += invalidate_slot(values, done, base + face);
+            for (slot_cell, slot_normal) in [(cell, normal), (owner, normal)] {
+                if let Some(slot) = slot_of(deps, slot_cell, slot_normal) {
+                    invalidated += invalidate_slot(values, done, slot);
+                }
             }
         }
     }
-    // Exact rays: a completed face whose recorded segment cells intersect the
-    // changed set is invalidated; a face with no bitset at all records no ray
-    // dependency and is decided by the exposure rule above. `UNTRACKED` faces
-    // always intersect and are always recomputed.
+    // Samples: a sample whose recorded blocks intersect the changed blocks is
+    // dropped, which dirties its face. `UNTRACKED` faces are always dropped.
     for slot in 0..deps.slots {
-        if deps.intersects_changed(slot) {
+        let dropped = match deps.offsets[slot] {
+            NO_BITS => false,
+            UNTRACKED => true,
+            _ => deps.invalidate_samples(slot),
+        };
+        if dropped {
             invalidated += invalidate_slot(values, done, slot);
         }
     }
@@ -473,6 +670,14 @@ pub(crate) fn invalidate_edit(
         first_dirty,
         tracked: true,
     }
+}
+
+/// Face slot of `cell` with outward `normal`, or a slot that cannot hold a value
+/// when the face is outside the coverage box.
+fn slot_of(deps: &MeshDependencies, cell: [i32; 3], normal: [i32; 3]) -> Option<usize> {
+    let index = deps.index_of(cell)?;
+    let face = FACE_NORMALS.iter().position(|&known| known == normal)?;
+    Some(index * 6 + face)
 }
 
 /// Packed-bit helpers shared with `IndirectVolume`'s per-face `done` bitmap.
@@ -506,6 +711,9 @@ pub(crate) fn bit_count(bits: &[u64], slots: usize) -> usize {
 /// revisits it) and zero its value. Returns 1 when it held a value and 0 when it
 /// was already dirty, so callers can count idempotently.
 fn invalidate_slot(values: &mut [[f32; 4]], done: &mut [u64], slot: usize) -> usize {
+    if slot >= values.len() {
+        return 0;
+    }
     bit_clear(done, slot);
     if values[slot][3] == 0.0 {
         return 0;
@@ -514,9 +722,10 @@ fn invalidate_slot(values: &mut [[f32; 4]], done: &mut [u64], slot: usize) -> us
     1
 }
 
-/// The changed cell and its six axis neighbors.
-const NEIGHBORHOOD: [[i32; 3]; 7] = [
-    [0, 0, 0],
+/// `IndirectVolume`'s face-slot order (`+X, -X, +Y, -Y, +Z, -Z`), repeated here
+/// because the exposure rule writes face slots directly; pinned against the
+/// volume's own table by `dependency_face_order_matches_the_volume_slot_order`.
+const FACE_NORMALS: [[i32; 3]; 6] = [
     [1, 0, 0],
     [-1, 0, 0],
     [0, 1, 0],
@@ -536,21 +745,6 @@ fn set_bits(mask: &[u64]) -> impl Iterator<Item = usize> + '_ {
     mask.iter().enumerate().flat_map(|(word, &bits)| {
         (0..64).filter_map(move |bit| (bits & (1u64 << bit) != 0).then_some(word * 64 + bit))
     })
-}
-
-impl MeshDependencies {
-    fn cell_of(&self, index: usize) -> Option<[i32; 3]> {
-        if index >= self.cells {
-            return None;
-        }
-        let dx = self.dimensions[0] as usize;
-        let dy = self.dimensions[1] as usize;
-        Some([
-            self.origin[0] + (index % dx) as i32,
-            self.origin[1] + ((index / dx) % dy) as i32,
-            self.origin[2] + (index / (dx * dy)) as i32,
-        ])
-    }
 }
 
 /// Visits exactly the cells `matterweave_core::World::raycast` reads for one
@@ -1367,7 +1561,7 @@ checked={} bytes={}",
                 status.tracked_faces,
                 status.untracked_faces,
                 status.outside_cells,
-                status.bits_per_face,
+                status.dependency_cells,
                 status.resident_bytes,
             );
             assert!(
@@ -1713,9 +1907,15 @@ checked={} bytes={}",
         let probe = volume
             .enable_proxy_retention(TRACKING_CAP)
             .expect("tracking probe");
-        let words = probe.bits_per_face.div_ceil(64);
-        let per_face = words * 8;
-        let fixed = probe.face_slots * 4 + words * 8;
+        let words = probe.dependency_cells.div_ceil(64);
+        let samples = probe.samples;
+        let per_face = samples * words * 8 + samples * 12;
+        let cell_words = (probe.dependency_cells
+            * probe.block_axis as usize
+            * probe.block_axis as usize
+            * probe.block_axis as usize)
+            .div_ceil(64);
+        let fixed = probe.face_slots * 4 + cell_words * 8 + words * 8;
         // Room for the fixed arrays, the tracker struct itself and eight face
         // bitsets only. The cap covers the whole tracker, so the struct is
         // charged before the bitsets.
@@ -1739,7 +1939,7 @@ checked={} bytes={}",
             "resident {} over cap {cap}",
             live.resident_bytes
         );
-        assert!(live.bits_per_face == probe.bits_per_face);
+        assert!(live.dependency_cells == probe.dependency_cells);
 
         let mut moved = sparse_scene();
         moved.push(([1, 3, 0], BODY_MATERIAL));
@@ -1890,6 +2090,68 @@ checked={} bytes={}",
             );
         }
         let _ = world;
+    }
+
+    /// The dependency module indexes face slots directly (`index * 6 + face`)
+    /// from its own normal table, so that table must be `IndirectVolume`'s slot
+    /// order. A mismatch would clear the wrong face's completed bit and leave
+    /// the face that actually changed holding a stale value.
+    #[test]
+    fn dependency_face_order_matches_the_volume_slot_order() {
+        assert_eq!(FACE_NORMALS, crate::indirect::NORMALS);
+    }
+
+    /// The budget fills a *sample*, not a face. A one-cell body move crosses the
+    /// gather or shadow segment of only some of a face's quadrature rays, so the
+    /// volume must replay the retained samples and trace only the dropped ones.
+    /// Per-face retention cannot satisfy the bound asserted here: every
+    /// invalidated face re-traces at least `SAMPLES` rays, so it always spends
+    /// `invalidated_faces * SAMPLES` rays or more. This is the regression test
+    /// for the mechanism that keeps a moving body's invalidated set inside one
+    /// production budget slice - the measured live fraction of the production
+    /// motion fixture depends on it (`moving_lighting_probe`).
+    #[test]
+    fn a_one_cell_edit_replays_retained_samples_instead_of_whole_faces() {
+        for (label, scene) in [("sparse", sparse_scene()), ("dense", dense_scene())] {
+            let world = World::new(0);
+            let mut cells = scene.clone();
+            cells.push(([0, 3, 0], BODY_MATERIAL));
+            let mut measured = retained_volume(BOX_ORIGIN, BOX_DIMENSIONS, GATHER_DISTANCE_M);
+            measured.set_mesh_proxy(Some(proxy(BOX_ORIGIN, BOX_DIMENSIONS, &cells)));
+            complete(&mut measured, &world, SUN);
+
+            let mut moved = scene.clone();
+            moved.push(([1, 3, 0], BODY_MATERIAL));
+            let edit = measured.replace_mesh_proxy(Some(proxy(BOX_ORIGIN, BOX_DIMENSIONS, &moved)));
+            assert_eq!(edit.changed_cells, 2, "{label}: one-cell move");
+            assert!(
+                edit.invalidated_faces > 0,
+                "{label}: the move must invalidate the faces it can change: {edit:?}"
+            );
+            let (frames, rays, work) = complete(&mut measured, &world, SUN);
+            let ceiling = edit.invalidated_faces * SAMPLES as usize;
+            println!(
+                "[retention] {label} sample replay: invalidated={} frames={frames} rays={rays} \
+work={work} face_retrace_ceiling={ceiling}",
+                edit.invalidated_faces,
+            );
+            assert!(
+                rays < ceiling,
+                "{label}: re-tracing every invalidated face costs at least {ceiling} rays; \
+{rays} rays means the invalidated faces were re-traced whole"
+            );
+
+            // The replay must be exact, not merely cheap.
+            let fresh = fresh_reference(
+                BOX_ORIGIN,
+                BOX_DIMENSIONS,
+                GATHER_DISTANCE_M,
+                &world,
+                SUN,
+                proxy(BOX_ORIGIN, BOX_DIMENSIONS, &moved),
+            );
+            assert_matches_fresh(&measured, &fresh, BOX_ORIGIN, BOX_DIMENSIONS, label);
+        }
     }
 
     /// Sixty one-cell moves: report the actual retention per frame, the real

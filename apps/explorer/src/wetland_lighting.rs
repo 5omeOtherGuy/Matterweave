@@ -64,20 +64,23 @@
 //!   a sub-cell move that keeps every triangle inside the cells it already
 //!   occupied leaves it unchanged, and cached radiance for that identical
 //!   representation stays valid.
-//! - **Continuous cell-crossing body motion withdraws GI until convergence.**
-//!   Every drawn-vertex change rebuilds the proxy, and every footprint change
-//!   retires the publication; while a body keeps crossing cell boundaries the
-//!   footprint keeps changing, so indirect radiance is off while the volume
-//!   recomputes and stays off until the fixed `UPDATE_BUDGET` has finished it.
-//!   The digest gate absorbs camera and LOD churn, not body motion.
-//!   Dependency retention (`INDIRECT_DEPENDENCY_BYTES`) shortens that recompute:
-//!   an edit invalidates only the completed faces whose recorded proxy cells
-//!   changed, so convergence is bounded by the invalidated set instead of the
-//!   box. It does not make a partially recomputed volume publishable —
-//!   complete-only publication is unchanged — so a moving body still turns GI
-//!   off for the frames its recompute needs. Continuous moving-cell/body GI
-//!   continuity is an open functional requirement, not part of this slice and
-//!   not Phase B cost/thermal work.
+//! - **Continuous cell-crossing body motion keeps GI live at the measured
+//!   motion rates, and the limit is the ray budget.** Every drawn-vertex change
+//!   rebuilds the proxy, and every footprint change retires the publication;
+//!   while a body keeps crossing cell boundaries the footprint keeps changing.
+//!   Dependency retention (`INDIRECT_DEPENDENCY_BYTES`) drops only the
+//!   quadrature samples whose recorded proxy cells changed, so a face whose
+//!   gather or shadow ray crosses one moved cell replays its other rays instead
+//!   of re-tracing all of them, and the invalidated set drains inside the fixed
+//!   `UPDATE_BUDGET` at every motion rate the host fixture exercises. The
+//!   digest gate absorbs camera and LOD churn, not body motion. The remaining
+//!   limit is the budget itself: a displacement that crosses enough of a face's
+//!   rays to need more than `UPDATE_BUDGET.rays` in one frame still cannot
+//!   publish that frame, and because a live motion invalidates again before the
+//!   next frame, the volume then stays dark until the motion pauses. Host
+//!   measurements, never a device claim; the Android visual gate for continuous
+//!   motion is **NOT RUN** and belongs to the phone owner (see
+//!   `docs/performance/logs/moving-gi-continuity.md`).
 //! - **No performance claim.** The per-frame budget is a bounded CPU work slice
 //!   over bounded volumes; nothing here is a device measurement.
 
@@ -117,14 +120,17 @@ const UPDATE_BUDGET: UpdateBudget = UpdateBudget {
     rays: 1024,
     work: 8192,
 };
-/// Memory cap for opt-in exact indirect dependency tracking, in bytes. The
-/// tracker records the proxy cells each completed face depends on, so a body
-/// move or edit recomputes only the faces whose recorded cells changed instead
-/// of the whole 4000-cell box. Bitsets are allocated lazily per sampled face
-/// under this cap: a face that does not fit is recomputed on every edit instead
-/// of being retained, so the cap bounds memory and degrades retention, never
-/// correctness. One face bitset is `ceil(4000 / 64) * 8 = 504` bytes, so this
-/// cap covers roughly twelve thousand sampled faces.
+/// Memory cap for opt-in indirect dependency tracking, in bytes. The tracker
+/// records the proxy cells each completed quadrature sample depends on, so a
+/// body move or edit re-traces only the samples whose recorded cells changed
+/// instead of the whole 4000-cell box. Records are allocated lazily per sampled
+/// face under this cap: a face that does not fit is recomputed on every edit
+/// instead of being retained, so the cap bounds memory and degrades retention,
+/// never correctness. One face's records are `SAMPLES` dependency sets over the
+/// index space - the 20x10x20 cell coverage box coarsened to 2 cells per axis,
+/// i.e. 10x5x10 = 500 blocks, 8 words = 64 bytes per sample - plus `SAMPLES`
+/// retained contributions of 12 bytes: 16 * 64 + 16 * 12 = 1 216 bytes, so this
+/// cap covers roughly five thousand sampled faces.
 const INDIRECT_DEPENDENCY_BYTES: usize = 6 * 1024 * 1024;
 /// Replacement epoch of the authoritative world. The wetland world is created
 /// once per session and never edited (all edits are detail-scene edits), so the
@@ -1498,6 +1504,84 @@ dependency_kib={} gi_live={}",
         assert_eq!(summary.pending_work, 0, "the retained volume must converge");
         assert_eq!(summary.dirty_faces, 0);
         assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    /// A sustained body walk: five consecutive one-cell steps, one per frame,
+    /// each crossing a cell boundary and therefore retiring the previous
+    /// publication. Every frame must publish a new complete, current volume in
+    /// that same frame, which is the production consequence of sample-level
+    /// retention (`docs/performance/logs/moving-gi-continuity.md`). The
+    /// `FakeSink` re-checks the renderer's own acceptance conditions on every
+    /// publication, so a partial or stale upload would be recorded as a
+    /// violation rather than pass unnoticed.
+    #[test]
+    fn a_sustained_body_walk_republishes_gi_on_every_frame() {
+        let fixture = Fixture::new();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        // A half-metre body over the plate's second row, aligned to a cell so
+        // each step changes exactly the cell it leaves and the cell it enters.
+        let body = |x: f32| {
+            let mut mesh = pebble(material::MOSS_TURF);
+            for vertex in &mut mesh.vertices {
+                vertex.position = [
+                    vertex.position[0] + x,
+                    vertex.position[1],
+                    vertex.position[2] + 1.2,
+                ];
+            }
+            mesh
+        };
+        let resting = body(-1.7);
+        let resting_source = FrameSource {
+            dynamic: &resting,
+            ..fixture.source()
+        };
+        settle(
+            &mut lighting,
+            &mut sink,
+            &resting_source,
+            InstallState::Installed,
+        );
+
+        let mut walk = Vec::new();
+        for step in 0..5 {
+            let moved = body(-1.7 + (step + 1) as f32);
+            let source = FrameSource {
+                dynamic: &moved,
+                ..fixture.source()
+            };
+            // The renderer's dynamic upload disables GI before this frame's
+            // lighting step, so the module has to republish to put it back.
+            sink.renderer_install();
+            let summary = lighting
+                .update(&mut sink, &source, InstallState::Current)
+                .expect("walk frame");
+            assert!(
+                summary.proxy_rebuilt,
+                "step {step}: a body cell crossing must rebuild the proxy"
+            );
+            assert!(
+                summary.invalidated_faces > 0,
+                "step {step}: the move must invalidate the faces it can change"
+            );
+            assert_eq!(
+                summary.dirty_faces, 0,
+                "step {step}: the invalidated set must drain inside the frame"
+            );
+            assert!(
+                summary.indirect_live && summary.pending_work == 0,
+                "step {step}: a complete, current volume must republish in this frame"
+            );
+            walk.push((step, summary.invalidated_faces, summary.retained_faces));
+        }
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+        println!(
+            "[wetland walk] steps={} live={} invalidated={:?}",
+            walk.len(),
+            sink.indirect_live(),
+            walk,
+        );
     }
 
     #[test]

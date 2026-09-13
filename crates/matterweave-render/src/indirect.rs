@@ -610,6 +610,14 @@ fn local_cell(origin: [i32; 3], dimensions: [u32; 3], index: u32) -> [i32; 3] {
 /// by an edit or cleared). Publication, `complete`, `valid_for` and
 /// `source_valid` still require every slot to be finished, so retention never
 /// publishes a partial or stale volume.
+///
+/// With [`IndirectVolume::enable_proxy_retention`] a mesh-proxy edit retains
+/// whole *quadrature samples*, not whole faces: the faces whose recorded sample
+/// dependencies an edit crossed are recomputed by replaying the samples it did
+/// not touch and tracing only the ones it did, which is what keeps a moved
+/// body's invalidated set inside one budget slice. A face is written once, at
+/// the end of its sample loop, so a partially retained face is never visible as
+/// a value.
 pub struct IndirectVolume {
     pub(crate) origin: [i32; 3],
     pub(crate) dimensions: [u32; 3],
@@ -622,16 +630,19 @@ pub struct IndirectVolume {
     sample_index: u32,
     sum: Vec3,
     mesh: Option<MeshProxy>,
-    /// Opt-in exact dependency tracking; `None` until
+    /// Opt-in dependency tracking; `None` until
     /// [`IndirectVolume::enable_proxy_retention`]. Its whole resident footprint
-    /// (bitsets, fixed arrays and its own state) is bounded by the cap.
-    tracking: Option<dependency::MeshDependencies>,
+    /// (dependency records, retained contributions, fixed arrays and its own
+    /// state) is bounded by the cap. Boxed so the tracker's own fields do not
+    /// grow the volume's inline footprint.
+    tracking: Option<Box<dependency::MeshDependencies>>,
     /// Per-face `done` bits for the current key: set as the scan resolves a
     /// face, either by writing a completed value or by testing its exposure and
     /// finding it enclosed. A cleared bit means the face still owes this key an
-    /// exposure test, and the update scan counts only those as work. Retention
-    /// clears bits for exactly the faces an edit invalidated, so a retained
-    /// volume drains its dirty set instead of rescanning the box.
+    /// exposure test or at least one replayed-or-traced sample, and the update
+    /// scan counts only those as work. Retention clears bits for exactly the
+    /// faces an edit invalidated, so a retained volume drains its dirty set
+    /// instead of rescanning the box.
     done: Vec<u64>,
 }
 
@@ -640,8 +651,13 @@ pub struct IndirectVolume {
 pub struct RetentionStatus {
     /// Face slots the tracker indexes.
     pub face_slots: usize,
-    /// Cells in the dependency index space (the volume's coverage box).
-    pub bits_per_face: usize,
+    /// Dependency index-space cells: the coverage box coarsened to
+    /// `block_axis` cells per axis per block.
+    pub dependency_cells: usize,
+    /// Cells per dependency index-space block along each axis.
+    pub block_axis: u32,
+    /// Quadrature samples tracked per face.
+    pub samples: usize,
     /// Caller cap after clamping to [`MAX_DEPENDENCY_BYTES`], including the
     /// tracker's own state. `resident_bytes` is always at most this value.
     pub cap_bytes: usize,
@@ -733,31 +749,38 @@ impl IndirectVolume {
             done,
         })
     }
-    /// Opt in to bounded exact dependency tracking for mesh-proxy edits.
+    /// Opt in to bounded dependency tracking for mesh-proxy edits, at
+    /// quadrature-sample granularity.
     ///
-    /// Records, per completed face, the proxy cells its value was computed from
-    /// and lets [`IndirectVolume::replace_mesh_proxy`] retain completed faces
-    /// whose dependencies did not change. `max_bytes` caps the tracker's total
-    /// memory - bitsets, fixed arrays and the tracker's own state - and is
-    /// clamped to [`MAX_DEPENDENCY_BYTES`]; bitsets are allocated lazily
-    /// per face from that cap, and a face that does not fit is recomputed on
-    /// every edit instead of being retained (`untracked_faces`).
+    /// Records, per completed sample of every completed face, the proxy cells
+    /// that sample's contribution was computed from, and keeps the contribution
+    /// itself. [`IndirectVolume::replace_mesh_proxy`] then drops only the samples
+    /// an edit can change: a face whose samples all survive keeps its value, and
+    /// a face whose samples partly survive replays the survivors and traces the
+    /// rest, in ascending sample order. `max_bytes` caps the tracker's total
+    /// memory - dependency records, retained contributions, fixed arrays and the
+    /// tracker's own state - and is clamped to [`MAX_DEPENDENCY_BYTES`]; records
+    /// are allocated lazily per face from that cap, and a face that does not fit
+    /// is recomputed on every edit instead of being retained
+    /// (`untracked_faces`).
     ///
     /// Enabling (or re-enabling) invalidates the current output: values computed
     /// without a dependency record may not be retained. The attached proxy, the
     /// coverage box, `samples` and `distance` are unaffected. The volume's own
-    /// coverage box is the dependency index space, so a proxy whose changed
-    /// cells fall outside it is a coverage change and clears all values.
+    /// coverage box, coarsened to `RetentionStatus::block_axis` cells per axis,
+    /// is the dependency index space, so a proxy whose changed cells fall outside
+    /// it is a coverage change and clears all values.
     pub fn enable_proxy_retention(&mut self, max_bytes: usize) -> Result<RetentionStatus, String> {
         let cap = max_bytes.min(MAX_DEPENDENCY_BYTES);
         let tracking = dependency::MeshDependencies::new(
             self.origin,
             self.dimensions,
+            self.samples,
             self.values.len(),
             cap,
         )?;
         let status = Self::status_of(&tracking, cap);
-        self.tracking = Some(tracking);
+        self.tracking = Some(Box::new(tracking));
         // Values computed without a dependency record must not be retained, and
         // a replaced tracker's records describe a different rule set.
         self.clear();
@@ -772,7 +795,9 @@ impl IndirectVolume {
     fn status_of(tracking: &dependency::MeshDependencies, cap: usize) -> RetentionStatus {
         RetentionStatus {
             face_slots: tracking.face_slots(),
-            bits_per_face: tracking.bits_per_face(),
+            dependency_cells: tracking.dependency_cells(),
+            block_axis: tracking.block_axis(),
+            samples: tracking.samples(),
             cap_bytes: cap,
             resident_bytes: tracking.resident_bytes(),
             tracked_faces: tracking.tracked_faces(),
@@ -792,15 +817,19 @@ impl IndirectVolume {
         self.mesh = mesh;
         self.clear();
     }
-    /// Replace the attached proxy, retaining completed faces whose exact
+    /// Replace the attached proxy, retaining completed samples whose recorded
     /// dependencies did not change.
     ///
     /// With [`IndirectVolume::enable_proxy_retention`] enabled and a completed
     /// key, this diffs the old and new proxy cells (occupancy and material),
-    /// invalidates every face whose recorded dependency or exposure overlaps a
-    /// changed cell, keeps every other completed value, and records the new
-    /// digest on the existing key so the volume completes the new representation
-    /// instead of restarting it. Without retention it is exactly
+    /// drops every retained sample whose recorded dependency blocks intersect a
+    /// changed block, invalidates every face those dropped samples belong to plus
+    /// every face whose exposure test reads a changed cell, keeps every other
+    /// completed value, and records the new digest on the existing key so the
+    /// volume completes the new representation instead of restarting it. A
+    /// dirty face replays the samples that survived and traces the rest, so an
+    /// edit that crosses one of a face's quadrature rays does not pay for the
+    /// other `samples - 1`. Without retention it is exactly
     /// [`IndirectVolume::set_mesh_proxy`]: all values are cleared.
     ///
     /// Retention is not partial publication. Until every retained-or-recomputed
@@ -908,6 +937,13 @@ impl IndirectVolume {
         self.sample_index = 0;
         self.sum = Vec3::ZERO;
         self.key = None;
+        if let Some(tracking) = self.tracking.as_mut() {
+            // A retained contribution is only meaningful for the value it was
+            // added into. Every value here was just cleared, so every recorded
+            // sample must go with it, or the next scan would replay a
+            // contribution into a value that no longer exists.
+            tracking.reset();
+        }
     }
     pub fn resident_bytes(&self) -> usize {
         self.values.len() * 16
@@ -917,7 +953,7 @@ impl IndirectVolume {
             + self
                 .tracking
                 .as_ref()
-                .map_or(0, dependency::MeshDependencies::resident_bytes)
+                .map_or(0, |tracker| tracker.resident_bytes())
     }
     /// Whether the volume holds a complete, publishable result for its current
     /// key. A fresh volume, a cleared volume and a partially updated volume are
@@ -999,8 +1035,11 @@ impl IndirectVolume {
     /// Face slots that already hold a completed value for the current key are
     /// skipped: only a proxy edit can leave such a value behind (see
     /// [`IndirectVolume::replace_mesh_proxy`]), and it is exact for the face's
-    /// recorded dependency set. The scan order and the per-face quadrature are
-    /// unchanged, so a full recompute converges exactly as before.
+    /// recorded dependency set. A dirty face still replays every sample whose
+    /// recorded dependency set survived the edit and traces only the samples it
+    /// dropped, in ascending sample order, so a recomputed face is bit-identical
+    /// to a fresh one. The scan order and the per-face quadrature are unchanged,
+    /// so a full recompute converges exactly as before.
     pub fn update(
         &mut self,
         world: &World,
@@ -1047,12 +1086,37 @@ impl IndirectVolume {
             {
                 dependency::bit_set(&mut self.done, self.cursor);
                 if let Some(tracking) = self.tracking.as_mut() {
-                    // An enclosed face traces no ray; its recorded segments are
+                    // An enclosed face traces no ray; its recorded samples are
                     // stale and must not keep invalidating it.
                     tracking.reset_face(self.cursor);
                 }
                 self.cursor += 1;
                 continue;
+            }
+            // A sample whose recorded dependency blocks are all unchanged
+            // replays its stored contribution instead of tracing again. The
+            // samples are still visited in ascending order, so the running sum
+            // is the shipped accumulation order.
+            if let Some(tracking) = self.tracking.as_ref() {
+                if let Some(contribution) =
+                    tracking.retained_contribution(self.cursor, self.sample_index as usize)
+                {
+                    self.sum += Vec3::from_array(contribution);
+                    self.sample_index += 1;
+                    if self.sample_index == samples {
+                        finish_face(
+                            &mut self.values,
+                            &mut self.done,
+                            self.cursor,
+                            self.sum,
+                            samples,
+                        );
+                        self.cursor += 1;
+                        self.sample_index = 0;
+                        self.sum = Vec3::ZERO;
+                    }
+                    continue;
+                }
             }
             if stats.rays + 2 > ray_cap {
                 break;
@@ -1063,12 +1127,11 @@ impl IndirectVolume {
             let ray = hemisphere(n, self.sample_index, samples);
             stats.rays += 1;
             if let Some(tracking) = self.tracking.as_mut() {
+                // The face's own cell is part of every sample's dependency set
+                // (the exposure test reads it), and the outward neighbor is part
+                // of the first sample's.
+                tracking.begin_sample(self.cursor, self.sample_index as usize, cell);
                 if self.sample_index == 0 {
-                    // The face's value depends on its own cell and its outward
-                    // neighbor through the exposure test, and on every proxy
-                    // cell the traced segments read.
-                    tracking.begin_face(self.cursor);
-                    tracking.record_cell(cell);
                     tracking.record_cell(neighbor);
                 }
             }
@@ -1089,6 +1152,7 @@ impl IndirectVolume {
                     );
                 }
             }
+            let mut contribution = Vec3::ZERO;
             if let Some(hit) = hit {
                 let hn = Vec3::from_array(hit.normal.map(|n| n as f32));
                 let cosine = hn.dot(direction).max(0.);
@@ -1117,16 +1181,28 @@ impl IndirectVolume {
                         }
                     }
                     if shadow.is_none() {
-                        self.sum += Vec3::from_array(self.palette[hit.material as usize])
+                        contribution = Vec3::from_array(self.palette[hit.material as usize])
                             * (light[3] * cosine);
                     }
                 }
             }
+            if let Some(tracking) = self.tracking.as_mut() {
+                tracking.store_contribution(
+                    self.cursor,
+                    self.sample_index as usize,
+                    contribution.to_array(),
+                );
+            }
+            self.sum += contribution;
             self.sample_index += 1;
             if self.sample_index == samples {
-                let rgb = self.sum / samples as f32;
-                self.values[self.cursor] = [rgb.x, rgb.y, rgb.z, 1.];
-                dependency::bit_set(&mut self.done, self.cursor);
+                finish_face(
+                    &mut self.values,
+                    &mut self.done,
+                    self.cursor,
+                    self.sum,
+                    samples,
+                );
                 self.cursor += 1;
                 self.sample_index = 0;
                 self.sum = Vec3::ZERO;
@@ -1135,6 +1211,14 @@ impl IndirectVolume {
         stats.complete = self.cursor == self.values.len();
         Ok(stats)
     }
+}
+
+/// Finish a face whose sample loop ended: store the mean of the contributions
+/// just replayed and traced, and mark it completed for the current key.
+fn finish_face(values: &mut [[f32; 4]], done: &mut [u64], cursor: usize, sum: Vec3, samples: u32) {
+    let rgb = sum / samples as f32;
+    values[cursor] = [rgb.x, rgb.y, rgb.z, 1.];
+    dependency::bit_set(done, cursor);
 }
 // Hammersley cosine-weighted quadrature. Runtime glam provides vector bases;
 // std reverse_bits provides the radical inverse (no RNG dependency/state).
