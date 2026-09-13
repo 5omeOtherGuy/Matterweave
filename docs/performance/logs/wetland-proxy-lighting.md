@@ -243,6 +243,16 @@ thermal claim**):
 - No ADR is proposed: this is consumption of accepted engine APIs
   (ADR-0014/ADR-0015 scope), not a new architectural decision.
 
+## Delivery snapshot
+
+- Source commit under review: `76043d394f106d550ebb43588db3a5c1310c9229` (code, tests and this log in one commit;
+  `apps/explorer/src/wetland_lighting.rs`, the `wetland.rs` integration and the
+  `lib.rs` module line). Branch `engine/wetland-proxy-lighting`, PR opened from
+  this commit.
+- Independently reviewable without a device: the 13 `wetland_lighting` tests, the
+  195-test explorer lib suite and the 107-test render suite all pass on this
+  commit, and the host smoke run above was executed from this source.
+
 ## Open gates (not run, not claimed)
 
 Independent review of the frozen source, the Android functional gate, and every
