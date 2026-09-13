@@ -464,8 +464,10 @@ names).
   `crates/matterweave-render/src/moving_lighting_probe.rs`,
   `apps/explorer/src/wetland_lighting.rs`, this log.
 - Frozen source SHA for review: `e6bca8934523d19be6612d261858dc4fe8c6fc94`
-  (the branch head, `test(render): pin the dependency face order against the
-  volume slot order`). The slice commit alone is `495fd1b`.
+  (`test(render): pin the dependency face order against the volume slot order`).
+  The branch head carries this log only, on top of that commit, so reviewing
+  `e6bca89` reviews all of the source and this file documents it; the slice
+  commit alone is `495fd1b`.
 - Branch pushed as `engine/moving-gi-continuity`; **not** merged, not
   self-approved and no PR opened, per the brief.
 
@@ -539,6 +541,6 @@ names).
 | Dependency rule intact | Probe-57 counterexample still caught; coverage-change full clear still correct | this worker | **PASS (host)** — `far_occluder_second_segment_is_invalidated_exactly` (sun segment to a receiver 5-6 cells away, reversed-sun control bit-identical), all five coverage-change tests, the exposure/enclosing/pending-edit/key tests, and the new sample-replay regression test (306/636 rays against a 1 792/2 080 face-retrace ceiling) |
 | Constants justified | R 24 / SAMPLES 16 unchanged; any budget change justified and re-tested | this worker | **PASS** — `GATHER_DISTANCE_M = 24.0`, `SAMPLES = 16`, `UPDATE_BUDGET {rays: 1024, work: 8192}`, `INDIRECT_DEPENDENCY_BYTES = 6 MiB`, `MAX_DEPENDENCY_BYTES = 16 MiB` are all unchanged (diff-limited), so no re-test at new values was required; every test uses the production values |
 | Checks green | render + explorer lib tests, clippy -D warnings, fmt, tools/check_docs.py | this worker | **PASS** — 127 + 231 tests, clippy `-D warnings` exit 0 for both crates (all targets for render, all targets for explorer), `cargo fmt -- --check` clean, `tools/check_docs.py` PASS (238 Markdown files, 676 local links, 16 ADRs, 20 requirements) |
-| Log and frozen SHA | Five headings filled, honest limits recorded, branch pushed, SHA reported | this worker | **PASS** — this file; frozen head `e6bca8934523d19be6612d261858dc4fe8c6fc94` (`495fd1b` is the slice commit); branch `engine/moving-gi-continuity` pushed |
+| Log and frozen SHA | Five headings filled, honest limits recorded, branch pushed, SHA reported | this worker | **PASS** — this file; frozen source `e6bca8934523d19be6612d261858dc4fe8c6fc94` with this log as its only child commit, slice commit `495fd1b`; branch `engine/moving-gi-continuity` pushed |
 | Independent review | Corrective review of this slice | Orchestrator dispatch | **NOT RUN** |
 | Android visual gate | Phone-owner functional gate during continuous motion | Owner | **NOT RUN** — no device, APK, phone, wall-clock, thermal or frame-rate claim is made anywhere in this log |
