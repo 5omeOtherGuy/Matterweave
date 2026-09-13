@@ -8,6 +8,11 @@ HANDOFF or board edits. No device, APK, benchmarks, `/mnt/bench`, or external
 research. This completes documentation scope only, not D4 functional acceptance
 or physical input gates.
 
+> Repair note (2026-09-13): this log's first freeze (`a98553f`) was independently
+> reviewed; three corrections were applied and re-verified after merging current
+> `main`. Historical findings and dispositions are preserved in
+> [d4-3-authoring-repair.md](d4-3-authoring-repair.md).
+
 ## Actions Taken
 
 - Read `AGENTS.md`, `docs/REQUIREMENTS.md`, `docs/DEVELOPMENT.md`,
@@ -65,52 +70,75 @@ or physical input gates.
 - Authoritative/derived, persistence/seed and service-boundary sections carry
   the D4 acceptance-relevant contracts (revision gating, publication deferral,
   atomic saves, generator+seed pinning) with the exact enforcing call sites.
-- D4.2 gaps are recorded here as evidence, not repaired: this slice owns no
-  runtime paths and was instructed not to implement speculative abstractions.
+- Observed absences are recorded here as evidence against the D4.2 gate and
+  explicitly classified (gate item vs deferred productization) rather than
+  repaired: this slice owns no runtime paths and was instructed not to
+  implement speculative abstractions.
 
 ## Solutions Applied
 
 - `docs/AUTHORING.md` written (new file): seven sections covering the required
   topics, both samples, registration steps for a new native sample, and a
   missing-features list.
-- This log written with the D4.2 gap evidence list below and validation results.
+- This log written with the observed-absence classification list below and
+  validation results.
 
-## D4.2 actual gaps discovered (evidence, not implemented)
+## Observed absences vs D4.2 scope (corrected after review — 2026-09-13)
 
-Scope reference: D4.2 = "only missing minimal animation/UI/assets and shared
-persistence/seeded behavior" (`ENGINE_COMPLETION_PLAN.md`, remaining slices).
+Correction note: the first version of this section labeled deferred
+productization (editor, codec/asset pipeline, settings UI, journal migration)
+as D4.2 gaps. That was wrong. The accepted D4.2 exit gate is
+`ENGINE_COMPLETION_PLAN.md`: "Both samples run without engine forks; functional
+input, physical simultaneous touch, lock/unlock, audible output and persistence
+observed." The items below are classified against that gate, not against
+commercial engine feature parity.
 
-1. **No animation system exists.** `docs/ROADMAP.md` still lists "the minimal
-   animation … those samples actually need" as to-add; `grep -rni animat
-   crates apps` returns no engine or sample animation module. Motion today is
-   physics bodies and placement transforms only.
+D4.2 gate evidence already satisfied by merged `main`:
+
+- Both samples run without engine forks on the shared crates (wetland: detail
+  scene plus edit journal; Relay: core `World` chamber plus attachment save).
+- Functional input and persistence are demonstrated by `matterweave-explorer`
+  tests and by the Relay physical device gate recorded in STATUS.
+
+D4.2 gate items still open (device acceptance, not engine API gaps):
+
+- Physical simultaneous multi-finger use and lock/unlock are untested (STATUS:
+  ADB gestures here are sequential; unit tests cover concurrent touch roles,
+  which is not physical multi-finger validation).
+- Audible output is unverified (no human confirmation; counters prove submitted
+  frames only).
+
+Observed absences that are not D4.2 gates:
+
+1. **No animation system.** Both samples are fully functional without one; the
+   ROADMAP M6 phrase "the minimal animation … those samples actually need"
+   resolves to zero for these two. A future animated sample adds new engine
+   scope rather than closing a D4.2 defect.
 2. **Mute/volume are implemented but unwired.** `AudioAdapter::set_muted` /
    `set_volume` exist (`apps/explorer/src/audio_service.rs`), but no caller
-   outside that module references them (`grep set_muted|set_volume
-   apps/explorer/src` excluding `audio_service.rs` is empty), and the module
-   docs state "no sample UI exposes them yet … nothing drives these methods in
-   production."
+   outside that module's tests references them, and the module docs state no
+   sample UI exposes them. Authoring a settings menu is deferred
+   productization, not a D4.2 exit criterion.
 3. **TerrainLab has no audio participation.** `terrain_lab.rs` contains zero
    references to `EventQueue`, `GameplayEvent` or `AudioScope`, and
-   `experience.rs` retires the lab scope to `AudioScope::Sandbox` (which
-   "triggers no events today"). A lab action is therefore silent even when the
-   shared adapter is running.
-4. **Standalone sample runs are silent by construction.** `voxel_relay.rs` and
-   `experience.rs` module docs both state a sample launched directly
-   (`--voxel-relay`) has no audio owner and its bounded queue is never drained.
-   Only the chooser/`Experience` path produces sound.
-5. **No asset pipeline.** All audio clips are code-synthesized (`synth_clip`;
-   no import path), only 48 kHz f32 mono/stereo is accepted with no resampling
-   and no compressed formats (`crates/matterweave-audio`), and detail geometry
-   is authored cell-by-cell in code (`showcase.rs`, `flora.rs`, `fixtures.rs`).
-6. **No editor and no settings UI.** There is no level/material editor surface
-   and no settings seam (follows from 2 and 5); authors edit Rust constants and
-   cell lists.
+   `experience.rs` maps the lab to the event-free `AudioScope::Sandbox`. The
+   lab is an internal developer harness, not one of the two required samples.
+4. **Standalone sample runs are silent by construction.** Design fact, not a
+   defect: only the chooser/`Experience` path owns and drains an audio queue.
+5. **No external asset pipeline and no compressed audio.** All audio clips are
+   code-synthesized (`synth_clip`); only 48 kHz f32 mono/stereo is accepted,
+   with no resampling and no compressed formats (`crates/matterweave-audio`).
+   Detail geometry is authored cell-by-cell in code (`showcase.rs`, `flora.rs`,
+   `fixtures.rs`). This is the accepted authoring path for both samples; an
+   importer/codec pipeline is deferred productization (ROADMAP "Later research
+   and productization").
+6. **No level/material editor or settings UI.** Follows from 2 and 5; deferred
+   productization, not a D4.2 gate.
 7. **Changed generator layouts abandon old journals instead of migrating.**
    `old_showcase_sessions_are_not_replayed_on_changed_layout`
    (`wetland_state.rs` tests) pins the behavior: old instance edits get a fresh
-   recovery slot, never a migration. Correct conservatism, but a D4.2
-   persistence-polish gap if layouts keep evolving.
+   recovery slot, never a migration. Correct conservatism; journal migration
+   tooling is deferred productization, not a D4.2 gate.
 
 ## Insights
 
@@ -121,12 +149,14 @@ persistence/seeded behavior" (`ENGINE_COMPLETION_PLAN.md`, remaining slices).
 - The audio seam is the cleanest extension example in the tree (plain-data
   vocabulary, one owner, bounded queue, exhaustive-match compiler guidance for
   new variants) and the natural template for any future animation-event or
-  settings plumbing — but that plumbing itself remains D4.2 work, not this
-  slice.
+  settings plumbing — but that plumbing itself remains deferred productization,
+  not this slice.
 
 ## Validation
 
-- `python3 tools/check_docs.py`: PASS — `213 Markdown files, 645 local links, 16 ADRs and 20 requirements.`
+- `python3 tools/check_docs.py`: PASS at first freeze — `213 Markdown files,
+  645 local links, 16 ADRs and 20 requirements.` (re-validated after the
+  correction in [d4-3-authoring-repair.md](d4-3-authoring-repair.md).)
 - `git diff --check`: PASS (no whitespace errors).
 - Referenced identifiers/paths: validated by targeted `grep`/`sed` reads
   listed under Actions Taken before writing; no invented API.

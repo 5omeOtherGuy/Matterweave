@@ -101,10 +101,18 @@ budget cannot serve the edit.
 
 ## Composing an instance / scene
 
-Follow the wetland pattern (`apps/explorer/src/wetland.rs`):
+Follow the wetland pattern (`apps/explorer/src/wetland.rs`, `Runtime::load`):
 
-1. Build the scene: `matterweave_detail::build_showcase(SEED)` for the full
-   wetland, or assemble `DetailScene` from your own prototypes as above.
+1. Build the scene: `matterweave_detail::build_showcase(SHOWCASE_SEED)?` for
+   the full wetland, or assemble `DetailScene` from your own prototypes as
+   above. `build_showcase` returns a `Showcase` container, not a scene — take
+   its `scene` field:
+
+   ```rust
+   let showcase = matterweave_detail::build_showcase(matterweave_detail::SHOWCASE_SEED)?;
+   let scene = showcase.scene;
+   ```
+
 2. Publish collision once: `physics.replace_detail_scene(&scene)?`.
 3. Per frame: poll background preparation, publish on the frame cadence
    (`sync_detail_collision` pattern), upload only changed prototype meshes at
@@ -221,9 +229,11 @@ Concretely, adding e.g. a `SlalomApp`:
    `world: World` (or `scene: DetailScene`), `physics: Physics`,
    `input: InputService`, `renderer/window`, `save_path`, `events:
    EventQueue`, plus `new(save_path, frame_limit)`, `setup_input()`,
-   `update(dt)`, `save()` / `load()` via `save_with_attachment`, and
-   `pop_event()` / `clear_events()` accessors. Reuse `generate_*` +
-   `initial_physics` style constructors with a pinned seed constant.
+   `update(dt)`, `save()` via `World::save_with_attachment`, `load()` via
+   `World::load` plus `world.attachment()` (see `VoxelRelayApp::save`/`load`
+   in `voxel_relay.rs`), and `pop_event()` / `clear_events()` accessors. Reuse
+   `generate_*` + `initial_physics` style constructors with a pinned seed
+   constant.
 2. **Add an `AudioScope` variant** in `audio_service.rs`
    (`Wetland | Sandbox | VoxelRelay` today) so scope switches retire the
    leaving sample's voices (`switch_to`).
@@ -231,32 +241,63 @@ Concretely, adding e.g. a `SlalomApp`:
    `pump_audio`, retire scopes in `switch_if_requested`, forward
    `resumed`/`suspended`/`window_event` (clearing input and events on
    pause/focus-loss exactly like the existing samples).
-4. **Add entry points** in `lib.rs`: a `--slalom` flag in `run_desktop` for
-   standalone host iteration (silent audio by construction, like Relay), and a
-   chooser path mirroring `VoxelRelayApp::for_chooser` with a dedicated
-   `<name>.json` save file that never writes back to the legacy path.
-5. **Verify without hardware:** `cargo test -p matterweave-explorer`,
-   `cargo run -p matterweave-explorer -- --slalom --save /tmp/<fresh>.json`,
-   then `python3 tools/check_docs.py` if docs change.
+4. **Add entry points in two places.** `lib.rs` owns only the standalone flag:
+   a `--slalom` branch in `run_desktop` (silent audio by construction, like
+   Relay). The chooser path is *not* in `lib.rs`: give the sample a
+   `for_chooser(legacy_path, frame_limit)` constructor mirroring
+   `VoxelRelayApp::for_chooser` (`voxel_relay.rs`) with a dedicated
+   `<name>.json` save file that never writes back to the legacy path, call it
+   from `Experience::switch_if_requested` (`experience.rs`), and set the
+   transition flag from the chooser button handler in `wetland.rs` (today:
+   `sandbox_requested`, `voxel_relay_requested`, `terrain_lab_requested`).
+5. **Verify without hardware:** `cargo test -p matterweave-explorer`, then the
+   `--slalom` flag you added:
+   `cargo run -p matterweave-explorer -- --slalom --save /tmp/<fresh>.json`;
+   re-run `python3 tools/check_docs.py` if docs change.
 
 Both shipped samples demonstrate the no-fork rule: the wetland (detail scene,
 first-person, edit journal) and Relay (core `World` chamber, orthographic
 `camera_view_proj`, attachment save) share `InputService`, `AudioAdapter`,
 `Physics`, `Renderer` and the persistence helpers with zero engine duplication.
 A new sample must do the same — any logic two samples need belongs in a crate
-or in the shared adapter, not copied into the sample.
+or in the shared adapter, not copied into the sample. Sample reuse is the part
+of the D4.2 gate that is demonstrably done; the physical-input and audibility
+observations are not (see below).
 
 ## Missing features — do not assume these
 
-- **No animation system.** ROADMAP M6 names "minimal animation" as still to
-  build; motion today is physics bodies and placement transforms only.
-- **No asset pipeline or editor.** No model/texture/audio import, no level
-  editor, no settings UI. Audio clips are synthesized in code
-  (`synth_clip`); mute/volume (`set_muted`/`set_volume`) exist but no sample
-  UI drives them.
+Engine capabilities that genuinely do not exist yet:
+
+- **No animation system.** Neither shipped sample needs animated geometry
+  today; ROADMAP M6's "minimal animation … those samples actually need"
+  resolves to zero for the wetland and Relay, whose motion is physics bodies
+  and placement transforms. A future sample that needs animation is new engine
+  scope, not a configuration of an existing system.
+- **No asset pipeline or importers.** No model/texture/audio import and no
+  compressed audio: detail geometry is authored in code
+  (`crates/matterweave-detail/src/{showcase,flora,fixtures}.rs`) and audio
+  clips are synthesized in code (`synth_clip`).
+- **No level/material editor and no settings UI.** Authors edit Rust constants
+  and cell lists. Mute/volume (`AudioAdapter::set_muted` / `set_volume`) exist
+  in `audio_service.rs` but no sample UI drives them.
 - **No stable ABI or dynamic samples.** `Experience` wiring and
   `AudioScope` are compiled-in; third-party out-of-tree samples are not
   supported.
+
+Scope boundaries and open acceptance — do not report these as shipped:
+
+- **Unmerged worker work is not shipped.** Shared mobile settings and
+  additional lighting-response work are in flight in unmerged worker branches;
+  do not treat settings services, GI/reflection response, or their APIs beyond
+  the surface documented above as available until they land in `main`. The
+  renderer surface documented in this guide is what `main` ships.
+- **D4.2 physical acceptance is still open.** Existing sample reuse is real:
+  both samples run without engine forks on the shared crates, and functional
+  input plus persistence are demonstrated by tests and the Relay device gate.
+  Physical simultaneous multi-finger use, lock/unlock and audible output remain
+  unverified — STATUS records sequential ADB gestures, concurrent touch covered
+  only by unit tests, and no human audibility confirmation. These are device
+  acceptance items, not engine API gaps.
 - **Host audio proves nothing about devices.** The mock backend renders into
   a buffer for tests; host runs are silent, standalone sample runs are silent
   by construction, and counters are not audibility.
