@@ -36,8 +36,11 @@
 //!   crop and the block shape, not by caller input;
 //! - every material word within `0..=255`, because the shader indexes the 256-entry
 //!   palette with it and hits report `u8` materials;
-//! - the set occupancy bits and the nonzero material words to have the same count, so a
-//!   mismatched (solid, occupancy) pair is rejected before it can skip a solid cell.
+//! - every material word's expected bit under the claimed block shape, so an
+//!   `(occupancy, shape)` pair whose word counts and set-bit totals happen to coincide is
+//!   still rejected before it can skip a solid cell;
+//! - the set occupancy bits and the nonzero material words to have the same count, so no
+//!   bit outside the crop-visible cell positions survives either.
 //!
 //! The upload also carries its source key. [`HierarchyUpload::is_current`] re-checks
 //! epoch, revision, seed, crop origin and dimensions against a pack; a stale upload must
@@ -239,7 +242,9 @@ impl<'a> HierarchyUpload<'a> {
     /// `materials` is a dense `u32` word per crop cell (normally
     /// `HierarchyVolume::materials()`); `occupancy` is the packed word list of the same
     /// crop (`HierarchyVolume::occupancy().words()`). The shape comes from the caller
-    /// because the GPU candidate tests more than the CPU-selected shape.
+    /// because the GPU candidate tests more than the CPU-selected shape; the claimed shape
+    /// pins every bit position, so a pair packed under a different shape is rejected even
+    /// when the word and set-bit counts coincide.
     pub fn from_parts(
         pack: &RayVolume,
         materials: &'a [u32],
@@ -270,9 +275,45 @@ impl<'a> HierarchyUpload<'a> {
                 layout.occupancy_words()
             ));
         }
-        // Layout-independent integrity: every solid cell sets exactly one bit, so the
-        // totals must match. Bit *positions* are proven end to end by the native example,
-        // which compares the kernel's readback against the CPU walk over the same words.
+        // Exact bit positions, not just totals: a mismatch between the shape the words were
+        // packed under and the claimed `shape` can preserve both the word count and the
+        // set-bit count (an 8x8x8 crop packed as [4,4,8] and validated as [8,4,4] does)
+        // while moving every bit to a different cell. The kernel gates each material read
+        // on the bit at the claimed shape's position, so such a pair would silently drop
+        // solid cells. Walk the crop in the shader's own indexing and require the bit at
+        // every cell to match its material exactly. (The reviewer's suggested fix was to
+        // read `OccupancyGrid`/`HierarchyVolume` here, but `matterweave-ray-hierarchy`
+        // depends on this crate, so those types cannot appear in `matterweave-render`.)
+        let dimensions = layout.dimensions();
+        let shape = layout.shape();
+        let block_dims = layout.block_dims();
+        let words_per_block = layout.words_per_block();
+        let row = dimensions[0] as usize;
+        let plane = row * dimensions[1] as usize;
+        for (index, &material) in materials.iter().enumerate() {
+            let cell = [
+                (index % row) as u32,
+                ((index / row) % dimensions[1] as usize) as u32,
+                (index / plane) as u32,
+            ];
+            let block = [cell[0] / shape[0], cell[1] / shape[1], cell[2] / shape[2]];
+            let local = [cell[0] % shape[0], cell[1] % shape[1], cell[2] % shape[2]];
+            let block_index = block[0] + block_dims[0] * (block[1] + block_dims[1] * block[2]);
+            let bit = (local[0] + shape[0] * (local[1] + shape[1] * local[2])) as usize;
+            let word = block_index as usize * words_per_block + bit / 32;
+            let set = occupancy[word] & (1u32 << (bit % 32)) != 0;
+            if set != (material != 0) {
+                let expected = if material != 0 { "set" } else { "clear" };
+                return Err(format!(
+                    "Hierarchy occupancy bit {bit} of block {block_index} must be {expected} \
+                     for material {material} at {index}"
+                ));
+            }
+        }
+        // Bits beyond the crop-visible cell positions (partial-block padding, and padding
+        // in a block's last word) are never tested by the kernel, but a set one still means
+        // the words and the materials disagree. Every visible solid bit was just proven
+        // set, so equal totals reject exactly the leftover positions.
         let solid = materials.iter().filter(|&&word| word != 0).count();
         let occupied: usize = occupancy
             .iter()
@@ -479,6 +520,55 @@ mod tests {
         let mut orphan = occupancy.clone();
         orphan[0] |= 1 << 2;
         assert!(HierarchyUpload::from_parts(&pack, &materials, &orphan, layout.shape()).is_err());
+    }
+
+    #[test]
+    fn upload_rejects_equal_wordcount_equal_popcount_shape_mismatch() {
+        // An 8x8x8 crop has four blocks and sixteen occupancy words under both [4,4,8]
+        // and [8,4,4], so the word counts coincide; one solid cell keeps the set-bit
+        // total at one under either packing. Word counts and popcounts therefore cannot
+        // tell the two layouts apart, and only the exact bit positions can. The bits were
+        // packed under [4,4,8]; passing [8,4,4] as the claimed shape must be rejected
+        // instead of silently gating the kernel on the wrong bit.
+        let mut world = World::new(11);
+        assert!(world.set([4, 0, 0], 7));
+        let pack = pack(&world, 1, [0, 0, 0], [8, 8, 8]);
+        let packed = HierarchyLayout::new([8, 8, 8], [4, 4, 8]).unwrap();
+        let claimed = HierarchyLayout::new([8, 8, 8], [8, 4, 4]).unwrap();
+        assert_eq!(packed.occupancy_words(), claimed.occupancy_words());
+        assert_ne!(packed.shape(), claimed.shape());
+        let cell = [4u32, 0, 0];
+        let solid_index = (cell[0] + 8 * (cell[1] + 8 * cell[2])) as usize;
+        let materials: Vec<u32> = (0..packed.materials())
+            .map(|index| u32::from(index == solid_index))
+            .collect();
+        // The shader's own indexing: block = cell / shape, local = cell % shape,
+        // bit = x + sx*(y + sy*z), block = bx + dx*(by + dy*bz), word = base + bit/32.
+        let word_and_mask = |layout: &HierarchyLayout, cell: [u32; 3]| {
+            let shape = layout.shape();
+            let block_dims = layout.block_dims();
+            let block = [cell[0] / shape[0], cell[1] / shape[1], cell[2] / shape[2]];
+            let local = [cell[0] % shape[0], cell[1] % shape[1], cell[2] % shape[2]];
+            let block_index = block[0] + block_dims[0] * (block[1] + block_dims[1] * block[2]);
+            let bit = local[0] + shape[0] * (local[1] + shape[1] * local[2]);
+            (
+                block_index as usize * layout.words_per_block() + bit as usize / 32,
+                1u32 << (bit % 32),
+            )
+        };
+        let (packed_word, packed_mask) = word_and_mask(&packed, cell);
+        let mut occupancy = vec![0u32; packed.occupancy_words()];
+        occupancy[packed_word] |= packed_mask;
+        assert_eq!(
+            occupancy.iter().map(|word| word.count_ones()).sum::<u32>(),
+            1
+        );
+        assert!(HierarchyUpload::from_parts(&pack, &materials, &occupancy, packed.shape()).is_ok());
+        let (claimed_word, claimed_mask) = word_and_mask(&claimed, cell);
+        assert_ne!((packed_word, packed_mask), (claimed_word, claimed_mask));
+        assert!(
+            HierarchyUpload::from_parts(&pack, &materials, &occupancy, claimed.shape()).is_err()
+        );
     }
 
     #[test]
