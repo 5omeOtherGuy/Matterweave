@@ -288,7 +288,41 @@ struct TileCounters {
     uploaded: u64,
     evicted: u64,
     outstanding: usize,
-    ms: f64,
+    /// Main-thread time spent building and uploading tiles. This is the
+    /// quantity [`MAX_TILE_MS`] bounds.
+    build_ms: f64,
+    /// The part of `build_ms` spent generating tile meshes from the generator.
+    /// This is the sample's own cost.
+    generate_ms: f64,
+    /// The part of `build_ms` spent inside `upload_terrain_tile`, which waits
+    /// on the frame fence before it replaces a buffer. On a software rasterizer
+    /// that wait is most of a frame, so it is reported rather than blamed on
+    /// tile generation.
+    upload_ms: f64,
+    /// Main-thread time spent planning and declaring residency. Declaring can
+    /// block on the frame fence when a tile has to be evicted, which is a GPU
+    /// wait rather than tile work, so it is reported apart from the budget
+    /// instead of being hidden inside it.
+    declare_ms: f64,
+    /// Total main-thread time spent generating tile meshes over the run, and
+    /// the number of meshes that time covers. Their ratio is the only per-tile
+    /// cost this sample can honestly report.
+    total_generate_ms: f64,
+    generated: u64,
+    /// The single worst frame seen so far, chosen by build time and kept as one
+    /// record. Independent maxima taken from different frames would describe a
+    /// frame that never happened.
+    worst: WorstFrame,
+}
+
+/// The most expensive tile frame of a run.
+#[derive(Clone, Copy, Debug, Default)]
+struct WorstFrame {
+    tiles: usize,
+    build_ms: f64,
+    generate_ms: f64,
+    upload_ms: f64,
+    declare_ms: f64,
 }
 
 pub struct LandscapeSample {
@@ -315,6 +349,9 @@ pub struct LandscapeSample {
     last_frame: Instant,
     frame_ms: f64,
     focused: bool,
+    /// Deterministic camera path for smoke runs. Off by default: it exists to
+    /// exercise streaming, eviction and the per-frame budget without input.
+    pub exercise: bool,
     /// Requested by BACK; the owning experience switches menus.
     pub return_to_menu: bool,
     pub failed: bool,
@@ -382,9 +419,31 @@ impl LandscapeSample {
             last_frame: Instant::now(),
             frame_ms: 0.,
             focused: true,
+            exercise: false,
             return_to_menu: false,
             failed: false,
         }
+    }
+
+    /// One step of the scripted smoke path: a 200 m circle flown at altitude.
+    ///
+    /// The radius crosses chunk boundaries constantly and crosses whole 128 m
+    /// tiles of the innermost ring, so the plan really does drop tiles and the
+    /// upload budget really is reached. The path is a function of the frame
+    /// index, not of elapsed time, so a slow host walks the same path.
+    fn exercise_step(&mut self) {
+        let angle = self.frames as f32 * 0.02;
+        let radius = 200.0;
+        self.camera.position.x = radius * angle.sin();
+        self.camera.position.z = radius * angle.cos();
+        let ground = landscape::height_at(
+            SEED,
+            self.camera.position.x.floor() as i32,
+            self.camera.position.z.floor() as i32,
+        ) as f32;
+        self.camera.position.y = ground + 60.0;
+        self.camera.yaw = angle + std::f32::consts::FRAC_PI_2;
+        clamp_camera(&mut self.camera);
     }
 
     fn wants_frames(&self) -> bool {
@@ -444,7 +503,7 @@ impl LandscapeSample {
     /// Plan the rings for this eye, evict what the plan dropped and build what
     /// it is missing, inside the frame budget.
     fn sync_tiles(&mut self) -> Result<(), String> {
-        let begin = Instant::now();
+        let declare_begin = Instant::now();
         let Some(renderer) = self.renderer.as_mut() else {
             return Ok(());
         };
@@ -458,30 +517,51 @@ impl LandscapeSample {
         // this frame adds anything, so residency never exceeds plan + budget.
         renderer.retain_terrain_tiles(&self.declared)?;
         let work = plan_tile_work(&self.plan, &self.resident, TileBudget::default());
+        self.tiles.declare_ms = declare_begin.elapsed().as_secs_f64() * 1000.;
+        let begin = Instant::now();
         for key in &work.evict {
             self.resident.remove(key);
         }
         self.tiles.evicted += work.evict.len() as u64;
         let mut uploaded = 0u64;
         let mut skipped = 0usize;
+        let mut generate_ms = 0.0;
+        let mut upload_ms = 0.0;
         for (index, tile) in work.build.iter().enumerate() {
             if begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
                 skipped = work.build.len() - index;
                 break;
             }
             let filter = normalized_filter(tile);
+            let generate_begin = Instant::now();
             let mesh = landscape::lod_tile_mesh(SEED, tile.level, tile.key, filter);
+            generate_ms += generate_begin.elapsed().as_secs_f64() * 1000.;
             // A tile entirely inside the hole meshes to nothing. It stays a
             // planned, resident-as-empty tile so it is not rebuilt every frame.
             if !mesh.indices.is_empty() {
+                let upload_begin = Instant::now();
                 renderer.upload_terrain_tile(tile.level, tile.key, &mesh)?;
+                upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
                 uploaded += 1;
             }
             self.resident.insert((tile.level, tile.key), filter);
         }
         self.tiles.uploaded += uploaded;
         self.tiles.outstanding = work.outstanding + skipped;
-        self.tiles.ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.build_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.generate_ms = generate_ms;
+        self.tiles.total_generate_ms += generate_ms;
+        self.tiles.generated += (work.build.len() - skipped) as u64;
+        self.tiles.upload_ms = upload_ms;
+        if self.tiles.build_ms > self.tiles.worst.build_ms {
+            self.tiles.worst = WorstFrame {
+                tiles: work.build.len() - skipped,
+                build_ms: self.tiles.build_ms,
+                generate_ms,
+                upload_ms,
+                declare_ms: self.tiles.declare_ms,
+            };
+        }
         Ok(())
     }
 
@@ -522,8 +602,9 @@ impl LandscapeSample {
             30.,
             74.,
             &format!(
-                "TILE {:.2} MS | FRAME {:.1} MS | TILE MEM {} KIB | {}",
-                self.tiles.ms,
+                "TILE {:.2}+{:.2} MS | FRAME {:.1} MS | TILE MEM {} KIB | {}",
+                self.tiles.build_ms,
+                self.tiles.declare_ms,
                 self.frame_ms,
                 tiles.bytes / 1024,
                 if self.walking { "WALK" } else { "FLY" }
@@ -596,6 +677,9 @@ impl LandscapeSample {
         }
         let (motion, look) = self.controls.consume();
         fly(&mut self.camera, motion, look, dt, FLY_SPEED);
+        if self.exercise {
+            self.exercise_step();
+        }
         if self.walking {
             // No physics in this slice: the eye follows the generator surface
             // directly, which is the same function the rings are derived from.
@@ -643,11 +727,15 @@ impl LandscapeSample {
                 if self.frames.is_multiple_of(30) {
                     let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
                     log::info!(
-                        "LANDSCAPE frame {} frame_ms {:.2} tile_ms {:.2} tiles {}/{} visible {} \
+                        "LANDSCAPE frame {} frame_ms {:.2} tile_build_ms {:.2} tile_declare_ms {:.2} \
+                         tile_generate_ms {:.2} tile_upload_ms {:.2} tiles {}/{} visible {} \
                          uploaded {} evicted {} outstanding {} tile_kib {} eye {:?}",
                         self.frames,
                         self.frame_ms,
-                        self.tiles.ms,
+                        self.tiles.build_ms,
+                        self.tiles.declare_ms,
+                        self.tiles.generate_ms,
+                        self.tiles.upload_ms,
                         tiles.resident,
                         tiles.declared,
                         tiles.visible,
@@ -688,7 +776,11 @@ impl LandscapeSample {
             );
             eprintln!(
                 "LANDSCAPE COUNTERS: chunks {}/{} | tiles resident {} declared {} visible {} \
-                 | uploaded {} evicted {} outstanding {} | tile mem {} KiB | tile {:.2} ms | frame {:.1} ms",
+                 | uploaded {} evicted {} outstanding {} | tile mem {} KiB | frame {:.1} ms\n\
+                 LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms generating + {:.2} ms \
+                 uploading (the upload waits on the frame fence) + {:.2} ms planning; \
+                 budget {} tiles / {:.1} ms\n\
+                 LANDSCAPE TILE COST: {} meshes generated in {:.1} ms total = {:.2} ms each",
                 self.renderer.as_ref().unwrap().visible_chunks,
                 self.renderer.as_ref().unwrap().resident_chunks,
                 tiles.resident,
@@ -698,8 +790,17 @@ impl LandscapeSample {
                 self.tiles.evicted,
                 self.tiles.outstanding,
                 tiles.bytes / 1024,
-                self.tiles.ms,
-                self.frame_ms
+                self.frame_ms,
+                self.tiles.worst.tiles,
+                self.tiles.worst.build_ms,
+                self.tiles.worst.generate_ms,
+                self.tiles.worst.upload_ms,
+                self.tiles.worst.declare_ms,
+                MAX_TILE_UPLOADS,
+                MAX_TILE_MS,
+                self.tiles.generated,
+                self.tiles.total_generate_ms,
+                self.tiles.total_generate_ms / self.tiles.generated.max(1) as f64
             );
             event_loop.exit();
         }

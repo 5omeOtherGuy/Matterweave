@@ -49,6 +49,15 @@ interface.
   missing legacy chunks mean air, including fully removed chunks. Saved chunks outside the
   domain remain in the override archive and are preserved on save, although they cannot be
   visited in this slice. This is bounded streaming, not virtualized LOD.
+- `landscape::fine_clip` returns that same published window in world metres, and
+  `landscape::ring_plan` cuts nested coarse rings around it: each ring covers its own square
+  minus the previous ring's, centred on the eye snapped to that ring's tile size, so the tile
+  set is stable while the camera moves inside one tile. Every ring square's edges are a
+  multiple of the next ring's cell size, which is what makes coverage exact: `tests/landscape.rs`
+  enumerates the whole outermost square for four eye positions and asserts each part of it is
+  drawn by the window or by exactly one ring. `ring_plan_into` reuses a caller-owned buffer so a
+  frame loop allocates nothing after the first frame. Rings are derived render geometry only:
+  nothing outside the window is authoritative, editable or collidable.
 - The first edit of a generated chunk copies its authoritative 4096-byte payload into a
   bounded override archive; later edits update that copy. Reaching 512 stored overrides
   rejects edits requiring another slot, preserving already saved data; `stored_overrides`
@@ -121,6 +130,9 @@ interface.
 - The `generate` fixture is a small integration scene, not a world-size requirement.
 - Streaming is a fixed radius-three window over a bounded domain, with a 512-override
   archive. It is not virtualized LOD, and saved chunks outside the window cannot be visited.
+- `ring_plan`'s coverage guarantee holds for an eye inside the simulation domain. Outside it
+  the streaming window is clamped against the world edge and stops being nested inside the
+  innermost ring; a caller that can leave the domain must keep its own camera inside it.
 - Power-loss durability after rename is not guaranteed; directory sync is best-effort.
 - `allocated_bytes` and `MAX_MESH_RESULT_BYTES` are logical payload budgets, not measured
   process memory. No measured mobile speed advantage follows from the async bounds alone.

@@ -1456,6 +1456,7 @@ pub fn run_desktop() {
     let mut voxel_relay = false;
     let mut terrain_lab = false;
     let mut landscape_sample = false;
+    let mut landscape_exercise = false;
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
@@ -1476,6 +1477,10 @@ pub fn run_desktop() {
             "--voxel-relay" => voxel_relay = true,
             "--terrain-lab" => terrain_lab = true,
             "--landscape" => landscape_sample = true,
+            "--landscape-exercise" => {
+                landscape_sample = true;
+                landscape_exercise = true;
+            }
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
@@ -1495,7 +1500,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\n--landscape-exercise flies a deterministic path so a smoke run stresses tile streaming, eviction and the per-frame budget\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
 --mesh-lighting-check runs the MeshProxy GI/reflection publication gate and writes mesh-lighting-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
@@ -1630,6 +1635,7 @@ pub fn run_desktop() {
     // equivalent and wins when both are present.
     if landscape_sample || landscape::marker_present(&directory) {
         let mut sample = landscape::LandscapeSample::new(save_path, smoke_frames);
+        sample.exercise = landscape_exercise;
         event_loop
             .run_app(&mut sample)
             .expect("landscape event loop run");

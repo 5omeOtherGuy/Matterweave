@@ -42,3 +42,22 @@ The wetland submits shared source meshes and authoritative quarter-turn placemen
 ## Automatic selection reference — 2026-09-08
 
 The detail crate selects Source/Half/Quarter per instance using perspective view-forward depth or orthographic scale, hysteresis, a global dilation bias and budgeted mesh preparation. Error values are estimates: any-occupied coarsening can fill a deep narrow opening, and no guaranteed surface-error bound is claimed. Host approach/retreat/zoom, off-axis and source-authority tests pass. The 9-phase native Vulkan check exercises retained geometry, perspective FOV/orthographic zoom, edits, zero extent and renderer recreation. The thin-sheet fixture stays at Source; the physical OnePlus 13 run also passes 1080 frames and HOME/resume. Captured images do not close temporal/transition-quality acceptance. See the native gate and detail engine notes. This advances the prototype; the ADR's visual/residency acceptance remains open.
+
+## Far-terrain distance rings — 2026-09-13
+
+The landscape sample draws the authoritative 7×7-chunk window plus three nested rings derived
+from the same generator at 4 m, 16 m and 64 m cells, to 6144 m. Selection here is distance,
+not projected error: `landscape::ring_plan` cuts each ring with the previous ring's square and
+snaps every ring to its own tile size, so the tile set is stable while the camera crosses one
+tile. Coverage and non-overlap are proved by enumerating the whole visible square rather than
+argued. Tiles are render-only, are excluded from the shadow pass, and are culled by their own
+bounds; uploads are bounded to 8 tiles and 2 ms of main-thread work per frame with immediate
+eviction of anything the plan drops.
+
+Host, llvmpipe, debug profile, 120 frames: 136 tiles planned, 132 resident (4 tiles fall
+entirely inside the streaming window and mesh to nothing), 24.4 MiB of tile geometry, mean
+0.84 ms to generate one tile mesh. That per-tile cost means the 2 ms budget admits about one
+tile per frame, so the rings take roughly a hundred frames to converge while the camera moves;
+that is the number to re-measure on the phone in a release build. No device measurement is
+claimed, and this closes none of the ADR's transition-quality or temporal-stability acceptance:
+there is no hysteresis and no blend at a ring boundary, only an exact seam.
