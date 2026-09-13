@@ -11,27 +11,46 @@ scope. Never dispatch Astra workers. Preserve the global three-worker cap.
 Phase B cost/thermal rankings are deferred; functional issue experiments may run
 alongside engine development. The issue42 ray-hierarchy experiment finished as
 PR #51 (merged `92f0a79`, optional CPU evidence only, GPU/Android/cost gates
-OPEN). Current third slot: **D4.2 shared mobile settings** (`w_6f7430c8`) in the
-isolated `shared-controls` checkout — handedness/large-controls/mute with bounded
-shared persistence, user-facing integration only, no lighting regions, no phone or
-shared-doc edits; wetland proxy lighting `w_da1d82ec` remains a separate isolated
-writer and is not integrated before review.
+OPEN). **Current three workers (owner, 2026-09-13):** this delegated
+device/integration owner (`w_150a72bd`) holds the phone and finished PR #53's
+shared-settings delivery, and now owns the reviewed PR #54 proxy-GI/reflection
+Android functional gate; `w_e1c8404b` anchors the read-only indirect/moving-light
+functional feasibility probe in `moving-lighting-probe` (new test/example/log
+only, no production change, no phone); `w_17afb30e` works the optional GPU
+traversal candidate in `ray-hierarchy-gpu` (issue 42, no phone, no app, no
+lighting, no shared status). The PR #54 repair author `w_8a9409db`, the D4.3
+authoring delivery `w_f653a32c` and the read-only next-slice feasibility review
+`w_869fcd5b` have completed; do not re-dispatch them.
 
-**Current pickup (2026-09-13):** main is `92f0a79`. PR36 lighting and PR39
-streaming merged earlier with all six checks green each. The delegated
+**Current pickup (2026-09-13):** main is `f878e1b` (PR #53 settings merge onto
+PR #55's `d37ca73`; merged tree `14ad21ff…`). PR36 lighting and
+PR39 streaming merged earlier with all six checks green each. The delegated
 integration/acceptance delivery finished: interaction ANR `c1e8777` merged at
 `f0da177` (PR #49); the detail diagnostic phase-7/retreat fixture repair
 `8ae9e7d` (`21c3ccc` + `28b841a`) passed independent Opus review `w_62fe4c42` and
 the full 14-phase detail gate on the OnePlus 13 at 3168x1440 (three PASS runs,
 each with a real HOME/resume, byte-identical reports), so PR #48 merged at
 `06975ce`; optional CPU traversal PR #51 merged at `92f0a79` with GPU/Android/cost
-gates explicitly open and issue 42 open. Acceptance APK
-`bff9e869aefa6448bc0b3c1d6560664f0b8b020b490cbf5283159ccf5319e01a`, built from the
-exact GitHub merge tree `90d529a4…`. All five current saves were restored
-hash-exact, the accepted APK stays installed and the app is force-stopped. No
-thermal campaign. See the
+gates explicitly open and issue 42 open. PR #53 shared mobile settings merged at
+`f878e1b` after two Opus acceptances and a full phone gate (chooser/Wetland/Relay,
+left/right x normal/large, adapter-level mute, restart, HOME, sample switch); five
+saves and the prior preference absence were restored exactly. **Next batch:**
+integrate the accepted PR #54 (review `w_adc924e0` ACCEPT at
+`28d30553606f01bdd5d38e6240782d6da552beae` + docs `3d33c4f`) preserving #53 and
+run the narrow Android functional gate: stationary GI/reflection converge, walk
+LOD returns GI, a real edit/body move invalidates then reconverges, lifecycle,
+and a dense source box with no `MAX_MESH_PROXY_TESTS` errors. Fix any
+comment/doc misclassification that presents moving cell/body GI continuity as
+Phase B before merging (behaviour unchanged); continuous moving-cell body GI
+continuity stays an **OPEN functional requirement**, and no full-GI/M4 claim may
+be made. Acceptance APK
+`e6f4c4b8d11ae37f1ff2c0d13fa1261e7741ef5ad26ff25c7eaab7bb04fa4f3f` (settings
+gate) stays installed until the #54 build replaces it; all five current saves
+were restored hash-exact and the app is force-stopped. No thermal campaign. See
+the
 [detail-48 delivery log](performance/logs/detail48-device-delivery.md), the
-[manifest](evidence/2026-09-13-detail48/manifest.json) and
+[settings delivery log](performance/logs/shared-settings-android-delivery.md),
+the [manifest](evidence/2026-09-13-detail48/manifest.json) and
 [STATUS](STATUS.md).
 
 **Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.

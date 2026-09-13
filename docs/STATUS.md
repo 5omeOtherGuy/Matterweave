@@ -23,7 +23,59 @@ experiment PR #51 merged at `92f0a79` with GPU/Android/cost gates explicitly ope
 See [delivery log](performance/logs/detail48-device-delivery.md) and
 [evidence manifest](evidence/2026-09-13-detail48/manifest.json); the earlier
 [functional-fix log](performance/logs/deepseek-functional-delivery.md) records the
-phase-7 failure that this delivery repaired.
+phase-7 failure that this delivery repaired. The same delegated owner then
+delivered shared mobile settings (PR #53, below) and owns the pending PR #54
+proxy-GI/reflection device gate; the owner also merged the docs-only authoring
+delivery (PR #55, below).
+
+## Shared mobile settings delivery (D4.2) and D4.3 authoring merge — 2026-09-13
+
+Settings PR #53 (`engine/shared-mobile-settings`, frozen head
+`4b4fbcd2f286719fdf0966a25de811ac146d1f4b`) merged at `f878e1b` after the
+independent Opus review `w_5b4c3413` and the corrective review `w_69103511`
+(ACCEPT at the frozen head, no blockers) and six green checks. Acceptance source
+was GitHub's own merge commit `6b341172` (PR #53 x `54ec529`), tree
+`4797b78c4cf08236d2b7685d26dc0d4803d10a5c`; accepted APK sha256
+`e6f4c4b8d11ae37f1ff2c0d13fa1261e7741ef5ad26ff25c7eaab7bb04fa4f3f`
+(`tools/verify_apk.py` PASS ARM64/16 KiB, v2 debug signature, `install -r`,
+on-device hash equal). PR #55 landed mid-run (`d37ca73`, documentation only), so
+the merged result was predicted with `git merge-tree` (tree `14ad21ff…`) and
+then confirmed as the merged tree: code paths are byte-identical to the built
+tree, so the single APK remains the delivery artifact.
+
+| Gate | Result |
+| --- | --- |
+| Entry points | SETTINGS reachable from the chooser, the Wetland options list and the Relay HUD; DONE wrote `matterweave-settings.json` (87 bytes, `ba4a341f…`) only after a real change, and the post-DONE chooser frame was byte-identical to the pre-settings frame |
+| Handedness + size, both samples | Wetland right+large: the drawn stick moved the diagnostics position 85.0/19.5/53.6 → 86.4/19.5/51.0 while the abandoned left zone was inert; PLACE/REMOVE at the drawn rectangles logged `WETLAND EDIT 17.509ms Voxel added` / `13.763ms Voxel removed`. Relay mirrored stick drove the physics eye 10.0/1.6 → 4.67/9.68, the crate push opened the door, and the drawn mirrored ACTION cleared the obstacle (`OBSTACLE CLEARED`, `event=block-edit outcome=Started`); the old left stick position was inert |
+| Mute policy | SOUND→OFF persisted `muted: true` and a PLACE logged `Sample audio Wetland: event=block-edit outcome=Dropped(Muted)`; SOUND→ON logged `outcome=Started`. Real adapter state and logs only; no human-hearing claim |
+| Persistence, switch, HOME, restart | Fast DONE→RETURN TO MENU persisted `handedness: left`; Relay-changed preferences propagated into a fresh Wetland; a real HOME + `am start` kept the file identical with input functional (89.1/18.3/60.7 → 89.7/18.3/60.8); restart kept the file byte-identical (`825f44f4…`) with the persisted layout and a working mirrored zone |
+| Saves / prior preferences | All five owner saves re-hashed on device byte-exact to the fresh backup; the test-created settings file was removed (prior state was absence); `e6f4c4b8…` installed; app force-stopped |
+
+Physical simultaneous multitouch and lock/unlock remain **OPEN** device gates:
+sequential ADB injection cannot claim simultaneous physical contacts, and the
+same-batch `DONE + scope switch` flush is proven by the worker's unit regression
+rather than by device taps. Evidence:
+[delivery log](performance/logs/shared-settings-android-delivery.md) and the
+private `orchestration/deepseek-settings-device/` run tree. No performance or
+thermal claim; the diagnostic FPS field is the app's pacing display, not a
+measurement. One cosmetic observation is recorded and not repaired: the Wetland
+load-time hint still says "Left thumb moves" in right-handed mode.
+
+**D4.3 authoring documentation delivery (2026-09-13).** PR #55
+(`engine/shared-services-authoring`) merged as
+`d37ca73b1846c03606eeae7fac90c27ff6e5e76c` after the Opus review `w_143c48ca`
+accepted the corrections and all required checks
+passed. `docs/AUTHORING.md` and its logs now state D4.2 accurately: sample
+reuse, functional input and persistence are satisfied; audible output is
+accepted on the owner's device confirmation ("Audio works 100%"); physical
+simultaneous multi-finger use and lock/unlock remain unrun device acceptance.
+The guide documents `build_showcase(SHOWCASE_SEED)?` / `showcase.scene`, chooser
+registration via `experience.rs`/`wetland.rs`, and persistence as `World::load`
++ `world.attachment()`, and it no longer presents a production editor,
+compressed codecs or save-journal migration as D4.2 gates. Documentation only:
+no runtime code changed, and D4/M6 are not closed by this PR. Settings #53 is
+now merged at `f878e1b` (above); lighting #54 is reviewed but still open and not
+shipped by this PR.
 
 ## Detail-48 device acceptance and reviewed PR delivery — 2026-09-13
 

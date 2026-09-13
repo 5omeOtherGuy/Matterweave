@@ -1146,19 +1146,24 @@
       "47": "extend adaptive lighting work and temporal reuse - read-only Opus next-slice review"
     },
     "phase_b_cost_thermal_rankings": "deferred per owner 2026-09-13; functional issue experiments run alongside engine development",
-    "phone": "delegated delivery owns the phone; app force-stopped; all5 current saves restored to fresh pre-incident-test backups",
+    "phone": "delegated delivery owner w_150a72bd owns the phone 192.168.178.93:5555; app force-stopped; all 5 owner saves restored byte-exact to the fresh backup and the prior settings-file absence restored; accepted settings-gate APK e6f4c4b8 installed until the #54 gate replaces it",
     "scope": "functional ANR repair and existing Android diagnostic failure; no thermal campaign; independent reviews and combinedAPK acceptance next",
     "shared_settings_20260913": {
-      "worker": "w_6f7430c8",
+      "workers": [
+        "w_6f7430c8 (base slice)",
+        "w_a57a5cb8 (same-batch ordering repair)"
+      ],
       "profile": "deepseek-flash-direct",
-      "state": "running",
+      "state": "merged",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/shared-controls",
       "branch": "engine/shared-mobile-settings",
       "issue": "R10",
       "scope": "handedness / normal-large controls / mute shared persistence, user-facing integration in both samples; no lighting regions, no phone, no shared docs",
-      "log": "docs/performance/logs/d4-2-shared-controls-direct.md",
-      "prior": "Muse w_d6871fc0 produced no code (run status failed); this continues the primary-plan D4.2 slice",
-      "gates": "independent review and device/user acceptance NOT RUN; not integrated before review"
+      "log": "docs/performance/logs/d4-2-shared-controls-direct.md and docs/performance/logs/shared-settings-ordering-repair.md",
+      "reviews": "w_5b4c3413 (opus-medium) accept at 560df25; corrective w_69103511 (opus-medium) ACCEPT at frozen 4b4fbcd with no blocking finding",
+      "pr": 53,
+      "merge": "f878e1b (merge tree 14ad21ff2ee75ae9bf5e9bfdf7997f80b3d80b4e on main d37ca73; six checks green, no bypass)",
+      "prior": "Muse w_d6871fc0 produced no code (run status failed); the base slice continued the primary-plan D4.2 work"
     },
     "wetland_proxy_lighting_20260913": {
       "worker": "w_da1d82ec",
@@ -1181,6 +1186,52 @@
       "evidence": "docs/performance/logs/detail48-device-delivery.md, docs/evidence/2026-09-13-detail48/manifest.json, private orchestration/detail48-acceptance/",
       "limits": "no runtime projected-overlap proof; <=1440 px only; no performance/thermal measurement",
       "record_discrepancy": "immutable harness records for completed workers w_bcdffd59 and w_defe33ad still carry bogus \"engineering log unfilled\" errors while the in-repo logs are complete; harness records were not rewritten and repository logs are ground truth."
+    },
+    "shared_settings_device_delivery_20260913": {
+      "worker": "w_150a72bd",
+      "profile": "deepseek-flash-direct",
+      "state": "delivered",
+      "run": "orchestration/deepseek-settings-device",
+      "acceptance_source": "GitHub refs/pull/53/merge 6b341172 (PR #53 4b4fbcd x main 54ec529), tree 4797b78c4cf08236d2b7685d26dc0d4803d10a5c",
+      "apk": "e6f4c4b8d11ae37f1ff2c0d13fa1261e7741ef5ad26ff25c7eaab7bb04fa4f3f (verify_apk PASS ARM64/16 KiB, v2 debug signature, install -r, on-device sha equal)",
+      "gates": "three entry points (chooser / Wetland options / Relay HUD); left+right x normal+large in both samples; drawn stick/action zones moved the world while the abandoned zone stayed inert; mute verified as adapter outcome Started -> Dropped(Muted) -> Started with matching settings bytes; fast DONE-then-switch, sample switch, HOME/resume and restart all preserved the file and kept input functional; five saves and the prior settings absence restored byte-exact",
+      "open": "physical simultaneous multitouch and lock/unlock remain OPEN (sequential ADB injection cannot claim them); same-batch flush proven by unit regression, not device taps; no performance/thermal claim",
+      "log": "docs/performance/logs/shared-settings-android-delivery.md",
+      "evidence": "private orchestration/deepseek-settings-device/device/ (screenshots, per-phase logs, logcat excerpts, settings snapshots, prestate/cleanup json) and device-backup/ (0700)"
+    },
+    "d4_3_authoring_delivery_20260913": {
+      "worker": "w_f653a32c",
+      "state": "merged",
+      "pr": 55,
+      "merge": "d37ca73b1846c03606eeae7fac90c27ff6e5e76c",
+      "review": "w_143c48ca (opus-medium) accept with one required sentence correction; four corrections applied exactly, merged tree byte-identical to the reviewed head tree",
+      "delivered": "docs/AUTHORING.md + d4-3-authoring{,repair}.md + authoring55-delivery.md; D4.2 audibility is owner-accepted, only physical simultaneous multi-finger use and lock/unlock remain unrun; no production editor/codec/save-journal presented as D4.2 gates",
+      "status_text": "applied to docs/STATUS.md with the merge SHA and the now-stale '#53 unmerged' clause corrected to the merged fact",
+      "log": "docs/performance/logs/authoring55-delivery.md"
+    },
+    "lighting54_nextslice_20260913": {
+      "state": "review-accepted-open-next-device-batch",
+      "repair_author": "w_8a9409db (completed; isolated wetland_lighting.rs, no phone)",
+      "pr": 54,
+      "head": "3d33c4feaac2552ca230d7fcfd8f224dd19e0771 (reviewed code 28d30553606f01bdd5d38e6240782d6da552beae + docs 3d33c4f)",
+      "review": "w_adc924e0 (opus-medium) corrective review ACCEPT at the frozen code SHA, no blocking finding; RED/GREEN counts unverified in that read-only review",
+      "next_batch": "integration/phone owner w_150a72bd integrates the accepted head preserving #53 and runs the narrow Android functional gate: stationary GI/reflection converge, walk LOD returns GI, real edit/body move invalidates then reconverges, lifecycle, dense source box with no MAX_MESH_PROXY_TESTS errors",
+      "open_requirement": "moving cell/body GI continuity remains an OPEN FUNCTIONAL requirement, explicitly not Phase B; any comment/doc misclassification must be fixed before merge with behaviour unchanged",
+      "claim_limit": "no full-GI or M4 claim",
+      "review_log": "docs/performance/logs/wetland-lighting-review-repair.md"
+    },
+    "current_workers_20260913": {
+      "active": {
+        "w_150a72bd": "device/integration owner: PR #53 delivered (f878e1b), now owns the reviewed PR #54 Android gate",
+        "w_e1c8404b": "read-only indirect / moving-light functional feasibility probe in engine/moving-lighting-probe (new test/example/log only, no production change, no phone)",
+        "w_17afb30e": "optional GPU traversal candidate in engine/ray-hierarchy-gpu (issue 42; no phone, no app, no lighting, no shared status)"
+      },
+      "completed": {
+        "w_8a9409db": "PR #54 repair author (wetland_lighting.rs only)",
+        "w_f653a32c": "PR #55 authoring docs delivery (d37ca73)",
+        "w_869fcd5b": "read-only moving-light next-slice feasibility review"
+      },
+      "cap": "global 3 worker cap observed"
     }
   }
 }
