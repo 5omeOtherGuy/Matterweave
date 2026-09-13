@@ -29,16 +29,7 @@ const FACES: [Face; 6] = [
 ];
 
 fn color(material: u8) -> [f32; 3] {
-    match material {
-        1 => [0.29, 0.48, 0.27], // Moss
-        2 => [0.35, 0.24, 0.17], // Soil
-        3 => [0.47, 0.51, 0.52], // Weathered stone
-        4 => [0.72, 0.65, 0.46], // Sand
-        5 => [0.30, 0.20, 0.13], // Wood
-        6 => [0.19, 0.38, 0.28], // Canopy
-        7 => [0.42, 0.77, 0.72], // Mineral
-        _ => [0.69, 0.46, 0.33],
-    }
+    crate::material::color(material)
 }
 
 impl World {
