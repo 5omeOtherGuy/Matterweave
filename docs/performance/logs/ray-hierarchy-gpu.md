@@ -11,6 +11,106 @@ unexplained mismatches. Android execution NOT RUN. No renderer-path selection, n
 default change, no performance claim and no resolution of the open GPU/Android/cost gates
 in issue 42/41.**
 
+## Repair pass (fix58): exact bit-position validation, rebase onto `48c851e`
+
+Independent re-review of PR #58 returned REQUEST CHANGES on one blocking correctness
+finding. This section records the repair; it is the durable artifact for that pass. It
+changes no renderer default, makes no performance/device/Android claim and does not
+touch the frozen branch `engine/ray-hierarchy-gpu` or PR #58.
+
+### Finding: `from_parts` could silently miss solid cells
+
+`HierarchyUpload::from_parts` (`crates/matterweave-render/src/ray_hierarchy_gpu.rs`) took
+`shape` as a free `[u32; 3]` and validated only the material/occupancy word counts, the
+`u8` material range and the total set-bit count. None of those pin the bit *positions* to
+the claimed shape: for an 8x8x8 crop, `[4,4,8]` (blocks `[2,2,1]`) and `[8,4,4]` (blocks
+`[1,2,2]`) both give 4 blocks x 4 words = 16 words and identical set-bit totals, so words
+packed under one shape passed with the other. The uniform then described a layout the
+bits were not packed in, the kernel's bit gate cleared solid cells, and the shader
+silently missed voxels -- bounds-safe, no error. That contradicted the module doc's
+promise that such a mismatch is "rejected before it can skip a solid cell".
+
+### Dependency-direction constraint that ruled out the suggested fix
+
+The reviewer proposed taking `&OccupancyGrid`/`&HierarchyVolume`, or comparing against
+`occupancy.shape()`. None of those compiles here: `OccupancyGrid` and `HierarchyVolume`
+live in `matterweave-ray-hierarchy`, and `crates/matterweave-ray-hierarchy/Cargo.toml:10`
+declares `matterweave-render = { path = "../matterweave-render" }`. `from_parts` is in
+`matterweave-render`, so naming either type there is a circular crate dependency. The fix
+had to use only what `matterweave-render` already holds: `materials`, `occupancy` and the
+claimed `shape`.
+
+### Fix chosen
+
+Replaced the layout-independent popcount check with the shader's own indexing. For every
+crop cell, `from_parts` now computes, under the claimed shape,
+`block = cell / shape`, `local = cell % shape`,
+`bit = local.x + shape.x*(local.y + shape.y*local.z)`,
+`block_index = block.x + block_dims.x*(block.y + block_dims.y*block.z)` and
+`word = block_index*words_per_block + bit/32`, and requires that bit to equal
+`material != 0`. This is O(cells) -- the same order as the popcount scan it replaces --
+allocates nothing and stays inside `matterweave-render`. `HierarchyLayout` keeps
+`block_dims = ceil(dimensions/shape)` and `words_per_block = ceil(bits/32)`, so the check
+is exactly the packing in `matterweave-ray-hierarchy/src/occupancy.rs` and in the kernel.
+The equal-total check is retained as a guard against set bits in padding positions the
+kernel never tests (partial blocks, and a block's last word), so no stray bit survives.
+
+### RED-first regression
+
+New test `upload_rejects_equal_wordcount_equal_popcount_shape_mismatch`: an 8x8x8 crop,
+one solid cell at `[4,0,0]`, occupancy packed under `[4,4,8]` (word 4, bit 0) and then
+claimed as `[8,4,4]` (the same cell's bit under the claimed shape is word 0, bit 4). The
+test asserts the two layouts have equal `occupancy_words()`, asserts the packed shape is
+accepted, and asserts the claimed shape is rejected.
+
+- Before the fix: `cargo test -p matterweave-render --lib ray_hierarchy_gpu` ->
+  `test result: FAILED. 5 passed; 1 failed; 0 ignored` -- the claimed-shape assertion
+  failed because `from_parts` returned `Ok`.
+- After the fix: the same command -> `6 passed`.
+
+### Rebase onto current main
+
+Branch `engine/ray-hierarchy-gpu-fix58` (confirmed with `git rev-parse --abbrev-ref HEAD`)
+was rebased from `d37ca73` onto `origin/main` @ `48c851e`. Three commits replayed; the only
+conflict was the expected module-registration collision in
+`crates/matterweave-render/src/lib.rs` between PR #57's test-only `moving_lighting_probe`
+and this branch's `ray_hierarchy_gpu`. Both registrations were kept in the file's
+alphabetical ordering (`moving_lighting_probe` before `ray_hierarchy_gpu`); nothing else
+was dropped, reordered or reformatted. After the rebase,
+`git diff origin/main HEAD -- crates/matterweave-render/src/lib.rs` is exactly
+`+pub mod ray_hierarchy_gpu;` (one insertion), and
+`git diff origin/main HEAD -- .../ray_reference.rs .../ray_reference.wgsl` is empty.
+
+The rebase produced new commit SHAs; the original branch `engine/ray-hierarchy-gpu` and
+PR #58 are untouched. Repair code checkpoint: `da72d29`.
+
+### Repair-pass verification
+
+Environment: recovery SSD, `RUSTC_WRAPPER=` (no sccache), `CARGO_BUILD_JOBS=1`,
+`CARGO_TARGET_DIR=../raygpu-fix58-target`. 13 GB free before and after; `/mnt/bench` was
+not used; no native GPU/lavapipe campaign was re-run (no device) and no performance,
+thermal, device or Android claim is made.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p matterweave-render --lib ray_hierarchy_gpu` (before fix) | 1 failed: `FAILED. 5 passed; 1 failed` |
+| `cargo test -p matterweave-render --lib ray_hierarchy_gpu` (after fix) | 6 passed |
+| `cargo test -p matterweave-render --lib ray_reference` | 7 passed (retained reference intact) |
+| `cargo test -p matterweave-ray-hierarchy` | 32 passed (retained CPU suites intact) |
+| `cargo test -p matterweave-ray-hierarchy --example ray_hierarchy_gpu` | 3 passed (classifier controls) |
+| `cargo clippy -p matterweave-render -p matterweave-ray-hierarchy --all-targets -- -D warnings` | exit 0, 0 errors (one pre-existing vendored-winit lint) |
+| `cargo fmt -p matterweave-render -p matterweave-ray-hierarchy -- --check` | clean |
+| `python3 tools/check_docs.py` | PASS: 237 Markdown files, 678 local links, 16 ADRs and 20 requirements |
+
+### Still-open review advisories (NOT fixed this pass)
+
+- **(2) No machine-readable evidence artifact** for the 440-check native GPU run.
+- **(3) `../orchestration/deepseek-ray-gpu/result.json` wrongly records all five DoD
+  criteria as NOT RUN** while the committed log shows PASS. The log is the truthful
+  artifact; the orchestration record is wrong.
+- **(4) Vulkan objects leak on mid-`Session::new` failure.**
+- **(5) `palette[material]` has no shader-side clamp** and no `robustBufferAccess`.
+
 ## Question and answer
 
 Can the CPU `BlockMask` candidate run as a fragment kernel over the same bounded crop and
@@ -73,6 +173,12 @@ rounding, for which the classifier is strict and had no cases to classify.
 8. Ran the focused checks, the validation-layer run with synchronization validation, and
    the retained `ray_reference_vulkan` example as a regression anchor, then committed the
    code and tests, and wrote this log.
+9. Repair pass (fix58): replaced the `from_parts` popcount check with exact per-cell bit
+   position validation under the claimed shape (see the repair section above), added the
+   RED-first equal-word-count/equal-popcount regression, rebased the branch onto
+   `origin/main` @ `48c851e` and resolved the single `lib.rs` module-registration conflict
+   by keeping both lines. Re-ran the focused tests, clippy, fmt and `check_docs`; did not
+   re-run the native GPU campaign (no device, unaffected by this validation-only change).
 
 ## Issues & Friction
 
@@ -106,6 +212,20 @@ rounding, for which the classifier is strict and had no cases to classify.
   `VK_LAYER_KHRONOS_validation` with synchronization validation; the harness is a
   single-queue, wait-idle loop by construction, and the run log contains zero
   `Validation Error`/`VUID-` lines.
+- **`from_parts` accepted a mismatched `(occupancy, shape)` pair** (review REQUEST
+  CHANGES). The word-count and popcount checks were layout-independent, so words packed
+  under `[4,4,8]` passed with `[8,4,4]` and the shader silently missed solid cells. Fixed
+  with exact per-cell bit positions; see the repair section above.
+- **The reviewer's suggested fix does not compile in this crate.** `OccupancyGrid` and
+  `HierarchyVolume` live in `matterweave-ray-hierarchy`, which depends on
+  `matterweave-render`, so `from_parts` cannot name them; the missing information had to
+  be recomputed from the arguments already passed in.
+- **Four review advisories remain open and are deliberately not fixed here:** (2) no
+  machine-readable evidence artifact for the 440-check native run; (3)
+  `../orchestration/deepseek-ray-gpu/result.json` records the five DoD criteria as NOT RUN
+  while the log shows PASS (the log is correct); (4) Vulkan objects leak on mid-
+  `Session::new` failure; (5) `palette[material]` has no shader-side clamp and no
+  `robustBufferAccess`.
 
 ## Decisions & Rationale
 
@@ -139,6 +259,14 @@ rounding, for which the classifier is strict and had no cases to classify.
   silently dropping the case.
 - **No timing, no DPR, no comparison to the raster path.** The example reports functional
   counts only, and the normal renderer remains the only production path.
+- **Exact bit positions, not a new dependency or a shape accessor.** `from_parts` cannot
+  take `OccupancyGrid`/`HierarchyVolume` (circular crate dependency) and has no shape but
+  its `shape` parameter, so the check recomputes the shader's `(block, bit)` indexing from
+  `materials`, `occupancy` and the claimed `shape`. It is O(cells), allocation-free and
+  keeps the invariant local to `matterweave-render`.
+- **Keep the equal-total check as a padding guard.** Per-cell checks pin every
+  crop-visible bit; the retained popcount equality additionally rejects set bits in
+  padding positions the kernel never tests, preserving the previous strictness.
 
 ## Solutions Applied
 
@@ -158,6 +286,13 @@ rounding, for which the classifier is strict and had no cases to classify.
 - Documentation: the shader, module, crate docs, README and DEVELOPMENT entry all state
   the optional status, the binding contract, the bounded buffers, the staleness rule and
   the Android gate.
+- Silent-miss closure: `HierarchyUpload::from_parts` walks every crop cell in the shader's
+  own indexing and requires the occupancy bit at that cell to match the material, so an
+  equal-word-count equal-popcount shape mismatch is rejected; the equal-total check is kept
+  as a padding guard.
+- Integration: the branch was rebased onto `origin/main` @ `48c851e`; the `lib.rs`
+  `moving_lighting_probe`/`ray_hierarchy_gpu` collision was resolved by keeping both
+  registrations, leaving the branch's own `lib.rs` delta at one added line.
 
 ## Insights
 
@@ -179,6 +314,13 @@ rounding, for which the classifier is strict and had no cases to classify.
 - Counted memory access (CPU experiment) and functional GPU agreement are now separate
   pieces of evidence. Neither says anything about device cost, cache behavior or thermal
   response, and none was measured here.
+- Word counts and set-bit totals are not a layout: both are invariant under some shape
+  changes, so a check that compares only totals cannot prove the bits the kernel will
+  actually test. The exact per-cell check is the cheapest faithful statement of the real
+  contract, and it caught a case the totals missed.
+- A dependency edge is a correctness constraint on fix design. `matterweave-render` being
+  the lower crate meant the unavailable type information had to be recomputed from the
+  data already passed in rather than imported.
 
 ## Verification performed
 
@@ -227,11 +369,14 @@ build and no workspace-wide rebuild.
 
 ## Delivery
 
-Code and tests checkpoint: `bf33a96`. Frozen reviewed source: the branch head at handoff
-(recorded in the PR body). Files: `matterweave-render` `ray_hierarchy_gpu.{rs,wgsl}` +
-`build.rs`/`lib.rs` registrations, `matterweave-ray-hierarchy` example + public `fixtures`
-+ dev-dependencies, `Cargo.lock`, and the crate README/DEVELOPMENT entries. The PR is
-opened for review and is not merged by this worker; issue 42 stays open.
+Code and tests checkpoint: `bf33a96`. Repair code checkpoint: `da72d29`. Frozen reviewed
+source: the branch head at handoff (recorded in the PR body); the original branch
+`engine/ray-hierarchy-gpu` and PR #58 are left exactly as they were. Files:
+`matterweave-render` `ray_hierarchy_gpu.{rs,wgsl}` + `build.rs`/`lib.rs` registrations,
+`matterweave-ray-hierarchy` example + public `fixtures` + dev-dependencies, `Cargo.lock`,
+and the crate README/DEVELOPMENT entries. The repair is additive on the new branch
+`engine/ray-hierarchy-gpu-fix58`; the PR is opened for review and is not merged by this
+worker; issue 42 stays open.
 
 ## Next gate for the Android/device owner
 
