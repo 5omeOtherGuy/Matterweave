@@ -57,10 +57,33 @@ use winit::{
 /// The derived levels the diagnostic treats as resident candidates.
 const LODS: [Lod; 3] = RESIDENT_LODS;
 
-/// Per-prepare cap on newly realized coarse levels, mirrored from the wetland
+/// Per-prepare cap on newly realized coarse levels declared by the wetland
 /// production policy (`MAX_COARSE_BUILDS_PER_PREPARE`). Kept local on purpose:
-/// the diagnostic must not import private production wiring.
+/// the diagnostic must not import private production wiring, and the cold
+/// phase's own declared bound is documented against it.
 const MAX_COARSE_BUILDS_PER_PREPARE: usize = 2;
+
+/// Coarse-build bound the diagnostic's cold phase declares for its bounded
+/// convergence proof: deliberately one, below the production maximum above.
+///
+/// The proof needs the first prepare to defer at least one eligible coarse
+/// `(prototype, Lod)` pair, and the cap counts distinct newly built pairs, so it
+/// must stay below the number of pairs the live viewport selects. At the
+/// physical Android viewport (1440 px) only two pairs clear the default pixel
+/// budget (`boulder` `Quarter`, `dense_control` `Quarter`), so the production
+/// cap of two realizes both in the first prepare and the deferral proof
+/// disappears silently. A bound tighter than production still exercises the
+/// production lazy path (selection, fallback, later realization) and proves the
+/// cap is honored; it relaxes no quality guard and does not fix the viewport.
+/// Raise it only alongside a fixture that selects more pairs at every supported
+/// viewport; `cold_lazy_convergence_defers_at_android_and_host_viewports` fails
+/// loudly when the declared cap cannot defer.
+const COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE: usize = 1;
+
+/// The cold-phase bound is only a proof of the production path while it stays
+/// below the production maximum it is compared against.
+const _: () = assert!(COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE < MAX_COARSE_BUILDS_PER_PREPARE);
+
 /// Hard bound on stationary convergence prepares, so a defective policy can
 /// never hang the gate. Production stops repeating once a repeat stops shrinking
 /// the deferred set; this only caps runaway behavior.
@@ -109,6 +132,23 @@ const FLORA_SHRUB_TARGET_M: [f32; 3] = [-17.0, 0.0, 2.0];
 const FLORA_SPIRE_HOME_M: [f32; 3] = [14.0, 0.0, 4.0];
 const FLORA_LILY_HOME_M: [f32; 3] = [14.0, 0.0, 10.0];
 const OCCLUSION_SOLID_HOME_M: [f32; 3] = [-20.0, 0.0, -2.0];
+
+/// Occlusion-phase camera: level with the ground and centred on the fungus stem
+/// and the solid core, so the two boxes stay concentric in projection and the
+/// depth order is purely along the view axis.
+///
+/// The phase's claim is that the thin foreground plant is retained at `Source`
+/// by the geometry guards, *not* by distance, so its coarse level must stay
+/// inside the fresh-selection pixel budget
+/// (`error_budget_px / (1 + hysteresis)`) at every supported render viewport.
+/// One coarse cell of the 0.0625 m-scale fungus is 0.125 m, so the default 2 px
+/// budget admits that coarse level only from about 109 m at the physical
+/// 1440 px Android surface. 130 m clears the budget at every supported viewport
+/// while the dense rear boulder, 4 m behind the fungus, still realizes a coarse
+/// level at the same distance. Both are asserted per viewport by
+/// `occlusion_phase_layers_guarded_flora_in_front_of_a_realized_coarse_solid`.
+const OCCLUSION_EYE_M: [f32; 3] = [-20.0, 0.35, 130.0];
+const OCCLUSION_TARGET_M: [f32; 3] = [-20.0, 0.35, 0.0];
 
 /// Builds one production flora prototype through the exported constructor.
 fn production_flora(id: &str) -> DetailVolume {
@@ -408,6 +448,19 @@ fn deferred_count(frame: &PreparedFrame) -> usize {
     frame.selected.iter().filter(|item| item.fallback).count()
 }
 
+/// Projected screen-space error in pixels of a prototype's first coarse level
+/// (one coarse cell, `2 * prototype_scale_m`) at `depth_m`.
+fn coarse_projected_error_px(camera: &LodCamera, prototype_scale_m: f32, depth_m: f32) -> f32 {
+    camera.projected_error_px(prototype_scale_m * 2.0, depth_m)
+}
+
+/// Fresh-selection pixel budget: the descending (switch-to-coarser) threshold
+/// `error_budget_px / (1 + hysteresis)`, the threshold the engine applies to an
+/// instance currently at `Source`.
+fn fresh_selection_budget_px(config: &LodConfig) -> f32 {
+    config.error_budget_px / (1.0 + config.hysteresis)
+}
+
 /// True when `Half` of a prototype at `prototype_scale_m` would pass the
 /// descending (fresh-selection) hysteresis threshold at `depth_m`. Used to show
 /// that a retained `Source` is the geometry guard's decision, not distance.
@@ -417,8 +470,8 @@ fn coarse_would_pass_pixels(
     depth_m: f32,
     config: &LodConfig,
 ) -> bool {
-    let low = config.error_budget_px / (1.0 + config.hysteresis);
-    camera.projected_error_px(prototype_scale_m * 2.0, depth_m) <= low
+    coarse_projected_error_px(camera, prototype_scale_m, depth_m)
+        <= fresh_selection_budget_px(config)
 }
 
 /// A camera phase: eye, look target, projection and selection policy.
@@ -481,10 +534,12 @@ pub fn phases() -> Vec<PhasePlan> {
         vertical_fov_rad: FOV,
     };
     vec![
-        // Cold resident pool (Source only) plus the production coarse build
-        // cap: the first prepare realizes at most the declared bound and defers
-        // the rest; identical stationary prepares converge to zero deferred and
-        // a zero-build steady state.
+        // Cold resident pool (Source only) plus the diagnostic's declared coarse
+        // build bound (one per prepare, below the production maximum): the first
+        // prepare realizes at most that bound and defers the rest; identical
+        // stationary prepares converge to zero deferred and a zero-build steady
+        // state. The bound is explicit because the physical Android viewport
+        // selects fewer distinct coarse pairs than the host window.
         PhasePlan {
             converge: true,
             ..plan(
@@ -493,7 +548,7 @@ pub fn phases() -> Vec<PhasePlan> {
                 origin,
                 perspective,
                 LodConfig {
-                    max_coarse_builds: Some(MAX_COARSE_BUILDS_PER_PREPARE),
+                    max_coarse_builds: Some(COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE),
                     ..default
                 },
             )
@@ -506,12 +561,14 @@ pub fn phases() -> Vec<PhasePlan> {
             perspective,
             default,
         ),
-        // Retreat coarsens it. This camera also makes every production flora
-        // instance pixel-eligible for a coarse level while the default guards
-        // retain Source.
+        // Retreat coarsens the near control. This camera also makes every
+        // production flora instance pixel-eligible for a coarse level while the
+        // default guards retain `Source` at every supported viewport, and it
+        // clears the near control's own coarse budget with headroom at the
+        // 1440 px Android surface (a 220 m camera cleared it by 0.6%).
         plan(
             "retreat-far-perspective",
-            [0.2, 0.2, 220.0],
+            [0.2, 0.2, 260.0],
             origin,
             perspective,
             default,
@@ -553,8 +610,8 @@ pub fn phases() -> Vec<PhasePlan> {
             occlusion: true,
             ..plan(
                 "occlusion-foreground-fungus-over-solid",
-                [-20.0, 0.5, 95.0],
-                [-20.0, 0.15, 0.0],
+                OCCLUSION_EYE_M,
+                OCCLUSION_TARGET_M,
                 perspective,
                 default,
             )
@@ -1198,7 +1255,7 @@ impl DetailCheck {
         let max_builds = outcome.max_builds;
         self.install(&update, outcome.force_replace)?;
 
-        let check = self.check_frame(&plan, &update)?;
+        let check = self.check_frame(&plan, &update, viewport)?;
         let histogram = lod_histogram(&update.frame);
         let (selections, runtime_meshes) = {
             let runtime = self.runtime.as_ref().ok_or("no runtime after prepare")?;
@@ -1261,14 +1318,18 @@ impl DetailCheck {
         ))
     }
 
-    /// Per-phase contract checks over one prepared and installed frame.
+    /// Per-phase contract checks over one prepared and installed frame. The
+    /// viewport height is passed in rather than re-read from the window so the
+    /// identical checks can be driven at every supported render viewport
+    /// without a live surface.
     fn check_frame(
         &mut self,
         plan: &PhasePlan,
         update: &crate::detail_runtime::FrameUpdate,
+        viewport_height_px: f32,
     ) -> Result<PhaseCheck, String> {
         let frame = &update.frame;
-        let camera = plan.lod_camera(self.viewport_height());
+        let camera = plan.lod_camera(viewport_height_px);
         let scene = &self.scene;
         let runtime = self.runtime.as_ref().ok_or("no runtime")?;
 
@@ -1402,9 +1463,13 @@ impl DetailCheck {
             if fungus.lod != Lod::Source
                 || !coarse_would_pass_pixels(&camera, fungus_scale, fungus.depth_m, &plan.config)
             {
-                return Err(
-                    "occlusion foreground flora was not a pixel-eligible guard retention".into(),
-                );
+                return Err(format!(
+                    "occlusion foreground flora was not a pixel-eligible guard retention: {:?} at depth {:.2} m, coarse error {:.3} px against a {:.3} px budget at a {viewport_height_px:.0} px viewport",
+                    fungus.lod,
+                    fungus.depth_m,
+                    coarse_projected_error_px(&camera, fungus_scale, fungus.depth_m),
+                    fresh_selection_budget_px(&plan.config),
+                ));
             }
             let solid = frame
                 .selected
@@ -1652,7 +1717,7 @@ impl ApplicationHandler for DetailCheck {
                         self.lods_seen.iter().map(|l| format!("{l:?}")).collect();
                     self.record(format!(
                         "PASS detail: {} phases over a controlled fixture plus {} exported production flora species; \
-                         bounded lazy convergence (cap {}) realized eligible dense geometry while every flora instance \
+                         bounded lazy convergence (declared cold-phase cap {}, below the production maximum {}) realized eligible dense geometry while every flora instance \
                          stayed at Source under the default guards (guarded despite a passing pixel budget where reported); \
                          occlusion view layered guarded thin flora in front of a realized coarse solid; instance move updated \
                          placements without a geometry rebuild, the moved-instance edit invalidated and refreshed its derived \
@@ -1661,6 +1726,7 @@ impl ApplicationHandler for DetailCheck {
                          budget, zero extent and lifecycle recreation verified (cold-cache cap fallback: unit test only)",
                         self.plans.len(),
                         FLORA_INSTANCES.len(),
+                        COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE,
                         MAX_COARSE_BUILDS_PER_PREPARE,
                         seen.join("/"),
                     ));
@@ -1738,15 +1804,21 @@ mod tests {
     }
 
     /// World-space AABB of one selected instance projected into normalized
-    /// device coordinates: `[min_x, min_y, max_x, max_y]`.
-    fn projected_rect(scene: &DetailScene, plan: &PhasePlan, item: &InstanceLod) -> [f32; 4] {
+    /// device coordinates at the given width/height aspect ratio:
+    /// `[min_x, min_y, max_x, max_y]`.
+    fn projected_rect(
+        scene: &DetailScene,
+        plan: &PhasePlan,
+        item: &InstanceLod,
+        aspect: f32,
+    ) -> [f32; 4] {
         let bounds: Bounds = scene
             .prototype(&item.prototype)
             .expect("prototype")
             .bounds_world(&item.transform)
             .expect("transform")
             .expect("nonempty prototype");
-        let matrix = Mat4::from_cols_array_2d(&plan.view_projection(16.0 / 9.0));
+        let matrix = Mat4::from_cols_array_2d(&plan.view_projection(aspect));
         let mut min = [f32::INFINITY; 2];
         let mut max = [f32::NEG_INFINITY; 2];
         for corner in 0..8 {
@@ -1992,30 +2064,66 @@ mod tests {
         assert!(instances.iter().any(|i| i.translation[0] < 0.0));
     }
 
+    /// Every production flora species is retained at `Source` by the geometry
+    /// guards, not by distance, at every supported live viewport: the retreat
+    /// camera keeps each species' coarse level inside the fresh-selection pixel
+    /// budget while the default guards hold the authoritative mesh. The same
+    /// camera must still coarsen the near dense control with real headroom at
+    /// the binding viewport — a fixture that only *just* clears the budget
+    /// breaks on a slightly taller surface — so the near instance must clear it
+    /// by at least 10%.
     #[test]
     fn production_flora_corpus_is_held_at_source_where_pixels_would_allow_coarse() {
         let plan = phase("retreat-far-perspective");
-        let camera = camera(&plan);
-        let mut scene = fixture_scene();
-        let frame = scene.prepare_batches(&camera, &plan.config).unwrap();
-        let mut pixel_eligible = 0usize;
-        for (instance, species) in FLORA_INSTANCES {
-            let selected = item(&frame, instance);
-            assert_eq!(
-                selected.lod,
-                Lod::Source,
-                "production flora {instance} ({species}) coarsened"
-            );
-            let scale_m = scene.prototype(species).unwrap().scale().metres();
-            if coarse_would_pass_pixels(&camera, scale_m, selected.depth_m, &plan.config) {
-                pixel_eligible += 1;
+        for viewport_px in LIVE_VIEWPORTS_PX {
+            let camera = plan.lod_camera(viewport_px);
+            let mut scene = fixture_scene();
+            let frame = scene.prepare_batches(&camera, &plan.config).unwrap();
+            let budget_px = fresh_selection_budget_px(&plan.config);
+            let mut pixel_eligible = 0usize;
+            for (instance, species) in FLORA_INSTANCES {
+                let selected = item(&frame, instance);
+                assert_eq!(
+                    selected.lod,
+                    Lod::Source,
+                    "{viewport_px} px: production flora {instance} ({species}) coarsened"
+                );
+                let scale_m = scene.prototype(species).unwrap().scale().metres();
+                if coarse_would_pass_pixels(&camera, scale_m, selected.depth_m, &plan.config) {
+                    pixel_eligible += 1;
+                }
             }
+
+            let near = item(&frame, NEAR_INSTANCE);
+            let near_error_px = near.projected_error_estimate_px;
+            println!(
+                "{viewport_px} px retreat: flora pixel-eligible {pixel_eligible}/{}, near boulder \
+                 {:?} at depth {:.2} m projects its selected level at {near_error_px:.3} px against \
+                 the {budget_px:.3} px budget",
+                FLORA_INSTANCES.len(),
+                near.lod,
+                near.depth_m,
+            );
+            assert!(
+                near_error_px <= 0.9 * budget_px,
+                "{viewport_px} px: the retreat camera must clear the budget for the level it \
+                 selects with at least 10% headroom ({near_error_px:.3} px of a {budget_px:.3} px \
+                 budget)"
+            );
+            assert_eq!(
+                pixel_eligible,
+                FLORA_INSTANCES.len(),
+                "{viewport_px} px: every flora species must face a pixel-eligible coarse choice at \
+                 the retreat camera"
+            );
+            assert!(
+                near.lod > Lod::Source && !near.fallback,
+                "{viewport_px} px: the retreat camera must coarsen the near dense control, chose \
+                 {:?} fallback={}",
+                near.lod,
+                near.fallback
+            );
         }
-        assert_eq!(
-            pixel_eligible,
-            FLORA_INSTANCES.len(),
-            "every flora species must face a pixel-eligible coarse choice at the retreat camera"
-        );
     }
 
     #[test]
@@ -2075,49 +2183,81 @@ mod tests {
         }
     }
 
+    /// The occlusion phase's claim must hold at every supported live viewport:
+    /// the thin foreground plant stays at `Source` while its coarse level
+    /// *would* clear the fresh-selection pixel budget (so the retention is the
+    /// geometry guard's decision, not distance), an eligible rear solid
+    /// realizes a non-empty coarse mesh at the live source revision, the
+    /// foreground is genuinely in front of it, and the two projected boxes
+    /// overlap. The overlap is checked at the host gate aspect and at the
+    /// physical Android landscape aspect.
     #[test]
     fn occlusion_phase_layers_guarded_flora_in_front_of_a_realized_coarse_solid() {
         let plan = phase("occlusion-foreground-fungus-over-solid");
-        let camera = camera(&plan);
-        let mut scene = fixture_scene();
-        let frame = scene.prepare_batches(&camera, &plan.config).unwrap();
+        for viewport_px in LIVE_VIEWPORTS_PX {
+            let camera = plan.lod_camera(viewport_px);
+            let mut scene = fixture_scene();
+            let frame = scene.prepare_batches(&camera, &plan.config).unwrap();
 
-        let fungus = item(&frame, FLORA_FUNGUS_INSTANCE);
-        assert_eq!(fungus.lod, Lod::Source, "foreground thin flora is guarded");
-        let fungus_scale = scene.prototype("funnel_mushroom").unwrap().scale().metres();
-        assert!(
-            coarse_would_pass_pixels(&camera, fungus_scale, fungus.depth_m, &plan.config),
-            "foreground Source must be a guard retention, not distance"
-        );
+            let fungus = item(&frame, FLORA_FUNGUS_INSTANCE);
+            assert_eq!(
+                fungus.lod,
+                Lod::Source,
+                "{viewport_px} px: foreground thin flora is guarded"
+            );
+            let fungus_scale = scene.prototype("funnel_mushroom").unwrap().scale().metres();
+            let error_px = coarse_projected_error_px(&camera, fungus_scale, fungus.depth_m);
+            let budget_px = fresh_selection_budget_px(&plan.config);
+            println!(
+                "occlusion {viewport_px} px: fungus depth {:.2} m projects the coarse level at \
+                 {error_px:.3} px against the {budget_px:.3} px fresh-selection budget",
+                fungus.depth_m
+            );
+            assert!(
+                coarse_would_pass_pixels(&camera, fungus_scale, fungus.depth_m, &plan.config),
+                "{viewport_px} px: foreground Source must be a guard retention, not distance \
+                 ({error_px:.3} px coarse error against a {budget_px:.3} px budget at depth {:.2} m)",
+                fungus.depth_m
+            );
 
-        let solid = item(&frame, OCCLUSION_SOLID_INSTANCE);
-        assert!(
-            solid.lod > Lod::Source && !solid.fallback,
-            "rear solid must realize a coarse level: {:?}",
-            solid.lod
-        );
-        let solid_mesh = scene
-            .cached_prototype_mesh(&solid.prototype, solid.lod)
-            .expect("realized coarse mesh is resident");
-        assert!(!solid_mesh.vertices.is_empty());
-        assert_eq!(
-            solid_mesh.revision,
-            scene.prototype(&solid.prototype).unwrap().revision()
-        );
+            let solid = item(&frame, OCCLUSION_SOLID_INSTANCE);
+            assert!(
+                solid.lod > Lod::Source && !solid.fallback,
+                "{viewport_px} px: rear solid must realize a coarse level: {:?} fallback={}",
+                solid.lod,
+                solid.fallback
+            );
+            let solid_mesh = scene
+                .cached_prototype_mesh(&solid.prototype, solid.lod)
+                .expect("realized coarse mesh is resident");
+            assert!(!solid_mesh.vertices.is_empty(), "{viewport_px} px");
+            assert_eq!(
+                solid_mesh.revision,
+                scene.prototype(&solid.prototype).unwrap().revision(),
+                "{viewport_px} px: rear solid coarse revision"
+            );
+            println!(
+                "occlusion {viewport_px} px: rear solid {:?} at depth {:.2} m",
+                solid.lod, solid.depth_m
+            );
 
-        assert!(
-            fungus.depth_m < solid.depth_m,
-            "foreground flora depth {} must be in front of solid depth {}",
-            fungus.depth_m,
-            solid.depth_m
-        );
-        let f = projected_rect(&scene, &plan, fungus);
-        let s = projected_rect(&scene, &plan, solid);
-        let overlaps = f[0] <= s[2] && s[0] <= f[2] && f[1] <= s[3] && s[1] <= f[3];
-        assert!(
-            overlaps,
-            "occlusion view must project the thin flora over the rear solid: {f:?} vs {s:?}"
-        );
+            assert!(
+                fungus.depth_m < solid.depth_m,
+                "{viewport_px} px: foreground flora depth {} must be in front of solid depth {}",
+                fungus.depth_m,
+                solid.depth_m
+            );
+            for aspect in VIEW_ASPECTS {
+                let f = projected_rect(&scene, &plan, fungus, aspect);
+                let s = projected_rect(&scene, &plan, solid, aspect);
+                let overlaps = f[0] <= s[2] && s[0] <= f[2] && f[1] <= s[3] && s[1] <= f[3];
+                assert!(
+                    overlaps,
+                    "{viewport_px} px aspect {aspect:.3}: occlusion view must project the thin \
+                     flora over the rear solid: {f:?} vs {s:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2209,7 +2349,8 @@ mod tests {
             .config
             .max_coarse_builds
             .expect("convergence declares a cap");
-        assert_eq!(cap, MAX_COARSE_BUILDS_PER_PREPARE);
+        assert_eq!(cap, COLD_PHASE_MAX_COARSE_BUILDS_PER_PREPARE);
+        assert!(cap < MAX_COARSE_BUILDS_PER_PREPARE);
 
         let mut scene = fixture_scene();
         let mut runtime = DetailRuntime::new();
@@ -2265,6 +2406,133 @@ mod tests {
         assert!(
             converge_bounded(&mut runtime, &mut scene, &camera, &plan.config, true).is_err(),
             "a fully resident view must fail the lazy-path-deferral guard"
+        );
+    }
+
+    /// Render viewport heights every live phase precondition must be proven at:
+    /// the physical Android device viewport first (the binding case), then the
+    /// host/portrait controls. Never a substitute for the live window height.
+    const LIVE_VIEWPORTS_PX: [f32; 4] = [1440.0, 1080.0, 720.0, 480.0];
+
+    /// Width/height ratios the occlusion frame's projected overlap must survive:
+    /// the host gate window and the physical Android landscape surface.
+    const VIEW_ASPECTS: [f32; 2] = [16.0 / 9.0, 3168.0 / 1440.0];
+
+    /// The bounded-convergence phase must exercise the lazy path at every
+    /// supported render viewport, not only the host window. The physical Android
+    /// viewport (1440 px) is the binding case: the default pixel budget admits
+    /// fewer distinct coarse `(prototype, Lod)` pairs there than at 480/720/1080
+    /// px, so the declared per-prepare cap must stay below that count or the
+    /// first prepare realizes every eligible pair and the deferral proof
+    /// silently disappears.
+    #[test]
+    fn cold_lazy_convergence_defers_at_android_and_host_viewports() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let plan = phase("cold-far-bounded-convergence");
+        let cap = plan
+            .config
+            .max_coarse_builds
+            .expect("cold phase declares a coarse build cap");
+
+        // Selection evidence per viewport, measured on throwaway scenes so the
+        // convergence runs below keep pristine hysteresis state.
+        let mut evidence: BTreeMap<u32, BTreeSet<(String, Lod)>> = BTreeMap::new();
+        for viewport_px in LIVE_VIEWPORTS_PX {
+            let camera = plan.lod_camera(viewport_px);
+            let mut probe = fixture_scene();
+            let pairs: BTreeSet<(String, Lod)> = probe
+                .select_lods(&camera, &plan.config)
+                .unwrap()
+                .into_iter()
+                .filter(|selected| selected.lod > Lod::Source)
+                .map(|selected| (selected.prototype, selected.lod))
+                .collect();
+            println!(
+                "cold phase at {viewport_px} px selects {} distinct coarse pair(s): {pairs:?}",
+                pairs.len()
+            );
+            evidence.insert(viewport_px as u32, pairs);
+        }
+
+        for (viewport_px, pairs) in &evidence {
+            let camera = plan.lod_camera(*viewport_px as f32);
+            assert!(
+                pairs.len() > cap,
+                "{viewport_px} px selects {} distinct coarse pair(s); a cap of {cap} cannot defer",
+                pairs.len()
+            );
+
+            // Mirror install_static_scene: the authoritative Source is warm and
+            // every coarse level is realized lazily by the phase prepare itself.
+            let mut scene = fixture_scene();
+            let mut runtime = DetailRuntime::new();
+            runtime
+                .prepare(&mut scene, &camera, &source_only(&plan.config))
+                .unwrap();
+            let probes = capture_probes(&scene).unwrap();
+            let mut state = PhaseState::default();
+            let outcome = prepare_phase(
+                &mut scene,
+                &mut runtime,
+                &plan,
+                *viewport_px as f32,
+                &probes,
+                &mut state,
+            )
+            .unwrap_or_else(|error| panic!("{viewport_px} px cold phase: {error}"));
+            assert!(
+                outcome.iterations >= 2,
+                "{viewport_px} px converged in one prepare; the lazy path was not exercised"
+            );
+            assert!(
+                outcome.max_builds > 0 && outcome.max_builds <= cap,
+                "{viewport_px} px built {} coarse meshes in one prepare, cap is {cap}",
+                outcome.max_builds
+            );
+
+            // The converged view is stationary, fully resident and
+            // revision-matched; a further identical prepare builds nothing.
+            let steady = runtime.prepare(&mut scene, &camera, &plan.config).unwrap();
+            assert_eq!(steady.frame.mesh_builds_this_call, 0, "{viewport_px} px");
+            assert!(!steady.geometry_changed, "{viewport_px} px");
+            assert_eq!(deferred_count(&steady.frame), 0, "{viewport_px} px");
+            for selected in steady.frame.selected.iter().filter(|s| s.lod > Lod::Source) {
+                let index = runtime
+                    .instance_index(&selected.prototype, selected.lod)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{viewport_px} px {} {:?} not resident",
+                            selected.prototype, selected.lod
+                        )
+                    });
+                assert!(!runtime.meshes()[index].vertices.is_empty());
+                assert_eq!(
+                    runtime.revision(&selected.prototype, selected.lod),
+                    Some(scene.prototype(&selected.prototype).unwrap().revision()),
+                    "{viewport_px} px"
+                );
+            }
+        }
+
+        // Liveness: the physical Android viewport selects a genuinely different
+        // view than the host window. The tile-scale dense control clears the
+        // pixel budget at 480 px and stays `Source` at 1440 px, so this is the
+        // live viewport deciding, not a forced host selection.
+        let tile_coarsens = |pairs: &BTreeSet<(String, Lod)>| {
+            pairs
+                .iter()
+                .any(|(prototype, _)| prototype == DENSE_TILE_CONTROL)
+        };
+        let android = evidence.get(&1440).expect("1440 px evidence");
+        let host = evidence.get(&480).expect("480 px evidence");
+        assert!(
+            !tile_coarsens(android),
+            "tile-scale control must stay Source at the physical Android viewport"
+        );
+        assert!(
+            tile_coarsens(host),
+            "tile-scale control must coarsen at the 480 px host viewport"
         );
     }
 
@@ -2496,5 +2764,104 @@ mod tests {
             "the packed record must reference the refreshed Source slot"
         );
         validate_packed_instances(&scene, &runtime, &near).unwrap();
+    }
+
+    /// The complete phase script — the one-shot mutations, every per-phase
+    /// prepare and every per-phase contract check, then the final gate — must
+    /// hold at each supported live render viewport, not only at the host test
+    /// viewport. This drives the same `apply_phase_mutation` -> `prepare_phase`
+    /// -> `check_frame` -> `finalize` control path the application uses, with
+    /// the same warm-`Source` install and a fresh resident pool per viewport;
+    /// only the renderer install/present step needs a live surface and is
+    /// covered by the device run instead.
+    #[test]
+    fn every_phase_precondition_holds_at_every_live_viewport() {
+        for viewport_px in LIVE_VIEWPORTS_PX {
+            let plans = phases();
+            let mut check = DetailCheck::new(
+                std::env::temp_dir().join("matterweave-detail-check-unused-report.txt"),
+            );
+            check.scene = fixture_scene();
+            check.probes = capture_probes(&check.scene).expect("fixture probes");
+            // Mirror `install_static_scene`: one fresh resident pool warmed with
+            // the authoritative `Source` meshes before any selection.
+            let mut runtime = DetailRuntime::new();
+            runtime
+                .prepare(
+                    &mut check.scene,
+                    &plans[0].lod_camera(viewport_px),
+                    &source_only(&plans[0].config),
+                )
+                .unwrap();
+            check.runtime = Some(runtime);
+
+            for (index, plan) in plans.iter().enumerate() {
+                apply_phase_mutation(
+                    &mut check.scene,
+                    plan,
+                    &mut check.phase_state,
+                    &mut check.probes,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{viewport_px} px phase {index} ({}) mutation: {error}",
+                        plan.name
+                    )
+                });
+                let outcome = prepare_phase(
+                    &mut check.scene,
+                    check.runtime.as_mut().expect("runtime"),
+                    plan,
+                    viewport_px,
+                    &check.probes,
+                    &mut check.phase_state,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{viewport_px} px phase {index} ({}) prepare: {error}",
+                        plan.name
+                    )
+                });
+                let checked = check
+                    .check_frame(plan, &outcome.update, viewport_px)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{viewport_px} px phase {index} ({}) check: {error}",
+                            plan.name
+                        )
+                    });
+                println!(
+                    "{viewport_px} px phase {index} {}: lods[{}] deferred={} flora_pixel_eligible={} \
+                     coarse_realized={} builds={} iterations={}",
+                    plan.name,
+                    histogram_label(&lod_histogram(&outcome.update.frame)),
+                    checked.deferred,
+                    checked.flora_pixel_eligible,
+                    checked.coarse_realized,
+                    outcome.update.frame.mesh_builds_this_call,
+                    outcome.iterations,
+                );
+                match plan.name {
+                    "cold-far-bounded-convergence" => {
+                        assert!(
+                            outcome.iterations >= 2 && checked.deferred == 0,
+                            "{viewport_px} px: the cold phase must exercise the lazy path and converge"
+                        );
+                    }
+                    "occlusion-foreground-fungus-over-solid" => assert!(
+                        checked.flora_pixel_eligible >= 1,
+                        "{viewport_px} px: the occlusion phase observed no pixel-eligible flora retention"
+                    ),
+                    "resident-zero-build-budget" => assert_eq!(
+                        outcome.update.frame.mesh_builds_this_call, 0,
+                        "{viewport_px} px: the resident phase built geometry"
+                    ),
+                    _ => {}
+                }
+            }
+            check
+                .finalize()
+                .unwrap_or_else(|error| panic!("{viewport_px} px finalize: {error}"));
+        }
     }
 }

@@ -389,10 +389,15 @@ host path.
   acceptance is claimed.
 - **Performance (NOT RUN):** no timing or memory claim; host software Vulkan is
   not device performance evidence.
-- **Bounds:** the bounded-convergence phase relies on at least three distinct
-  coarse pairs at the declared 480 host / 1080 Android viewport heights; the
-  unit test pins the 1080 case. An unusual runtime window height could reduce
-  the pair count and fail the phase explicitly (never silently pass).
+- **Bounds (superseded 2026-09-13):** the bounded-convergence phase now declares
+  a diagnostic cold-phase cap of one, below the unchanged production maximum of
+  two, because the physical 1440 px Android viewport selects only two distinct
+  coarse pairs (the 480/1080 assumptions above do not hold there).
+  `cold_lazy_convergence_defers_at_android_and_host_viewports` pins the
+  1440/1080/720/480 cases and fails loudly when the declared cap cannot defer;
+  the diagnostic still fails the phase explicitly rather than silently passing.
+  See
+  [detail-android-convergence](detail-android-convergence.md).
 
 ## Corrective acceptance and batched device gate — 2026-09-12
 
