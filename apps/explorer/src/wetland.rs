@@ -2,9 +2,13 @@
 //! remain separate. Legacy sandbox files are never used by this mode.
 use crate::{
     audio_service::{EventQueue, GameplayEvent},
-    controls::{contains, Action, Camera, Controls},
+    controls::{
+        action_at, contains, draw_settings_panel, settings_panel_click, wetland_layout, Action,
+        Camera, Controls, SettingsPanelClick,
+    },
     detail_runtime::DetailRuntime,
     metrics,
+    settings::SharedSettings,
     wetland_metrics::Capture,
     wetland_replay::{Replay, Route},
     wetland_state::{self, Edit, SavedWetland},
@@ -912,6 +916,15 @@ pub struct WetlandApp {
     menu: bool,
     options: bool,
     diagnostics: bool,
+    /// The shared preferences this sample renders and edits. The owner
+    /// (`Experience`) persists changes and applies the audio policy; this
+    /// sample never opens a device or a settings file itself.
+    settings: SharedSettings,
+    /// One-shot flag set when the settings panel changed a preference.
+    settings_dirty: bool,
+    /// True while the shared settings overlay is open. Modal: the gameplay
+    /// zones and action buttons are inactive until it closes.
+    settings_open: bool,
     pub sandbox_requested: bool,
     pub voxel_relay_requested: bool,
     pub terrain_lab_requested: bool,
@@ -953,6 +966,9 @@ impl WetlandApp {
             menu: true,
             options: false,
             diagnostics: false,
+            settings: SharedSettings::default(),
+            settings_dirty: false,
+            settings_open: false,
             sandbox_requested: false,
             voxel_relay_requested: false,
             terrain_lab_requested: false,
@@ -990,6 +1006,25 @@ impl WetlandApp {
     pub(crate) fn clear_events(&mut self) {
         self.events.clear();
     }
+    /// Install the owner's shared preferences. Called when the sample is
+    /// constructed or switched, never a user change.
+    pub fn set_shared_settings(&mut self, settings: SharedSettings) {
+        self.settings = settings;
+        self.settings_dirty = false;
+    }
+    /// The one-shot preference change the settings panel queued, if any.
+    pub fn take_settings_change(&mut self) -> Option<SharedSettings> {
+        if self.settings_dirty {
+            self.settings_dirty = false;
+            Some(self.settings)
+        } else {
+            None
+        }
+    }
+    fn open_settings(&mut self) {
+        self.settings_open = true;
+        self.controls.clear();
+    }
     fn finish_replay(&mut self) {
         if self.replay.as_mut().is_some_and(Replay::take_finished) {
             self.save();
@@ -1022,7 +1057,27 @@ impl WetlandApp {
         });
     }
     fn click(&mut self, p: Vec2) -> bool {
+        if self.settings_open {
+            match settings_panel_click(&mut self.settings, p) {
+                SettingsPanelClick::Toggled => {
+                    // A preference change re-derives the layout: drop held touches
+                    // so they cannot activate zones from the previous one.
+                    self.settings_dirty = true;
+                    self.controls.clear();
+                }
+                SettingsPanelClick::Close => {
+                    self.settings_open = false;
+                    self.controls.clear();
+                }
+                SettingsPanelClick::Outside => {}
+            }
+            return true;
+        }
         if self.menu {
+            if contains([880., 20., 100., 42.], p) {
+                self.open_settings();
+                return true;
+            }
             if self.loading.is_none() && contains([70., 290., 420., 72.], p) {
                 self.enter();
             }
@@ -1048,6 +1103,7 @@ impl WetlandApp {
                 "SHADOWS",
                 "DIAGNOSTICS",
                 "RESET ARCH",
+                "SETTINGS",
                 "RETURN TO MENU",
             ]
             .iter()
@@ -1070,6 +1126,7 @@ impl WetlandApp {
                                     .map_or_else(|e| e, |_| "Arch restored in the clearing".into());
                             }
                         }
+                        4 => self.open_settings(),
                         _ => {
                             self.save();
                             self.menu = true;
@@ -1083,17 +1140,9 @@ impl WetlandApp {
             }
             return true;
         }
-        for (rect, action) in [
-            ([630., 514., 102., 58.], Action::Remove),
-            ([742., 514., 102., 58.], Action::Place),
-            ([854., 514., 120., 58.], Action::Grab),
-            ([854., 444., 120., 54.], Action::Break),
-            ([742., 444., 102., 54.], Action::Throw),
-        ] {
-            if contains(rect, p) {
-                self.action(action);
-                return true;
-            }
+        if let Some(action) = action_at(&wetland_layout(&self.settings), p) {
+            self.action(action);
+            return true;
         }
         false
     }
@@ -1200,6 +1249,8 @@ impl WetlandApp {
             h.text(96., 458., "PLAY VOXEL RELAY", 1.4, ink);
             h.rect([70., 498., 420., 50.], panel);
             h.text(96., 516., "EXPLORE TERRAIN LAB", 1.4, ink);
+            h.rect([880., 20., 100., 42.], panel);
+            h.text(888., 34., "SETTINGS", 1.1, ink);
             h.text(74., 562., "An original alien wetland", 1.25, gold);
             h.text(
                 74.,
@@ -1208,6 +1259,9 @@ impl WetlandApp {
                 1.,
                 ink,
             );
+            if self.settings_open {
+                draw_settings_panel(&mut h, &self.settings);
+            }
             return h;
         }
         h.rect([18., 18., 305., 67.], panel);
@@ -1233,17 +1287,24 @@ impl WetlandApp {
         }
         h.rect([880., 20., 100., 42.], panel);
         h.text(894., 34., "MENU", 1.4, ink);
-        h.rect([60., 410., 142., 142.], [0.08, 0.14, 0.14, 0.5]);
-        h.text(100., 475., "MOVE", 1.3, ink);
-        h.rect([910., 367., 64., 55.], panel);
-        h.text(918., 387., "JUMP", 1.1, ink);
-        for (rect, text) in [
-            ([630., 514., 102., 58.], "REMOVE"),
-            ([742., 514., 102., 58.], "PLACE"),
-            ([854., 514., 120., 58.], "GRAB"),
-            ([854., 444., 120., 54.], "BREAK"),
-            ([742., 444., 102., 54.], "THROW"),
-        ] {
+        let layout = wetland_layout(&self.settings);
+        h.rect(layout.move_zone, [0.08, 0.14, 0.14, 0.5]);
+        h.text(
+            layout.move_zone[0] + 40.,
+            layout.move_zone[1] + 65.,
+            "MOVE",
+            1.3,
+            ink,
+        );
+        h.rect(layout.jump_zone, panel);
+        h.text(
+            layout.jump_zone[0] + 8.,
+            layout.jump_zone[1] + 20.,
+            "JUMP",
+            1.1,
+            ink,
+        );
+        for (rect, text, _) in layout.actions {
             h.rect(rect, panel);
             h.text(rect[0] + 10., rect[1] + 22., text, 1.2, ink);
         }
@@ -1262,6 +1323,7 @@ impl WetlandApp {
                 "SHADOWS",
                 "DIAGNOSTICS",
                 "RESET ARCH",
+                "SETTINGS",
                 "RETURN TO MENU",
             ]
             .iter()
@@ -1291,6 +1353,9 @@ impl WetlandApp {
                     ink,
                 );
             }
+        }
+        if self.settings_open {
+            draw_settings_panel(&mut h, &self.settings);
         }
         h
     }
@@ -1667,10 +1732,7 @@ impl WetlandApp {
     }
     fn point(&self, x: f64, y: f64) -> Vec2 {
         let s = self.window.as_ref().unwrap().inner_size();
-        Vec2::new(
-            x as f32 / s.width.max(1) as f32 * 1000.,
-            y as f32 / s.height.max(1) as f32 * 600.,
-        )
+        crate::controls::virtual_point(x, y, s.width, s.height)
     }
 }
 impl ApplicationHandler for WetlandApp {
@@ -1778,13 +1840,21 @@ impl ApplicationHandler for WetlandApp {
                     && (event.logical_key == Key::Named(NamedKey::BrowserBack)
                         || event.physical_key == PhysicalKey::Code(KeyCode::Escape))
                 {
-                    if self.menu {
+                    if self.settings_open {
+                        self.settings_open = false;
+                        self.controls.clear();
+                    } else if self.menu {
                         event_loop.exit();
                     } else {
                         self.save();
                         self.menu = true;
                         self.controls.clear();
                     }
+                    return;
+                }
+                if self.settings_open {
+                    // The modal settings overlay owns input: gameplay keys are
+                    // ignored until it closes.
                     return;
                 }
                 if let PhysicalKey::Code(key) = event.physical_key {
@@ -1829,7 +1899,8 @@ impl ApplicationHandler for WetlandApp {
                 match t.phase {
                     TouchPhase::Started => {
                         if !self.click(p) && !self.menu {
-                            self.controls.start_wetland(t.id, p);
+                            self.controls
+                                .start_wetland(&wetland_layout(&self.settings), t.id, p);
                         }
                     }
                     TouchPhase::Moved => self.controls.moved(t.id, p),
@@ -3011,5 +3082,203 @@ mod detail_tests {
         assert!(!detail.meshes()[detail.instances()[0].prototype]
             .vertices
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod shared_settings_ui_tests {
+    use super::*;
+    use crate::controls::{settings_panel, virtual_point};
+    use crate::settings::{Handedness, SettingRow};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+
+    fn app() -> WetlandApp {
+        let directory = std::env::temp_dir().join(format!(
+            "matterweave-wetland-settings-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        WetlandApp::new(directory, false, None)
+    }
+
+    fn center(rect: [f32; 4]) -> Vec2 {
+        Vec2::new(rect[0] + rect[2] / 2., rect[1] + rect[3] / 2.)
+    }
+
+    #[test]
+    fn chooser_settings_button_opens_the_shared_panel() {
+        let mut app = app();
+        assert!(app.menu, "the chooser opens first");
+        assert!(!app.settings_open);
+        assert!(app.click(Vec2::new(930., 41.)), "the panel is reachable");
+        assert!(app.settings_open);
+        assert!(
+            app.take_settings_change().is_none(),
+            "opening is not a change"
+        );
+    }
+
+    #[test]
+    fn panel_toggles_queue_one_shot_changes_and_done_closes() {
+        let mut app = app();
+        assert!(app.click(Vec2::new(930., 41.)));
+        let panel = settings_panel();
+
+        assert!(app.click(center(panel.rows[0].0)));
+        assert_eq!(app.settings.handedness, Handedness::Right);
+        assert_eq!(
+            app.take_settings_change(),
+            Some(SharedSettings {
+                handedness: Handedness::Right,
+                ..SharedSettings::default()
+            })
+        );
+        assert!(
+            app.take_settings_change().is_none(),
+            "a change is reported exactly once"
+        );
+
+        assert!(app.click(center(panel.rows[1].0)));
+        assert!(app.settings.large_controls);
+        assert!(app.take_settings_change().is_some());
+        assert!(app.click(center(panel.rows[2].0)));
+        assert!(app.settings.muted);
+        assert!(app.take_settings_change().is_some());
+
+        assert!(app.click(center(panel.done)));
+        assert!(!app.settings_open);
+        assert!(
+            app.take_settings_change().is_none(),
+            "DONE only closes the overlay"
+        );
+    }
+
+    #[test]
+    fn in_game_options_route_reaches_the_same_panel() {
+        let mut app = app();
+        app.menu = false;
+        assert!(
+            app.click(Vec2::new(930., 41.)),
+            "the MENU button opens options"
+        );
+        assert!(app.options);
+        // SETTINGS is the fifth options row (300..345).
+        assert!(app.click(Vec2::new(800., 320.)));
+        assert!(app.settings_open);
+        let panel = settings_panel();
+        assert!(app.click(center(panel.rows[0].0)));
+        assert_eq!(
+            app.settings.handedness,
+            Handedness::Right,
+            "the in-game route edits the same preferences"
+        );
+    }
+
+    #[test]
+    fn action_hit_regions_follow_handedness_and_scale_with_the_shared_layout() {
+        for settings in [
+            SharedSettings::default(),
+            SharedSettings {
+                handedness: Handedness::Right,
+                ..SharedSettings::default()
+            },
+            SharedSettings {
+                handedness: Handedness::Right,
+                large_controls: true,
+                ..SharedSettings::default()
+            },
+            SharedSettings {
+                large_controls: true,
+                ..SharedSettings::default()
+            },
+        ] {
+            let mut app = app();
+            app.menu = false;
+            app.set_shared_settings(settings);
+            let layout = wetland_layout(&app.settings);
+            for (rect, _, _) in layout.actions {
+                assert!(
+                    app.click(center(rect)),
+                    "the drawn action {rect:?} must be clickable ({settings:?})"
+                );
+            }
+            // A touch in the movement zone is never an action.
+            assert!(!app.click(center(layout.move_zone)));
+            assert!(!app.click(center(layout.jump_zone)));
+        }
+    }
+
+    #[test]
+    fn applying_a_layout_change_clears_held_touches() {
+        let mut app = app();
+        app.menu = false;
+        let before = wetland_layout(&app.settings);
+        let grip = center(before.move_zone);
+        app.controls.start_wetland(&before, 7, grip);
+        app.controls.moved(7, grip + Vec2::new(0., -70.));
+        assert!(app.controls.consume().0.z > 0.5, "the held touch moves");
+
+        // Two fingers: one on the stick, one opening the panel from MENU.
+        assert!(app.click(Vec2::new(930., 41.)), "open options");
+        assert!(app.click(Vec2::new(800., 320.)), "open settings");
+        assert_eq!(
+            app.controls.service.active_pointers(),
+            0,
+            "opening the modal overlay must drop the held contact"
+        );
+
+        // The toggle re-derives the layout; the stale pointer id stays dead.
+        let panel = settings_panel();
+        assert!(app.click(center(panel.rows[0].0)));
+        assert_eq!(app.settings.handedness, Handedness::Right);
+        app.controls.moved(7, grip + Vec2::new(0., -70.));
+        assert_eq!(
+            app.controls.consume(),
+            (Vec3::ZERO, Vec2::ZERO),
+            "a held touch must not keep driving the previous layout"
+        );
+    }
+
+    #[test]
+    fn owner_install_updates_the_rendered_preferences_without_queueing_a_change() {
+        let mut app = app();
+        let installed = SharedSettings {
+            handedness: Handedness::Right,
+            large_controls: true,
+            muted: true,
+            ..SharedSettings::default()
+        };
+        app.set_shared_settings(installed);
+        assert_eq!(app.settings, installed);
+        assert_eq!(app.settings.value_label(SettingRow::Mute), "MUTED");
+        assert!(app.take_settings_change().is_none());
+        assert_eq!(wetland_layout(&app.settings).move_zone[0], 762.);
+    }
+
+    #[test]
+    fn narrow_and_wide_viewports_map_touches_into_the_drawn_rectangles() {
+        let settings = SharedSettings {
+            handedness: Handedness::Right,
+            large_controls: true,
+            ..SharedSettings::default()
+        };
+        let layout = wetland_layout(&settings);
+        for (width, height) in [(1000_u32, 600_u32), (480, 800), (1600, 720)] {
+            for rect in [layout.move_zone, layout.jump_zone, layout.actions[2].0] {
+                let center = center(rect);
+                let pixel = (
+                    center.x / 1000. * width as f32,
+                    center.y / 600. * height as f32,
+                );
+                let mapped = virtual_point(pixel.0 as f64, pixel.1 as f64, width, height);
+                assert!(
+                    contains(rect, mapped),
+                    "{width}x{height} must map into {rect:?}, got {mapped:?}"
+                );
+            }
+        }
     }
 }

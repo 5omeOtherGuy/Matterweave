@@ -8,7 +8,11 @@
 //! construction: the bounded queue is simply never drained.
 
 use crate::audio_service::{EventQueue, GameplayEvent};
-use glam::{Mat4, Vec3};
+use crate::controls::{
+    draw_settings_panel, relay_layout, settings_panel_click, SettingsPanelClick,
+};
+use crate::settings::SharedSettings;
+use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::{InputService, VirtualKey, World};
 use matterweave_physics::{BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
@@ -156,6 +160,15 @@ pub struct VoxelRelayApp {
     pub focused: bool,
     pub last_frame: Instant,
     pub recreate_renderer: bool,
+    /// Shared preferences this sample renders and edits. The owner
+    /// (`Experience`) persists changes and applies the audio policy; the relay
+    /// never opens a device or a settings file itself.
+    settings: SharedSettings,
+    /// One-shot flag set when the settings overlay changed a preference.
+    settings_dirty: bool,
+    /// True while the modal shared-settings overlay is open; gameplay touch
+    /// zones are not registered while it is.
+    pub settings_open: bool,
     /// Gameplay feedback since the last drain by the shared audio owner. Private:
     /// the vocabulary is the accessor, not the field.
     events: EventQueue,
@@ -201,6 +214,9 @@ impl VoxelRelayApp {
             focused: true,
             last_frame: Instant::now(),
             recreate_renderer: true,
+            settings: SharedSettings::default(),
+            settings_dirty: false,
+            settings_open: false,
             events: EventQueue::default(),
         };
 
@@ -223,11 +239,86 @@ impl VoxelRelayApp {
 
     fn setup_input(&mut self) {
         self.input.clear();
-        self.input.set_move_zone([40., 380., 180., 180.], 70.0);
-        self.input.add_button_zone([760., 450., 200., 70.], 1); // ACTION
-        self.input.add_button_zone([860., 20., 95., 40.], 2); // RESET
-        self.input.add_button_zone([755., 20., 90., 40.], 3); // SAVE
-        self.input.add_button_zone([650., 20., 90., 40.], 4); // MENU
+        // Replace every zone, never append: a layout change or a later reset
+        // must not leave a stale hit region registered.
+        self.input.clear_button_zones();
+        self.input.clear_motion_zones();
+        if self.settings_open {
+            // The shared settings overlay is modal: no gameplay zone accepts a
+            // touch while it is open.
+            return;
+        }
+        let layout = relay_layout(&self.settings);
+        self.input.set_move_zone(layout.move_zone, 70.0);
+        self.input.add_button_zone(layout.action, 1); // ACTION
+        self.input.add_button_zone(layout.reset, 2); // RESET
+        self.input.add_button_zone(layout.save, 3); // SAVE
+        self.input.add_button_zone(layout.menu, 4); // MENU
+        self.input.add_button_zone(layout.settings, 5); // SETTINGS
+    }
+
+    /// Apply one registered touch action. Shared by the touch path and tests.
+    pub(crate) fn activate_button(&mut self, action: u32) {
+        match action {
+            1 => {
+                self.try_remove_obstacle();
+            }
+            2 => {
+                self.reset();
+            }
+            3 => {
+                let _ = self.save();
+            }
+            4 => {
+                self.return_to_menu = true;
+            }
+            5 => self.open_settings(),
+            _ => {}
+        }
+    }
+
+    /// Install the owner's shared preferences. Called when the sample is
+    /// constructed or switched, never a user change.
+    pub fn set_shared_settings(&mut self, settings: SharedSettings) {
+        self.settings = settings;
+        self.settings_dirty = false;
+        self.setup_input();
+    }
+
+    /// The one-shot preference change the settings overlay queued, if any.
+    pub fn take_settings_change(&mut self) -> Option<SharedSettings> {
+        if self.settings_dirty {
+            self.settings_dirty = false;
+            Some(self.settings)
+        } else {
+            None
+        }
+    }
+
+    /// Open the modal shared-settings overlay. Every held contact is dropped so
+    /// a touch held on the previous layout cannot keep steering the player.
+    fn open_settings(&mut self) {
+        self.settings_open = true;
+        self.setup_input();
+    }
+
+    /// Route one press while the settings overlay is open. A toggled preference
+    /// re-installs the layout and clears every active contact.
+    pub(crate) fn settings_click(&mut self, p: [f32; 2]) {
+        if !self.settings_open {
+            return;
+        }
+        match settings_panel_click(&mut self.settings, Vec2::from_array(p)) {
+            SettingsPanelClick::Toggled => {
+                self.settings_dirty = true;
+                self.setup_input();
+            }
+            SettingsPanelClick::Close => {
+                self.settings_open = false;
+                self.setup_input();
+            }
+            SettingsPanelClick::Outside => {}
+        }
     }
 
     pub fn reset(&mut self) {
@@ -463,20 +554,54 @@ impl VoxelRelayApp {
         hud.text(30., 77., hint, 1.0, muted);
 
         // Top action buttons
-        hud.rect([650., 20., 90., 40.], panel);
-        hud.text(670., 32., "MENU", 1.25, white);
+        let layout = relay_layout(&self.settings);
+        hud.rect(layout.menu, panel);
+        hud.text(
+            layout.menu[0] + 20.,
+            layout.menu[1] + 12.,
+            "MENU",
+            1.25,
+            white,
+        );
 
-        hud.rect([755., 20., 90., 40.], panel);
-        hud.text(778., 32., "SAVE", 1.25, white);
+        hud.rect(layout.save, panel);
+        hud.text(
+            layout.save[0] + 23.,
+            layout.save[1] + 12.,
+            "SAVE",
+            1.25,
+            white,
+        );
 
-        hud.rect([860., 20., 95., 40.], panel);
-        hud.text(880., 32., "RESET", 1.25, white);
+        hud.rect(layout.reset, panel);
+        hud.text(
+            layout.reset[0] + 20.,
+            layout.reset[1] + 12.,
+            "RESET",
+            1.25,
+            white,
+        );
 
-        // Bottom left virtual joystick
-        let stick_rect = [40., 380., 180., 180.];
+        hud.rect(layout.settings, panel);
+        hud.text(
+            layout.settings[0] + 12.,
+            layout.settings[1] + 12.,
+            "SETTINGS",
+            1.1,
+            white,
+        );
+
+        // Bottom virtual joystick
+        let stick_rect = layout.move_zone;
         hud.rect(stick_rect, [0.04, 0.10, 0.13, 0.52]);
-        hud.text(56., 396., "MOVE", 1.4, white);
-        hud.text(56., 418., "DRAG STICK", 1.0, muted);
+        hud.text(stick_rect[0] + 16., stick_rect[1] + 16., "MOVE", 1.4, white);
+        hud.text(
+            stick_rect[0] + 16.,
+            stick_rect[1] + 38.,
+            "DRAG STICK",
+            1.0,
+            muted,
+        );
 
         if let Some((origin, current)) = self.input.joystick_state() {
             let stick_x =
@@ -495,11 +620,20 @@ impl VoxelRelayApp {
             hud.rect([cx - 1., cy - 18., 2., 36.], accent);
         }
 
-        // Bottom right ACTION button
-        let action_rect = [760., 450., 200., 70.];
+        // Bottom ACTION button, opposite the movement stick
+        let action_rect = layout.action;
         hud.rect(action_rect, [0.20, 0.38, 0.32, 0.88]);
-        hud.text(788., 474., "ACTION / CLEAR", 1.4, white);
+        hud.text(
+            action_rect[0] + 28.,
+            action_rect[1] + 24.,
+            "ACTION / CLEAR",
+            1.4,
+            white,
+        );
 
+        if self.settings_open {
+            draw_settings_panel(&mut hud, &self.settings);
+        }
         hud
     }
 
@@ -509,10 +643,8 @@ impl VoxelRelayApp {
             .as_ref()
             .map(|w| w.inner_size())
             .unwrap_or(winit::dpi::PhysicalSize::new(1000, 600));
-        [
-            x as f32 / size.width.max(1) as f32 * 1000.,
-            y as f32 / size.height.max(1) as f32 * 600.,
-        ]
+        let mapped = crate::controls::virtual_point(x, y, size.width, size.height);
+        [mapped.x, mapped.y]
     }
 
     fn draw(&mut self, event_loop: &ActiveEventLoop) {
@@ -638,6 +770,15 @@ impl ApplicationHandler for VoxelRelayApp {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state == ElementState::Pressed;
+                if self.settings_open {
+                    // The modal settings overlay owns input: Escape closes it
+                    // and no gameplay key is acted on.
+                    if pressed && event.physical_key == PhysicalKey::Code(KeyCode::Escape) {
+                        self.settings_open = false;
+                        self.setup_input();
+                    }
+                    return;
+                }
                 match event.physical_key {
                     PhysicalKey::Code(KeyCode::KeyW | KeyCode::ArrowUp) => {
                         if pressed {
@@ -701,22 +842,10 @@ impl ApplicationHandler for VoxelRelayApp {
                 let p = self.point(touch.location.x, touch.location.y);
                 match touch.phase {
                     TouchPhase::Started => {
-                        if let Some(action) = self.input.pointer_down(touch.id, p) {
-                            match action {
-                                1 => {
-                                    self.try_remove_obstacle();
-                                }
-                                2 => {
-                                    self.reset();
-                                }
-                                3 => {
-                                    let _ = self.save();
-                                }
-                                4 => {
-                                    self.return_to_menu = true;
-                                }
-                                _ => {}
-                            }
+                        if self.settings_open {
+                            self.settings_click(p);
+                        } else if let Some(action) = self.input.pointer_down(touch.id, p) {
+                            self.activate_button(action);
                         }
                     }
                     TouchPhase::Moved => self.input.pointer_move(touch.id, p),
@@ -1555,6 +1684,205 @@ mod tests {
             input.consume_motion(),
             [0.0, 0.0, 0.0],
             "No stuck touch movement after release"
+        );
+    }
+}
+
+#[cfg(test)]
+mod shared_settings_ui_tests {
+    use super::*;
+    use crate::controls::settings_panel;
+    use crate::settings::Handedness;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir() -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "matterweave-relay-settings-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    fn center(rect: [f32; 4]) -> [f32; 2] {
+        [rect[0] + rect[2] / 2., rect[1] + rect[3] / 2.]
+    }
+
+    #[test]
+    fn settings_overlay_opens_from_the_registered_hud_zone() {
+        let mut app = VoxelRelayApp::new(temp_dir().join("relay.json"), None);
+        let layout = relay_layout(&app.settings);
+        let hit = [layout.settings[0] + 8., layout.settings[1] + 8.];
+        assert_eq!(
+            app.input.pointer_down(1, hit),
+            Some(5),
+            "the drawn SETTINGS button must be a registered hit region"
+        );
+        app.activate_button(5);
+        assert!(app.settings_open);
+        assert_eq!(
+            app.input.active_pointers(),
+            0,
+            "opening the modal overlay must drop held contacts"
+        );
+
+        // A gameplay press while the overlay is open never reaches the puzzle.
+        let before = app.obstacle_cleared;
+        app.settings_click(hit);
+        assert_eq!(app.obstacle_cleared, before);
+        assert!(app.settings_open);
+    }
+
+    #[test]
+    fn overlay_toggles_queue_one_shot_changes_and_apply_the_layout() {
+        let mut app = VoxelRelayApp::new(temp_dir().join("relay.json"), None);
+        app.open_settings();
+        let panel = settings_panel();
+        assert!(app.take_settings_change().is_none());
+
+        app.settings_click(center(panel.rows[0].0));
+        assert_eq!(app.settings.handedness, Handedness::Right);
+        assert_eq!(
+            app.take_settings_change(),
+            Some(SharedSettings {
+                handedness: Handedness::Right,
+                ..SharedSettings::default()
+            })
+        );
+        assert!(
+            app.take_settings_change().is_none(),
+            "a change is reported exactly once"
+        );
+
+        app.settings_click(center(panel.rows[1].0));
+        assert!(app.settings.large_controls);
+        app.settings_click(center(panel.rows[2].0));
+        assert!(app.settings.muted);
+        assert!(app.take_settings_change().is_some());
+
+        app.settings_click(center(panel.done));
+        assert!(!app.settings_open);
+        assert!(app.take_settings_change().is_none());
+        let applied = relay_layout(&app.settings);
+        assert_eq!(
+            app.input.move_zone(),
+            Some((applied.move_zone, 70.0)),
+            "closing re-installs the layout the preferences describe"
+        );
+    }
+
+    #[test]
+    fn installed_zones_match_the_shared_layout_for_every_preference() {
+        for settings in [
+            SharedSettings::default(),
+            SharedSettings {
+                handedness: Handedness::Right,
+                ..SharedSettings::default()
+            },
+            SharedSettings {
+                large_controls: true,
+                ..SharedSettings::default()
+            },
+            SharedSettings {
+                handedness: Handedness::Right,
+                large_controls: true,
+                ..SharedSettings::default()
+            },
+        ] {
+            let mut app = VoxelRelayApp::new(temp_dir().join("relay.json"), None);
+            app.set_shared_settings(settings);
+            let layout = relay_layout(&settings);
+            assert_eq!(
+                app.input.move_zone(),
+                Some((layout.move_zone, 70.0)),
+                "the stick zone must be the drawn stick ({settings:?})"
+            );
+            assert_eq!(app.input.pointer_down(1, center(layout.action)), Some(1));
+            assert_eq!(app.input.pointer_down(2, center(layout.reset)), Some(2));
+            assert_eq!(app.input.pointer_down(3, center(layout.save)), Some(3));
+            assert_eq!(app.input.pointer_down(4, center(layout.menu)), Some(4));
+            assert_eq!(app.input.pointer_down(5, center(layout.settings)), Some(5));
+            assert_eq!(
+                app.input.pointer_down(6, center(layout.move_zone)),
+                None,
+                "the stick must not be a button zone ({settings:?})"
+            );
+            assert!(app.take_settings_change().is_none());
+            let _ = app.hud();
+        }
+    }
+
+    #[test]
+    fn held_touch_cannot_steer_a_swapped_layout() {
+        let mut app = VoxelRelayApp::new(temp_dir().join("relay.json"), None);
+        let grip = center(relay_layout(&app.settings).move_zone);
+        assert_eq!(app.input.pointer_down(7, grip), None);
+        app.input.pointer_move(7, [grip[0], grip[1] - 70.]);
+        assert!(app.input.consume_motion()[2] > 0.5, "the held stick moves");
+
+        app.open_settings();
+        assert_eq!(app.input.active_pointers(), 0);
+        let panel = settings_panel();
+        app.settings_click(center(panel.rows[0].0));
+        assert_eq!(app.settings.handedness, Handedness::Right);
+        app.input.pointer_move(7, [grip[0], grip[1] - 70.]);
+        assert_eq!(
+            app.input.consume_motion(),
+            [0.0, 0.0, 0.0],
+            "a stale pointer must not keep moving after the layout change"
+        );
+
+        app.settings_click(center(panel.done));
+        // The old stick position must not drive movement. With the stick on the
+        // right, that spot is the mirrored ACTION button, so the press may
+        // register an action - never motion.
+        app.input.pointer_down(8, grip);
+        app.input.pointer_move(8, [grip[0], grip[1] - 70.]);
+        assert_eq!(
+            app.input.consume_motion(),
+            [0.0, 0.0, 0.0],
+            "the previous stick position must not move the right-hand layout"
+        );
+        app.input.pointer_up(8);
+        app.input.clear();
+
+        let swapped = relay_layout(&app.settings);
+        let new_grip = center(swapped.move_zone);
+        assert_eq!(app.input.pointer_down(9, new_grip), None);
+        app.input.pointer_move(9, [new_grip[0], new_grip[1] - 70.]);
+        assert!(
+            app.input.consume_motion()[2] > 0.5,
+            "the swapped stick is the live movement zone"
+        );
+        app.input.pointer_up(9);
+        assert_eq!(
+            app.input.pointer_down(10, center(swapped.action)),
+            Some(1),
+            "the touch path stays live after closing the overlay"
+        );
+        app.input.pointer_up(10);
+        app.input.clear();
+    }
+
+    #[test]
+    fn preferences_never_touch_the_relay_save() {
+        let directory = temp_dir();
+        let save = directory.join("voxel-relay.json");
+        std::fs::write(&save, b"{\"relay\":\"sentinel\"}").unwrap();
+        let mut app = VoxelRelayApp::new(save.clone(), None);
+        app.open_settings();
+        let panel = settings_panel();
+        app.settings_click(center(panel.rows[2].0));
+        assert!(app.settings.muted);
+        assert!(app.take_settings_change().is_some());
+        assert_eq!(
+            std::fs::read(&save).unwrap(),
+            b"{\"relay\":\"sentinel\"}",
+            "a preference change must never rewrite the puzzle save"
         );
     }
 }

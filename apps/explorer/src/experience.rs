@@ -6,6 +6,7 @@
 //! device or owns a service.
 use crate::{
     audio_service::{AudioAdapter, AudioScope},
+    settings::{SharedSettings, SETTINGS_FILE_NAME},
     terrain_lab::TerrainLab,
     voxel_relay::VoxelRelayApp,
     wetland::WetlandApp,
@@ -28,6 +29,11 @@ pub struct Experience {
     /// `resumed` opens it, and a sample launched without an `Experience` never
     /// opens one at all (its bounded queue is simply never drained).
     audio: AudioAdapter,
+    /// The shared, bounded preferences every sample renders. This owner is the
+    /// only writer of the settings file and the only audio-policy decision point.
+    settings: SharedSettings,
+    /// Sibling of `world.json`, never a game save.
+    settings_path: PathBuf,
     /// True while the window has focus. Audio is only active when this and
     /// `resumed` are both true; focus gain alone never overrides a suspended
     /// lifecycle.
@@ -43,14 +49,24 @@ pub struct Experience {
 impl Experience {
     pub fn new(legacy_path: PathBuf, auto_enter: bool, frame_limit: Option<u64>) -> Self {
         let directory = crate::data_directory(&legacy_path).to_path_buf();
+        let settings_path = directory.join(SETTINGS_FILE_NAME);
+        let settings = SharedSettings::load(&settings_path);
+        let mut wetland = WetlandApp::new(directory, auto_enter, frame_limit);
+        wetland.set_shared_settings(settings);
+        let mut audio = AudioAdapter::new(AudioScope::Wetland);
+        // Mute is owner policy, not a gameplay event: apply it before any sample
+        // can queue feedback.
+        audio.set_muted(settings.muted);
         Self {
-            wetland: Some(WetlandApp::new(directory, auto_enter, frame_limit)),
+            wetland: Some(wetland),
             sandbox: None,
             voxel_relay: None,
             terrain_lab: None,
             legacy_path,
             frame_limit,
-            audio: AudioAdapter::new(AudioScope::Wetland),
+            audio,
+            settings,
+            settings_path,
             // The samples treat the initial resume as focused; a real focus-loss
             // event then takes it away.
             focused: true,
@@ -161,6 +177,34 @@ impl Experience {
             None => log::warn!("audio reported failures without a recorded error ({seen:?})"),
         }
     }
+    /// Take the one preference change the live sample queued, persist it and
+    /// apply the owner's audio policy. The file is written only on a real
+    /// change, so an open menu never rewrites the disk every frame.
+    fn sync_settings(&mut self) {
+        let change = self
+            .wetland
+            .as_mut()
+            .and_then(WetlandApp::take_settings_change)
+            .or_else(|| {
+                self.voxel_relay
+                    .as_mut()
+                    .and_then(VoxelRelayApp::take_settings_change)
+            });
+        let Some(settings) = change else {
+            return;
+        };
+        if settings == self.settings {
+            return;
+        }
+        self.settings = settings;
+        self.audio.set_muted(self.settings.muted);
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            log::warn!(
+                "Shared settings could not be saved to {}: {error}",
+                self.settings_path.display()
+            );
+        }
+    }
     fn switch_if_requested(&mut self, event_loop: &ActiveEventLoop) {
         if self.wetland.as_ref().is_some_and(|w| w.sandbox_requested) {
             self.retire_leaving_scope(AudioScope::Sandbox);
@@ -180,6 +224,7 @@ impl Experience {
                 wetland.suspended(event_loop);
             }
             let mut relay = VoxelRelayApp::for_chooser(&self.legacy_path, self.frame_limit);
+            relay.set_shared_settings(self.settings);
             relay.resumed(event_loop);
             self.voxel_relay = Some(relay);
         } else if self
@@ -202,6 +247,7 @@ impl Experience {
             }
             let directory = crate::data_directory(&self.legacy_path).to_path_buf();
             let mut wetland = WetlandApp::new(directory, false, self.frame_limit);
+            wetland.set_shared_settings(self.settings);
             wetland.resumed(event_loop);
             self.wetland = Some(wetland);
         } else if self.voxel_relay.as_ref().is_some_and(|r| r.return_to_menu) {
@@ -211,6 +257,7 @@ impl Experience {
             }
             let directory = crate::data_directory(&self.legacy_path).to_path_buf();
             let mut wetland = WetlandApp::new(directory, false, self.frame_limit);
+            wetland.set_shared_settings(self.settings);
             wetland.resumed(event_loop);
             self.wetland = Some(wetland);
         }
@@ -225,6 +272,9 @@ impl ApplicationHandler for Experience {
         if self.focused {
             self.audio.resume();
         }
+        // Re-assert the persisted policy after every resume; the adapter itself
+        // keeps its mute across sample switches and lifecycle pauses.
+        self.audio.set_muted(self.settings.muted);
         if let Some(w) = &mut self.wetland {
             w.resumed(e);
         }
@@ -293,6 +343,7 @@ impl ApplicationHandler for Experience {
         if let Some(t) = &mut self.terrain_lab {
             t.about_to_wait(e);
         }
+        self.sync_settings();
         self.pump_audio();
     }
     fn exiting(&mut self, e: &ActiveEventLoop) {
@@ -340,6 +391,8 @@ mod tests {
             legacy_path: temp_path("world.json"),
             frame_limit: None,
             audio: AudioAdapter::new(AudioScope::Wetland),
+            settings: SharedSettings::default(),
+            settings_path: temp_path("matterweave-settings.json"),
             focused: true,
             resumed: true,
             audio_failures_seen: (0, 0),
@@ -516,5 +569,73 @@ mod tests {
         );
         assert_eq!(experience.audio.status().scope, AudioScope::Wetland);
         assert_eq!(experience.audio.status().counters.device_failures, 0);
+    }
+
+    #[test]
+    fn sample_settings_change_propagates_mute_and_persists() {
+        let mut experience = experience();
+        experience.audio.resume();
+        let mut relay = VoxelRelayApp::new(temp_path("relay-settings.json"), None);
+        relay.set_shared_settings(experience.settings);
+        experience.audio.switch_to(AudioScope::VoxelRelay);
+        experience.voxel_relay = Some(relay);
+
+        // Drive the real overlay path: the registered SETTINGS zone opens the
+        // panel, then the SOUND row toggles mute.
+        let settings_hit = {
+            let layout = crate::controls::relay_layout(&experience.settings);
+            [layout.settings[0] + 8., layout.settings[1] + 8.]
+        };
+        let mute_row = crate::controls::settings_panel().rows[2].0;
+        let mute_click = [
+            mute_row[0] + mute_row[2] / 2.,
+            mute_row[1] + mute_row[3] / 2.,
+        ];
+        let toggle_mute = |experience: &mut Experience| {
+            let relay = experience.voxel_relay.as_mut().unwrap();
+            if !relay.settings_open {
+                assert_eq!(relay.input.pointer_down(1, settings_hit), Some(5));
+                relay.activate_button(5);
+            }
+            relay.settings_click(mute_click);
+        };
+
+        toggle_mute(&mut experience);
+        experience.sync_settings();
+        assert!(experience.settings.muted);
+        assert!(
+            experience.audio.status().muted,
+            "mute must reach the one adapter"
+        );
+        assert_eq!(
+            SharedSettings::load(&experience.settings_path),
+            experience.settings,
+            "the change must survive a restart through the settings file"
+        );
+        assert_eq!(
+            experience.audio.trigger(GameplayEvent::BlockEdit),
+            TriggerOutcome::Dropped(DropReason::Muted),
+            "muted playback must not start a voice"
+        );
+
+        // Unmuting is the same path in reverse and reopens nothing.
+        let device_failures = experience.audio.status().counters.device_failures;
+        toggle_mute(&mut experience);
+        experience.sync_settings();
+        assert!(!experience.settings.muted);
+        assert!(!experience.audio.status().muted);
+        assert_eq!(
+            experience.audio.status().counters.device_failures,
+            device_failures,
+            "the mute toggle must not disturb the open device"
+        );
+
+        // A sample switch keeps the adapter and the last mute policy.
+        toggle_mute(&mut experience);
+        experience.sync_settings();
+        assert!(experience.settings.muted);
+        experience.retire_leaving_scope(AudioScope::Sandbox);
+        assert!(experience.audio.status().muted);
+        assert!(experience.settings_path.exists());
     }
 }
