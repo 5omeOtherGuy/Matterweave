@@ -219,7 +219,13 @@ fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) 
     }
     return out;
 }
-@fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
+/// Alpha of a derived water surface. Translucent enough to read as water over a
+/// bed, opaque enough that the single-layer surface does not need sorting.
+const WATER_ALPHA = 0.82;
+
+/// Shade one surface. `alpha` is 1.0 for opaque geometry and the water alpha for
+/// the derived water pass, which is otherwise the same shading.
+fn shade(v: Output, alpha: f32) -> vec4<f32> {
     var normal = normalize(v.normal);
     var color = v.color;
     let enhanced = camera.eye.w < 0.0;
@@ -258,5 +264,11 @@ fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) 
         lit = mix(lit, sample.color, mirror);
     }
     let fog = 1.0 - exp(-path_length * lighting.atmosphere.w);
-    return vec4(mix(lit, sky_color(), fog), 1.0);
+    return vec4(mix(lit, sky_color(), fog), alpha);
+}
+@fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
+    return shade(v, 1.0);
+}
+@fragment fn fs_water(v: Output) -> @location(0) vec4<f32> {
+    return shade(v, WATER_ALPHA);
 }

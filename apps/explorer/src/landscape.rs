@@ -64,6 +64,12 @@ pub const MAX_TILE_UPLOADS: usize = 8;
 /// next cannot start.
 pub const MAX_TILE_MS: f64 = 2.0;
 
+/// Derived water meshes built and uploaded in one frame. Only the sea-level
+/// chunk layer carries water, so this is at most one mesh per column stack.
+pub const MAX_WATER_UPLOADS: usize = 8;
+/// Main-thread milliseconds one frame may spend deriving and uploading water.
+pub const MAX_WATER_MS: f64 = 2.0;
+
 /// Eye height above the surface in walk mode.
 const EYE_HEIGHT: f32 = 1.7;
 /// Fly speed in metres per second.
@@ -243,7 +249,41 @@ pub fn plan_tile_work(
 
 // -- Sample ------------------------------------------------------------------
 
+/// Open on water looking at a coast: the first 64 m grid point (scanned from the
+/// origin outward, so the same build always opens in the same place) that is open
+/// water with land at least 20 m high about 320 m away. The camera then sits a
+/// few metres above the sea with the shore and the mountains beyond it: the view
+/// the near water pass, the distance rings and the haze are for.
 fn spawn_camera() -> Camera {
+    for gz in (-3..=3).rev() {
+        for gx in -3..=3 {
+            let (x, z) = (gx * 64, gz * 64);
+            let depth = landscape::height_at(SEED, x, z);
+            if depth > -8 {
+                continue;
+            }
+            for (dx, dz) in [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (-1, -1),
+                (1, -1),
+                (-1, 1),
+            ] {
+                if landscape::height_at(SEED, x + dx * 320, z + dz * 320) > 20 {
+                    return Camera {
+                        position: Vec3::new(x as f32, 6., z as f32),
+                        yaw: (dx as f32).atan2(dz as f32),
+                        pitch: -0.04,
+                    };
+                }
+            }
+        }
+    }
+    // No coast found in the probed square: keep the old behaviour rather than
+    // failing to start.
     let height = landscape::height_at(SEED, 0, 0) as f32;
     Camera {
         position: Vec3::new(0., height.max(0.) + 40., 0.),
@@ -342,6 +382,14 @@ pub struct LandscapeSample {
     /// Resident tiles and the normalized filter each was built with.
     resident: BTreeMap<TerrainTileKey, TileFilter>,
     tiles: TileCounters,
+    /// Water meshes uploaded over the run, and this frame's derivation time.
+    water_uploaded: u64,
+    water_ms: f64,
+    /// World revision each resident water key was derived at.
+    water_stamps: BTreeMap<[i32; 3], u64>,
+    /// Last sync's window size and sea-level candidate count, for the report.
+    water_window: usize,
+    water_candidates: usize,
     profile: Option<metrics::FrameLog>,
     status: String,
     frames: u64,
@@ -412,6 +460,11 @@ impl LandscapeSample {
             declared: Vec::new(),
             resident: BTreeMap::new(),
             tiles: TileCounters::default(),
+            water_uploaded: 0,
+            water_ms: 0.,
+            water_stamps: BTreeMap::new(),
+            water_window: 0,
+            water_candidates: 0,
             profile,
             status: format!(
                 "Fly the landscape. Rings reach {} km.",
@@ -571,6 +624,55 @@ impl LandscapeSample {
         Ok(())
     }
 
+    /// Derive and upload the water surface of every resident sea-level chunk.
+    ///
+    /// Only the chunk layer that contains sea level can hold water, so a window
+    /// change adds at most one water mesh per column stack. The derivation reads
+    /// the authoritative world, so an edit that raises land above sea level
+    /// removes its surface on the next sync, exactly like a chunk mesh.
+    fn sync_water(&mut self) -> Result<(), String> {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Ok(());
+        };
+        let begin = Instant::now();
+        // Residency, not `chunk_keys`: an open-water column stores no voxels at
+        // all, so its chunk is absent and a surface over it still has to be
+        // derived. Residency is exactly the set of chunks the window published.
+        let keys = self
+            .world
+            .stream_resident_chunks()
+            .unwrap_or_else(|| self.world.chunk_keys());
+        renderer.retain_water_chunks(&keys)?;
+        let level = matterweave_core::water::sea_level_chunk_y();
+        let revision = self.world.revision();
+        self.water_window = keys.len();
+        self.water_candidates = keys.iter().filter(|key| key[1] == level).count();
+        let mut uploaded = 0usize;
+        for key in &keys {
+            if key[1] != level {
+                continue;
+            }
+            // The stamp is the whole-world revision: any edit can change the
+            // terrain under a water surface, and re-deriving the sea-level layer
+            // costs one mesh per column stack, not one per resident chunk.
+            if self.water_stamps.get(key) == Some(&revision) {
+                continue;
+            }
+            renderer.upload_water_chunk(*key, &self.world.water_mesh_chunk(*key))?;
+            self.water_stamps.insert(*key, revision);
+            uploaded += 1;
+            if uploaded >= MAX_WATER_UPLOADS
+                || begin.elapsed().as_secs_f64() * 1000. >= MAX_WATER_MS
+            {
+                break;
+            }
+        }
+        self.water_stamps.retain(|key, _| keys.contains(key));
+        self.water_uploaded += uploaded as u64;
+        self.water_ms = begin.elapsed().as_secs_f64() * 1000.;
+        Ok(())
+    }
+
     fn hud(&self) -> Hud {
         let mut hud = Hud::new(1000., 600.);
         let white = [0.95, 0.97, 0.99, 1.];
@@ -579,24 +681,27 @@ impl LandscapeSample {
         let panel = [0.03, 0.06, 0.09, 0.80];
         hud.rect([16., 16., 700., 112.], panel);
         hud.text(30., 28., "MATTERWEAVE / LANDSCAPE RINGS", 2., white);
-        let (chunks_visible, chunks_resident, tiles) = match &self.renderer {
+        let (chunks_visible, chunks_resident, tiles, water) = match &self.renderer {
             Some(renderer) => (
                 renderer.visible_chunks,
                 renderer.resident_chunks,
                 renderer.terrain_tile_stats(),
+                renderer.water_stats(),
             ),
-            None => (0, 0, Default::default()),
+            None => (0, 0, Default::default(), Default::default()),
         };
         hud.text(
             30.,
             54.,
             &format!(
-                "CHUNKS {}/{} | TILES {}/{} VIS {} | UP {} EV {} | LEFT {}",
+                "CHUNKS {}/{} | TILES {}/{} VIS {} | WATER {}/{} | UP {} EV {} | LEFT {}",
                 chunks_visible,
                 chunks_resident,
                 tiles.resident,
                 tiles.declared,
                 tiles.visible,
+                water.resident,
+                water.visible,
                 self.tiles.uploaded,
                 self.tiles.evicted,
                 self.tiles.outstanding
@@ -706,7 +811,11 @@ impl LandscapeSample {
         }
         let stream_ms = stream_begin.elapsed().as_secs_f64() * 1000.;
         let mesh_begin = Instant::now();
-        if let Err(error) = self.sync_chunks().and_then(|()| self.sync_tiles()) {
+        if let Err(error) = self
+            .sync_chunks()
+            .and_then(|()| self.sync_tiles())
+            .and_then(|()| self.sync_water())
+        {
             log::error!("Landscape geometry failed: {error}");
             eprintln!("Landscape geometry failed: {error}");
             self.failed = true;
@@ -732,10 +841,12 @@ impl LandscapeSample {
                 self.frames += 1;
                 if self.frames.is_multiple_of(30) {
                     let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
+                    let water = self.renderer.as_ref().unwrap().water_stats();
                     log::info!(
                         "LANDSCAPE frame {} frame_ms {:.2} tile_build_ms {:.2} tile_declare_ms {:.2} \
                          tile_generate_ms {:.2} tile_upload_ms {:.2} tiles {}/{} visible {} \
-                         uploaded {} evicted {} outstanding {} tile_kib {} eye {:?}",
+                         uploaded {} evicted {} outstanding {} tile_kib {} \
+                         water {}/{} up {} {:.2} ms eye {:?}",
                         self.frames,
                         self.frame_ms,
                         self.tiles.build_ms,
@@ -749,6 +860,10 @@ impl LandscapeSample {
                         self.tiles.evicted,
                         self.tiles.outstanding,
                         tiles.bytes / 1024,
+                        water.resident,
+                        water.visible,
+                        self.water_uploaded,
+                        self.water_ms,
                         eye
                     );
                 }
@@ -775,6 +890,7 @@ impl LandscapeSample {
         }
         if !self.failed && self.frame_limit.is_some_and(|limit| self.frames >= limit) {
             let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
+            let water = self.renderer.as_ref().unwrap().water_stats();
             eprintln!(
                 "LANDSCAPE SMOKE PASS: {} presented frames; {}",
                 self.frames,
@@ -782,7 +898,10 @@ impl LandscapeSample {
             );
             eprintln!(
                 "LANDSCAPE COUNTERS: chunks {}/{} | tiles resident {} declared {} visible {} \
-                 | uploaded {} evicted {} outstanding {} | tile mem {} KiB | frame {:.1} ms\n\
+                 | uploaded {} evicted {} outstanding {} | tile mem {} KiB \n\
+                 LANDSCAPE WATER: resident {} visible {} uploaded {} | {} KiB | {} ms this frame | \
+                 window {} candidates {}\n\
+                 frame {:.1} ms\n\
                  LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms generating + {:.2} ms \
                  uploading (the upload waits on the frame fence) + {:.2} ms planning; \
                  budget {} tiles / {:.1} ms\n\
@@ -796,6 +915,13 @@ impl LandscapeSample {
                 self.tiles.evicted,
                 self.tiles.outstanding,
                 tiles.bytes / 1024,
+                water.resident,
+                water.visible,
+                self.water_uploaded,
+                water.bytes / 1024,
+                self.water_ms,
+                self.water_window,
+                self.water_candidates,
                 self.frame_ms,
                 self.tiles.worst.tiles,
                 self.tiles.worst.build_ms,
