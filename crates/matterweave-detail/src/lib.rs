@@ -30,6 +30,7 @@ mod bracket;
 pub use bracket::bracket_fungus;
 mod fixtures;
 mod flora;
+mod landscape_flora;
 mod scene;
 mod select;
 mod serial;
@@ -46,6 +47,17 @@ pub use flora::{
     DENSE_FLORA_CELLS_MIN, DENSE_PER_SPECIES_MIN, DENSE_TYPES_MIN, DENSE_VEGETATION_MIN,
     FLORA_CANONICAL_SEED, FLORA_FUNGUS_SCALE_M, FLORA_GENERATOR_VERSION, FLORA_LEAF_SCALE_M,
     FLORA_SPECIES,
+};
+pub use landscape_flora::{
+    assert_landscape_policy, cactus, fern, flower_red_l, flower_red_m, flower_red_s,
+    flower_white_l, flower_white_m, flower_white_s, flower_yellow_l, flower_yellow_m,
+    flower_yellow_s, grass_tuft_l, grass_tuft_m, grass_tuft_s, is_single_body,
+    landscape_flora_class, landscape_prototype, prototype_for, shrub, tree_broadleaf_l,
+    tree_broadleaf_m, tree_broadleaf_s, tree_conifer_l, tree_conifer_m, tree_conifer_s,
+    CACTUS_CELL_CAP, CACTUS_TRI_CAP, FERN_CELL_CAP, FERN_TRI_CAP, FLOWER_CELL_CAP, FLOWER_TRI_CAP,
+    GRASS_CELL_CAP, GRASS_TRI_CAP, LANDSCAPE_FLORA_SPECIES, LANDSCAPE_FLORA_VERSION,
+    LANDSCAPE_LEAF_SCALE_M, MAX_SITES_PER_16M_SQUARE, SHRUB_CELL_CAP, SHRUB_TRI_CAP, TREE_CELL_CAP,
+    TREE_TRI_CAP,
 };
 pub use scene::{
     DetailScene, InstanceDraw, SceneCounts, SceneVersion, MAX_INSTANCES, MAX_PROTOTYPES,
@@ -268,6 +280,11 @@ pub enum MaterialPolicy {
 
 /// Named palette owned by this crate. IDs are local to detail volumes and do not
 /// change or reuse any existing core world material definitions.
+///
+/// Landscape flora palette (IDs 60..=72) is entirely [`MaterialPolicy::Decorative`]:
+/// grass, flowers, shrubs, trees and cacti never enter collision. Walking
+/// through a trunk is therefore a documented choice for this version rather
+/// than an accident; a later worker may promote trunks to collidable wood.
 pub mod material {
     pub const AIR: u8 = 0;
     pub const DETAIL_SOIL: u8 = 10;
@@ -278,7 +295,7 @@ pub mod material {
     pub const MUSHROOM_CAP: u8 = 21;
     pub const MUSHROOM_RIM: u8 = 22;
     pub const MUSHROOM_GILL: u8 = 23;
-    // Additive flora catalogue palette (IDs 30..63). Existing IDs above are unchanged.
+    // Additive flora catalogue palette (IDs 30..48). Existing IDs above are unchanged.
     pub const FLORA_FUNNEL_STIPE: u8 = 30;
     pub const FLORA_FUNNEL_CAP: u8 = 31;
     pub const FLORA_FUNNEL_RIM: u8 = 32;
@@ -301,6 +318,21 @@ pub mod material {
     /// [`FLORA_LUMEN_DOT`] precisely because it is part of a substantive body
     /// and must collide; colour may match, policy may not.
     pub const FLORA_FUNGUS_LUMEN: u8 = 48;
+    // Landscape flora catalogue palette (IDs 60..72). All Decorative; see the
+    // module docs. Existing IDs above are unchanged.
+    pub const GRASS_BLADE: u8 = 60;
+    pub const GRASS_TIP: u8 = 61;
+    pub const FLOWER_PETAL_RED: u8 = 62;
+    pub const FLOWER_PETAL_WHITE: u8 = 63;
+    pub const FLOWER_PETAL_YELLOW: u8 = 64;
+    pub const FLOWER_HEART: u8 = 65;
+    pub const SHRUB_LEAF: u8 = 66;
+    pub const SHRUB_STEM: u8 = 67;
+    pub const TREE_BARK: u8 = 68;
+    pub const TREE_LEAF: u8 = 69;
+    pub const TREE_NEEDLE: u8 = 70;
+    pub const CACTUS_BODY: u8 = 71;
+    pub const CACTUS_SPINE: u8 = 72;
 }
 
 pub fn material_name(material: u8) -> &'static str {
@@ -332,6 +364,19 @@ pub fn material_name(material: u8) -> &'static str {
         material::FLORA_ROSETTE_SPOT => "flora_rosette_spot",
         material::FLORA_LUMEN_DOT => "flora_lumen_dot",
         material::FLORA_FUNGUS_LUMEN => "flora_fungus_lumen",
+        material::GRASS_BLADE => "grass_blade",
+        material::GRASS_TIP => "grass_tip",
+        material::FLOWER_PETAL_RED => "flower_petal_red",
+        material::FLOWER_PETAL_WHITE => "flower_petal_white",
+        material::FLOWER_PETAL_YELLOW => "flower_petal_yellow",
+        material::FLOWER_HEART => "flower_heart",
+        material::SHRUB_LEAF => "shrub_leaf",
+        material::SHRUB_STEM => "shrub_stem",
+        material::TREE_BARK => "tree_bark",
+        material::TREE_LEAF => "tree_leaf",
+        material::TREE_NEEDLE => "tree_needle",
+        material::CACTUS_BODY => "cactus_body",
+        material::CACTUS_SPINE => "cactus_spine",
         _ => "unknown",
     }
 }
@@ -360,7 +405,20 @@ pub fn material_policy(material: u8) -> MaterialPolicy {
         | material::FLORA_ROSETTE_LEAF
         | material::FLORA_ROSETTE_HEART
         | material::FLORA_ROSETTE_SPOT
-        | material::FLORA_LUMEN_DOT => MaterialPolicy::Decorative,
+        | material::FLORA_LUMEN_DOT
+        | material::GRASS_BLADE
+        | material::GRASS_TIP
+        | material::FLOWER_PETAL_RED
+        | material::FLOWER_PETAL_WHITE
+        | material::FLOWER_PETAL_YELLOW
+        | material::FLOWER_HEART
+        | material::SHRUB_LEAF
+        | material::SHRUB_STEM
+        | material::TREE_BARK
+        | material::TREE_LEAF
+        | material::TREE_NEEDLE
+        | material::CACTUS_BODY
+        | material::CACTUS_SPINE => MaterialPolicy::Decorative,
         _ => MaterialPolicy::Collision,
     }
 }
@@ -394,6 +452,19 @@ pub fn material_color(material: u8) -> [f32; 3] {
         material::FLORA_ROSETTE_SPOT => [0.75, 0.55, 0.25],
         material::FLORA_LUMEN_DOT => [0.65, 0.85, 0.80],
         material::FLORA_FUNGUS_LUMEN => [0.62, 0.88, 0.76],
+        material::GRASS_BLADE => [0.26, 0.55, 0.28],
+        material::GRASS_TIP => [0.55, 0.72, 0.30],
+        material::FLOWER_PETAL_RED => [0.78, 0.12, 0.16],
+        material::FLOWER_PETAL_WHITE => [0.93, 0.92, 0.88],
+        material::FLOWER_PETAL_YELLOW => [0.92, 0.78, 0.15],
+        material::FLOWER_HEART => [0.35, 0.20, 0.08],
+        material::SHRUB_LEAF => [0.16, 0.38, 0.22],
+        material::SHRUB_STEM => [0.36, 0.24, 0.15],
+        material::TREE_BARK => [0.30, 0.20, 0.13],
+        material::TREE_LEAF => [0.22, 0.48, 0.26],
+        material::TREE_NEEDLE => [0.12, 0.32, 0.20],
+        material::CACTUS_BODY => [0.32, 0.52, 0.36],
+        material::CACTUS_SPINE => [0.87, 0.83, 0.70],
         _ => [0.60, 0.60, 0.60],
     }
 }
