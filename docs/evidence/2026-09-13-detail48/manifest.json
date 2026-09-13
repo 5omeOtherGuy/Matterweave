@@ -1,0 +1,50 @@
+{
+  "task": "delegated detail-48 Android acceptance and reviewed PR delivery (w_7459dd48)",
+  "date": "2026-09-13",
+  "source": {
+    "main_before": "8183540",
+    "pr48_head": "8ae9e7dcbd8de59e29a803190a08bbfb12c22737",
+    "acceptance_merge_head": "29421d91ae8bd47a04df59974978eee4889a7497",
+    "acceptance_tree": "90d529a411e0b530d5933eb8d5cdde5cd008966b",
+    "github_merge_commit": "06975ceabb6e",
+    "github_merge_tree": "90d529a411e0b530d5933eb8d5cdde5cd008966b",
+    "acceptance_worktree": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/pr36-39-acceptance (branch engine/detail48-acceptance; previous branch engine/pr36-39-acceptance @ bbf7d1d preserved)"
+  },
+  "apk": {
+    "sha256": "bff9e869aefa6448bc0b3c1d6560664f0b8b020b490cbf5283159ccf5319e01a",
+    "bytes": 9088705,
+    "verify_apk": "PASS (arm64-v8a, 16 KiB LOAD alignment)",
+    "signature": "APK Signature Scheme v2, Android debug certificate",
+    "build": "ANDROID_HOME=../android-sdk GRADLE_USER_HOME=../gradle-home CARGO_TARGET_DIR=../detail-android-target CARGO_BUILD_JOBS=1 RUSTC_WRAPPER= android/gradlew -p android :app:assembleDebug --no-daemon",
+    "installed": "adb install -r at 2026-09-13 02:43:54; on-device base.apk sha256 matches"
+  },
+  "device": "OnePlus 13 CPH2653, Android 16, Adreno 830, Vulkan 1.3.284, driver 2150760522, 3168x1440",
+  "runs": [
+    {
+      "kind": "detail 14-phase + real HOME/resume",
+      "runs": 3,
+      "result": "PASS detail: 14 phases",
+      "report": "detail-report-1440.txt",
+      "report_sha256": "97821a4194fc9bbd22fa14563897dc8544a8d396c2bdf2bad7b10b4feb31f300",
+      "note": "byte-identical report in all three runs; 15 phase applications = phases 0-13 plus resumed phase 3 re-prepared; phase 0 deferral proof converge_iters=2 max_prepare_builds=1; phase 7 occlusion_solid:boulder:Half with flora_source=6/6 flora_pixel_eligible=2 at 1440 px"
+    },
+    {
+      "kind": "normal Wetland interaction",
+      "result": "PLACE 11.904 ms Voxel added; REMOVE 19.234 ms Voxel removed; MOVE-zone walking 85.1/19.3/53.8 -> 83.6/19.3/54.4; MENU/DIAGNOSTICS responsive",
+      "result_note": "BREAK/GRAB/THROW dispatched responsively but missed - diagnostics stayed at 6 physics bodies / 8302 placed objects, so no object effect is claimed",
+      "logcat_excerpt": "logcat-edit-excerpt.txt",
+      "anr_check": "no new ANR/crash; newest /data/anr trace remains the 2026-09-12 23:25:55 baseline"
+    }
+  ],
+  "save_integrity": "all five owner saves restored byte-exact with the app force-stopped (hashes f0f37bcc/e474b8c9/44f102b1/4f66fd00/d53380cf match the fresh private backup); accepted APK remains installed",
+  "review": {
+    "pr48": "Opus medium w_62fe4c42 accept (non-blocking: projected_rect overlap is viewport-invariant, no envelope guard, in-run check omits projected overlap, <=1440 px verified)",
+    "pr51": "Opus medium w_a6d28d97 accept, no blockers; six green checks; merged as 92f0a79 with GPU/Android/cost gates OPEN and issue 42 open"
+  },
+  "limits": [
+    "No performance, memory, thermal or sustained-workload measurement.",
+    "No runtime projected-overlap proof; fixture proven only up to a 1440 px viewport (headroom ends around 1650-1680 px).",
+    "Screenshots are HUD/frame captures, not pixel-readback quality evidence; the phase-7 occlusion pair is only a few pixels tall at 127 m depth.",
+    "Raw ANR/dropbox data (including other apps) is not copied into Git; only selected app lines and this manifest are committed."
+  ]
+}

@@ -674,26 +674,54 @@ impl IndirectVolume {
             + std::mem::size_of::<Self>()
             + self.mesh.as_ref().map_or(0, |proxy| proxy.resident_bytes())
     }
+    /// Whether the volume holds a complete, publishable result for its current
+    /// key. A fresh volume, a cleared volume and a partially updated volume are
+    /// all incomplete; only a finished key is publishable. This is the CPU
+    /// work-unit gate: it bounds preparation work, not Android frames or
+    /// presentation latency (see the D3.2 log).
+    pub fn complete(&self) -> bool {
+        self.key.is_some() && self.cursor == self.values.len()
+    }
+    /// Upper bound on the remaining `work` units needed to finish the current
+    /// key: at most one face inspection per face slot per sample. A changed key
+    /// starts with at most `values.len() * samples` pending; each bounded
+    /// `update` call that makes progress strictly reduces it. This bounds CPU
+    /// preparation slices, not wall-clock time or frame presentation.
+    pub fn pending_work(&self) -> usize {
+        if self.complete() {
+            return 0;
+        }
+        self.values
+            .len()
+            .saturating_sub(self.cursor)
+            .saturating_mul(self.samples as usize)
+            .saturating_sub(self.sample_index as usize)
+    }
     pub fn valid_for(&self, world: &World, epoch: u64, sun: Sun) -> bool {
-        light_key(sun).is_ok_and(|sun| {
-            self.key
-                == Some(Key {
-                    epoch,
-                    revision: world.revision(),
-                    sun,
-                    mesh: self.mesh_digest(),
-                })
-        })
+        self.complete()
+            && light_key(sun).is_ok_and(|sun| {
+                self.key
+                    == Some(Key {
+                        epoch,
+                        revision: world.revision(),
+                        sun,
+                        mesh: self.mesh_digest(),
+                    })
+            })
     }
     pub(crate) fn cached_sun(&self) -> Option<[f32; 4]> {
         self.key.map(|k| k.sun)
     }
     /// Source identity for publication: the caller's replacement epoch and the
-    /// authoritative revision. Mesh-only coverage is not re-checked here; it is
+    /// authoritative revision, plus completion. An incomplete volume is never
+    /// publishable, so a superseded or partially recomputed key cannot be
+    /// uploaded. Mesh-only coverage is not re-checked here; it is
     /// the caller's contract, as documented on [`IndirectVolume::set_mesh_proxy`].
     pub(crate) fn source_valid(&self, world: &World, epoch: u64) -> bool {
-        self.key
-            .is_some_and(|k| k.epoch == epoch && k.revision == world.revision())
+        self.complete()
+            && self
+                .key
+                .is_some_and(|k| k.epoch == epoch && k.revision == world.revision())
     }
     pub fn sample(&self, cell: [i32; 3], face: usize) -> [f32; 3] {
         if face >= 6 {

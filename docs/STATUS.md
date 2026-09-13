@@ -1,5 +1,174 @@
 # Current status
 
+Owner routing update (2026-09-13, latest): Codex dispatches tasks only.
+DeepSeek V4.1 Flash direct and GLM5.3 Flash do bulk development; the Claude
+subscription reset, so Opus at medium is available again for complex reviews and
+review fallback, and a separate read-only Opus reviewer inspects merged
+production lighting gaps and returns the next-slice brief (issue47) with no
+phone or write ownership and no overlap with this functional acceptance. No
+Astra workers; global cap3. Phase B cost/thermal rankings are deferred;
+functional issue experiments run alongside engine development.
+
+Delegated delivery (2026-09-13): a DeepSeek integration/acceptance worker owns
+the phone, the combined Android gate and reviewed/passing PR merges for the
+functional fixes. Interaction `c1e8777` (integrated `bb68e59`) passed independent
+GLM review `w_a6f188e8` with no findings and the physical four-action device gate
+(real edits 13-20 ms, no new ANR/crash); merged at `f0da177` (PR #49, all six
+checks green). Detail `648dda2` passed independent GLM review `w_94385293` (one
+stale fixture-log claim, corrected in `7466208`); its phase-7 blocker was then
+repaired in `8ae9e7d` (`21c3ccc` fixture + `28b841a` RED regression), accepted by
+independent Opus review `w_62fe4c42`, and the full 14-phase + HOME/resume gate now
+PASSES on the phone, so PR #48 merged at `06975ce`. The optional CPU traversal
+experiment PR #51 merged at `92f0a79` with GPU/Android/cost gates explicitly open.
+See [delivery log](performance/logs/detail48-device-delivery.md) and
+[evidence manifest](evidence/2026-09-13-detail48/manifest.json); the earlier
+[functional-fix log](performance/logs/deepseek-functional-delivery.md) records the
+phase-7 failure that this delivery repaired.
+
+## Detail-48 device acceptance and reviewed PR delivery — 2026-09-13
+
+Acceptance source: current main `8183540` + PR #48 `8ae9e7d` merged in the existing
+acceptance checkout (`pr36-39-acceptance`, branch `engine/detail48-acceptance`,
+local merge `29421d9`, tree `90d529a411e0b530d5933eb8d5cdde5cd008966b`). That tree
+is byte-identical to GitHub's merge tree at `06975ce`, so the device evidence
+transfers exactly to the merged commit. APK
+`bff9e869aefa6448bc0b3c1d6560664f0b8b020b490cbf5283159ccf5319e01a` (9 088 705
+bytes; `tools/verify_apk.py` PASS ARM64/16 KiB; v2 debug signature; `install -r` at
+2026-09-13 02:43:54). OnePlus 13 CPH2653, Android 16, Adreno 830, Vulkan 1.3.284,
+3168x1440.
+
+| Gate | Result |
+| --- | --- |
+| Detail 14-phase at 1440 px | **PASS ×3**; all three reports byte-identical (sha256 `97821a4194fc9bbd22fa14563897dc8544a8d396c2bdf2bad7b10b4feb31f300`): phases 0-13, `fallback=0`, terminal `PASS detail: 14 phases`; phase 0 `converge_iters=2 max_prepare_builds=1 total_converge_builds=2`; phase 7 `occlusion_solid:boulder:Half` with `flora_source=6/6 flora_pixel_eligible=2`; `zero-extent=Retry; recreating renderer` and the phase-13 renderer recreation present. The marker `files/engine-check.txt` was written once per run as `detail\n` and consumed before the chooser |
+| HOME/resume | a real HOME (`keyevent 3`) plus `am start` mid-run in all three runs; the report then shows a second `capabilities:`/`fixture:` pair and the in-progress phase re-applied against a fresh pool before continuing to phase 13 (same process) |
+| Interaction | chooser screenshot before tapping `ENTER THE WETLAND` at 887,782; Wetland loaded 34 716 469 cells / 8 302 placed objects in 2.456 s; `WETLAND EDIT 11.904 ms Voxel added`, `WETLAND EDIT 19.234 ms Voxel removed`; MOVE-zone walking moved the diagnostics position 85.1/19.3/53.8 → 83.6/19.3/54.4; MENU and DIAGNOSTICS responsive. BREAK/GRAB/THROW dispatched responsively but missed — diagnostics stayed at 6 physics bodies / 8 302 objects with no body under the reticle, so no object effect is claimed |
+| ANR/crash | no new ANR: `dumpsys activity lastanr` reports none since boot, the newest `/data/anr/` trace is still the 2026-09-12 23:25:55 baseline, no `ANR in`/`FATAL EXCEPTION` for the app |
+| Saves / install | all five owner saves re-hashed on device byte-exact to the fresh backup with the app force-stopped; the accepted APK remains installed |
+
+Reviewed PR delivery: PR #48 merged at `06975ce` (six green checks; independent
+Opus review `w_62fe4c42` accepted, with the disclosed non-blocking limits: the
+`projected_rect` overlap assertion is viewport-invariant, there is no envelope
+guard above ~1650 px, and the in-run phase check verifies eligibility, coarse
+realization and depth order but not projected overlap). PR #51 (optional CPU
+traversal experiment `43050cd`) merged at `92f0a79` after independent Opus
+corrective review `w_a6d28d97` accepted with no blockers and six green checks;
+GPU, Android and cost gates remain explicitly OPEN and issue 42 is not closed.
+Evidence: [delivery log](performance/logs/detail48-device-delivery.md),
+[manifest](evidence/2026-09-13-detail48/manifest.json) and the private
+`orchestration/detail48-acceptance/` run tree (screenshots, logcat excerpts,
+per-run reports). No performance or thermal claim is made anywhere in this gate.
+
+## Functional-fix delivery — 2026-09-13
+
+Combined acceptance source `bbf7d1d` (`engine/interaction-delivery` `f5fc91f` +
+cherry-pick `648dda2`), APK sha256
+`0531c7d115fb1d3af425d87fa4404e4aefa3048dbbcef2f41ad5b890e8a88a7e` (ARM64
+16 KiB alignment `verify_apk.py` PASS, debug-signed, installed `-r`). OnePlus 13
+CPH2653, Android 16, Vulkan 1.3.284, Adreno 830, 3168x1440, app start fresh.
+
+| Gate | Result |
+| --- | --- |
+| Interaction actions | `PLACE` 13.015 ms "Voxel added", `PLACE` 16.613 ms "Voxel added", `REMOVE` 20.232 ms "Voxel removed" (`WETLAND EDIT` app log); BREAK/GRAB/THROW dispatched responsively but missed — no physics object inside the 6 m reach at the saved camera (27 m from the arch); MENU open/close responsive |
+| ANR/crash | No new ANR: `dumpsys activity lastanr` still the 2026-09-12 23:25:55 baseline; no new `/data/anr/` trace after 23:25; no `ANR in`/`FATAL EXCEPTION` matches |
+| Detail 1440 px | Phase 0 `converge_iters=2 max_prepare_builds=1 total_converge_builds=2` (deferral proof runs); phases 1-6 PASS; phase 7 FAIL `occlusion foreground flora was not a pixel-eligible guard retention` — pre-existing viewport coupling (host probe: 1.688 px projected error vs 1.429 px budget at 1440; eligible at 480/720/1080). 14-phase + HOME/resume NOT PASSED |
+| Saves | All five owner saves re-hashed on device byte-exact to `saves-before.json`; app force-stopped; fixed APK remains installed |
+
+Evidence: `orchestration/deepseek-functional-delivery/device/` (report, logcat
+extracts, screenshots, package state) and the
+[delivery log](performance/logs/deepseek-functional-delivery.md).
+
+## Reviewed PR delivery and functional follow-up — 2026-09-13
+
+PR36 merged at `7e88f31` and PR39 at `fc6212e`; all six checks passed for each.
+Owner-requested **GLM5.3 Flash** reviews completed (`w_46c2ce3f`, corrective
+`w_af5d3477`; streaming `w_8b9d64dd`). The full-GLM route was the owner's initial
+wording, then corrected to Flash; preserved partial reviews are not separate
+completed acceptances. Lighting report-write failure handling is fixed and the
+proxy caller contract clarified. Streaming's real upstream rejection path is
+fixed and independently reviewed. Physical evidence: lighting300presentations,
+repeat HOME/resume1/1; streaming36core tests on ARM64. One Android CI attempt
+failed during dependency resolution, then passed on retry; no checks bypassed.
+
+The owner interaction ANR is being repaired separately in `interaction-anr`:
+GLMFlash continues preserved Opus work after its5h rate limit. The narrow solution
+reuses per-revision scene bounds for action queries and removes unnecessary rays.
+The separate detail diagnostic failure at Android1440px is assigned to the newly
+owner-authorized direct DeepSeek route (`deepseek/deepseek-flash`, Pi displays
+V4.1 Flash, max verified); this is not the similarly named Go route.
+[Board](performance/board.json) records disjoint ownership and exact workers.
+Both follow-ups require review and functional Android acceptance before closure.
+All five current user JSON saves were restored and hash-verified after diagnostics.
+
+
+## PR36/39 acceptance and interaction incident — 2026-09-12
+
+Main is `495d9f9` (PR37 streaming contract tests and PR38 detail diagnostic merged).
+PR36 (`45ab5de`) and PR39 (`343dc36` plus preserved corrective work) remain draft
+until their explicit reviews/checks pass. The owner corrected the requested review
+model to OpenRouter **GLM 5.3 Flash** (`z-ai/glm-5.3-flash`, high). Previous full
+GLM attempts and Muse quota failures are preserved, not counted as completed reviews.
+Opus subscription workers repair the streaming counter and the interaction incident;
+no Astra workers. The board records current identities.
+
+PR36 Android mesh-lighting functional gate PASS at `45ab5de`: five phases, 300
+presentations; second run also PASS with one real HOME/resume. Source/API rejection,
+matching proxy publication, move invalidation, recompute and removal are covered.
+[Manifest and exact reports](evidence/2026-09-12-pr36-lighting/manifest.json).
+This is not full-scene production GI, pixel-quality or performance acceptance.
+GLM Flash review found a caller-contract clarification and a report-write panic.
+The documentation is clarified and report failures now terminate as failed gates;
+13 focused mesh-lighting tests and scoped strict app Clippy pass after correction.
+Formatting and documentation checks pass.
+
+The separate merged detail diagnostic FAILS on this Android viewport in phase0:
+its cold bounded-convergence guard observes no deferred levels. Host tests had
+passed; the physical result supersedes any inferred Android completion. M2 remains
+open. Raw report is preserved in the healthy recovery orchestration/pr36-device directory.
+
+Owner reports Wetland/Amber Mine BREAK/THROW/PLACE/GRAB freezes and recovery.
+Android recorded a real input ANR at23:25:55 (waited5001ms for MotionEvent), with
+android_main CPU97% during the short sample. The shared action ray query repeatedly
+scans occupied cells for per-instance bounds; investigation and a narrow corrective
+branch are in progress. This is an existing installed-build incident, not evidence
+that either draft PR caused it. Fresh backups include all five current JSON saves.
+
+
+## Post-reboot primary-plan development — 2026-09-12
+
+The owner prioritizes development batches over repeated intermediate live checks.
+Host tests and independent review remain required; Android acceptance is batched
+on integrated behavioral changes. Two free Muse workers implement native
+mesh-lighting publication and the actual continuous-edit streaming progress fix.
+Gemini corrective review of detail05549eb and streamingf63055b found no concrete
+defects. Streaming host contract checks are in PR37; application progress and
+Android streaming acceptance remain open.
+
+Clean CI source4a60df7 (tree identical to mainac1ce444) was re-signed with the
+existing debug key, verified for signature/16KiB alignment, installed without data
+clear, and visually ran both wetland and the existing solved Relay save. All four
+original saves were verified restored byte-for-byte after smoke. This revalidates
+the existing install/run slice, not the final E8 candidate.
+[Manifest](evidence/2026-09-12-restart-smoke/manifest.json).
+
+
+**Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
+
+## Recovery and continued development — 2026-09-12
+
+PR #35 merged at `ac1ce444`: reviewed, host/device-verified destruction diagnostic,
+all six CI checks green. Audio audibility is confirmed by the owner. A later
+`/mnt/bench` hardware I/O failure interrupted follow-up development, not that delivery.
+Source work continues in isolated healthy-disk recovery checkouts; benchmark work
+and data remain deferred. [Recovery state](performance/recovery-20260912.md).
+
+DeepSeek Go returned HTTP429 weekly quota errors. Per owner direction, the live
+D1 repair worker is OpenRouter `deepseek/deepseek-v4.1-flash` high (`w_f38feb0e`);
+D3.2 recovery uses exact Muse Spark 1.3 Contributor Free high (`w_a0a724e3`).
+Both have executed source-reading tool calls. Gemini `w_3287036b` reviewed frozen
+D2.3 Git objects after its earlier result became unreadable. OpenRouter DeepSeek
+`w_b5255700` now repairs its concrete bound-scope and byte-admission test gaps;
+sustained-edit app liveness remains open. No Opus or Astra worker was launched. No top-up or overage enabled.
+
 ## Production-detail diagnostic repair — 2026-09-12
 
 The opt-in detail diagnostic uses production flora, bounded stationary convergence,

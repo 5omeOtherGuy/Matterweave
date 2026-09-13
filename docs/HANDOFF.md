@@ -1,5 +1,49 @@
 # Implementation handoff
 
+**Current worker routing (owner, 2026-09-13, latest):** Codex dispatches tasks
+only. Use direct Pi `deepseek/deepseek-flash` (DeepSeek V4.1 Flash) and OpenRouter
+`z-ai/glm-5.3-flash` for bulk development. The Claude subscription reset, so
+Claude/Opus at **medium** is available again for complex reviews and review
+fallback (the owner-designated complex-task role), and a separate read-only Opus
+reviewer inspects merged production lighting gaps and returns the next-slice
+brief (issue47) without phone/write ownership; do not wait on it or duplicate its
+scope. Never dispatch Astra workers. Preserve the global three-worker cap.
+Phase B cost/thermal rankings are deferred; functional issue experiments may run
+alongside engine development. The issue42 ray-hierarchy experiment finished as
+PR #51 (merged `92f0a79`, optional CPU evidence only, GPU/Android/cost gates
+OPEN). Current third slot: **D4.2 shared mobile settings** (`w_6f7430c8`) in the
+isolated `shared-controls` checkout — handedness/large-controls/mute with bounded
+shared persistence, user-facing integration only, no lighting regions, no phone or
+shared-doc edits; wetland proxy lighting `w_da1d82ec` remains a separate isolated
+writer and is not integrated before review.
+
+**Current pickup (2026-09-13):** main is `92f0a79`. PR36 lighting and PR39
+streaming merged earlier with all six checks green each. The delegated
+integration/acceptance delivery finished: interaction ANR `c1e8777` merged at
+`f0da177` (PR #49); the detail diagnostic phase-7/retreat fixture repair
+`8ae9e7d` (`21c3ccc` + `28b841a`) passed independent Opus review `w_62fe4c42` and
+the full 14-phase detail gate on the OnePlus 13 at 3168x1440 (three PASS runs,
+each with a real HOME/resume, byte-identical reports), so PR #48 merged at
+`06975ce`; optional CPU traversal PR #51 merged at `92f0a79` with GPU/Android/cost
+gates explicitly open and issue 42 open. Acceptance APK
+`bff9e869aefa6448bc0b3c1d6560664f0b8b020b490cbf5283159ccf5319e01a`, built from the
+exact GitHub merge tree `90d529a4…`. All five current saves were restored
+hash-exact, the accepted APK stays installed and the app is force-stopped. No
+thermal campaign. See the
+[detail-48 delivery log](performance/logs/detail48-device-delivery.md), the
+[manifest](evidence/2026-09-13-detail48/manifest.json) and
+[STATUS](STATUS.md).
+
+**Restart checkpoint:** all workers finished; source commits and outstanding gates are listed in [restart handoff](performance/restart-20260912.md). This checkpoint supersedes older live-worker descriptions below.
+
+**Recovery update, 2026-09-12:** PR #35 merged at `ac1ce444` with all six checks
+passing. `/mnt/bench` now has hardware I/O failures in its backing device `sdb`;
+do not resume writes or builds there until the drive is repaired and verified.
+The live lead checkout is
+`/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/integration`
+(`engine/recovered-mesh-lighting`). See [recovery state](performance/recovery-20260912.md)
+and the [board](performance/board.json) for workers. Original worktrees are preserved.
+
 Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
 
 The entry point for a fresh session: what is true now and what is authorized next.

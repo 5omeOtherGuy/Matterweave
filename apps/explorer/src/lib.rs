@@ -8,6 +8,7 @@ mod dynamic_upload;
 mod engine_check;
 mod experience;
 mod gallery;
+mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
 mod reflection_check;
@@ -1027,6 +1028,17 @@ impl Explorer {
                 .request_stream(&self.world, self.camera.position.to_array());
             if self.preparation.poll_stream(&mut self.world) {
                 self.physics.sync_world(&self.world);
+            } else if self
+                .preparation
+                .sync_fallback_if_stalled(&mut self.world, self.camera.position.to_array())
+            {
+                // Bounded progress under sustained edits: after
+                // STALE_STREAM_FALLBACK_AFTER consecutive edit-stale completions
+                // for this destination, rewindow once synchronously on the current
+                // authoritative world (edits preserved, stale snapshots never
+                // published). Cost is one synchronous window on this thread;
+                // host-measured only, no mobile performance claimed.
+                self.physics.sync_world(&self.world);
             }
         } else if self.world.stream_around(self.camera.position.to_array()) {
             self.physics.sync_world(&self.world);
@@ -1443,6 +1455,7 @@ pub fn run_desktop() {
     let mut async_engine_check = false;
     let mut detail_check = false;
     let mut destruction_check = false;
+    let mut mesh_lighting_check = false;
     let mut pacing_check = false;
     let mut reflection_check = None;
     let mut explicit_save = false;
@@ -1461,6 +1474,7 @@ pub fn run_desktop() {
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
             "--destruction-check" => destruction_check = true,
+            "--mesh-lighting-check" => mesh_lighting_check = true,
             "--pacing-check" => pacing_check = true,
             "--reflection-check" => reflection_check = Some(crate::reflection_check::Mode::Quality),
             "--reflection-cost" => reflection_check = Some(crate::reflection_check::Mode::Cost),
@@ -1475,7 +1489,8 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
+--mesh-lighting-check runs the MeshProxy GI/reflection publication gate and writes mesh-lighting-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
             _ => {
@@ -1532,6 +1547,14 @@ pub fn run_desktop() {
             .run_app(&mut check)
             .expect("destruction check loop");
         if check.failed() {
+            std::process::exit(1);
+        }
+        return;
+    }
+    if mesh_lighting_check {
+        if crate::mesh_lighting_check::run(
+            save_path.with_file_name("mesh-lighting-check-report.txt"),
+        ) {
             std::process::exit(1);
         }
         return;
@@ -1688,6 +1711,20 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             crate::pacing_check::PacingCheck::new(directory.join("pacing-check-report.txt"));
         if let Err(e) = event_loop.run_app(&mut check) {
             log::error!("Pacing check: {e}");
+        }
+        return;
+    }
+    if requested_check.as_deref() == Some("mesh-lighting") {
+        // Remove only the consumed request marker; never any world or save.
+        if let Err(e) = std::fs::remove_file(&request) {
+            log::error!("Mesh lighting check request: {e}");
+            return;
+        }
+        let mut check = mesh_lighting_check::MeshLightingCheck::new(
+            directory.join("mesh-lighting-check-report.txt"),
+        );
+        if let Err(e) = event_loop.run_app(&mut check) {
+            log::error!("Mesh lighting check: {e}");
         }
         return;
     }
