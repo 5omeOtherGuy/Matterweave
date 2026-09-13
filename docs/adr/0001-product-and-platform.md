@@ -29,4 +29,4 @@ M0/M1 establish the native slice. M6 demonstrates two different samples sharing 
 
 ## References
 
-[Project brief](../PROJECT_BRIEF.md), [requirements](../REQUIREMENTS.md), [roadmap](../ROADMAP.md).
+Project brief, [requirements](../REQUIREMENTS.md), roadmap.

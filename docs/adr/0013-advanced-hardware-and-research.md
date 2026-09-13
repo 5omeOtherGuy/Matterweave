@@ -33,4 +33,4 @@ M0 records capabilities; later experiments specify workload, baseline, device co
 
 ## References
 
-[Hardware efficiency goal](0002-fidelity-and-hardware-efficiency.md), [research](../RESEARCH.md), [benchmarks](../BENCHMARKS.md).
+[Hardware efficiency goal](0002-fidelity-and-hardware-efficiency.md), research, benchmarks.

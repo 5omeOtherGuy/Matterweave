@@ -35,7 +35,7 @@ Use a small working baseline to identify actual gaps. A bounded prototype tests 
 
 ## Validation
 
-Follow [component selection](../COMPONENT_SELECTION.md) for substantial dependency/custom-code decisions and exceptions. Establish workload-specific thresholds before performance comparisons; include full-frame/step costs, quality, memory, thermals and compatibility. Record adopt/adapt/build/defer outcomes and revisit conditions. Hardware-dependent gains remain unproven until tested on physical hardware; independent development may proceed provisionally.
+Follow component selection for substantial dependency/custom-code decisions and exceptions. Establish workload-specific thresholds before performance comparisons; include full-frame/step costs, quality, memory, thermals and compatibility. Record adopt/adapt/build/defer outcomes and revisit conditions. Hardware-dependent gains remain unproven until tested on physical hardware; independent development may proceed provisionally.
 
 ## References
 

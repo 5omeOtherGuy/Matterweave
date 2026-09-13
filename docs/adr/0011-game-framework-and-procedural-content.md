@@ -29,4 +29,4 @@ M1 verifies seeded generation and save/load edits. M6 demonstrates two different
 
 ## References
 
-[Project brief](../PROJECT_BRIEF.md), [roadmap](../ROADMAP.md), [world data](0005-voxel-world-data.md).
+Project brief, roadmap, [world data](0005-voxel-world-data.md).

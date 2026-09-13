@@ -33,7 +33,7 @@ extra cost, the recommendation grows, and the cadence ratchets to its slowest se
 regardless of real work. `work_ns` is measured on the production path and excludes the wait,
 so the recommendation cannot reinforce itself. `tests/closed_loop.rs` is the executable guard
 and fails if the adaptive policy is reconnected to the interval series.
-[Frame pacing](../../docs/performance/frame-pacing.md) holds the measured defect, the
+Frame pacing holds the measured defect, the
 frame-loop gate and the executed device result.
 
 ### Policies
@@ -104,7 +104,7 @@ the current target plus `deadline_tolerance_ns` (default one eighth of the refre
 - Host-only crate evidence; real wait overshoot, display/vsync behaviour, GPU/CPU
   scheduling, thermals and surface lifecycle are not modelled here. The frame-loop
   integration and device gates are lead-owned and recorded in
-  [frame pacing](../../docs/performance/frame-pacing.md).
+  frame pacing.
 
 ## How it is tested
 
@@ -127,4 +127,4 @@ cargo test -p matterweave-pacing --offline
 
 `tests/closed_loop.rs` is deterministic: it uses no `std::time`, sleeps, threads or I/O, so
 it reproduces on any host. None of these are mobile measurements; the executed host and
-device gate results live in [frame pacing](../../docs/performance/frame-pacing.md).
+device gate results live in frame pacing.
