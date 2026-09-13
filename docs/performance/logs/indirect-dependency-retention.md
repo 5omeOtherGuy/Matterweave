@@ -20,6 +20,15 @@ that hypothesis with an unchanged complete-only publication contract.
 mode; no stale or partial lighting is ever uploaded. Host-only: no device, no
 phone, no `/mnt/bench`, no wall-clock and no thermal claim.
 
+**Review fixes (revision on top of the slice).** An independent review of PR #60
+returned REQUEST CHANGES with four findings confirmed against source. This
+revision addresses all four: the coverage-change rule in `invalidate_edit` (F1),
+the corrected and audited frozen SHA (F2), the wetland test that now pins what
+this log claims (F3), and the cap/frame wording (F4). The slice commit is
+`f77a36b`, its log commit `545113f`, and the fix commit is
+`6ff0352b755b7733a354463f5171a58f7fc4b5dd`; details under "Independent review
+fixes (F1-F4)" in Solutions Applied.
+
 ## Actions Taken
 
 - Read the three orchestration results and checked each load-bearing claim
@@ -31,7 +40,7 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
 - Added `crates/matterweave-render/src/indirect/dependency.rs`: per-face proxy
   cell bitsets over the volume's own coverage box, a DDA reader that mirrors
   `matterweave_core::World::raycast`'s cell reads, the old/new proxy diff, and
-  the invalidation rules. 13 tests in the same file.
+  the invalidation rules. 13 tests in the same file (15 after the review fixes).
 - Extended `IndirectVolume`:
   `enable_proxy_retention(max_bytes) -> Result<RetentionStatus, String>`,
   `replace_mesh_proxy(Option<MeshProxy>) -> ProxyEdit`, `retention_status()`,
@@ -45,6 +54,16 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
   and complete-only upload are unchanged.
 - Ran the render lib suite, the full explorer lib suite, scoped clippy with
   `-D warnings`, `rustfmt --check` and `tools/check_docs.py`.
+- **Review fixes (this revision).** Read the four review findings against source,
+  wrote two RED-first tests that reproduced both F1 triggers as a retained value
+  differing from a fresh reference, added the coverage-change rule to
+  `invalidate_edit`, charged the tracker struct to the cap so
+  `resident_bytes() <= cap_bytes()` is exact (F4), audited every SHA in this log
+  with `git cat-file -e` and corrected the one that did not resolve (F2), and
+  made the wetland same-frame republish assertion unconditional after observing
+  the fixture's actual `indirect_live` (F3). Re-ran the render and explorer lib
+  suites, clippy `-D warnings` for both crates, `rustfmt --check` and
+  `python3 tools/check_docs.py`.
 
 ## Issues & Friction
 
@@ -73,13 +92,36 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
   indirect state is a *new* upload with `pending_work == 0` (the `FakeSink`
   re-checks `complete()`, `valid_for`, digest match and non-retired digest).
   See "Behavior delta vs the frozen 54" below.
+- **The log claimed more than that test pinned (review finding F3, confirmed).**
+  The assertion above was written as `if summary.indirect_live { ... } else {
+  assert!(pending_work > 0) }`, so the test passed whether or not the invalidated
+  set drained in one budget, while the log stated the drain as its result. The
+  fixture is deterministic (no RNG, no time-dependent branch; `Instant` is used
+  only for `rebuild_ms`). Observed value, this fixture, three consecutive runs:
+  `indirect_live = true`, `dirty_faces = 0`, `pending_work = 0`,
+  `invalidated_faces = 6`, `retained_faces = 0`, one new upload after the
+  retirement. Decision: the assertion is now unconditional (branch (i) of the
+  finding), so the test pins the same-frame drain the log claims; the `else`
+  branch is gone and a retirement that left the volume dark now fails the test.
+- **The logged frozen SHA did not resolve (review finding F2, confirmed).**
+  `docs/performance/logs/indirect-dependency-retention.md` recorded
+  `f77a36b1e9c39cc8a2b1d3aa4b1c0dbd5b6bcb5f`, which does not exist: the 7-char
+  prefix was right and the suffix wrong, so anyone checking out the logged SHA
+  failed. Corrected to `f77a36b6d8aa724a2e771592e819f9c627b183e1`, and every other
+  commit reference in the file was audited (result under "SHA audit" in
+  Solutions Applied below).
+- **The retained bitset was not the read set when the trace's reach grew (review
+  finding F1, confirmed).** Two real triggers, both latent rather than live: see
+  "Independent review fixes (F1-F4)" for the mechanism and the RED evidence,
+  and the severity qualification there.
 - **`MeshProxy` is not `Clone` and the volume's proxy is private**, so a test
   cannot inspect the retained proxy directly; tests observe retention through
   `ProxyEdit` counts, `sample()` and the volume's own `done`/`values` state
   (visible to the submodule's tests). No production state was exposed for tests.
 - **The `dependency.rs` test module is large** (1 250 of the file's 1 816
-  lines). Kept in the owned new file rather than `indirect_tests.rs` because the
-  brief restricts the new file scope and forbids other renderer edits.
+  lines at the slice commit; 2 001 lines after the review fixes). Kept in the
+  owned new file rather than `indirect_tests.rs` because the brief restricts the
+  new file scope and forbids other renderer edits.
 
 ## Decisions & Rationale
 
@@ -89,7 +131,8 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
   outside that space is a coverage change and takes the old clear-all path
   (`tracked = false`), which is the conservative branch the brief allows. A
   proxy box that is merely *larger* while its occupied cells stay inside remains
-  exactly trackable and is tested.
+  exactly trackable and is tested - but only while that box is unchanged between
+  edits: a box that *changes* is a coverage change too (review F1).
 - **Only proxy cells are recorded.** `World` cells are fixed by the key
   (`epoch`, world `revision`, sun, mesh digest), and any change to them clears
   the volume in `update`, so recording them would be redundant. `World` exposes
@@ -126,6 +169,27 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
 - **Production quadrature and budgets untouched.** `GATHER_DISTANCE_M = 24.0`,
   `SAMPLES = 16` and `UPDATE_BUDGET { rays: 1024, work: 8192 }` are unchanged;
   the tests use those exact values. No `R` is adopted anywhere.
+- **A coverage-box change is a coverage change, not an edit (review finding F1).**
+  A recorded bitset is the read set *of the box and representation it was
+  recorded under*: a face completed with no proxy records only its exposure
+  cells, and every recorded segment is clipped by `MeshProxy::segment_exit`. So a
+  `None` <-> `Some` transition, or any change to the proxy's `origin` or
+  `dimensions`, cannot be decided by comparing cells. The answer is the
+  conservative path that already exists: report `tracked = false` and let
+  `replace_mesh_proxy` clear every value. No new mechanism, no per-face record of
+  the box, and the cell diff is still counted for reporting.
+- **The cap now bounds the whole tracker (review finding F4).** `resident_bytes`
+  could exceed `cap_bytes` by `size_of::<MeshDependencies>()`. Instead of
+  documenting a constant overshoot, `MeshDependencies::new` charges the struct to
+  the cap before the arena, so `resident_bytes() <= cap_bytes()` is an exact
+  invariant and the cap test asserts it without slack. `cap_bytes()` still equals
+  the clamped caller cap; only the arena's share of it shrinks by the struct's
+  176 bytes on this target.
+- **F3: fix the test, not the log (evidence-driven).** The drain was measured,
+  not assumed - the fixture's invalidated set is 6 faces and drains inside
+  `UPDATE_BUDGET` - so the test now asserts it unconditionally. The other branch
+  (rewrite the log to say the test pins only "at least one face invalidated") was
+  rejected: it would delete a real, reproducible property of this fixture.
 
 ## Solutions Applied
 
@@ -145,11 +209,14 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
   closed seven-cell neighborhood's six faces each (exposure). Plus every face
   whose recorded bitset intersects the changed mask, plus every `UNTRACKED` face.
   Invalidated slots are zeroed and their `done` bit cleared; retained slots keep
-  their exact value and bitset.
+  their exact value and bitset. A `None` <-> `Some` transition, or any change to
+  the proxy's `origin` or `dimensions`, short-circuits this to the coverage-change
+  path above, because the records were made under a different box (review F1).
 - **Retention preconditions**: tracking enabled, `key.is_some()` (a completed
-  source identity exists), and every changed cell inside the index space. Any
-  other case (`None` tracking, no key, coverage change) takes `set_mesh_proxy`'s
-  clear-all path and reports `tracked = false`.
+  source identity exists), the same proxy presence and coverage box on both sides
+  of the edit, and every changed cell inside the index space. Any other case
+  (`None` tracking, no key, coverage change) takes `set_mesh_proxy`'s clear-all
+  path and reports `tracked = false`.
 - **Retained key**: the new proxy digest replaces the mesh component of the
   existing key; `update` still clears everything when `epoch`, world `revision`
   or sun changes, so a retained value can never outlive its source or light.
@@ -165,6 +232,69 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
   (identical to the previous value in the untracked path, tighter with
   retention).
 
+### Independent review fixes (F1-F4)
+
+- **F1 (blocking, correctness): a retained bitset is the read set only of the box
+  it was recorded under.** Confirmed in source. The sample loop records ray cells
+  only when a proxy is attached (`if let (Some(tracking), Some(proxy))`), so a
+  face completed with `set_mesh_proxy(None)` holds just
+  `{own cell, outward neighbor}`; and `dependency::walk_segment` is clipped by
+  `proxy.segment_exit`, so a segment records nothing beyond the box it was
+  recorded under. `invalidate_edit` diffed cells only, so both were treated as
+  ordinary edits:
+  - trigger (a) `None` -> `Some`: every face more than the +-1 exposure rule from
+    the newly occupied cell was retained with its old, unoccluded value;
+  - trigger (b) box growth: a new cell inside the volume index space kept
+    `tracked = true`, and faces whose old clipped segments never reached it were
+    retained stale.
+  Fix: `invalidate_edit` compares the old/new proxy `origin()` and `dimensions()`
+  (a `None`/`Some` difference included) and reports `tracked = false` for any
+  change, exactly like a changed cell outside the index space;
+  `replace_mesh_proxy` then takes its existing clear-all path. The module doc,
+  the `invalidate_edit` doc, the `replace_mesh_proxy` doc and the
+  `ProxyEdit::tracked` doc now state the rule.
+- **Severity, honestly.** Neither trigger is reachable from the current app
+  consumer: `apps/explorer/src/wetland_lighting.rs` only ever calls
+  `replace_mesh_proxy(Some(built.proxy))`, and the proxy is always built from the
+  never-mutated `self.origin` and the constant `BOX_DIMENSIONS`. This is a latent
+  public-API defect, not a shipped app bug - and not harmless either, because the
+  module doc claimed exactness unconditionally and the API is public.
+- **RED-first tests (both failed before the fix, both pass after).** The rule was
+  disabled locally (one boolean) to produce the RED run against the final test
+  source:
+  - `none_to_some_proxy_transition_is_a_coverage_change` (the far-occluder
+    fixture completed with `set_mesh_proxy(None)`, then given
+    `body(BODY_BEFORE)`): RED `none to some: [3, 0, 15] face 2 differs: retained
+    [0.0, 0.0, 0.0] vs fresh [0.09805807, 0.024514517, 0.012257258]` (3 of
+    6 000 faces differed: the +Y floor faces `[3,0,15]` and `[4,0,15]` at
+    `0.09805807`, `[2,0,16]` at `0.049029034`); GREEN after the fix.
+  - `proxy_box_growth_is_a_coverage_change` (12x5x20 volume box; proxy box grows
+    from 6x5x20 to 12x5x20 as one new cell `[8,2,10]` appears; sun `[-5,1,0]`, so
+    a hit on the new cell's `-X` face contributes): RED `box growth: [4, 1, 10]
+    face 0 differs: retained [0.0330946, 0.0018385889, 0.0007354355] vs fresh
+    [0.08212363, 0.014095848, 0.0068640644]` (3 of 7 200 faces differed: the
+    in-box `+X` receiver whose segment was clipped at the old `x = 6` boundary,
+    plus the boundary floor faces `[6,0,11]` and `[7,0,11]` at `0.049029034`);
+    GREEN after the fix.
+- **SHA audit (F2).** Every commit reference in this file was checked with
+  `git cat-file -e`. Six unique commits are referenced and all six resolve and
+  name the commits this log says they do:
+  `f77a36b6d8aa724a2e771592e819f9c627b183e1` (the slice commit; also cited short
+  as `f77a36b`), `545113f` (its log commit),
+  `6ff0352b755b7733a354463f5171a58f7fc4b5dd` (these review fixes; also cited short
+  as `6ff0352`), `0e37e8403bc7ae850eb344ce1d61252ffb325fb5` (frozen 54 head; also
+  cited short as `0e37e84`), `1bdfd6f` and `48c851e`. The one SHA the original
+  revision got wrong, `f77a36b1e9c39cc8a2b1d3aa4b1c0dbd5b6bcb5f`, does not exist
+  and appears in this file only as the quoted erratum beside its correction.
+  Non-SHA hex-shaped tokens were excluded explicitly: the decimal engine counters
+  `1942940`, `2297504`, `3007651` in the motion output, and the decimal fractions
+  inside the quoted RED failure messages (for example `09805807` in
+  `0.09805807`). Original-revision audit, for the record: 6 SHA-shaped tokens
+  checked, 5 resolved, 1 did not.
+- **F4 wording.** The Insights line that read "<= 2 frames here" counted budget
+  slices, not device frames; it now says "<= 2 update-budget slices (not device
+  frames)" and the motion-characterization wording was aligned.
+
 ### Memory accounting (structural, not a benchmark)
 
 | Array | Size for the 20×10×20 wetland box | Notes |
@@ -178,7 +308,10 @@ phone, no `/mnt/bench`, no wall-clock and no thermal claim.
 
 A face that cannot be tracked is recomputed on every edit; a cap or allocation
 failure therefore degrades retention, never correctness, and no stale value can
-survive it (tested).
+survive it (tested). The cap covers the tracker's whole resident footprint-
+arena, fixed arrays and the tracker struct-so `RetentionStatus::resident_bytes`
+is at most `RetentionStatus::cap_bytes`; the cap test asserts that bound exactly
+(review finding F4).
 
 ### Behavior delta vs the frozen 54 (recorded, not hidden)
 
@@ -189,23 +322,35 @@ survive it (tested).
   and the error latch are unchanged; only the dark window shortens. When the
   invalidated set is larger (e.g. a body appears in the detail scene) the
   previous behavior is visible: indirect stays retired until convergence.
+  (Review F3: for the `the_proxy_footprint_gates_invalidation` fixture this is
+  now an unconditional assertion, with the observed `indirect_live = true`,
+  `dirty_faces = 0`, `pending_work = 0`, `invalidated_faces = 6`; the
+  larger-invalidated-set case is covered by the `settle` loop in the other
+  wetland tests, which is where the "stays retired" wording comes from.)
 - **Proxy-internal only.** The tracker replaces `set_mesh_proxy` only inside
   `attach`, only for this volume; `engine_check.rs`, `mesh_lighting_check.rs`,
   `async_indirect.rs` and every other caller keep the untracked path.
 
 ### Test evidence (`RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=../indirect-retention-target`)
 
-- `cargo test --locked -p matterweave-render --lib` → `122 passed; 0 failed`
-  (13 new in `indirect::dependency::tests`, the 2 probe tests from PR 57, and
-  the pre-existing suite).
+- `cargo test --locked -p matterweave-render --lib` → `124 passed; 0 failed`
+  (15 new in `indirect::dependency::tests`, the 2 probe tests from PR 57, and
+  the pre-existing suite). The two review-fix tests were RED before the fix
+  (messages above) and GREEN after.
 - `cargo test --locked -p matterweave-explorer --lib` → `230 passed; 0 failed;
   1 ignored` (16 pre-existing wetland tests + 1 new integration test, plus
-  `main`'s newer app tests).
+  `main`'s newer app tests). The review fix changes only the same-frame
+  assertion inside `the_proxy_footprint_gates_invalidation`, which passes with
+  it unconditional.
 - `cargo clippy --locked -p matterweave-render --all-targets -- -D warnings` →
   exit 0. `cargo clippy --locked -p matterweave-explorer --lib -- -D warnings` →
   exit 0. `cargo fmt -p matterweave-render -p matterweave-explorer -- --check` →
   clean. `python3 tools/check_docs.py` → `PASS: 221 Markdown files, 655 local
-  links, 16 ADRs and 20 requirements`.
+  links, 16 ADRs and 20 requirements` (original revision). Review-fix re-run:
+  `cargo clippy -p matterweave-render -p matterweave-explorer --all-targets -- -D
+  warnings` → exit 0; `cargo fmt ... -- --check` → exit 0; `python3
+  tools/check_docs.py` → `PASS: 237 Markdown files, 676 local links, 16 ADRs and
+  20 requirements`.
 
 Correctness tests (all through the shipped `update`/`sample` paths, all 24 000
 slots compared bit-for-bit against a fresh untracked volume unless stated):
@@ -214,13 +359,15 @@ slots compared bit-for-bit against a fresh untracked volume unless stated):
 | --- | --- |
 | `walker_reads_the_cells_the_dda_reads` | the mirrored reader equals the shipped DDA: 11 000+ segments, terminal cell = `MeshProxy::raycast` hit cell, misses pass no solid cell, `World::raycast` on identical cells agrees, unit-step paths, outside-box segments read nothing |
 | `far_occluder_second_segment_is_invalidated_exactly` | the probe-57 fixture at `R = 4`: receiver `[4,1,8] +Z`, body `[3,1,14] → [3,1,13]`; the receiver is invalidated by its recorded *sun* segment (5–6 Chebyshev cells away, no gather ray can reach), zeroed mid-key, converges to the fresh volume, and a reversed-sun control is bit-identical |
+| `none_to_some_proxy_transition_is_a_coverage_change` (review F1a) | the same fixture completed with `set_mesh_proxy(None)` and then given a proxy: the transition reports `tracked = false`, clears every value, and converges bit-exactly to the fresh reference; RED before the fix at `[3,0,15] +Y` (retained `0.0` vs fresh `0.09805807`) |
+| `proxy_box_growth_is_a_coverage_change` (review F1b) | a proxy box grown from 6x5x20 to 12x5x20 with one new in-index cell: the box change reports `tracked = false`, clears every value, and converges bit-exactly to the fresh reference; RED before the fix at the clipped in-box face `[4,1,10] +X` (retained `0.0330946` vs fresh `0.08212363`) |
 | `single_cell_edits_match_a_fresh_reference` | move / material / removal / insertion on sparse and dense: bit-exact fresh equality, retained ≫ invalidated, retained slots exact mid-key, `dirty` accounting exact |
 | `enclosing_edit_zeroes_the_newly_hidden_face` | an exposure change zeroes the newly enclosed face immediately, `complete`/`valid_for`/`source_valid` refuse it until convergence, then equals fresh |
 | `overlapping_edits_accumulate_invalidation` | a second edit one partial slice into the first: invalidation accumulates, no superseded key publishes, final volume equals fresh for the last proxy |
 | `world_sun_and_epoch_changes_clear_retained_values` | sun, world revision and replacement epoch each zero every retained value and re-converge to fresh |
-| `coverage_change_outside_the_index_space_clears` | an out-of-index changed cell reports `tracked = false`, clears everything, then equals fresh |
+| `coverage_change_outside_the_index_space_clears` | an out-of-index changed cell reports `tracked = false`, clears everything, then equals fresh (review F1 added the `None` <-> `Some` and box-change siblings above to the same fallback) |
 | `out_of_box_traversal_cells_do_not_block_retention` | a larger proxy box with in-index changes still retains exactly and equals fresh |
-| `tracking_cap_degrades_to_untracked_never_stale` | 8-face cap: `untracked_faces > 0`, retained ≤ tracked, every completed untracked face invalidated, no stale publish, fresh equality; caller cap clamped to `MAX_DEPENDENCY_BYTES` |
+| `tracking_cap_degrades_to_untracked_never_stale` | 8-face cap: `untracked_faces > 0`, retained ≤ tracked, every completed untracked face invalidated, no stale publish, fresh equality; `resident_bytes <= cap_bytes` exactly (the cap charges the tracker struct, review F4); caller cap clamped to `MAX_DEPENDENCY_BYTES` |
 | `identical_proxy_edit_keeps_the_complete_volume` | identical footprint: 0 changed cells, 0 invalidations, still complete, `pending_work == 0` |
 | `old_set_mesh_proxy_still_clears` | the old API still clears unconditionally and re-converges to fresh |
 | `outside_coverage_geometry_is_clipped_from_the_trace` | the coverage box clips the trace: geometry outside it cannot be hit, identical cells give identical traces |
@@ -265,7 +412,9 @@ every renderer acceptance condition, from
 The reconciled 60-move volumes are compared bit-for-bit against fresh references
 at frames 10/20/30/40/50/60, and the final volume additionally checked through
 the app's own publication path. Ray/work/frame counts are engine work units from
-the published budget; they are **not** time, and no latency claim is made.
+the published budget; they are **not** time, and no latency claim is made. A
+"frame" in this test is one `update` call with the fixed budget, i.e. a budget
+slice-no device frame is measured or implied anywhere in this log.
 
 ### Delivery snapshot
 
@@ -273,13 +422,20 @@ the published budget; they are **not** time, and no latency claim is made.
   now in `main` (54 merged as `1bdfd6f`); this branch is rebased onto
   `main` @ `48c851e` so the PR carries only these changes.
 - Branch: `engine/indirect-dependency-retention`, PR base `main`.
-- Files: `crates/matterweave-render/src/indirect/dependency.rs` (new, 1 816
-  lines incl. 13 tests), `crates/matterweave-render/src/indirect.rs`
-  (+358/−61), `apps/explorer/src/wetland_lighting.rs` (+234/−61), this log.
-- Frozen source SHA: `f77a36b1e9c39cc8a2b1d3aa4b1c0dbd5b6bcb5f`
+- Commit chain: `545113f` (the original revision of this log, on top of the
+  slice commit), `6ff0352b755b7733a354463f5171a58f7fc4b5dd` (the review fixes:
+  F1-F4 source and tests; verified with `git cat-file -e`), and the commit
+  carrying this log revision as a child of the fix commit. Nothing was amended,
+  rebased or force-pushed: the fix commits are additive on top of `545113f`.
+- Files: `crates/matterweave-render/src/indirect/dependency.rs` (new, 2 001
+  lines incl. 15 tests), `crates/matterweave-render/src/indirect.rs`,
+  `apps/explorer/src/wetland_lighting.rs`, this log.
+- Frozen source SHA: `f77a36b6d8aa724a2e771592e819f9c627b183e1`
   (`feat(render): retain mesh-proxy indirect faces by exact dependency`), the
   commit carrying `indirect/dependency.rs`, the `indirect.rs` changes and the
-  wetland integration on the rebased branch; this log is the commit after it.
+  wetland integration on the rebased branch. The original revision of this log
+  recorded this commit as `f77a36b1e9c39cc8a2b1d3aa4b1c0dbd5b6bcb5f`, which does
+  not exist; the correction is review finding F2.
   PR: `engine/indirect-dependency-retention` -> `main`.
 
 ### Proposed shared updates (log only, not applied here)
@@ -315,14 +471,22 @@ the published budget; they are **not** time, and no latency claim is made.
 > small retention ratio, and the absence of any device or wall-clock claim.
 > Expected: ACCEPT or a concrete falsifying fixture.
 
+> Outcome: **REQUEST CHANGES** - F1 (retained bitsets are not the read set when
+> the trace's reach grows), F2 (the logged SHA did not resolve) and F3 (the log
+> claimed more than the wetland test pinned) confirmed against source, plus F4
+> (advisory: budget-slice vs device-frame wording, and the cap/struct overshoot).
+> All four are addressed by `6ff0352b755b7733a354463f5171a58f7fc4b5dd`; see
+> "Independent review fixes (F1-F4)". The Android visual functional gate remains
+> open and belongs to the phone owner.
+
 | Criterion | Verification method | Owner | Result |
 | --- | --- | --- | --- |
-| Exact bounded retention | Every consulted proxy cell recorded (exposure cells, both segments, empty cells and first hit) or conservative full-clear; explicit cap and failure behavior | this worker | **PASS (host)** — `dependency.rs` recorder + 13 tests; cap clamped to 16 MiB, per-face `UNTRACKED` beyond, `tracked/untracked/resident` reported; 555 KB (sparse, 910 faces) / 945 KB (dense, 1 684) |
+| Exact bounded retention | Every consulted proxy cell recorded (exposure cells, both segments, empty cells and first hit) or conservative full-clear; explicit cap and failure behavior | this worker | **PASS (host)** — `dependency.rs` recorder + 13 tests (15 after the review fixes); cap clamped to 16 MiB, per-face `UNTRACKED` beyond, `tracked/untracked/resident` reported, and `resident_bytes <= cap_bytes` exactly after review F4; 555 KB (sparse, 910 faces) / 945 KB (dense, 1 684) |
 | Compatibility | Complete-current-only publication, old API/full clear, R 24 + SAMPLES 16 + budgets 1024/8192 unchanged | this worker | **PASS** — `set_mesh_proxy`/`complete`/`valid_for`/`source_valid` unchanged and tested; constants untouched (diff-limited); no shader/`lib.rs` edit |
 | Correctness | Fresh-reference bit-exactness, far occluder, exposure/material/pending-edit/key/failure regressions | this worker | **PASS (host)** — all 24 000 slots compared on move/material/remove/insert/enclose/overlap/coverage/cap; probe-57 counterexample; reversed-sun control; world/sun/epoch clears |
-| Real progress characterized | Continuous-motion fixture counts actual retention and convergence, no invented gain | this worker | **PASS (host counts)** — 0.945/0.970 retained, ray ratio 0.073/0.048, work ratio 0.039/0.034, ≤ 2 frames/move, exact references at 7 checkpoints; no wall-clock claim |
-| Integrated delivery | Consumer + API together, focused checks, log, commit/push/PR, frozen SHA | this worker | **PASS** — wetland opts in at 6 MiB and reports retained/invalidated/dirty; 122 + 230 tests, clippy/fmt/docs clean; PR based on `main` (`48c851e`), frozen SHA `f77a36b` |
-| Review/Android | Independent Opus review, then phone-owner visual functional gate | Codex dispatch | **NOT RUN** — brief above; device gate blocked on the phone worker |
+| Real progress characterized | Continuous-motion fixture counts actual retention and convergence, no invented gain | this worker | **PASS (host counts)** — 0.945/0.970 retained, ray ratio 0.073/0.048, work ratio 0.039/0.034, ≤ 2 update-budget slices/move (not device frames), exact references at 7 checkpoints; no wall-clock claim |
+| Integrated delivery | Consumer + API together, focused checks, log, commit/push/PR, frozen SHA | this worker | **PASS** — wetland opts in at 6 MiB and reports retained/invalidated/dirty; 122 + 230 tests, clippy/fmt/docs clean; PR based on `main` (`48c851e`), frozen SHA `f77a36b` (re-run after the review fixes: 124 + 230, clippy/fmt/docs clean) |
+| Review/Android | Independent Opus review, then phone-owner visual functional gate | Codex dispatch | **Review RAN → REQUEST CHANGES; addressed** — F1/F2/F3 confirmed against source and F4 advisory; all fixed by `6ff0352` with two RED-first tests (`124` render lib tests green), a full SHA audit and the corrected frozen SHA. **Android visual functional gate still NOT RUN** — blocked on the phone owner, and no device/thermal/wall-clock claim is made here |
 
 ## Insights
 
@@ -345,10 +509,10 @@ the published budget; they are **not** time, and no latency claim is made.
 - **Retention does not remove the functional gate, only the starvation.** The
   volume still must finish every invalidated face before it may publish, so a
   body moving faster than the ray budget still turns GI off; retention makes the
-  off window short (≤ 2 frames here, and same-frame for the small wetland
-  fixture) but not zero. Continuous moving-cell GI continuity stays an open
-  functional requirement that needs the Android visual gate, not more host
-  counters.
+  off window short (≤ 2 update-budget slices per one-cell move here, and inside
+  one slice for the small wetland fixture - budget slices, not device frames) but
+  not zero. Continuous moving-cell GI continuity stays an open functional
+  requirement that needs the Android visual gate, not more host counters.
 - **Honest limits of these numbers.** They are engine work units on a
   20×10×20-cell host fixture with an empty authoritative world and all geometry
   in the proxy. They say nothing about phone frames, thermals or appearance;
@@ -357,6 +521,15 @@ the published budget; they are **not** time, and no latency claim is made.
   than the sparse/dense fixtures, which is exactly why the app test asserts
   *behavior* (bounded dirty set, same-frame convergence) rather than a
   percentage.
+- **A dependency record is only as wide as the box it was recorded in.** Review
+  finding F1 is the general shape of that hazard: any change that widens what a
+  trace *could* reach - attaching a proxy, growing its box - silently makes every
+  recorded bitset incomplete, and the +-1 exposure rule hides it for faces near
+  the change. Charging those changes to the conservative clear-all path costs
+  nothing in this app (which never changes either) and removes a class of
+  stale-value bugs that a cell-only diff cannot see. The general lesson is that
+  an exactness argument has to name its frame of reference: here, one
+  `(origin, dimensions, presence)` triple.
 - **The next necessary measurement is still on device.** If the phone gate
   exists, the useful follow-up is a fixed-camera scripted body path with the
   per-frame `retained`/`invalidated`/`dirty`/`pending` report line, compared
