@@ -9,6 +9,7 @@ mod mesh;
 mod persistence;
 mod ray;
 mod streaming;
+pub mod water;
 
 pub use async_world::{
     AsyncStats, AsyncWorld, MAX_MESH_RESULTS, MAX_MESH_RESULT_BYTES, MAX_QUEUED_MESH_JOBS,
