@@ -3,7 +3,7 @@
   "run": "engine-completion-plan-v2-20260912",
   "authority": "Current Codex lead owns integration, acceptance, shared board conflicts and the phone by owner transfer. Preserve the other session as producer of its existing non-app physics/lighting slices and merge handoffs; Codex owns apps/explorer, Android and landscape integration. Reconcile all Pi workers before dispatch; global cap3, no duplicate assignment. Historical producer acceptance entries remain intact and do not supersede later integration evidence.",
   "base": "01ab450",
-  "phone_owner": "OnePlus13 192.168.178.93:5555. Codex now dispatches tasks only; for the 2026-09-13 functional-fix delivery a delegated DeepSeek integration/acceptance worker owns the phone, the combined APK gate and reviewed/passing PR merges (see functional_followup_20260913.delivery). Historical lead-only phone entries preserved.",
+  "phone_owner": "OnePlus13 192.168.178.93:5555. Codex dispatches tasks only. For the 2026-09-13 detail-48 delivery the delegated worker w_7459dd48 owned the phone, the integration checkout and shared STATUS/HANDOFF/board; the delivery finished 2026-09-13 with the app force-stopped, all five owner saves restored hash-exact, the accepted APK bff9e869 left installed and the phone returned to Codex dispatch. Historical lead-only phone entries preserved.",
   "tasks": {
     "P00-handoff": {
       "attempt": 2,
@@ -766,11 +766,12 @@
       "acceptance": "PR33 mergedc86980b after existing independent review, all6CI checks pass; rendered Android gate moves to D2.2-Android-rendered."
     },
     "D3.1-preserved": {
-      "state": "running",
+      "state": "closed-historical",
       "owner": "w_9d03d127",
       "dispatcher": "other lead; preserve existing assignment",
       "worktree": "/mnt/bench/matterweave-dev/worktrees/d3-1-production-lighting",
-      "device_access": "none; this integration lead currently operates phone"
+      "device_access": "none; this integration lead currently operates phone",
+      "reconciled": "closed-historical; superseded by merged D3.1/PR34 and the later PR36 lighting delivery (reconciled 2026-09-13; no live worker)"
     },
     "D2.2-Android-rendered": {
       "owner": "current Codex lead / w_3f998c46",
@@ -908,9 +909,10 @@
     },
     "D3.2-live-reconciliation": {
       "owner": "Claude contributor / w_7ea6fc6d",
-      "state": "running",
+      "state": "closed-historical",
       "scope": "D3.2 dynamic lighting response, preserved contributor assignment",
-      "acceptance": "NOT RUN; observed live after out-of-order coordination messages. PR34 D3.1 merged 16ad342. Do not duplicate render lighting work."
+      "acceptance": "NOT RUN; observed live after out-of-order coordination messages. PR34 D3.1 merged 16ad342. Do not duplicate render lighting work.",
+      "reconciled": "closed-historical; superseded by the D3.2 recovery/PR36 lighting delivery (reconciled 2026-09-13; no live worker)"
     },
     "D3.2-recovery": {
       "owner": "current Codex lead / Muse Free recovery",
@@ -975,7 +977,7 @@
   },
   "restart_wave_20260912": {
     "authority": "current Codex lead",
-    "state": "running",
+    "state": "closed-historical",
     "cap": 3,
     "routing": "Free Muse implementation, Gemini corrective review; preserve remaining OpenRouter credit; no Astra workers",
     "mesh_native": {
@@ -984,7 +986,7 @@
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-native.md",
       "ownership": "mesh_lighting_check.rs, minimal explorer lib.rs registration, dedicated log",
       "worker": "w_1c518c32",
-      "state": "repaired-host-passed-awaiting-combined-Android",
+      "state": "closed-verification-fed-pr36-merged-7e88f31",
       "artifact": "b7b39bf"
     },
     "repair_review": {
@@ -1000,7 +1002,7 @@
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/streaming-progress",
       "base": "d95c63ef8268fae2f3efeb535105548d54c865e4",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/streaming-progress.md",
-      "state": "corrective-worker-running",
+      "state": "merged-as-pr39-fc6212e",
       "profile": "muse-free",
       "ownership": "core async streaming; explorer tick streaming block only; dedicated log",
       "worker": "w_cf45df18",
@@ -1011,7 +1013,7 @@
     "device_policy": "Owner requests coherent development batches and fewer live tests. Relevant host tests/review before one integrated Android acceptance; immediate device checks only for actual Android/GPU/lifecycle uncertainty.",
     "streaming_contract_pr": 37,
     "mesh_api_review": {
-      "state": "running",
+      "state": "completed-reviewed-findings-reported",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/mesh-api-review.md",
       "source": "80a89c5 renderer only",
       "profile": "gemini-restricted",
@@ -1019,38 +1021,40 @@
     },
     "mesh_native_review": {
       "worker": "w_1b4b44aa",
-      "state": "running",
+      "state": "completed-two-candidate-defects-reported",
       "source": "c043ed5",
       "scope": "app diagnostic lifecycle/validity"
     },
     "streaming_contract_pr_state": "merged fc8c1ab",
     "detail_pr": 38,
     "authoring": {
-      "state": "completed-awaiting-review",
+      "state": "completed-reviewed-not-merged",
       "profile": "muse-free",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/authoring",
       "base": "495d9f97edd3c2e4886b3506de7d69fa60fe6445",
       "ownership": "docs/AUTHORING.md and dedicated log only",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/authoring.md",
       "worker": "w_1f62c1ed",
-      "artifact": "a98553f"
+      "artifact": "a98553f",
+      "review_result": "w_c6f0d2d0 completed; a98553f is not an ancestor of main"
     },
     "authoring_review": {
       "worker": "w_c6f0d2d0",
-      "state": "running"
+      "state": "completed"
     },
     "streaming_progress_review": {
       "worker": "w_33e7ed68",
       "state": "completed-critical-finding-accepted"
     },
     "shared_controls": {
-      "state": "dispatching",
+      "state": "failed-no-code-preserved",
       "profile": "muse-free",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/shared-controls",
       "base": "495d9f97edd3c2e4886b3506de7d69fa60fe6445",
       "ownership": "settings, controls, experience, wetland, Relay; lib module/settings setter only",
       "brief": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/orchestration/shared-controls.md"
-    }
+    },
+    "reconciled_20260913": "Wave closed and superseded: its lighting/streaming slices landed as PR36 (merged 7e88f31) and PR39 (merged fc6212e); its reviews have completed result records; live workers on 2026-09-13 are only w_7459dd48, w_6f7430c8 and w_da1d82ec. Historical entries preserved."
   },
   "pr36_39_glm_review": {
     "state": "merged",
@@ -1075,7 +1079,7 @@
   "functional_followup_20260913": {
     "lead_workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/integration",
     "lead_branch": "engine/interaction-delivery",
-    "routing_20260913": "Codex dispatches tasks only. DeepSeek V4.1 Flash direct and GLM5.3 Flash do bulk development; Opus medium is available for complex reviews/review-fallback now the Claude subscription reset; a separate read-only Opus reviewer inspects merged production lighting gaps and returns the next-slice brief (issue47) with no phone or write ownership, so it does not duplicate this functional-fix acceptance. No Astra workers; global worker cap3.",
+    "routing_20260913": "Codex dispatches tasks only. DeepSeek V4.1 Flash direct and GLM5.3 Flash do bulk development; Opus medium is available for complex reviews/review-fallback now the Claude subscription reset; a separate read-only Opus reviewer inspects merged production lighting gaps and returns the next-slice brief (issue47) with no phone or write ownership, so it does not duplicate this functional-fix acceptance. No Astra workers; global worker cap3. Third-slot update 2026-09-13: the issue42 ray-hierarchy experiment finished as PR #51 (merged 92f0a79, CPU-only evidence; GPU/Android/cost gates OPEN, issue 42 not closed). Current third slot is D4.2 shared mobile settings w_6f7430c8 in the isolated shared-controls checkout; wetland proxy lighting w_da1d82ec remains a separate isolated writer, not the phone and not integrated before review.",
     "interaction": {
       "worker": "w_3eb557eb",
       "profile": "glm-flash-openrouter",
@@ -1093,12 +1097,23 @@
       "provider": "deepseek",
       "model": "deepseek-flash",
       "thinking": "max",
-      "state": "phase0-accepted-phase7-blocked",
+      "state": "merged-after-phase7-repair-and-device-pass",
       "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/detail-android-convergence",
       "owns": "detail_check.rs and dedicated log only",
       "integrated_commit": "7466208",
       "independent_review": "w_94385293 (GLM5.3 Flash) sound; one minor stale fixture-log claim, corrected in 7466208",
-      "device": "PARTIAL 2026-09-13: phase0 PASS at the real 1440px surface (converge_iters2 max_prepare_builds1); phases1-6 PASS; phase7 FAIL 'occlusion foreground flora was not a pixel-eligible guard retention' - pre-existing viewport-coupled fixture assumption (host probe 1.688px projected error vs 1.429px budget at 1440, eligible at 480/720/1080). Full 14-phase + HOME/resume gate not reached; separate fixture repair needed before merge (isolated writer requested from Codex)"
+      "device": "PARTIAL 2026-09-13: phase0 PASS at the real 1440px surface (converge_iters2 max_prepare_builds1); phases1-6 PASS; phase7 FAIL 'occlusion foreground flora was not a pixel-eligible guard retention' - pre-existing viewport-coupled fixture assumption (host probe 1.688px projected error vs 1.429px budget at 1440, eligible at 480/720/1080). Full 14-phase + HOME/resume gate not reached; separate fixture repair needed before merge (isolated writer requested from Codex)",
+      "repair_worker": "w_bcdffd59",
+      "repair_base": "7466208",
+      "repair_commits": [
+        "28b841a test RED regression",
+        "21c3ccc fixture repair",
+        "8ae9e7d docs"
+      ],
+      "repair_frozen": "8ae9e7dcbd8de59e29a803190a08bbfb12c22737",
+      "repair_review": "w_62fe4c42 (opus-medium) accept, no blockers. Non-blocking limits disclosed: projected_rect overlap is viewport-invariant (redundant four-viewport loop), no envelope guard above ~1650 px, in-run check omits projected overlap; <=1440 px verified.",
+      "merged": "06975ceabb6e (tree 90d529a411e0b530d5933eb8d5cdde5cd008966b)",
+      "device_pass": "PASS 2026-09-13: full 14-phase detail check at the real 3168x1440 surface, three runs, each with a real HOME/resume; reports byte-identical sha256 97821a4194fc9bbd22fa14563897dc8544a8d396c2bdf2bad7b10b4feb31f300; phase 7 occlusion_solid:boulder:Half flora_pixel_eligible=2; no new ANR/crash."
     },
     "delivery": {
       "worker": "deepseek-functional-delivery",
@@ -1106,17 +1121,23 @@
       "prs": {
         "interaction": 49,
         "interaction_merge": "f0da177603cd7b3d5c2ad4777cd6bd47e8e4c5b2",
-        "detail": 48
+        "detail": 48,
+        "detail_merge": "06975ceabb6e",
+        "ray_experiment": 51,
+        "ray_merge": "92f0a792a5f6ba19f825cf5ac0a69b3a88306a8d"
       },
-      "combined_build": "pr36-39-acceptance bbf7d1d (engine/interaction-delivery f5fc91f + cherry-pick 648dda2); APK sha256 0531c7d115fb1d3af425d87fa4404e4aefa3048dbbcef2f41ad5b890e8a88a7e",
-      "saves": "all5 owner saves restored byte-exact; fixed APK stays installed; app force-stopped"
+      "combined_build": "pr36-39-acceptance branch engine/detail48-acceptance: main 8183540 + PR48 8ae9e7d, local merge 29421d9, tree 90d529a4 equals the GitHub merge tree at 06975ce; APK sha256 bff9e869aefa6448bc0b3c1d6560664f0b8b020b490cbf5283159ccf5319e01a",
+      "saves": "all5 owner saves restored byte-exact (app force-stopped); accepted APK remains installed",
+      "log": "docs/performance/logs/detail48-device-delivery.md"
     },
     "third_slot_20260913": {
       "worker": "deepseek isolated engine/ray-hierarchy-experiment",
       "issue": 42,
-      "state": "dispatching",
+      "state": "merged-cpu-experiment-gates-open",
       "owns": "new traversal module/shader/tests only",
-      "prohibited": "renderer lib.rs, app, lighting, phone, shared docs"
+      "prohibited": "renderer lib.rs, app, lighting, phone, shared docs",
+      "review": "w_a6d28d97 (opus-medium) corrective review accept, no blockers; all five supported findings resolved. Six checks green at 43050cd; merged 92f0a79 with GPU/Android/cost gates explicitly OPEN and issue 42 not closed.",
+      "log": "docs/performance/logs/ray-hierarchy-review-repair.md"
     },
     "issue_mapping_20260913": {
       "42": "experiment: hierarchical voxel ray traversal with packed occupancy (third slot, optional candidate)",
@@ -1126,6 +1147,40 @@
     },
     "phase_b_cost_thermal_rankings": "deferred per owner 2026-09-13; functional issue experiments run alongside engine development",
     "phone": "delegated delivery owns the phone; app force-stopped; all5 current saves restored to fresh pre-incident-test backups",
-    "scope": "functional ANR repair and existing Android diagnostic failure; no thermal campaign; independent reviews and combinedAPK acceptance next"
+    "scope": "functional ANR repair and existing Android diagnostic failure; no thermal campaign; independent reviews and combinedAPK acceptance next",
+    "shared_settings_20260913": {
+      "worker": "w_6f7430c8",
+      "profile": "deepseek-flash-direct",
+      "state": "running",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/shared-controls",
+      "branch": "engine/shared-mobile-settings",
+      "issue": "R10",
+      "scope": "handedness / normal-large controls / mute shared persistence, user-facing integration in both samples; no lighting regions, no phone, no shared docs",
+      "log": "docs/performance/logs/d4-2-shared-controls-direct.md",
+      "prior": "Muse w_d6871fc0 produced no code (run status failed); this continues the primary-plan D4.2 slice",
+      "gates": "independent review and device/user acceptance NOT RUN; not integrated before review"
+    },
+    "wetland_proxy_lighting_20260913": {
+      "worker": "w_da1d82ec",
+      "state": "running",
+      "workspace": "/home/someotherguy/Documents/ChatGPT/Matterweave-recovery-20260912/wetland-proxy-lighting",
+      "branch": "engine/wetland-proxy-lighting",
+      "issue": "47",
+      "scope": "isolated wetland_lighting.rs plus narrow Runtime/lib.rs registration; no phone, no shared docs",
+      "gates": "not integrated before independent review; will arrive as a later batch"
+    },
+    "detail48_delivery_20260913": {
+      "worker": "w_7459dd48",
+      "role": "delegated Android acceptance and reviewed-PR delivery (phone, integration checkout, shared STATUS/HANDOFF/board)",
+      "apk": "bff9e869aefa6448bc0b3c1d6560664f0b8b020b490cbf5283159ccf5319e01a (verify_apk PASS ARM64 16 KiB, v2 debug signature, install -r 2026-09-13 02:43:54)",
+      "device": "OnePlus 13 CPH2653 Android 16 Adreno 830 Vulkan 1.3.284 3168x1440",
+      "detail_gate": "PASS x3, 14 phases, real HOME/resume each run, reports byte-identical",
+      "interaction": "chooser to Wetland; PLACE 11.904 ms and REMOVE 19.234 ms real edits; walking moved the diagnostics position; MENU/DIAGNOSTICS responsive; BREAK/GRAB/THROW dispatched but missed (6 bodies unchanged) - misses recorded as misses",
+      "anr": "no new ANR/crash; newest /data/anr trace remains the 2026-09-12 23:25:55 baseline",
+      "saves": "five owner saves restored and re-hashed byte-exact; app force-stopped; accepted APK installed",
+      "evidence": "docs/performance/logs/detail48-device-delivery.md, docs/evidence/2026-09-13-detail48/manifest.json, private orchestration/detail48-acceptance/",
+      "limits": "no runtime projected-overlap proof; <=1440 px only; no performance/thermal measurement",
+      "record_discrepancy": "immutable harness records for completed workers w_bcdffd59 and w_defe33ad still carry bogus \"engineering log unfilled\" errors while the in-repo logs are complete; harness records were not rewritten and repository logs are ground truth."
+    }
   }
 }
