@@ -67,8 +67,8 @@ a tested GitHub APK with its build manifest.
 The campaign ran with multiple models (Opus, Muse, GLM, Hy4, Gemini and the Astra
 lead). Per-route outcomes and limits are the [model results ledger](performance/models.md).
 Raw execution logs are under [performance/logs/](performance/logs/), including the
-[completion log](performance/logs/completion-execution.md) and the
-[lead native integration log](performance/logs/lead-native-p02.md). A failed or
+completion log and the
+lead native integration log. A failed or
 unavailable route is an honestly recorded result, not a delivery blocker.
 
 Do not buy subscriptions, replenish paid credits, bypass limits, change credentials

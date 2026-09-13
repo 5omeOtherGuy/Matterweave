@@ -32,7 +32,7 @@ restored; [SHA-256 evidence](../evidence/2026-09-12-shared-audio/restored-saves.
 
 Host:147 app tests pass (one ignored),49 audio tests pass, scoped strict Clippy
 and fmt pass. The three recovery tests discriminate missing retry, missing output
-guard and missing cancellation. [Worker log and exact commands](logs/audio-resume-repair.md).
+guard and missing cancellation. Worker log and exact commands.
 Independent Gemini review `w_3e710340` of the repair found no defects; lead checked
 the service contracts and ran the phone reproducer. Earlier integration reviews
 `w_bc601816` and `w_f715246c` found no defects but missed the Android failure;

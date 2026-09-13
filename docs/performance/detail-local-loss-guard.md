@@ -1,7 +1,7 @@
 # Local interior-loss guard for automatic detail selection
 
 Scope: `matterweave-detail` only. Companion log:
-[engine-03-detail.md](logs/engine-03-detail.md). No visual-acceptance or
+engine-03-detail.md. No visual-acceptance or
 device-performance claim is made here; on-device approach/retreat/zoom review
 remains lead-owned.
 

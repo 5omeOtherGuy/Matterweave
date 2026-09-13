@@ -93,7 +93,7 @@ consistently to every generator-dependent gate:
 | Composition | Generator | Expected scene | Source |
 | --- | --- | --- | --- |
 | `dfb9f40519a3c151` | 3 | 34,716,467 cells / 8,302 placed objects | [full-wetland-generator3.json](../evidence/full-wetland-generator3.json) (`counts.instance_expanded_occupied_cells`, `counts.instances`) |
-| `f458591e7b345546` | 2 | 34,864,520 cells / 8,324 placed objects | [completion-execution.md](logs/completion-execution.md) |
+| `f458591e7b345546` | 2 | 34,864,520 cells / 8,324 placed objects | completion-execution.md |
 
 Generator 2 is retained only so the existing frozen generator-2 paired
 experiment stays reproducible. New runs use the current generator.

@@ -58,41 +58,41 @@ and the [P01 overhead check](../evidence/2026-09-08-p01-overhead.md).
 
 ## Execution logs
 
-- [logs/completion-execution.md](logs/completion-execution.md) — campaign completion log: ownership/CI repair, full-map integration, native and device validation, remaining blockers.
-- [logs/lead-native-p02.md](logs/lead-native-p02.md) — lead native/P02 integration judgment and accepted-revision checks.
-- [logs/engine-03-collision.md](logs/engine-03-collision.md) — collision-cadence log; whole-collider AABB equivalence removed and the gate re-sourced from the owner's edit journal.
-- [logs/engine-03-detail-review.md](logs/engine-03-detail-review.md) — read-only review of the engine-03 detail interior-loss guard (frozen `1a42f59`); execution not run.
-- [logs/engine-03-detail.md](logs/engine-03-detail.md) — engine-03 detail log for the local interior-loss guard (detail crate only).
-- [logs/engine-03-lighting-review.md](logs/engine-03-lighting-review.md) — leaf review of the async indirect/lighting delta (`577dff8`); no edits or builds.
-- [logs/engine-03-ray.md](logs/engine-03-ray.md) — engine-03 ray recovery log: retained ray packing/shader work recovered after a worker timeout.
-- [logs/gemini-conditions-final.md](logs/gemini-conditions-final.md) — independent correction review of the conditions validator candidate 02.
-- [logs/gemini-native-cache-review.md](logs/gemini-native-cache-review.md) — independent read-only review of the native dynamic-cache/gallery change (`cc46873`).
-- [logs/gemini-native-wsi-final.md](logs/gemini-native-wsi-final.md) — independent review of the final WSI/present-outcome correction (`cc46873` to `6fac9a5`).
-- [logs/gemini-p00-review-a2.md](logs/gemini-p00-review-a2.md) — independent review of P00 handoff validator candidate 02.
-- [logs/gemini-p00-review.md](logs/gemini-p00-review.md) — independent review of P00 handoff validator candidate 01.
-- [logs/gemini-p01-final.md](logs/gemini-p01-final.md) — independent review of P01 candidate 02 and the new fixtures/validators.
-- [logs/gemini-p01-schema.md](logs/gemini-p01-schema.md) — review of P01 instrumentation candidate 01: schema and column contracts.
-- [logs/gemini-profile-final.md](logs/gemini-profile-final.md) — independent correction review of frozen profile validator candidate 02.
-- [logs/gemini-profile-review.md](logs/gemini-profile-review.md) — independent review of the frozen profile validator slice.
-- [logs/glm-p01-a1.md](logs/glm-p01-a1.md) — GLM device-condition validator slice: fail-closed two-minute idle-readiness check.
-- [logs/muse-conditions-final.md](logs/muse-conditions-final.md) — read-only correction review of conditions-candidate-02 bounds and invariants.
-- [logs/muse-conditions-review.md](logs/muse-conditions-review.md) — read-only review of the conditions validator and its tests.
-- [logs/muse-native-cache-review.md](logs/muse-native-cache-review.md) — read-only review of the native dynamic-cache upload path.
-- [logs/muse-native-wsi-final.md](logs/muse-native-wsi-final.md) — read-only review of the WSI present-outcome corrections.
-- [logs/muse-p00-a2.md](logs/muse-p00-a2.md) — P00 handoff attempt-2 implementation log.
-- [logs/muse-p00-review-a2.md](logs/muse-p00-review-a2.md) — P00 attempt-2 delta review of candidate 02.
-- [logs/muse-p00-review.md](logs/muse-p00-review.md) — P00 read-only review of the handoff validator.
-- [logs/muse-p01-behavior.md](logs/muse-p01-behavior.md) — P01 instrumentation review (behavior perspective); execution not run.
-- [logs/muse-p01-final-behavior.md](logs/muse-p01-final-behavior.md) — P01 candidate-02 behavior review; no valid findings.
-- [logs/muse-p01-final-lifetime.md](logs/muse-p01-final-lifetime.md) — P01 candidate-02 lifetime/concurrency review; not run.
-- [logs/muse-p01-fixtures-a1.md](logs/muse-p01-fixtures-a1.md) — first deterministic authoritative-world fixture/replay slice.
-- [logs/muse-p01-lifetime.md](logs/muse-p01-lifetime.md) — P01 instrumentation candidate review (concurrency/lifetime).
-- [logs/muse-profile-a2.md](logs/muse-profile-a2.md) — profile validator implementation log (P01 attempt 2).
-- [logs/muse-profile-a3.md](logs/muse-profile-a3.md) — profile validator correction log for the review delta.
-- [logs/muse-profile-final.md](logs/muse-profile-final.md) — read-only correction review of the frozen profile validator.
-- [logs/muse-profile-review.md](logs/muse-profile-review.md) — read-only review of the profile validator slice.
-- [logs/opus-p01-a1.md](logs/opus-p01-a1.md) — P01 instrumentation slice 1 implementation log.
-- [logs/opus-p01-a2.md](logs/opus-p01-a2.md) — P01 instrumentation correction (attempt 2) log.
+- logs/completion-execution.md — campaign completion log: ownership/CI repair, full-map integration, native and device validation, remaining blockers.
+- logs/lead-native-p02.md — lead native/P02 integration judgment and accepted-revision checks.
+- logs/engine-03-collision.md — collision-cadence log; whole-collider AABB equivalence removed and the gate re-sourced from the owner's edit journal.
+- logs/engine-03-detail-review.md — read-only review of the engine-03 detail interior-loss guard (frozen `1a42f59`); execution not run.
+- logs/engine-03-detail.md — engine-03 detail log for the local interior-loss guard (detail crate only).
+- logs/engine-03-lighting-review.md — leaf review of the async indirect/lighting delta (`577dff8`); no edits or builds.
+- logs/engine-03-ray.md — engine-03 ray recovery log: retained ray packing/shader work recovered after a worker timeout.
+- logs/gemini-conditions-final.md — independent correction review of the conditions validator candidate 02.
+- logs/gemini-native-cache-review.md — independent read-only review of the native dynamic-cache/gallery change (`cc46873`).
+- logs/gemini-native-wsi-final.md — independent review of the final WSI/present-outcome correction (`cc46873` to `6fac9a5`).
+- logs/gemini-p00-review-a2.md — independent review of P00 handoff validator candidate 02.
+- logs/gemini-p00-review.md — independent review of P00 handoff validator candidate 01.
+- logs/gemini-p01-final.md — independent review of P01 candidate 02 and the new fixtures/validators.
+- logs/gemini-p01-schema.md — review of P01 instrumentation candidate 01: schema and column contracts.
+- logs/gemini-profile-final.md — independent correction review of frozen profile validator candidate 02.
+- logs/gemini-profile-review.md — independent review of the frozen profile validator slice.
+- logs/glm-p01-a1.md — GLM device-condition validator slice: fail-closed two-minute idle-readiness check.
+- logs/muse-conditions-final.md — read-only correction review of conditions-candidate-02 bounds and invariants.
+- logs/muse-conditions-review.md — read-only review of the conditions validator and its tests.
+- logs/muse-native-cache-review.md — read-only review of the native dynamic-cache upload path.
+- logs/muse-native-wsi-final.md — read-only review of the WSI present-outcome corrections.
+- logs/muse-p00-a2.md — P00 handoff attempt-2 implementation log.
+- logs/muse-p00-review-a2.md — P00 attempt-2 delta review of candidate 02.
+- logs/muse-p00-review.md — P00 read-only review of the handoff validator.
+- logs/muse-p01-behavior.md — P01 instrumentation review (behavior perspective); execution not run.
+- logs/muse-p01-final-behavior.md — P01 candidate-02 behavior review; no valid findings.
+- logs/muse-p01-final-lifetime.md — P01 candidate-02 lifetime/concurrency review; not run.
+- logs/muse-p01-fixtures-a1.md — first deterministic authoritative-world fixture/replay slice.
+- logs/muse-p01-lifetime.md — P01 instrumentation candidate review (concurrency/lifetime).
+- logs/muse-profile-a2.md — profile validator implementation log (P01 attempt 2).
+- logs/muse-profile-a3.md — profile validator correction log for the review delta.
+- logs/muse-profile-final.md — read-only correction review of the frozen profile validator.
+- logs/muse-profile-review.md — read-only review of the profile validator slice.
+- logs/opus-p01-a1.md — P01 instrumentation slice 1 implementation log.
+- logs/opus-p01-a2.md — P01 instrumentation correction (attempt 2) log.
 - [instancing/glm-execution.md](instancing/glm-execution.md) — GLM execution log for bounded GPU prototype instancing in the render crate.
 - [p03/logs/execution_log.md](p03/logs/execution_log.md) — desktop coordination log for the P03 detail/gallery lane.
 - [p03/logs/opus-detail-a1.md](p03/logs/opus-detail-a1.md) — P03 detail-foundation worker log (A1).
@@ -109,25 +109,25 @@ and the [P01 overhead check](../evidence/2026-09-08-p01-overhead.md).
 
 ## Reviews
 
-- [reviews/app-audit-astra.md](reviews/app-audit-astra.md) — independent app interaction/capture audit (frozen `9b7faa9`).
-- [reviews/app-audit-astra-correction.md](reviews/app-audit-astra-correction.md) — correction review of the app interaction audit.
-- [reviews/app-review-gemini.md](reviews/app-review-gemini.md) — independent Gemini app review (frozen `3f8f01d`); tests not run.
-- [reviews/app-review-muse.md](reviews/app-review-muse.md) — independent Muse app review.
-- [reviews/collision-review-astra.md](reviews/collision-review-astra.md) — fresh Astra collision review; no substantiated candidates.
-- [reviews/collision-review-gemini.md](reviews/collision-review-gemini.md) — independent Gemini collision review; candidate findings only.
-- [reviews/collision-review-muse.md](reviews/collision-review-muse.md) — independent Muse collision review; candidate findings only.
-- [reviews/flora-review-gemini.md](reviews/flora-review-gemini.md) — independent Gemini flora review.
-- [reviews/flora-review-muse.md](reviews/flora-review-muse.md) — independent Muse flora review.
-- [reviews/map-gemini-finish.md](reviews/map-gemini-finish.md) — independent Gemini full-map findings (frozen `952d630`).
-- [reviews/map-muse-finish.md](reviews/map-muse-finish.md) — independent Muse full-map findings (frozen `952d630`).
-- [reviews/renderer-gemini-corrections.md](reviews/renderer-gemini-corrections.md) — Gemini review of the corrected renderer.
-- [reviews/renderer-muse-corrections.md](reviews/renderer-muse-corrections.md) — Muse review of the corrected renderer.
-- [reviews/replay-review-muse.md](reviews/replay-review-muse.md) — native route replay source review (frozen `c0c73e0`).
-- [reviews/route-correction-gemini-a2.md](reviews/route-correction-gemini-a2.md) — Gemini route-correction review; no substantiated findings.
-- [reviews/route-correction-muse-a2.md](reviews/route-correction-muse-a2.md) — Muse route-correction review; no substantiated findings.
-- [reviews/route-review-astra.md](reviews/route-review-astra.md) — generator-3 route review (frozen `d58c85e`).
-- [reviews/route-review-muse.md](reviews/route-review-muse.md) — generator-3 route review (frozen `d58c85e`).
-- [reviews/save-review-gemini.md](reviews/save-review-gemini.md) — save-restoration review and lead disposition.
+- reviews/app-audit-astra.md — independent app interaction/capture audit (frozen `9b7faa9`).
+- reviews/app-audit-astra-correction.md — correction review of the app interaction audit.
+- reviews/app-review-gemini.md — independent Gemini app review (frozen `3f8f01d`); tests not run.
+- reviews/app-review-muse.md — independent Muse app review.
+- reviews/collision-review-astra.md — fresh Astra collision review; no substantiated candidates.
+- reviews/collision-review-gemini.md — independent Gemini collision review; candidate findings only.
+- reviews/collision-review-muse.md — independent Muse collision review; candidate findings only.
+- reviews/flora-review-gemini.md — independent Gemini flora review.
+- reviews/flora-review-muse.md — independent Muse flora review.
+- reviews/map-gemini-finish.md — independent Gemini full-map findings (frozen `952d630`).
+- reviews/map-muse-finish.md — independent Muse full-map findings (frozen `952d630`).
+- reviews/renderer-gemini-corrections.md — Gemini review of the corrected renderer.
+- reviews/renderer-muse-corrections.md — Muse review of the corrected renderer.
+- reviews/replay-review-muse.md — native route replay source review (frozen `c0c73e0`).
+- reviews/route-correction-gemini-a2.md — Gemini route-correction review; no substantiated findings.
+- reviews/route-correction-muse-a2.md — Muse route-correction review; no substantiated findings.
+- reviews/route-review-astra.md — generator-3 route review (frozen `d58c85e`).
+- reviews/route-review-muse.md — generator-3 route review (frozen `d58c85e`).
+- reviews/save-review-gemini.md — save-restoration review and lead disposition.
 
 ## Patch handoff contract
 

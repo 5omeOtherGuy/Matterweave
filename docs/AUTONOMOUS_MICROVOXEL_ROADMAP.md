@@ -101,4 +101,4 @@ human-only gates and stay explicit.
 - [REQUIREMENTS](REQUIREMENTS.md), [ROADMAP](ROADMAP.md), [STATUS](STATUS.md).
 - [BENCHMARKS](BENCHMARKS.md) and [measurement qualification](performance/measurement-qualification.md) for S6.
 - [COMPONENT_SELECTION](COMPONENT_SELECTION.md) and ADR-0014/ADR-0015 for reuse rules.
-- Delivery log: [microvoxel-roadmap-deepseek](performance/logs/microvoxel-roadmap-deepseek.md).
+- Delivery log: microvoxel-roadmap-deepseek.

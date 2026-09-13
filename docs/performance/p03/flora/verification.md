@@ -30,8 +30,8 @@ terrain.
 | Independent source/count/mesh validation | PASS, 21 meshes | [gallery check](gallery-check.json) |
 | Independent rooted contacts, source connectivity and terrain clearance | PASS, 84 plants | [geometry check](geometry-check.json) |
 | Inspector negative controls | Candidate02's disconnected/intersecting geometry rejected; final-scene raised-root mutation rejected | Lead execution |
-| Independent Muse and Gemini source reviews | Completed, verified issues repaired | [Muse](logs/muse-flora-review.md), [Gemini](logs/gemini-flora-review.md) |
-| Muse correction review | Completed, no remaining regression found in correction scope | [review](logs/muse-flora-delta.md) |
+| Independent Muse and Gemini source reviews | Completed, verified issues repaired | Muse, Gemini |
+| Muse correction review | Completed, no remaining regression found in correction scope | review |
 | Native rendering, traversal, collision adapter, mobile cost | NOT RUN by this lane | Sole integration lead owns these gates |
 
 The tests cover actual anatomy, connected roots, palette policy, deterministic scene and

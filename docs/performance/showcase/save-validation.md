@@ -141,7 +141,7 @@ source yet. The transient candidate can now also hold derived meshes/colliders;
 source payload bounds alone remain insufficient to claim total memory bounds.
 
 
-The [independent review](../reviews/save-review-gemini.md) exposed an uncleared
+The independent review exposed an uncleared
 stored respawn point on restored sessions. Prepared state now carries a validated
 entrance, or the validated saved eye if edits completely block the entrance's
 bounded search. The current eye remains the saved eye. All 64 app tests including

@@ -64,9 +64,9 @@ artifact is the accepted #54 APK
 `1c857c08bdeb50678f2d634042fb9bbe32aaf406dcb889802c56462eb73fabca`, installed
 with the app force-stopped and all five saves restored hash-exact. No thermal
 campaign. See the
-[detail-48 delivery log](performance/logs/detail48-device-delivery.md), the
-[lighting delivery log](performance/logs/wetland-lighting-android-delivery.md), the
-[settings delivery log](performance/logs/shared-settings-android-delivery.md),
+detail-48 delivery log, the
+lighting delivery log, the
+settings delivery log,
 the [manifest](evidence/2026-09-13-detail48/manifest.json) and
 [STATUS](STATUS.md).
 
@@ -140,7 +140,7 @@ The follow-up delivered opt-in landscape comparison fixtures and a
 [reference reuse assessment](performance/virtual-matter-and-lay-of-the-land.md).
 Host default/landscape runs pass (16/24); Android execution is still unrun and
 now belongs to this lead's device schedule. See the current STATUS entry and
-[review evidence](performance/reviews/landscape-followup.md). All runtime work must
+review evidence. All runtime work must
 run on device; the network-disabled Android round-trip gate is now explicit in R01.
 
 

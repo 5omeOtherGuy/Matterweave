@@ -2,7 +2,7 @@
 
 Status: working prototype foundation, not a shipped feature and not the showcase. Commit
 base `94dc2ca`. Revision A2 applies the lead's verified defect list
-([log](logs/opus-detail-a2.md)).
+(log).
 
 ## What problem this solves
 

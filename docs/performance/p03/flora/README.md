@@ -4,7 +4,7 @@ A host-verified source-data increment for `matterweave-detail`. Native rendering
 cost and the complete showcase remain separate acceptance gates. The existing sparse
 `gallery_scene(2026)` and its public foundation stay unchanged. See
 [verification](verification.md) for the final artifact counts and checks; the
-[execution log](logs/execution_log.md) records failed attempts and repairs.
+execution log records failed attempts and repairs.
 
 ## What problem this solves
 

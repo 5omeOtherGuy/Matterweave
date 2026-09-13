@@ -363,7 +363,7 @@ VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT \
 CPU-only classifier controls and layout contracts:
 `cargo test -p matterweave-ray-hierarchy --example ray_hierarchy_gpu` and
 `cargo test -p matterweave-render --lib ray_hierarchy_gpu`. Evidence, tolerances and
-the Android gate are in [the GPU log](performance/logs/ray-hierarchy-gpu.md).
+the Android gate are in the GPU log.
 
 ### Full wetland integration checks
 

@@ -3,7 +3,7 @@
 Status: working native viewer mode over the accepted P03 detail foundation. It is an
 explicitly isolated fly/viewer mode — **not** native collision, not gameplay integration
 and not the required dense showcase. Session log:
-[logs/opus-native-gallery-a1.md](logs/opus-native-gallery-a1.md).
+logs/opus-native-gallery-a1.md.
 
 The viewer mode lives in `apps/explorer/src/gallery.rs` plus the explorer's `lib.rs` and
 `Cargo.toml`. No renderer, physics, core, detail, shader or shared-board file was changed

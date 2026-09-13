@@ -20,9 +20,9 @@ repaired in `8ae9e7d` (`21c3ccc` fixture + `28b841a` RED regression), accepted b
 independent Opus review `w_62fe4c42`, and the full 14-phase + HOME/resume gate now
 PASSES on the phone, so PR #48 merged at `06975ce`. The optional CPU traversal
 experiment PR #51 merged at `92f0a79` with GPU/Android/cost gates explicitly open.
-See [delivery log](performance/logs/detail48-device-delivery.md) and
+See delivery log and
 [evidence manifest](evidence/2026-09-13-detail48/manifest.json); the earlier
-[functional-fix log](performance/logs/deepseek-functional-delivery.md) records the
+functional-fix log records the
 phase-7 failure that this delivery repaired. The same delegated owner then
 delivered shared mobile settings (PR #53, below) and the reviewed proxy
 GI/reflection slice (PR #54, below), and handed over the probe (PR #57) and the
@@ -59,7 +59,7 @@ authored clearing, not arbitrary density up to `MAX_MESH_PROXY_TESTS = 4 Mi`; an
 a body-only move never retries after a failed attach (`build_failed` latch,
 disclosed, unexercised on device). No "GI is live during motion" or full-GI/M4
 claim is admissible. Evidence:
-[delivery log](performance/logs/wetland-lighting-android-delivery.md) and the
+delivery log and the
 private `orchestration/lighting54-device/` run tree. No performance or thermal
 claim.
 
@@ -102,7 +102,7 @@ Physical simultaneous multitouch and lock/unlock remain **OPEN** device gates:
 sequential ADB injection cannot claim simultaneous physical contacts, and the
 same-batch `DONE + scope switch` flush is proven by the worker's unit regression
 rather than by device taps. Evidence:
-[delivery log](performance/logs/shared-settings-android-delivery.md) and the
+delivery log and the
 private `orchestration/deepseek-settings-device/` run tree. No performance or
 thermal claim; the diagnostic FPS field is the app's pacing display, not a
 measurement. One cosmetic observation is recorded and not repaired: the Wetland
@@ -152,7 +152,7 @@ realization and depth order but not projected overlap). PR #51 (optional CPU
 traversal experiment `43050cd`) merged at `92f0a79` after independent Opus
 corrective review `w_a6d28d97` accepted with no blockers and six green checks;
 GPU, Android and cost gates remain explicitly OPEN and issue 42 is not closed.
-Evidence: [delivery log](performance/logs/detail48-device-delivery.md),
+Evidence: delivery log,
 [manifest](evidence/2026-09-13-detail48/manifest.json) and the private
 `orchestration/detail48-acceptance/` run tree (screenshots, logcat excerpts,
 per-run reports). No performance or thermal claim is made anywhere in this gate.
@@ -174,7 +174,7 @@ CPH2653, Android 16, Vulkan 1.3.284, Adreno 830, 3168x1440, app start fresh.
 
 Evidence: `orchestration/deepseek-functional-delivery/device/` (report, logcat
 extracts, screenshots, package state) and the
-[delivery log](performance/logs/deepseek-functional-delivery.md).
+delivery log.
 
 ## Reviewed PR delivery and functional follow-up — 2026-09-13
 
@@ -276,7 +276,7 @@ packed renderer transform/index validation and lifecycle-safe one-shot mutations
 independent corrective Gemini review returned no concrete findings. Default
 playable detail guards remain unchanged. Android acceptance is NOT RUN and is
 batched into the next integrated build under the owner's updated test cadence.
-[Evidence and limits](performance/logs/detail-production-fixtures.md).
+Evidence and limits.
 
 ## D2.3 streaming contract verification — 2026-09-12
 
@@ -286,7 +286,7 @@ corrective slice passed focused core tests, Clippy/fmt and independent Gemini
 review; lead accepted the host-only changes. Production stale-result rejection
 is unchanged. Continuous-edit app progress and integrated Android acceptance
 remain OPEN and belong to the next behavioral slice. See
-[streaming evidence](performance/logs/d2-3-streaming.md).
+streaming evidence.
 
 
 Terrain Lab (PR #29) and production wetland detail integration (PR #31) are merged and functionally verified on Android. Choose **EXPLORE TERRAIN LAB** for the playable terrain comparison. [Controls and evidence](performance/terrain-lab.md). Shared audio PR #32 merged at `f370990` after repaired Android resume checks and all six CI checks; owner hearing is now confirmed.
@@ -370,7 +370,7 @@ comparison: thin near vegetation against a distant ridge, and negative-coordinat
 orthographic terrain/opening edits. Default 16 runs and opt-in 24 runs pass host
 software Vulkan validation. Independent image checks confirm visible edits and
 near-detail oracle coverage; four GPU-free example tests, fmt and scoped strict
-Clippy pass. [Review and provenance](performance/reviews/landscape-followup.md),
+Clippy pass. Review and provenance,
 [fixture evidence](performance/landscape-functional-fixtures.md).
 
 The first orthographic fixture exposed a 116-pixel top-row coverage mismatch.
@@ -417,7 +417,7 @@ The [board](performance/board.json) owns current assignments.
 Plan delivery: [PR #22](https://github.com/5omeOtherGuy/Matterweave/pull/22).
 DeepSeek authored the plan; six initial Gemini code reviews were lead-triaged and
 one independent final plan review passed. Documentation and diff checks pass;
-[review dispositions](performance/reviews/completion-plan-v2-initial.md) record
+review dispositions record
 verified gaps and rejected speculation. No new engine/device result is claimed.
 
 ## Completion execution — wave 1
@@ -566,7 +566,7 @@ that used to fail 15 times in 20 now passes every time.
 | Shadow-depth reuse | v0.4.0 prerelease; host Vulkan and OnePlus 13 functional checks pass. | [Shadow reuse](performance/shadow-reuse.md) |
 | Automatic detail selection | v0.5.0; host and OnePlus 13 checks pass. | [Instance updates](performance/instance-updates.md) |
 | Background indirect-light preparation | v0.5.0; host and OnePlus 13 checks pass. | [Background lighting](performance/async-indirect.md) |
-| Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | [Collision log](performance/logs/engine-03-collision.md), [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
+| Bounded async collision, shared chunk snapshots, streaming stress, engine coverage, ray reference | Host and Android functional checks on the integration branch; not in a release. | Collision log, [streaming](performance/stream-stress.md), [coverage](performance/engine-coverage.md), [ray reference](performance/ray-reference.md) |
 | Bounded specular reflections | Merged (PR #13). Both OnePlus 13 app gates ran 2026-09-12: all phases completed; +7.45 ms GPU per frame when enabled. | [Reflections](performance/reflections-engine.md) |
 | Bounded audio service | Merged (PR #12); suspend observability repaired (PR #19). OnePlus 13 diagnostic **PASSES** after the fix, 3 of 3 runs, 30 physical suspend/resume/shutdown cycles. | [ADR-0016](adr/0016-audio-service.md) |
 | Voxel Relay second sample | Merged (PR #14). Physical device gate ran 2026-09-12: puzzle solved end to end on the OnePlus 13. | — |
@@ -694,7 +694,7 @@ remaining M2–M6 engine requirements.
   while occupied; the workerless fallback applies the same gate. Rejection restores prior
   journal entries, and current rigid-body poses protect teleports before physics stepping.
   Eleven cadence tests and scoped strict Clippy pass. See
-  [collision log](performance/logs/engine-03-collision.md). Native/Android integration
+  collision log. Native/Android integration
   validation of this revision remains pending.
 - **Renderer comparison.** The engine-03 full-image comparison's initial 12-run Android
   gate passes at `bfb65ca`; the expanded 16-run host gate includes orthographic opening
@@ -908,7 +908,7 @@ APK or physical-device tests were run for the plan. M2–M6 remain open.
 
 ## Historical campaign records
 
-The [completion execution log](performance/logs/completion-execution.md) and
+The completion execution log and
 [prior campaign status](STATUS_BEFORE_COMPLETION.md) retain earlier accepted
 P00/P01/P02/P03 slices and unavailable measurement gates.
 
