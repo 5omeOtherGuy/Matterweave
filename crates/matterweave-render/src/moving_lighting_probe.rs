@@ -1260,7 +1260,10 @@ fn continuous_motion_live_fraction_is_measured() {
                     let check_every = if dense { 1 } else { (frames_total / 2).max(1) };
                     let report = run_motion_path(scene, body, sun, *speed, 30, check_every);
                     let label = format!("{sun_label}/{scene:?}/{body:?}/{speed}cells");
-                    report_motion(&label, &report, false);
+                    // The dense healing configuration (low sun over the pillar
+                    // field at one cell per frame) prints its per-frame counts:
+                    // that is the table the requirement is reported against.
+                    report_motion(&label, &report, dense);
                     if report.max_rays() > worst_rays {
                         worst_rays = report.max_rays();
                         worst_label = label.clone();
