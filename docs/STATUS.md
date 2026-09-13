@@ -24,9 +24,56 @@ See [delivery log](performance/logs/detail48-device-delivery.md) and
 [evidence manifest](evidence/2026-09-13-detail48/manifest.json); the earlier
 [functional-fix log](performance/logs/deepseek-functional-delivery.md) records the
 phase-7 failure that this delivery repaired. The same delegated owner then
-delivered shared mobile settings (PR #53, below) and owns the pending PR #54
-proxy-GI/reflection device gate; the owner also merged the docs-only authoring
-delivery (PR #55, below).
+delivered shared mobile settings (PR #53, below) and the reviewed proxy
+GI/reflection slice (PR #54, below), and handed over the probe (PR #57) and the
+pending GPU traversal review.
+
+## Wetland proxy GI/reflection Android delivery (PR #54, PR #57) — 2026-09-13
+
+PR #54 (code `28d30553…` + docs `3d33c4f`, corrective Opus review `w_adc924e0`
+ACCEPT) merged at `1bdfd6f` with the owner-directed classification fix `0e37e84`
+(wording only: continuous moving-cell/body GI continuity is an open functional
+requirement, not Phase B) and six green checks. Acceptance source: GitHub's
+merge ref `e094aa59…` (PR #54 x `f878e1b`), tree
+`f52569bf9bb2bd1ed66db72f5b4e6be96501547c`; accepted APK sha256
+`1c857c08bdeb50678f2d634042fb9bbe32aaf406dcb889802c56462eb73fabca`
+(`tools/verify_apk.py` PASS ARM64/16 KiB, v2 debug signature, `install -r`,
+on-device hash equal). The merged tree `e927fede…` equals the `git merge-tree`
+prediction, and the code delta against the built tree is empty (only the PR #56
+docs differ), so the single APK is the delivery artifact.
+
+| Gate | Result |
+| --- | --- |
+| Stationary convergence | App stderr reports surfaced via `log.redirect-stdio`: `gi=false reflection=true cells=1801 pool_meshes=39 pending=381906 rebuild_ms=13.52` → `gi=true reflection=true pending=0 rebuild_ms=0.00` in ~2.9 s |
+| Walk / LOD churn | Holding the MOVE zone produced no withdrawal; the digest gate absorbed camera/LOD churn with GI staying live (no false "GI returned" claim) |
+| Real edit invalidate + reconverge | `WETLAND EDIT 30.894ms Voxel added` + detail refresh, then `rebuild_ms=11.14`, digest change, `cells=1801 -> 1802`, `gi=false pending=381906` → `gi=true pending=0` |
+| Lifecycle | Real HOME + `am start` resumed with functional input and no proxy error; reports continued with GI live |
+| Dense source box (finding 5) | Real authored clearing box (4000 cells / 24 000 slots, `BOX_HALF_EXTENT [10,5,10]`) exercised at 1801-1802 occupied cells / 39 pool meshes with **zero** `MAX_MESH_PROXY_TESTS`, attach or proxy errors |
+| Saves / preferences | Pre-state settings absent and five saves equal to the fresh backup; cleanup restored 5/5 byte-exact, settings absent, `log.redirect-stdio` false, app force-stopped, `1c857c08…` installed |
+
+**Open dense/motion cases:** continuous moving-cell/body GI continuity remains an
+open functional requirement (motion withdraws GI for the crossing and reconverges
+only after `UPDATE_BUDGET`); the report tuple suppresses a fast withdraw/reconverge
+inside `REPORT_INTERVAL_FRAMES = 30`; the dense box was exercised for the real
+authored clearing, not arbitrary density up to `MAX_MESH_PROXY_TESTS = 4 Mi`; and
+a body-only move never retries after a failed attach (`build_failed` latch,
+disclosed, unexercised on device). No "GI is live during motion" or full-GI/M4
+claim is admissible. Evidence:
+[delivery log](performance/logs/wetland-lighting-android-delivery.md) and the
+private `orchestration/lighting54-device/` run tree. No performance or thermal
+claim.
+
+PR #57 (the test-only moving-body GI dependency probe, `fae6173a` + docs,
+review `w_4c9f3d5e` ACCEPT) had its three non-blocking comment/log precision
+corrections applied as `817943d` and merged at `4a64fe0` after six green checks;
+no phone gate was run because nothing production changed. The probe's own
+conclusion is that partial publication alone does not yet meet usable motion, and
+GI continuity must not be inferred closed. `w_88f312a3` now probes
+indirect-dependency retention in `indirect.rs` + the wetland attach path without
+phone or shared-doc ownership; the optional GPU traversal work (`w_17afb30e`) has
+completed with its review verdict still pending, and the standalone
+cross-compiled Android executable route is feasible for handover without an app
+debug entry.
 
 ## Shared mobile settings delivery (D4.2) and D4.3 authoring merge — 2026-09-13
 

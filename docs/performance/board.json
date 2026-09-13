@@ -1146,7 +1146,7 @@
       "47": "extend adaptive lighting work and temporal reuse - read-only Opus next-slice review"
     },
     "phase_b_cost_thermal_rankings": "deferred per owner 2026-09-13; functional issue experiments run alongside engine development",
-    "phone": "delegated delivery owner w_150a72bd owns the phone 192.168.178.93:5555; app force-stopped; all 5 owner saves restored byte-exact to the fresh backup and the prior settings-file absence restored; accepted settings-gate APK e6f4c4b8 installed until the #54 gate replaces it",
+    "phone": "delegated delivery owner w_150a72bd owns the phone 192.168.178.93:5555; app force-stopped; five saves restored byte-exact to the fresh backup and the settings file left absent; accepted #54 device APK 1c857c08 installed",
     "scope": "functional ANR repair and existing Android diagnostic failure; no thermal campaign; independent reviews and combinedAPK acceptance next",
     "shared_settings_20260913": {
       "workers": [
@@ -1210,28 +1210,68 @@
       "log": "docs/performance/logs/authoring55-delivery.md"
     },
     "lighting54_nextslice_20260913": {
-      "state": "review-accepted-open-next-device-batch",
+      "state": "delivered-and-device-verified",
       "repair_author": "w_8a9409db (completed; isolated wetland_lighting.rs, no phone)",
       "pr": 54,
-      "head": "3d33c4feaac2552ca230d7fcfd8f224dd19e0771 (reviewed code 28d30553606f01bdd5d38e6240782d6da552beae + docs 3d33c4f)",
-      "review": "w_adc924e0 (opus-medium) corrective review ACCEPT at the frozen code SHA, no blocking finding; RED/GREEN counts unverified in that read-only review",
-      "next_batch": "integration/phone owner w_150a72bd integrates the accepted head preserving #53 and runs the narrow Android functional gate: stationary GI/reflection converge, walk LOD returns GI, real edit/body move invalidates then reconverges, lifecycle, dense source box with no MAX_MESH_PROXY_TESTS errors",
-      "open_requirement": "moving cell/body GI continuity remains an OPEN FUNCTIONAL requirement, explicitly not Phase B; any comment/doc misclassification must be fixed before merge with behaviour unchanged",
-      "claim_limit": "no full-GI or M4 claim",
-      "review_log": "docs/performance/logs/wetland-lighting-review-repair.md"
+      "reviewed_source": "28d30553606f01bdd5d38e6240782d6da552beae + docs 3d33c4feaac2552ca230d7fcfd8f224dd19e0771",
+      "review": "w_adc924e0 (opus-medium) corrective ACCEPT at the frozen code SHA, no blocking finding; RED/GREEN counts were unverified there and re-ran in CI",
+      "pre_merge_fix": "0e37e84 wording only: continuous moving-cell/body GI continuity is an open functional requirement, not Phase B; no logic/budget/assertion change",
+      "merge": "1bdfd6f (tree e927fede021db263bfb423e8fe1996614966f046 = git merge-tree prediction; code paths byte-identical to the built tree f52569bf, only PR #56 docs differ)",
+      "claim_limit": "no full-GI or M4 claim; no GI-live-during-motion claim"
     },
     "current_workers_20260913": {
       "active": {
-        "w_150a72bd": "device/integration owner: PR #53 delivered (f878e1b), now owns the reviewed PR #54 Android gate",
-        "w_e1c8404b": "read-only indirect / moving-light functional feasibility probe in engine/moving-lighting-probe (new test/example/log only, no production change, no phone)",
-        "w_17afb30e": "optional GPU traversal candidate in engine/ray-hierarchy-gpu (issue 42; no phone, no app, no lighting, no shared status)"
+        "w_150a72bd": "device/integration owner: PR #53 and PR #54 delivered and device-verified, PR #57 merged; owns remaining device gates and this handover",
+        "w_88f312a3": "optional exact indirect-dependency retention in indirect.rs + wetland attach (test/example/log only; no phone or shared docs)",
+        "w_538111ec": "final ray-gpu review verdict (opus-medium)"
       },
       "completed": {
-        "w_8a9409db": "PR #54 repair author (wetland_lighting.rs only)",
+        "w_e1c8404b": "moving-lighting probe (PR #57)",
+        "w_8a9409db": "PR #54 repair author",
         "w_f653a32c": "PR #55 authoring docs delivery (d37ca73)",
-        "w_869fcd5b": "read-only moving-light next-slice feasibility review"
+        "w_869fcd5b": "read-only moving-light next-slice feasibility review",
+        "w_4c9f3d5e": "PR #57 probe review (ACCEPT)",
+        "w_17afb30e": "optional GPU traversal authoring",
+        "w_e3c16633": "ray-gpu review"
       },
       "cap": "global 3 worker cap observed"
+    },
+    "wetland_lighting_device_delivery_20260913": {
+      "worker": "w_150a72bd",
+      "acceptance_source": "GitHub refs/pull/54/merge e094aa59 (PR #54 x main f878e1b), tree f52569bf9bb2bd1ed66db72f5b4e6be96501547c",
+      "apk": "1c857c08bdeb50678f2d634042fb9bbe32aaf406dcb889802c56462eb73fabca (verify_apk PASS ARM64/16 KiB, v2 debug signature, install -r, on-device sha equal)",
+      "channel": "adb setprop log.redirect-stdio true surfaces the app's WETLAND PROXY LIGHTING stderr reports as I/RustStdoutStderr",
+      "gates": "stationary gi=false pending=381906 -> gi=true pending=0 in ~2.9s with reflection live; walk/LOD churn left GI live (digest gate); real edit rebuilt the proxy (rebuild_ms=11.14, cells 1801->1802, gi=false pending=381906 -> gi=true pending=0); HOME/resume functional with no error; real dense clearing box (4000 cells/24000 slots, 1802 occupied, 39 pool meshes) had zero MAX_MESH_PROXY_TESTS/attach/proxy errors",
+      "integrity": "settings absent before and after; five saves restored byte-exact to the fresh backup; log.redirect-stdio reset; app force-stopped; 1c857c08 installed",
+      "unresolved_dense_motion": "continuous moving-cell/body GI continuity stays an OPEN functional requirement (not Phase B); the (gi,reflection,digest) report tuple suppresses a fast withdraw+reconverge inside REPORT_INTERVAL_FRAMES=30; dense coverage proven for the real clearing only, not arbitrary density up to MAX_MESH_PROXY_TESTS=4 Mi; build_failed latch suppresses a body-only retry after a failed attach (disclosed, unexercised on device)",
+      "log": "docs/performance/logs/wetland-lighting-android-delivery.md",
+      "evidence": "private orchestration/lighting54-device/ (screenshots, per-phase logs, full logcat windows, prestate/cleanup json)"
+    },
+    "probe57_20260913": {
+      "author": "w_e1c8404b (completed)",
+      "pr": 57,
+      "reviewed": "fae6173a6d8519bc28cd7e21b2f0fa5510ba60f7 + docs ba181f0; w_4c9f3d5e (opus-medium) ACCEPT with three non-blocking precision findings",
+      "corrections": "817943d comment/log only: distance helper is +/-0.001 not a lower bound; 20 non-vacuous pairs not 30; outside_r_only attributed to the dense mid-box fixture + engineered counterexample",
+      "merge": "4a64fe0 after retarget to main (PR base had been the merged engine/wetland-proxy-lighting branch); six checks green; no phone gate for the test-only probe",
+      "conclusion": "partial publication alone does not yet meet usable motion; GI continuity must not be inferred closed",
+      "log": "docs/performance/logs/moving-lighting-feasibility.md"
+    },
+    "indirect_retention_worker_20260913": {
+      "worker": "w_88f312a3",
+      "profile": "deepseek-flash-direct",
+      "state": "running",
+      "workspace": "engine/indirect-dependency-retention (deepseek-indirect-retention run)",
+      "scope": "optional exact dependency retention in crates/matterweave-render/src/indirect.rs + the wetland_lighting attach path; new test/example/log work",
+      "prohibited": "app debug entry, phone, shared docs, unrelated source",
+      "basis": "w_4c9f3d5e next-slice proposal: value retention + explicit per-slot validity, consumer still complete-only"
+    },
+    "gpu_traversal_20260913": {
+      "worker": "w_17afb30e",
+      "state": "completed-authoring-review-pending",
+      "workspace": "engine/ray-hierarchy-gpu (deepseek-ray-gpu run), issue 42",
+      "review": "w_e3c16633 review completed; w_538111ec final verdict running",
+      "handover": "standalone cross-compiled Android executable route is feasible; no app debug entry needed; to be handed over after the current delivery",
+      "scope": "optional shader/native readback candidate; no phone, no app, no lighting, no shared status"
     }
   }
 }

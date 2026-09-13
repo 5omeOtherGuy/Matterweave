@@ -12,18 +12,43 @@ Phase B cost/thermal rankings are deferred; functional issue experiments may run
 alongside engine development. The issue42 ray-hierarchy experiment finished as
 PR #51 (merged `92f0a79`, optional CPU evidence only, GPU/Android/cost gates
 OPEN). **Current three workers (owner, 2026-09-13):** this delegated
-device/integration owner (`w_150a72bd`) holds the phone and finished PR #53's
-shared-settings delivery, and now owns the reviewed PR #54 proxy-GI/reflection
-Android functional gate; `w_e1c8404b` anchors the read-only indirect/moving-light
-functional feasibility probe in `moving-lighting-probe` (new test/example/log
-only, no production change, no phone); `w_17afb30e` works the optional GPU
-traversal candidate in `ray-hierarchy-gpu` (issue 42, no phone, no app, no
-lighting, no shared status). The PR #54 repair author `w_8a9409db`, the D4.3
-authoring delivery `w_f653a32c` and the read-only next-slice feasibility review
-`w_869fcd5b` have completed; do not re-dispatch them.
+device/integration owner (`w_150a72bd`) holds the phone and delivered PR #53 and
+PR #54, and merged the probe PR #57; it owns the remaining device gates and the
+handover below. `w_88f312a3` (`deepseek-indirect-retention`) is probing optional
+exact indirect-dependency retention in `indirect.rs` + the wetland attach path
+(new test/example/log work; no phone and no shared status). `w_17afb30e`
+(`deepseek-ray-gpu`, optional GPU traversal candidate for issue 42) has finished
+writing; its review verdict is still pending (`w_e3c16633` review complete,
+`w_538111ec` verdict running), and its standalone cross-compiled Android
+executable route is feasible for handover without an app debug entry. The probe
+author `w_e1c8404b`, the PR #54 repair author `w_8a9409db`, the D4.3 authoring
+delivery `w_f653a32c` and the read-only next-slice reviews `w_869fcd5b` /
+`w_4c9f3d5e` have completed; do not re-dispatch them.
 
-**Current pickup (2026-09-13):** main is `f878e1b` (PR #53 settings merge onto
-PR #55's `d37ca73`; merged tree `14ad21ff…`). PR36 lighting and
+**Current pickup (2026-09-13):** main is `4a64fe0` (PR #57 probe merge onto the
+PR #54 lighting merge `1bdfd6f`, itself on PR #53 `f878e1b` / PR #55 `d37ca73`).
+The delegated device/integration owner (`w_150a72bd`) delivered both reviewed
+slices: shared mobile settings (PR #53 `f878e1b`) and the wetland proxy
+GI/reflection slice (PR #54 `1bdfd6f`, source `28d3055` + docs `3d33c4f` +
+wording fix `0e37e84`, device APK `1c857c08…`), then merged the test-only probe
+PR #57 as `4a64fe0` after applying its review's comment/log precision
+corrections. The phone gate covered stationary convergence (~2.9 s), walk/LOD
+churn with GI staying live, a real edit rebuild and reconvergence
+(`cells=1801 -> 1802`, `gi=false -> gi=true`), HOME/resume input, the real dense
+clearing box with zero `MAX_MESH_PROXY_TESTS`/attach errors, and byte-exact save
+plus prior-preference restoration. **Open dense/motion cases:** continuous
+moving-cell/body GI continuity stays an open functional requirement (not
+Phase B); report gating can hide a fast withdraw/reconverge inside 30 frames;
+the dense box is exercised for the real clearing, not arbitrary density up to
+`MAX_MESH_PROXY_TESTS = 4 Mi`; the `build_failed` latch suppresses a body-only
+retry after a failed attach (disclosed, unexercised on device). No "GI is live
+during motion" and no full-GI/M4 claim may be made. `w_88f312a3`
+(`deepseek-indirect-retention`) is probing indirect-dependency retention in
+`indirect.rs` + the wetland attach path (no phone, no shared docs). The optional
+GPU traversal work `w_17afb30e` completed; its review verdict is still pending
+(`w_e3c16633` review complete, `w_538111ec` verdict running), and the standalone
+cross-compiled Android executable route is feasible for handover without an app
+debug entry. Earlier context: PR36 lighting and
 PR39 streaming merged earlier with all six checks green each. The delegated
 integration/acceptance delivery finished: interaction ANR `c1e8777` merged at
 `f0da177` (PR #49); the detail diagnostic phase-7/retreat fixture repair
@@ -34,21 +59,13 @@ each with a real HOME/resume, byte-identical reports), so PR #48 merged at
 gates explicitly open and issue 42 open. PR #53 shared mobile settings merged at
 `f878e1b` after two Opus acceptances and a full phone gate (chooser/Wetland/Relay,
 left/right x normal/large, adapter-level mute, restart, HOME, sample switch); five
-saves and the prior preference absence were restored exactly. **Next batch:**
-integrate the accepted PR #54 (review `w_adc924e0` ACCEPT at
-`28d30553606f01bdd5d38e6240782d6da552beae` + docs `3d33c4f`) preserving #53 and
-run the narrow Android functional gate: stationary GI/reflection converge, walk
-LOD returns GI, a real edit/body move invalidates then reconverges, lifecycle,
-and a dense source box with no `MAX_MESH_PROXY_TESTS` errors. Fix any
-comment/doc misclassification that presents moving cell/body GI continuity as
-Phase B before merging (behaviour unchanged); continuous moving-cell body GI
-continuity stays an **OPEN functional requirement**, and no full-GI/M4 claim may
-be made. Acceptance APK
-`e6f4c4b8d11ae37f1ff2c0d13fa1261e7741ef5ad26ff25c7eaab7bb04fa4f3f` (settings
-gate) stays installed until the #54 build replaces it; all five current saves
-were restored hash-exact and the app is force-stopped. No thermal campaign. See
-the
+saves and the prior preference absence were restored exactly. The last device
+artifact is the accepted #54 APK
+`1c857c08bdeb50678f2d634042fb9bbe32aaf406dcb889802c56462eb73fabca`, installed
+with the app force-stopped and all five saves restored hash-exact. No thermal
+campaign. See the
 [detail-48 delivery log](performance/logs/detail48-device-delivery.md), the
+[lighting delivery log](performance/logs/wetland-lighting-android-delivery.md), the
 [settings delivery log](performance/logs/shared-settings-android-delivery.md),
 the [manifest](evidence/2026-09-13-detail48/manifest.json) and
 [STATUS](STATUS.md).
