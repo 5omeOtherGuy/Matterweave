@@ -6,6 +6,7 @@ var<push_constant> camera: Camera;
 // Layout is defined once in Rust: crates/matterweave-render/src/shader_contract.rs.
 // `indirect_dimensions.w` and `reflection_dimensions.w` are enable flags.
 // `reflection_params` is (trace step bound, surface offset, 0, 0).
+// `atmosphere` is (sky rgb, fog density per metre).
 struct Lighting {
     view_proj: mat4x4<f32>,
     sun: vec4<f32>,
@@ -16,6 +17,7 @@ struct Lighting {
     reflection_origin: vec4<i32>,
     reflection_dimensions: vec4<u32>,
     reflection_params: vec4<f32>,
+    atmosphere: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> lighting: Lighting;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
@@ -25,8 +27,9 @@ struct Lighting {
 @group(0) @binding(4) var<storage, read> reflection_materials: array<u32>;
 // 256 vec4s: rgb reflectance plus mirror strength in w.
 @group(0) @binding(5) var<storage, read> reflection_palette: array<vec4<f32>>;
-// Colour a reflected ray terminates against; identical to the fog target.
-const REFLECTION_BACKGROUND = vec3<f32>(0.16, 0.24, 0.29);
+// Colour a reflected ray terminates against; identical to the fog target and to
+// the cleared background, so the horizon and the world's end are one colour.
+fn sky_color() -> vec3<f32> { return lighting.atmosphere.xyz; }
 struct Input {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -141,12 +144,12 @@ fn reflection_mirror(world: vec3<f32>, normal: vec3<f32>) -> f32 {
 }
 // One ideal specular bounce: r = d - 2 * dot(d, n) * n with d = normalize(world - eye).
 // The single secondary ray starts at world + n * offset and is clipped to the source
-// volume. A miss terminates against REFLECTION_BACKGROUND at the volume exit distance.
+// volume. A miss terminates against the sky colour at the volume exit distance.
 // Reflected hits use documented simple shading: no shadow lookup, no second bounce.
 fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) -> ReflectionSample {
     var out: ReflectionSample;
     out.hit = false;
-    out.color = REFLECTION_BACKGROUND;
+    out.color = sky_color();
     out.distance = 0.0;
     let incident = normalize(world_pos - eye);
     let direction = incident - 2.0 * dot(incident, normal) * normal;
@@ -254,6 +257,6 @@ fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) 
         path_length = path_length + sample.distance;
         lit = mix(lit, sample.color, mirror);
     }
-    let fog = 1.0 - exp(-path_length * 0.013);
-    return vec4(mix(lit, REFLECTION_BACKGROUND, fog), 1.0);
+    let fog = 1.0 - exp(-path_length * lighting.atmosphere.w);
+    return vec4(mix(lit, sky_color(), fog), 1.0);
 }

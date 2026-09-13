@@ -17,12 +17,65 @@ impl Default for Sun {
     }
 }
 
+/// Aerial perspective the world pass converges to. The fog factor is
+/// `1 - exp(-path_length * fog_density)` toward [`Atmosphere::sky`], and the
+/// colour buffer is cleared to the same sky, so the horizon and the background
+/// are one colour and a distance ring's outer edge has nothing to stand against.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Atmosphere {
+    /// Extinction per metre. Zero renders without fog.
+    pub fog_density: f32,
+    /// Linear rgb the fog and the cleared background converge to.
+    pub sky: [f32; 3],
+}
+
+/// The look every sample rendered before atmosphere became a setting.
+pub const DEFAULT_FOG_DENSITY: f32 = 0.013;
+pub const DEFAULT_SKY: [f32; 3] = [0.16, 0.24, 0.29];
+
+impl Default for Atmosphere {
+    fn default() -> Self {
+        Self {
+            fog_density: DEFAULT_FOG_DENSITY,
+            sky: DEFAULT_SKY,
+        }
+    }
+}
+
+impl Atmosphere {
+    /// Largest density the renderer accepts: beyond this a surface one metre
+    /// away is already fully fogged, which is a settings mistake, not a look.
+    pub const MAX_FOG_DENSITY: f32 = 1.0;
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.fog_density.is_finite()
+            || !(0.0..=Self::MAX_FOG_DENSITY).contains(&self.fog_density)
+        {
+            return Err(format!(
+                "Fog density must be finite in 0..={}",
+                Self::MAX_FOG_DENSITY
+            ));
+        }
+        if !self
+            .sky
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+        {
+            return Err("Sky colour components must be finite in 0..=1".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LightingSettings {
     pub sun: Sun,
     pub shadows: bool,
     /// Supported sizes are 1024 and 2048. Changes retire resources after the frame fence.
     pub shadow_map_size: u32,
+    /// Fog and sky. The default reproduces the look every sample had before
+    /// this was a per-frame setting.
+    pub atmosphere: Atmosphere,
 }
 
 impl Default for LightingSettings {
@@ -31,6 +84,7 @@ impl Default for LightingSettings {
             sun: Sun::default(),
             shadows: true,
             shadow_map_size: 1024,
+            atmosphere: Atmosphere::default(),
         }
     }
 }
@@ -164,6 +218,52 @@ mod tests {
         let p = projected(camera.view_proj, eye);
         assert!(p[0].abs() < 0.002 && p[1].abs() < 0.002);
         assert!(camera.view_proj.iter().flatten().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn atmosphere_defaults_reproduce_the_original_look() {
+        let settings = LightingSettings::default();
+        // These two numbers were literals in world.wgsl and in the clear value.
+        // Changing a default changes every existing sample's image.
+        assert_eq!(settings.atmosphere.fog_density, 0.013);
+        assert_eq!(settings.atmosphere.sky, [0.16, 0.24, 0.29]);
+        assert_eq!(Atmosphere::default(), Atmosphere::default());
+        settings.atmosphere.validate().unwrap();
+    }
+
+    #[test]
+    fn invalid_atmospheres_are_rejected() {
+        for atmosphere in [
+            Atmosphere {
+                fog_density: f32::NAN,
+                ..Atmosphere::default()
+            },
+            Atmosphere {
+                fog_density: -0.001,
+                ..Atmosphere::default()
+            },
+            Atmosphere {
+                fog_density: 1.001,
+                ..Atmosphere::default()
+            },
+            Atmosphere {
+                sky: [0.0, f32::INFINITY, 0.0],
+                ..Atmosphere::default()
+            },
+            Atmosphere {
+                sky: [0.0, 1.5, 0.0],
+                ..Atmosphere::default()
+            },
+        ] {
+            assert!(atmosphere.validate().is_err(), "{atmosphere:?}");
+        }
+        // Fog can be switched off entirely, and a black sky is a valid sky.
+        Atmosphere {
+            fog_density: 0.0,
+            sky: [0.0; 3],
+        }
+        .validate()
+        .unwrap();
     }
 
     #[test]

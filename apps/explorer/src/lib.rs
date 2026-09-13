@@ -79,6 +79,7 @@ impl LightPreferences {
             },
             shadows: self.shadows,
             shadow_map_size: self.map_size,
+            ..Default::default()
         }
     }
 }
