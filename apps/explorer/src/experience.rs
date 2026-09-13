@@ -6,6 +6,7 @@
 //! device or owns a service.
 use crate::{
     audio_service::{AudioAdapter, AudioScope},
+    landscape::LandscapeSample,
     settings::{SharedSettings, SETTINGS_FILE_NAME},
     terrain_lab::TerrainLab,
     voxel_relay::VoxelRelayApp,
@@ -23,6 +24,7 @@ pub struct Experience {
     sandbox: Option<Explorer>,
     voxel_relay: Option<VoxelRelayApp>,
     terrain_lab: Option<TerrainLab>,
+    landscape: Option<LandscapeSample>,
     legacy_path: PathBuf,
     frame_limit: Option<u64>,
     /// The one audio adapter shared by every sample. No device is opened here;
@@ -62,6 +64,7 @@ impl Experience {
             sandbox: None,
             voxel_relay: None,
             terrain_lab: None,
+            landscape: None,
             legacy_path,
             frame_limit,
             audio,
@@ -79,6 +82,7 @@ impl Experience {
             || self.sandbox.as_ref().is_some_and(|s| s.failed)
             || self.voxel_relay.as_ref().is_some_and(|r| r.failed)
             || self.terrain_lab.as_ref().is_some_and(|t| t.failed)
+            || self.landscape.as_ref().is_some_and(|l| l.failed)
     }
     /// Drop every queued gameplay event from whichever sample is active.
     ///
@@ -252,6 +256,24 @@ impl Experience {
             let mut lab = TerrainLab::new(directory, self.frame_limit);
             lab.resumed(event_loop);
             self.terrain_lab = Some(lab);
+        } else if self.wetland.as_ref().is_some_and(|w| w.landscape_requested) {
+            self.begin_scope_switch(AudioScope::Sandbox);
+            if let Some(mut wetland) = self.wetland.take() {
+                wetland.suspended(event_loop);
+            }
+            let mut sample = LandscapeSample::new(self.legacy_path.clone(), self.frame_limit);
+            sample.resumed(event_loop);
+            self.landscape = Some(sample);
+        } else if self.landscape.as_ref().is_some_and(|l| l.return_to_menu) {
+            self.begin_scope_switch(AudioScope::Wetland);
+            if let Some(mut sample) = self.landscape.take() {
+                sample.suspended(event_loop);
+            }
+            let directory = crate::data_directory(&self.legacy_path).to_path_buf();
+            let mut wetland = WetlandApp::new(directory, false, self.frame_limit);
+            wetland.set_shared_settings(self.settings);
+            wetland.resumed(event_loop);
+            self.wetland = Some(wetland);
         } else if self.terrain_lab.as_ref().is_some_and(|t| t.return_to_menu) {
             self.begin_scope_switch(AudioScope::Wetland);
             if let Some(mut lab) = self.terrain_lab.take() {
@@ -299,6 +321,9 @@ impl ApplicationHandler for Experience {
         if let Some(t) = &mut self.terrain_lab {
             t.resumed(e);
         }
+        if let Some(l) = &mut self.landscape {
+            l.resumed(e);
+        }
     }
     fn suspended(&mut self, e: &ActiveEventLoop) {
         // Refuse new events before the samples tear down, stop sounding voices
@@ -319,6 +344,9 @@ impl ApplicationHandler for Experience {
         if let Some(t) = &mut self.terrain_lab {
             t.suspended(e);
         }
+        if let Some(l) = &mut self.landscape {
+            l.suspended(e);
+        }
         self.clear_sample_events();
     }
     fn window_event(&mut self, e: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -334,6 +362,8 @@ impl ApplicationHandler for Experience {
             r.window_event(e, id, event);
         } else if let Some(t) = &mut self.terrain_lab {
             t.window_event(e, id, event);
+        } else if let Some(l) = &mut self.landscape {
+            l.window_event(e, id, event);
         }
         match focus {
             Some(false) => self.on_focus_lost(),
@@ -355,6 +385,9 @@ impl ApplicationHandler for Experience {
         if let Some(t) = &mut self.terrain_lab {
             t.about_to_wait(e);
         }
+        if let Some(l) = &mut self.landscape {
+            l.about_to_wait(e);
+        }
         self.sync_settings();
         self.pump_audio();
     }
@@ -370,6 +403,9 @@ impl ApplicationHandler for Experience {
         }
         if let Some(t) = &mut self.terrain_lab {
             t.exiting(e);
+        }
+        if let Some(l) = &mut self.landscape {
+            l.exiting(e);
         }
         self.audio.stop_all();
     }
@@ -400,6 +436,7 @@ mod tests {
             sandbox: None,
             voxel_relay: None,
             terrain_lab: None,
+            landscape: None,
             legacy_path: temp_path("world.json"),
             frame_limit: None,
             audio: AudioAdapter::new(AudioScope::Wetland),

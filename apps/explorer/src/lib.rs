@@ -8,6 +8,7 @@ mod dynamic_upload;
 mod engine_check;
 mod experience;
 mod gallery;
+mod landscape;
 mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
@@ -1454,6 +1455,7 @@ pub fn run_desktop() {
     let mut sandbox = false;
     let mut voxel_relay = false;
     let mut terrain_lab = false;
+    let mut landscape_sample = false;
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
@@ -1473,6 +1475,7 @@ pub fn run_desktop() {
             "--sandbox" => sandbox = true,
             "--voxel-relay" => voxel_relay = true,
             "--terrain-lab" => terrain_lab = true,
+            "--landscape" => landscape_sample = true,
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
@@ -1492,7 +1495,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
 --mesh-lighting-check runs the MeshProxy GI/reflection publication gate and writes mesh-lighting-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
@@ -1623,6 +1626,18 @@ pub fn run_desktop() {
         smoke_frames = Some(30);
     }
     let event_loop = EventLoop::new().expect("event loop");
+    // The marker is the entry a device run can script; the flag is the desktop
+    // equivalent and wins when both are present.
+    if landscape_sample || landscape::marker_present(&directory) {
+        let mut sample = landscape::LandscapeSample::new(save_path, smoke_frames);
+        event_loop
+            .run_app(&mut sample)
+            .expect("landscape event loop run");
+        if sample.failed {
+            std::process::exit(1);
+        }
+        return;
+    }
     if terrain_lab {
         let mut lab = terrain_lab::TerrainLab::new(directory, smoke_frames);
         event_loop
@@ -1770,6 +1785,18 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         };
         if let Err(e) = result {
             log::error!("Engine check: {e}");
+        }
+        return;
+    }
+    // Opt-in far-terrain sample. NativeActivity passes no command line, so the
+    // marker beside the save is the only way a device run can select it. It is
+    // entered directly rather than through the chooser: the sample has to own
+    // the capture request from its first frame, and the chooser would consume
+    // it while its own recorder is still paused in the menu.
+    if landscape::marker_present(&directory) {
+        let mut sample = landscape::LandscapeSample::new(directory.join("world.json"), None);
+        if let Err(e) = event_loop.run_app(&mut sample) {
+            log::error!("Landscape sample: {e}");
         }
         return;
     }
