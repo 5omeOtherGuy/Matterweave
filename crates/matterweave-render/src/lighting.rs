@@ -105,8 +105,7 @@ impl Wind {
         if !self.direction_xz.iter().all(|v| v.is_finite()) {
             return Err("Wind direction components must be finite".into());
         }
-        if !self.strength_m.is_finite()
-            || !(0.0..=Self::MAX_STRENGTH_M).contains(&self.strength_m)
+        if !self.strength_m.is_finite() || !(0.0..=Self::MAX_STRENGTH_M).contains(&self.strength_m)
         {
             return Err(format!(
                 "Wind strength must be finite in 0..={}",
@@ -129,7 +128,12 @@ impl Wind {
         } else {
             (1.0, 0.0, 0.0)
         };
-        [dx, dz, strength, self.time_s.rem_euclid(Self::TIME_PERIOD_S)]
+        [
+            dx,
+            dz,
+            strength,
+            self.time_s.rem_euclid(Self::TIME_PERIOD_S),
+        ]
     }
 }
 

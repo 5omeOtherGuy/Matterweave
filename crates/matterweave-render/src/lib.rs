@@ -16,9 +16,9 @@ pub mod reflection;
 pub mod shader_contract;
 mod shadow;
 mod static_scene;
+mod timing;
 #[cfg(test)]
 mod wind_tests;
-mod timing;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
 use frustum::Frustum;

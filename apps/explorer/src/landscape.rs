@@ -23,6 +23,7 @@
 //! every tile the plan drops is evicted the same frame, so the cache cannot grow
 //! with the path the camera took.
 use crate::controls::{Camera, Controls};
+use crate::landscape_flora::{LandscapeFlora, PUSH_RADIUS_M, WIND_DIRECTION_XZ, WIND_STRENGTH_M};
 use crate::metrics;
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
@@ -30,8 +31,8 @@ use matterweave_core::landscape::{
 };
 use matterweave_core::{AsyncWorld, World, WORLD_LIMIT};
 use matterweave_render::{
-    Atmosphere, FrameResult, Hud, LightingSettings, Renderer, Sun, TerrainTileKey,
-    MAX_TERRAIN_TILES,
+    Atmosphere, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun, TerrainTileKey,
+    Wind, MAX_TERRAIN_TILES,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -342,6 +343,14 @@ pub struct LandscapeSample {
     /// Resident tiles and the normalized filter each was built with.
     resident: BTreeMap<TerrainTileKey, TileFilter>,
     tiles: TileCounters,
+    /// Dense vegetation: the pooled prototypes plus the field for the eye's
+    /// cell. `None` until the renderer exists, because the first
+    /// [`LandscapeFlora::sync`] installs the scene rather than updating one.
+    flora: Option<LandscapeFlora>,
+    /// Wind animation clock in seconds, advanced by frame time. The renderer
+    /// folds it into its animation period, so a long session cannot lose sine
+    /// precision here.
+    wind_time: f32,
     profile: Option<metrics::FrameLog>,
     status: String,
     frames: u64,
@@ -406,12 +415,26 @@ impl LandscapeSample {
                     fog_density: FOG_DENSITY,
                     sky: SKY,
                 },
+                // Real wind and player values, not still air. The position is
+                // refreshed to the eye every frame; the constant bearing and
+                // strength are the sample's own weather.
+                wind: Wind {
+                    direction_xz: WIND_DIRECTION_XZ,
+                    strength_m: WIND_STRENGTH_M,
+                    time_s: 0.0,
+                },
+                player: PlayerPush {
+                    position: [0.0; 3],
+                    radius_m: PUSH_RADIUS_M,
+                },
             },
             walking: false,
             plan: Vec::new(),
             declared: Vec::new(),
             resident: BTreeMap::new(),
             tiles: TileCounters::default(),
+            flora: None,
+            wind_time: 0.,
             profile,
             status: "Fly the landscape. Rings reach 6 km.".into(),
             frames: 0,
@@ -571,7 +594,7 @@ impl LandscapeSample {
         let muted = [0.70, 0.79, 0.86, 1.];
         let accent = [0.62, 0.94, 0.76, 1.];
         let panel = [0.03, 0.06, 0.09, 0.80];
-        hud.rect([16., 16., 700., 112.], panel);
+        hud.rect([16., 16., 700., 150.], panel);
         hud.text(30., 28., "MATTERWEAVE / LANDSCAPE RINGS", 2., white);
         let (chunks_visible, chunks_resident, tiles) = match &self.renderer {
             Some(renderer) => (
@@ -630,9 +653,31 @@ impl LandscapeSample {
             1.,
             muted,
         );
+        let flora = self
+            .flora
+            .as_ref()
+            .map(LandscapeFlora::counters)
+            .unwrap_or_default();
         hud.text(
             30.,
             111.,
+            &format!(
+                "FLORA SITES {} TREES {} DROP {} | DRAWN {} BATCH {} | INST {} KIB | PLAN {:.2} + UP {:.2} MS",
+                flora.planned_sites,
+                flora.planned_trees,
+                flora.dropped,
+                flora.drawn,
+                flora.batches,
+                flora.instance_bytes / 1024,
+                flora.plan_ms,
+                flora.upload_ms,
+            ),
+            1.,
+            accent,
+        );
+        hud.text(
+            30.,
+            129.,
             &self.status.chars().take(72).collect::<String>(),
             1.,
             muted,
@@ -708,9 +753,33 @@ impl LandscapeSample {
             return;
         }
         let mesh_ms = mesh_begin.elapsed().as_secs_f64() * 1000.;
+        // Flora is rebuilt only when the eye leaves its rebuild cell, which is
+        // what keeps a moving camera from re-running the planner every frame.
+        let eye = self.camera.position.to_array();
+        if let Some(flora) = self.flora.as_mut() {
+            let renderer = self.renderer.as_mut().unwrap();
+            if let Err(error) = flora.sync(renderer, eye) {
+                log::error!("Landscape flora failed: {error}");
+                eprintln!("Landscape flora failed: {error}");
+                self.failed = true;
+                event_loop.exit();
+                return;
+            }
+        }
+        // The wind clock advances every frame even when the field does not, so
+        // the resident plants keep moving. Player push follows the eye.
+        self.wind_time += dt.clamp(0.0, 0.1);
+        self.lighting.wind = Wind {
+            direction_xz: WIND_DIRECTION_XZ,
+            strength_m: WIND_STRENGTH_M,
+            time_s: self.wind_time,
+        };
+        self.lighting.player = PlayerPush {
+            position: eye,
+            radius_m: PUSH_RADIUS_M,
+        };
         let hud = self.hud();
         let matrix = view_projection(&self.camera, size.width as f32 / size.height as f32);
-        let eye = self.camera.position.to_array();
         let outcome =
             self.renderer
                 .as_mut()
@@ -769,6 +838,11 @@ impl LandscapeSample {
         }
         if !self.failed && self.frame_limit.is_some_and(|limit| self.frames >= limit) {
             let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
+            let flora = self
+                .flora
+                .as_ref()
+                .map(LandscapeFlora::counters)
+                .unwrap_or_default();
             eprintln!(
                 "LANDSCAPE SMOKE PASS: {} presented frames; {}",
                 self.frames,
@@ -801,6 +875,23 @@ impl LandscapeSample {
                 self.tiles.generated,
                 self.tiles.total_generate_ms,
                 self.tiles.total_generate_ms / self.tiles.generated.max(1) as f64
+            );
+            eprintln!(
+                "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
+                 bytes {} | plan {:.2} ms (worst {:.2}, budget {:.1}, over {}) upload {:.2} ms \
+                 | rebuilds {}",
+                flora.planned_sites,
+                flora.planned_trees,
+                flora.dropped,
+                flora.drawn,
+                flora.batches,
+                flora.instance_bytes,
+                flora.plan_ms,
+                flora.worst_plan_ms,
+                crate::landscape_flora::MAX_REBUILD_MS,
+                flora.over_budget,
+                flora.upload_ms,
+                flora.rebuilds,
             );
             event_loop.exit();
         }
@@ -904,6 +995,20 @@ impl ApplicationHandler for LandscapeSample {
                 renderer.set_diagnostics_enabled(self.profile.is_some());
                 self.renderer = Some(renderer);
                 self.window = Some(window);
+                // Prototype pooling is CPU work that does not need the
+                // renderer, and it is built once per process: a resume after a
+                // suspend keeps the pool and only re-installs the field.
+                if self.flora.is_none() {
+                    match LandscapeFlora::new() {
+                        Ok(flora) => self.flora = Some(flora),
+                        Err(error) => {
+                            log::error!("Landscape flora build failed: {error}");
+                            eprintln!("Landscape flora build failed: {error}");
+                            self.failed = true;
+                            event_loop.exit();
+                        }
+                    }
+                }
             }
             Err(error) => {
                 log::error!("Landscape renderer initialization failed: {error}");
@@ -919,6 +1024,12 @@ impl ApplicationHandler for LandscapeSample {
         // GPU objects must be gone before the Android suspend callback returns.
         // Every resident tile dies with the renderer, so the cache bookkeeping
         // is cleared too and the next resume rebuilds inside the same budget.
+        // The flora field's buffers die the same way; the plan and pooled
+        // geometry stay, so the field is marked uninstalled and re-uploaded on
+        // the next frame rather than uploading into an absent scene.
+        if let Some(flora) = self.flora.as_mut() {
+            flora.forget_renderer();
+        }
         self.renderer = None;
         self.window = None;
         self.resident.clear();

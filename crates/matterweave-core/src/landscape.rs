@@ -859,7 +859,7 @@ fn keeps_cell(seed: u64, cell_x: i32, cell_z: i32, keep_every: u32) -> bool {
     if keep_every <= 1 {
         return true;
     }
-    (hash3(seed ^ SALT_FLORA_KEEP, cell_x, cell_z) % keep_every as u64) == 0
+    hash3(seed ^ SALT_FLORA_KEEP, cell_x, cell_z).is_multiple_of(keep_every as u64)
 }
 
 /// Plan the flora around one eye position.
@@ -1521,14 +1521,21 @@ mod tests {
         use std::collections::BTreeSet;
         for eye in [PLAINS_EYE, [-137.5, 12.0, 913.25], [7.0, 0.0, -3.0]] {
             let plan = plan_default(eye);
-            assert_eq!(plan, plan_default(eye), "the plan must be a function of the eye");
+            assert_eq!(
+                plan,
+                plan_default(eye),
+                "the plan must be a function of the eye"
+            );
             // No lattice cell is visited twice, so no site is emitted twice.
             // (A single column may legitimately carry two plants of the same
             // kind: `flora_cell` rolls ground cover and flowers separately.)
             let mut cells = BTreeSet::new();
             let mut previous: Option<(i32, i32)> = None;
             for site in &plan.sites {
-                let cell = (site.x.div_euclid(FLORA_CELL_M), site.z.div_euclid(FLORA_CELL_M));
+                let cell = (
+                    site.x.div_euclid(FLORA_CELL_M),
+                    site.z.div_euclid(FLORA_CELL_M),
+                );
                 if previous != Some(cell) {
                     assert!(cells.insert(cell), "flora cell {cell:?} was visited twice");
                     previous = Some(cell);
@@ -1536,10 +1543,7 @@ mod tests {
             }
             let mut trees = BTreeSet::new();
             for tree in &plan.trees {
-                assert!(
-                    trees.insert((tree.x, tree.z)),
-                    "duplicate tree {tree:?}"
-                );
+                assert!(trees.insert((tree.x, tree.z)), "duplicate tree {tree:?}");
             }
             for placed in plan.sites.iter().chain(&plan.trees) {
                 assert!(placed.yaw_quarters <= 3);
@@ -1664,10 +1668,7 @@ mod tests {
             }
             for site in &plan.sites {
                 assert!(
-                    !matches!(
-                        site.kind,
-                        FloraKind::TreeBroadleaf | FloraKind::TreeConifer
-                    ),
+                    !matches!(site.kind, FloraKind::TreeBroadleaf | FloraKind::TreeConifer),
                     "a tree reached the ground-cover list"
                 );
                 assert!(chebyshev(site.x, site.z, eye_x, eye_z) <= 96 + FLORA_CELL_M);
@@ -1718,7 +1719,13 @@ mod tests {
     fn per_16m_square_density_stays_inside_its_budget() {
         use std::collections::BTreeMap;
         let plains = find_biome(SEED_UNDER_TEST, Biome::Plains).expect("the world has plains");
-        let plan = plan_flora(SEED_UNDER_TEST, plains, &LANDSCAPE_FLORA_TIERS, 20_000, 4_000);
+        let plan = plan_flora(
+            SEED_UNDER_TEST,
+            plains,
+            &LANDSCAPE_FLORA_TIERS,
+            20_000,
+            4_000,
+        );
         let mut squares: BTreeMap<(i32, i32), usize> = BTreeMap::new();
         for placed in plan.sites.iter().chain(&plan.trees) {
             *squares
@@ -1746,4 +1753,3 @@ mod tests {
         assert!((length - 1.0).abs() < 1.0e-5);
     }
 }
-

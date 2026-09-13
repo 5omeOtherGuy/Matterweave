@@ -31,12 +31,11 @@
 //! materials. No per-plant culling either - the renderer culls whole prototype
 //! batches, which is the same bound the static path has always had.
 
-use matterweave_core::landscape::{
-    self, FloraKind, FloraPlan, PlacedFlora, LANDSCAPE_FLORA_TIERS, LANDSCAPE_TREE_RADIUS_M,
-};
+use matterweave_core::landscape::{self, FloraKind, FloraPlan, PlacedFlora, LANDSCAPE_FLORA_TIERS};
 use matterweave_core::Mesh;
-use matterweave_detail::landscape_flora::{landscape_prototype, prototype_for};
-use matterweave_detail::{landscape_flora::LANDSCAPE_FLORA_SPECIES, DetailScene, Lod};
+use matterweave_detail::{
+    landscape_prototype, prototype_for, DetailScene, Lod, LANDSCAPE_FLORA_SPECIES,
+};
 use matterweave_render::{FloraInstance, Renderer, StaticSceneStats, MAX_FLORA_INSTANCES};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -99,12 +98,15 @@ fn lod_for_tier(tier: u8) -> Lod {
 /// neighbouring plants never pulse together and the same plant always carries
 /// the same phase across rebuilds.
 fn phase_of(x: i32, z: i32) -> f32 {
-    let mut v = (x as u32)
-        .wrapping_mul(0x9E37_79B9)
-        ^ (z as u32).wrapping_mul(0x85EB_CA6B);
+    // Mix the two coordinates, then run the Murmur3 `fmix32` finalizer so the
+    // low 16 bits the phase reads have full avalanche: a neighbour one metre
+    // away must not visibly share the same sway.
+    let mut v = (x as u32).wrapping_mul(0x9E37_79B9) ^ (z as u32).wrapping_mul(0x85EB_CA6B);
+    v ^= v >> 16;
+    v = v.wrapping_mul(0x7FEB_352D);
     v ^= v >> 15;
-    v = v.wrapping_mul(0x2545_F491);
-    v ^= v >> 13;
+    v = v.wrapping_mul(0x846C_A68B);
+    v ^= v >> 16;
     (v & 0xFFFF) as f32 / 65535.0
 }
 
@@ -258,6 +260,19 @@ impl LandscapeFlora {
         Ok(())
     }
 
+    /// Forget the renderer this field was installed into.
+    ///
+    /// A renderer recreation (Android suspend/resume, a lost device) destroys
+    /// the flora buffers with the renderer. The plan and the pooled CPU meshes
+    /// survive, so this only marks the field uninstalled: the next [`Self::sync`]
+    /// re-installs it instead of updating a scene that no longer exists. The
+    /// resident plan is kept so a same-cell frame after the recreation does not
+    /// have to replan, only re-upload.
+    pub fn forget_renderer(&mut self) {
+        self.installed = false;
+        self.cell = None;
+    }
+
     /// Map one placement onto a pooled prototype at the level its band asks
     /// for, falling back to the source level when the coarse one is absent.
     /// A placement whose prototype produced no geometry at all is skipped.
@@ -275,7 +290,11 @@ impl LandscapeFlora {
             // window the visible ground is the derived ring tile, whose
             // vertices interpolate 4 m generator samples, so a distant plant
             // can sit a metre or two off the surface it is drawn against.
-            translation: [placed.x as f32 + 0.5, placed.y as f32 + 1.0, placed.z as f32 + 0.5],
+            translation: [
+                placed.x as f32 + 0.5,
+                placed.y as f32 + 1.0,
+                placed.z as f32 + 0.5,
+            ],
             yaw_quarters: placed.yaw_quarters.min(3),
             phase: phase_of(placed.x, placed.z),
             bend: bend_of(placed.kind),
@@ -315,6 +334,7 @@ impl AsSite for PlacedFlora {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use matterweave_core::landscape::LANDSCAPE_TREE_RADIUS_M;
 
     #[test]
     fn every_prototype_the_catalogue_can_place_is_pooled_with_a_height() {
@@ -382,7 +402,7 @@ mod tests {
 
     #[test]
     fn the_plan_caps_stay_inside_the_renderer_budget() {
-        assert!(MAX_PLANNED_SITES + MAX_PLANNED_TREES <= MAX_FLORA_INSTANCES);
+        const { assert!(MAX_PLANNED_SITES + MAX_PLANNED_TREES <= MAX_FLORA_INSTANCES) };
         // The tree radius must reach past the outermost ground-cover band, or a
         // forest would stop being a forest at the edge of the field.
         assert!(LANDSCAPE_TREE_RADIUS_M > LANDSCAPE_FLORA_TIERS[3].radius_m);

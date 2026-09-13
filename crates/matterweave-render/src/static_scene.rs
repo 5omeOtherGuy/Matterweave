@@ -132,14 +132,15 @@ impl Placement for FloraInstance {
     }
     fn validate_wind(&self) -> Result<()> {
         if !self.phase.is_finite() || !(0.0..=1.0).contains(&self.phase) {
-            return Err(format!("Flora instance phase {} is not in 0..=1", self.phase));
+            return Err(format!(
+                "Flora instance phase {} is not in 0..=1",
+                self.phase
+            ));
         }
         if !self.bend.is_finite() || !(0.0..=1.0).contains(&self.bend) {
             return Err(format!("Flora instance bend {} is not in 0..=1", self.bend));
         }
-        if !self.height_m.is_finite()
-            || self.height_m <= 0.0
-            || self.height_m > MAX_FLORA_HEIGHT_M
+        if !self.height_m.is_finite() || self.height_m <= 0.0 || self.height_m > MAX_FLORA_HEIGHT_M
         {
             return Err(format!(
                 "Flora instance height {} m is not in (0, {MAX_FLORA_HEIGHT_M}]",
@@ -341,12 +342,7 @@ pub(crate) fn plan_flora_scene(
     meshes: &[Mesh],
     instances: &[FloraInstance],
 ) -> Result<StaticScenePlan> {
-    plan_static_scene_with_budgets(
-        meshes,
-        instances,
-        STATIC_MESH_BUDGET_BYTES,
-        MAX_FLORA_BYTES,
-    )
+    plan_static_scene_with_budgets(meshes, instances, STATIC_MESH_BUDGET_BYTES, MAX_FLORA_BYTES)
 }
 
 pub(crate) fn plan_static_scene_with_budgets<P: Placement>(
@@ -641,7 +637,10 @@ impl StaticScene {
         plan_instance_update(&self.geometry, instances, STATIC_INSTANCE_BUDGET_BYTES)
     }
 
-    pub(crate) fn plan_flora_instances(&self, instances: &[FloraInstance]) -> Result<InstanceUpdate> {
+    pub(crate) fn plan_flora_instances(
+        &self,
+        instances: &[FloraInstance],
+    ) -> Result<InstanceUpdate> {
         plan_instance_update(&self.geometry, instances, MAX_FLORA_BYTES)
     }
 

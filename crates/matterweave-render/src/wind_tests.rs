@@ -171,10 +171,7 @@ fn invalid_wind_fields_are_rejected_before_anything_is_packed() {
             "non-finite translation",
             flora(0, [f32::NAN, 0., 0.], 0.5, 0.5),
         ),
-        (
-            "unknown prototype",
-            flora(9, [0., 0., 0.], 0.5, 0.5),
-        ),
+        ("unknown prototype", flora(9, [0., 0., 0.], 0.5, 0.5)),
     ] {
         assert!(plan_flora_scene(&meshes, &[bad]).is_err(), "{name}");
     }
