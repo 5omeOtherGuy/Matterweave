@@ -133,6 +133,23 @@ const FLORA_SPIRE_HOME_M: [f32; 3] = [14.0, 0.0, 4.0];
 const FLORA_LILY_HOME_M: [f32; 3] = [14.0, 0.0, 10.0];
 const OCCLUSION_SOLID_HOME_M: [f32; 3] = [-20.0, 0.0, -2.0];
 
+/// Occlusion-phase camera: level with the ground and centred on the fungus stem
+/// and the solid core, so the two boxes stay concentric in projection and the
+/// depth order is purely along the view axis.
+///
+/// The phase's claim is that the thin foreground plant is retained at `Source`
+/// by the geometry guards, *not* by distance, so its coarse level must stay
+/// inside the fresh-selection pixel budget
+/// (`error_budget_px / (1 + hysteresis)`) at every supported render viewport.
+/// One coarse cell of the 0.0625 m-scale fungus is 0.125 m, so the default 2 px
+/// budget admits that coarse level only from about 109 m at the physical
+/// 1440 px Android surface. 130 m clears the budget at every supported viewport
+/// while the dense rear boulder, 4 m behind the fungus, still realizes a coarse
+/// level at the same distance. Both are asserted per viewport by
+/// `occlusion_phase_layers_guarded_flora_in_front_of_a_realized_coarse_solid`.
+const OCCLUSION_EYE_M: [f32; 3] = [-20.0, 0.35, 130.0];
+const OCCLUSION_TARGET_M: [f32; 3] = [-20.0, 0.35, 0.0];
+
 /// Builds one production flora prototype through the exported constructor.
 fn production_flora(id: &str) -> DetailVolume {
     showcase_prototype(id)
@@ -431,6 +448,19 @@ fn deferred_count(frame: &PreparedFrame) -> usize {
     frame.selected.iter().filter(|item| item.fallback).count()
 }
 
+/// Projected screen-space error in pixels of a prototype's first coarse level
+/// (one coarse cell, `2 * prototype_scale_m`) at `depth_m`.
+fn coarse_projected_error_px(camera: &LodCamera, prototype_scale_m: f32, depth_m: f32) -> f32 {
+    camera.projected_error_px(prototype_scale_m * 2.0, depth_m)
+}
+
+/// Fresh-selection pixel budget: the descending (switch-to-coarser) threshold
+/// `error_budget_px / (1 + hysteresis)`, the threshold the engine applies to an
+/// instance currently at `Source`.
+fn fresh_selection_budget_px(config: &LodConfig) -> f32 {
+    config.error_budget_px / (1.0 + config.hysteresis)
+}
+
 /// True when `Half` of a prototype at `prototype_scale_m` would pass the
 /// descending (fresh-selection) hysteresis threshold at `depth_m`. Used to show
 /// that a retained `Source` is the geometry guard's decision, not distance.
@@ -440,8 +470,8 @@ fn coarse_would_pass_pixels(
     depth_m: f32,
     config: &LodConfig,
 ) -> bool {
-    let low = config.error_budget_px / (1.0 + config.hysteresis);
-    camera.projected_error_px(prototype_scale_m * 2.0, depth_m) <= low
+    coarse_projected_error_px(camera, prototype_scale_m, depth_m)
+        <= fresh_selection_budget_px(config)
 }
 
 /// A camera phase: eye, look target, projection and selection policy.
@@ -531,12 +561,14 @@ pub fn phases() -> Vec<PhasePlan> {
             perspective,
             default,
         ),
-        // Retreat coarsens it. This camera also makes every production flora
-        // instance pixel-eligible for a coarse level while the default guards
-        // retain Source.
+        // Retreat coarsens the near control. This camera also makes every
+        // production flora instance pixel-eligible for a coarse level while the
+        // default guards retain `Source` at every supported viewport, and it
+        // clears the near control's own coarse budget with headroom at the
+        // 1440 px Android surface (a 220 m camera cleared it by 0.6%).
         plan(
             "retreat-far-perspective",
-            [0.2, 0.2, 220.0],
+            [0.2, 0.2, 260.0],
             origin,
             perspective,
             default,
@@ -578,8 +610,8 @@ pub fn phases() -> Vec<PhasePlan> {
             occlusion: true,
             ..plan(
                 "occlusion-foreground-fungus-over-solid",
-                [-20.0, 0.5, 95.0],
-                [-20.0, 0.15, 0.0],
+                OCCLUSION_EYE_M,
+                OCCLUSION_TARGET_M,
                 perspective,
                 default,
             )
@@ -1431,9 +1463,13 @@ impl DetailCheck {
             if fungus.lod != Lod::Source
                 || !coarse_would_pass_pixels(&camera, fungus_scale, fungus.depth_m, &plan.config)
             {
-                return Err(
-                    "occlusion foreground flora was not a pixel-eligible guard retention".into(),
-                );
+                return Err(format!(
+                    "occlusion foreground flora was not a pixel-eligible guard retention: {:?} at depth {:.2} m, coarse error {:.3} px against a {:.3} px budget at a {viewport_height_px:.0} px viewport",
+                    fungus.lod,
+                    fungus.depth_m,
+                    coarse_projected_error_px(&camera, fungus_scale, fungus.depth_m),
+                    fresh_selection_budget_px(&plan.config),
+                ));
             }
             let solid = frame
                 .selected
@@ -2043,7 +2079,7 @@ mod tests {
             let camera = plan.lod_camera(viewport_px);
             let mut scene = fixture_scene();
             let frame = scene.prepare_batches(&camera, &plan.config).unwrap();
-            let budget_px = plan.config.error_budget_px / (1.0 + plan.config.hysteresis);
+            let budget_px = fresh_selection_budget_px(&plan.config);
             let mut pixel_eligible = 0usize;
             for (instance, species) in FLORA_INSTANCES {
                 let selected = item(&frame, instance);
@@ -2170,8 +2206,8 @@ mod tests {
                 "{viewport_px} px: foreground thin flora is guarded"
             );
             let fungus_scale = scene.prototype("funnel_mushroom").unwrap().scale().metres();
-            let error_px = camera.projected_error_px(fungus_scale * 2.0, fungus.depth_m);
-            let budget_px = plan.config.error_budget_px / (1.0 + plan.config.hysteresis);
+            let error_px = coarse_projected_error_px(&camera, fungus_scale, fungus.depth_m);
+            let budget_px = fresh_selection_budget_px(&plan.config);
             println!(
                 "occlusion {viewport_px} px: fungus depth {:.2} m projects the coarse level at \
                  {error_px:.3} px against the {budget_px:.3} px fresh-selection budget",
