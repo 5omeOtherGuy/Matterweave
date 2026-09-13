@@ -99,15 +99,14 @@ D4.2 gate evidence already satisfied by merged `main`:
   scene plus edit journal; Relay: core `World` chamber plus attachment save).
 - Functional input and persistence are demonstrated by `matterweave-explorer`
   tests and by the Relay physical device gate recorded in STATUS.
+- Audible output is accepted on the owner's device confirmation (STATUS.md);
+  host counters remain non-evidence.
 
 D4.2 gate items still open (device acceptance, not engine API gaps):
 
 - Physical simultaneous multi-finger use and lock/unlock are untested (STATUS:
   ADB gestures here are sequential; unit tests cover concurrent touch roles,
   which is not physical multi-finger validation).
-- Audible output is unverified (no human confirmation; counters prove submitted
-  frames only).
-
 Observed absences that are not D4.2 gates:
 
 1. **No animation system.** Both samples are fully functional without one; the

@@ -261,8 +261,8 @@ first-person, edit journal) and Relay (core `World` chamber, orthographic
 `Physics`, `Renderer` and the persistence helpers with zero engine duplication.
 A new sample must do the same — any logic two samples need belongs in a crate
 or in the shared adapter, not copied into the sample. Sample reuse is the part
-of the D4.2 gate that is demonstrably done; the physical-input and audibility
-observations are not (see below).
+of the D4.2 gate that is demonstrably done; the physical simultaneous-touch and
+lock/unlock observations are not (see below).
 
 ## Missing features — do not assume these
 
@@ -294,10 +294,11 @@ Scope boundaries and open acceptance — do not report these as shipped:
 - **D4.2 physical acceptance is still open.** Existing sample reuse is real:
   both samples run without engine forks on the shared crates, and functional
   input plus persistence are demonstrated by tests and the Relay device gate.
-  Physical simultaneous multi-finger use, lock/unlock and audible output remain
-  unverified — STATUS records sequential ADB gestures, concurrent touch covered
-  only by unit tests, and no human audibility confirmation. These are device
-  acceptance items, not engine API gaps.
+  Physical simultaneous multi-finger use and lock/unlock remain unverified —
+  STATUS records sequential ADB gestures and concurrent touch covered only by
+  unit tests. Audible output is accepted: the owner confirmed device audio
+  (STATUS.md, "Audio works 100%"). These are device acceptance items, not
+  engine API gaps.
 - **Host audio proves nothing about devices.** The mock backend renders into
   a buffer for tests; host runs are silent, standalone sample runs are silent
   by construction, and counters are not audibility.

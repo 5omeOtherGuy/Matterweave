@@ -105,7 +105,7 @@ and none was dismissed.
    functional input, physical simultaneous touch, lock/unlock, audible output
    and persistence observed. **Disposition:** fixed. The section is
    reclassified into: gate evidence already satisfied, gate items still open
-   (physical input, lock/unlock, audibility), and observed absences that are
+   (physical simultaneous touch, lock/unlock), and observed absences that are
    not gates. Nothing was deleted from the historical facts.
 
 ## Issues & Friction
@@ -255,7 +255,7 @@ so the lead can apply or adapt it:
 > registration across `experience.rs`/`wetland.rs`, and documents persistence
 > loading as `World::load` + `world.attachment()`. The D4.3 log no longer
 > presents a production editor, compressed codecs or save-journal migration as
-> D4.2 gates; D4.2's physical simultaneous touch, lock/unlock and audible
-> output remain open device acceptance. `check_docs.py` and `git diff --check`
-> pass at the frozen SHA, and the guide's corrected snippets compile against
-> the merged crates. Documentation only: no runtime code changed.
+> D4.2 gates; D4.2's physical simultaneous touch and lock/unlock remain open
+> device acceptance. `check_docs.py` and `git diff --check` pass at the frozen
+> SHA, and the guide's corrected snippets compile against the merged crates.
+> Documentation only: no runtime code changed.
