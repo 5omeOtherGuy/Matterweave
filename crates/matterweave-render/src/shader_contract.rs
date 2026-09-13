@@ -29,6 +29,10 @@ pub const WORLD_FRAGMENT_SPIRV: &[u8] =
 /// `atmosphere` is (sky rgb, fog density per metre): the colour distance fades
 /// to, which is also the colour a reflected ray terminates against and the
 /// colour the frame is cleared to.
+/// `wind` is (direction x, direction z, strength in metres, time in seconds)
+/// and `player` is (x, y, z, push radius in metres). Both drive `displace` in
+/// `world.wgsl` and reach only vertices whose per-instance wind record is
+/// enabled; a zero strength and a zero radius leave even those undisplaced.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct LightingUniform {
@@ -41,9 +45,11 @@ pub struct LightingUniform {
     pub reflection_dimensions: [u32; 4],
     pub reflection_params: [f32; 4],
     pub atmosphere: [f32; 4],
+    pub wind: [f32; 4],
+    pub player: [f32; 4],
 }
 
-pub const LIGHTING_UNIFORM_BYTES: usize = 192;
+pub const LIGHTING_UNIFORM_BYTES: usize = 224;
 
 #[cfg(test)]
 mod tests {
@@ -63,6 +69,8 @@ mod tests {
         assert_eq!(offset_of!(LightingUniform, reflection_dimensions), 144);
         assert_eq!(offset_of!(LightingUniform, reflection_params), 160);
         assert_eq!(offset_of!(LightingUniform, atmosphere), 176);
+        assert_eq!(offset_of!(LightingUniform, wind), 192);
+        assert_eq!(offset_of!(LightingUniform, player), 208);
         // Every binding index is distinct and contiguous from zero.
         let bindings = [
             BINDING_LIGHTING,

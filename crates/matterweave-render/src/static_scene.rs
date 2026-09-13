@@ -18,6 +18,19 @@ pub const STATIC_MESH_BUDGET_BYTES: usize = 128 * 1024 * 1024;
 /// Host-side allocation ceiling for the packed per-scene instance buffer.
 pub const STATIC_INSTANCE_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 
+/// Hard ceiling on one wind-capable flora scene's instances. A dense field is
+/// meant to be bounded: a caller over this budget is told so and keeps the
+/// scene it already has, rather than having its far tier silently truncated.
+pub const MAX_FLORA_INSTANCES: usize = 16_384;
+/// Per-buffer byte ceiling implied by [`MAX_FLORA_INSTANCES`]. A flora scene
+/// carries two per-instance buffers of the same length - the packed transform
+/// record and the wind record - so this bounds each of them.
+pub const MAX_FLORA_BYTES: usize = MAX_FLORA_INSTANCES * INSTANCE_RECORD_SIZE;
+/// Tallest flora prototype the wind path accepts, in metres. Displacement
+/// scales with the height a vertex sits at, so an absurd height would turn a
+/// gentle breeze into a catapult.
+pub const MAX_FLORA_HEIGHT_M: f32 = 64.0;
+
 /// One instanced placement of a prototype mesh. `yaw_quarters` rotates the
 /// prototype about the Y axis in quarter turns (0..=3); translation is world
 /// space. This is a CPU description only; the packed GPU record is private.
@@ -28,6 +41,27 @@ pub struct StaticInstance {
     pub yaw_quarters: u8,
 }
 
+/// One instanced placement of a wind-capable flora prototype.
+///
+/// Everything [`StaticInstance`] carries, plus the three numbers `world.wgsl`
+/// needs to displace it: `phase` decorrelates neighbouring plants, `bend` is
+/// how far this plant gives in a unit wind, and `height_m` is the prototype's
+/// own height so the shader can weight displacement by height above the ground
+/// contact. [`StaticInstance`] deliberately keeps its shape: existing scenes
+/// pack and draw exactly as before.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FloraInstance {
+    pub prototype: usize,
+    pub translation: [f32; 3],
+    pub yaw_quarters: u8,
+    /// Sway phase in `0..=1`, one turn of the primary sine.
+    pub phase: f32,
+    /// Compliance in `0..=1`: 0 is rigid, 1 bends the full wind amount.
+    pub bend: f32,
+    /// Prototype height in metres, in `(0, MAX_FLORA_HEIGHT_M]`.
+    pub height_m: f32,
+}
+
 /// Packed GPU instance record: vertex input location 3 as vec4<f32> holds
 /// translation xyz plus quarter-turn yaw in w. Must match world.wgsl/shadow.wgsl.
 #[repr(C)]
@@ -36,7 +70,85 @@ struct InstanceRecord {
     data: [f32; 4],
 }
 
+/// Packed GPU wind record: vertex input location 4 as vec4<f32> holds
+/// `(phase, bend, height_m, enabled)`. `enabled == 0` is the early-out every
+/// non-flora draw binds, which is why the zero record is the identity.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct WindRecord {
+    pub data: [f32; 4],
+}
+
 const INSTANCE_RECORD_SIZE: usize = std::mem::size_of::<InstanceRecord>();
+pub(crate) const WIND_RECORD_SIZE: usize = std::mem::size_of::<WindRecord>();
+/// The record a non-flora draw reads: `w = 0` disables all displacement.
+pub(crate) const ZERO_WIND: WindRecord = WindRecord { data: [0.0; 4] };
+// Both per-instance bindings are declared with the same stride in the pipeline
+// vertex input; keeping the records the same size is what makes that true.
+const _: () = assert!(WIND_RECORD_SIZE == INSTANCE_RECORD_SIZE);
+
+/// A placement the packer can group, validate and pack. Implemented by
+/// [`StaticInstance`] (no wind) and [`FloraInstance`] (wind), so prototype
+/// pooling, per-prototype batching and bounds culling are written once.
+pub(crate) trait Placement: Copy {
+    /// Whether this placement kind can be displaced by the shader. Every scene
+    /// carries a wind buffer parallel to its transform buffer - a batch draw
+    /// selects its slice with `firstInstance`, so a shorter buffer would be
+    /// read out of bounds - but a scene of plain [`StaticInstance`]s fills it
+    /// with [`ZERO_WIND`], which the shader early-outs on.
+    const WIND: bool;
+    fn base(&self) -> StaticInstance;
+    fn wind(&self) -> WindRecord;
+    /// Host validation of the fields this kind adds beyond the base instance.
+    fn validate_wind(&self) -> Result<()>;
+}
+
+impl Placement for StaticInstance {
+    const WIND: bool = false;
+    fn base(&self) -> StaticInstance {
+        *self
+    }
+    fn wind(&self) -> WindRecord {
+        ZERO_WIND
+    }
+    fn validate_wind(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Placement for FloraInstance {
+    const WIND: bool = true;
+    fn base(&self) -> StaticInstance {
+        StaticInstance {
+            prototype: self.prototype,
+            translation: self.translation,
+            yaw_quarters: self.yaw_quarters,
+        }
+    }
+    fn wind(&self) -> WindRecord {
+        WindRecord {
+            data: [self.phase, self.bend, self.height_m, 1.0],
+        }
+    }
+    fn validate_wind(&self) -> Result<()> {
+        if !self.phase.is_finite() || !(0.0..=1.0).contains(&self.phase) {
+            return Err(format!("Flora instance phase {} is not in 0..=1", self.phase));
+        }
+        if !self.bend.is_finite() || !(0.0..=1.0).contains(&self.bend) {
+            return Err(format!("Flora instance bend {} is not in 0..=1", self.bend));
+        }
+        if !self.height_m.is_finite()
+            || self.height_m <= 0.0
+            || self.height_m > MAX_FLORA_HEIGHT_M
+        {
+            return Err(format!(
+                "Flora instance height {} m is not in (0, {MAX_FLORA_HEIGHT_M}]",
+                self.height_m
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Honest accounting of the last accepted static scene. Source bytes are the
 /// input mesh bytes; allocated bytes are the real GPU buffer capacities.
@@ -50,6 +162,11 @@ pub struct StaticSceneStats {
     pub allocated_bytes: usize,
     /// Per-prototype draw batches carrying all of that prototype's instances.
     pub batches: usize,
+    /// Allocated bytes of the two per-instance buffers: the packed transform
+    /// records plus the wind records when the scene carries them.
+    pub instance_bytes: usize,
+    /// Whether this scene supplies per-instance wind records.
+    pub wind: bool,
 }
 
 #[derive(Debug)]
@@ -66,6 +183,7 @@ pub(crate) struct PrototypeRange {
     pub bounds: [[f32; 3]; 2],
 }
 
+#[derive(Debug)]
 pub(crate) struct PrototypeGeometry {
     first_index: u32,
     index_count: u32,
@@ -76,21 +194,29 @@ pub(crate) struct PrototypeGeometry {
 
 pub(crate) struct InstanceUpdate {
     instance_bytes: Vec<u8>,
+    /// Parallel to `instance_bytes`, record for record; `firstInstance`
+    /// indexes both buffers identically.
+    wind_bytes: Vec<u8>,
     prototypes: Vec<PrototypeRange>,
     bounds: [[f32; 3]; 2],
     instance_count: u32,
 }
 
+#[derive(Debug)]
 pub(crate) struct StaticScenePlan {
     geometry: Vec<PrototypeGeometry>,
     pub vertex_bytes: Vec<u8>,
     pub index_bytes: Vec<u8>,
     pub instance_bytes: Vec<u8>,
+    /// Parallel to `instance_bytes`, record for record.
+    pub wind_bytes: Vec<u8>,
     pub prototypes: Vec<PrototypeRange>,
     pub bounds: [[f32; 3]; 2],
     pub instance_count: u32,
     pub has_geometry: bool,
     pub source_bytes: usize,
+    /// Whether this plan's placements can carry nonzero wind records.
+    pub wind_capable: bool,
 }
 
 impl StaticScenePlan {
@@ -100,11 +226,13 @@ impl StaticScenePlan {
             vertex_bytes: Vec::new(),
             index_bytes: Vec::new(),
             instance_bytes: Vec::new(),
+            wind_bytes: Vec::new(),
             prototypes: Vec::new(),
             bounds: [[0.; 3], [0.; 3]],
             instance_count: 0,
             has_geometry: false,
             source_bytes: 0,
+            wind_capable: false,
         }
     }
 }
@@ -142,6 +270,26 @@ fn translate_bounds(bounds: [[f32; 3]; 2], translation: [f32; 3]) -> [[f32; 3]; 
             bounds[1][1] + translation[1],
             bounds[1][2] + translation[2],
         ],
+    ]
+}
+
+/// Largest horizontal displacement `world.wgsl` can apply to a flora vertex.
+///
+/// Sway reaches `1.5 * bend * strength` metres and the walk-through push adds
+/// at most `MAX_PUSH_STRENGTH_M`; both are validated on the Rust side. Flora
+/// batch bounds are grown by this margin in x and z so whole-batch frustum
+/// culling cannot clip a plant that swayed into view.
+pub const MAX_WIND_DISPLACEMENT_M: f32 = 2.5;
+
+/// Grow bounds horizontally by the wind margin, for wind-capable placements only.
+fn wind_margin<P: Placement>(bounds: [[f32; 3]; 2]) -> [[f32; 3]; 2] {
+    if !P::WIND {
+        return bounds;
+    }
+    let m = MAX_WIND_DISPLACEMENT_M;
+    [
+        [bounds[0][0] - m, bounds[0][1], bounds[0][2] - m],
+        [bounds[1][0] + m, bounds[1][1], bounds[1][2] + m],
     ]
 }
 
@@ -187,9 +335,23 @@ pub(crate) fn plan_static_scene(
     )
 }
 
-pub(crate) fn plan_static_scene_with_budgets(
+/// [`plan_static_scene`] for wind-capable flora, under the tighter
+/// [`MAX_FLORA_BYTES`] instance budget.
+pub(crate) fn plan_flora_scene(
     meshes: &[Mesh],
-    instances: &[StaticInstance],
+    instances: &[FloraInstance],
+) -> Result<StaticScenePlan> {
+    plan_static_scene_with_budgets(
+        meshes,
+        instances,
+        STATIC_MESH_BUDGET_BYTES,
+        MAX_FLORA_BYTES,
+    )
+}
+
+pub(crate) fn plan_static_scene_with_budgets<P: Placement>(
+    meshes: &[Mesh],
+    instances: &[P],
     mesh_budget: usize,
     instance_budget: usize,
 ) -> Result<StaticScenePlan> {
@@ -206,8 +368,9 @@ pub(crate) fn plan_static_scene_with_budgets(
             "Static scene instances need {instance_capacity} bytes, over the {instance_budget}-byte instance budget"
         ));
     }
-    let mut grouped: BTreeMap<usize, Vec<StaticInstance>> = BTreeMap::new();
-    for instance in instances {
+    let mut grouped: BTreeMap<usize, Vec<P>> = BTreeMap::new();
+    for placement in instances {
+        let instance = placement.base();
         if instance.prototype >= meshes.len() {
             return Err(format!(
                 "Static instance references prototype {} but only {} prototypes were supplied",
@@ -224,12 +387,14 @@ pub(crate) fn plan_static_scene_with_budgets(
         if !instance.translation.iter().all(|v| v.is_finite()) {
             return Err("Static instance translation contains non-finite values".into());
         }
+        placement.validate_wind()?;
         grouped
             .entry(instance.prototype)
             .or_default()
-            .push(*instance);
+            .push(*placement);
     }
     let mut plan = StaticScenePlan::empty();
+    plan.wind_capable = P::WIND;
     let mut vertex_offset: u64 = 0;
     let mut first_index: u64 = 0;
     let mut union: Option<[[f32; 3]; 2]> = None;
@@ -293,13 +458,16 @@ pub(crate) fn plan_static_scene_with_budgets(
                 }
                 let offset = instance_bytes(&plan.instance_bytes);
                 let mut batch: Option<[[f32; 3]; 2]> = None;
-                for instance in list {
+                for placement in list {
+                    let instance = &placement.base();
                     plan.instance_bytes
                         .extend_from_slice(bytemuck::bytes_of(&instance_record(instance)));
-                    let placed = translate_bounds(
+                    plan.wind_bytes
+                        .extend_from_slice(bytemuck::bytes_of(&placement.wind()));
+                    let placed = wind_margin::<P>(translate_bounds(
                         rotate_bounds(bounds, instance.yaw_quarters),
                         instance.translation,
-                    );
+                    ));
                     if !placed.iter().flatten().all(|v| v.is_finite()) {
                         return Err(
                             "Static instance translation produces non-finite scene bounds".into(),
@@ -335,9 +503,9 @@ pub(crate) fn plan_static_scene_with_budgets(
 }
 
 /// Instance-only planning never reads or copies vertex/index payloads.
-fn plan_instance_update(
+fn plan_instance_update<P: Placement>(
     geometry: &[PrototypeGeometry],
-    instances: &[StaticInstance],
+    instances: &[P],
     budget: usize,
 ) -> Result<InstanceUpdate> {
     let size = instances
@@ -345,8 +513,9 @@ fn plan_instance_update(
         .checked_mul(INSTANCE_RECORD_SIZE)
         .filter(|&n| n <= budget)
         .ok_or("Static instance update exceeds budget")?;
-    let mut grouped: BTreeMap<usize, Vec<&StaticInstance>> = BTreeMap::new();
-    for instance in instances {
+    let mut grouped: BTreeMap<usize, Vec<P>> = BTreeMap::new();
+    for placement in instances {
+        let instance = placement.base();
         let mesh = geometry
             .get(instance.prototype)
             .ok_or("Unknown static prototype")?;
@@ -356,13 +525,15 @@ fn plan_instance_update(
         {
             return Err("Invalid static instance or empty prototype".into());
         }
+        placement.validate_wind()?;
         grouped
             .entry(instance.prototype)
             .or_default()
-            .push(instance);
+            .push(*placement);
     }
     let mut output = InstanceUpdate {
         instance_bytes: Vec::with_capacity(size),
+        wind_bytes: Vec::with_capacity(size),
         prototypes: Vec::new(),
         bounds: [[0.; 3]; 2],
         instance_count: instances.len() as u32,
@@ -372,11 +543,12 @@ fn plan_instance_update(
         let mesh = &geometry[index];
         let offset = instance_bytes(&output.instance_bytes);
         let mut bounds = None;
-        for instance in &placements {
-            let placed = translate_bounds(
+        for placement in &placements {
+            let instance = &placement.base();
+            let placed = wind_margin::<P>(translate_bounds(
                 rotate_bounds(mesh.bounds, instance.yaw_quarters),
                 instance.translation,
-            );
+            ));
             if !placed.iter().flatten().all(|v| v.is_finite()) {
                 return Err("Static instance produces nonfinite bounds".into());
             }
@@ -385,6 +557,9 @@ fn plan_instance_update(
             output
                 .instance_bytes
                 .extend_from_slice(bytemuck::bytes_of(&instance_record(instance)));
+            output
+                .wind_bytes
+                .extend_from_slice(bytemuck::bytes_of(&placement.wind()));
         }
         if mesh.index_count > 0 {
             output.prototypes.push(PrototypeRange {
@@ -408,6 +583,11 @@ pub(crate) struct StaticScene {
     pub(crate) vertices: Option<Buffer>,
     pub(crate) indices: Option<Buffer>,
     pub(crate) instances: Buffer,
+    /// Per-instance wind records, parallel to `instances`. Always present, and
+    /// zero-filled for a scene of plain static instances.
+    pub(crate) wind: Buffer,
+    /// Whether this scene's wind records can be nonzero.
+    wind_capable: bool,
     pub(crate) prototypes: Vec<PrototypeRange>,
     pub(crate) instance_count: u32,
     pub(crate) has_geometry: bool,
@@ -434,9 +614,11 @@ impl StaticScene {
             .transpose()?;
         // An accepted nonempty instance list always produces instance records.
         let instances = Buffer::new(device.clone(), &plan.instance_bytes, usage)?;
+        let wind = Buffer::new(device.clone(), &plan.wind_bytes, usage)?;
         let allocated_bytes = vertices.as_ref().map_or(0, |b| b.size)
             + indices.as_ref().map_or(0, |b| b.size)
-            + instances.size;
+            + instances.size
+            + wind.size;
         let prototype_count = plan.prototypes.len();
         Ok(Self {
             geometry: plan.geometry,
@@ -446,6 +628,8 @@ impl StaticScene {
             vertices,
             indices,
             instances,
+            wind,
+            wind_capable: plan.wind_capable,
             prototypes: plan.prototypes,
             instance_count: plan.instance_count,
             has_geometry: plan.has_geometry,
@@ -457,11 +641,30 @@ impl StaticScene {
         plan_instance_update(&self.geometry, instances, STATIC_INSTANCE_BUDGET_BYTES)
     }
 
+    pub(crate) fn plan_flora_instances(&self, instances: &[FloraInstance]) -> Result<InstanceUpdate> {
+        plan_instance_update(&self.geometry, instances, MAX_FLORA_BYTES)
+    }
+
     /// Caller has waited the sole frame fence. Geometry allocations stay untouched.
     pub(crate) fn update_instances(&mut self, plan: InstanceUpdate) -> Result<()> {
+        // The wind buffer is grown or written first; it and the transform
+        // buffer always hold the same record count, so a failure here leaves
+        // the previous, still-consistent pair published.
+        let device = self.instances.device.clone();
+        if plan.wind_bytes.len() > self.wind.size {
+            let buffer = Buffer::new(
+                device.clone(),
+                &plan.wind_bytes,
+                vk::BufferUsageFlags::VERTEX_BUFFER,
+            )?;
+            self.allocated_bytes = self.allocated_bytes - self.wind.size + buffer.size;
+            self.wind = buffer;
+        } else {
+            self.wind.write(&plan.wind_bytes)?;
+        }
         if plan.instance_bytes.len() > self.instances.size {
             let buffer = Buffer::new(
-                self.instances.device.clone(),
+                device.clone(),
                 &plan.instance_bytes,
                 vk::BufferUsageFlags::VERTEX_BUFFER,
             )?;
@@ -498,6 +701,8 @@ impl StaticScene {
                 .iter()
                 .filter(|p| p.index_count > 0 && p.instance_count > 0)
                 .count(),
+            instance_bytes: self.instances.size + self.wind.size,
+            wind: self.wind_capable,
         }
     }
 
@@ -521,6 +726,11 @@ impl StaticScene {
         unsafe {
             device.cmd_bind_vertex_buffers(cmd, 0, &[vertices.raw], &[0]);
             device.cmd_bind_vertex_buffers(cmd, 1, &[self.instances.raw], &[0]);
+            // Binding 2 is the wind attribute, parallel to binding 1 so a
+            // batch's `firstInstance` selects the same slice of both. A scene
+            // of plain static instances holds zero records here, whose `w = 0`
+            // early-outs the shader, so its geometry is unchanged.
+            device.cmd_bind_vertex_buffers(cmd, 2, &[self.wind.raw], &[0]);
             device.cmd_bind_index_buffer(cmd, indices.raw, 0, vk::IndexType::UINT32);
         }
         let mut batches = 0;
@@ -657,7 +867,7 @@ mod tests {
     #[test]
     fn clearing_instances_retains_reusable_geometry_metadata() {
         let plan = plan_static_scene(&[triangle(1)], &[instance(0, [0.; 3], 0)]).unwrap();
-        let cleared = plan_instance_update(&plan.geometry, &[], 0).unwrap();
+        let cleared = plan_instance_update::<StaticInstance>(&plan.geometry, &[], 0).unwrap();
         assert_eq!(cleared.instance_count, 0);
         assert!(cleared.prototypes.is_empty());
         let again = plan_instance_update(&plan.geometry, &[instance(0, [1.; 3], 0)], 16).unwrap();

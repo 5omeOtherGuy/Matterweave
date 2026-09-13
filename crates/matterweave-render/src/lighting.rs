@@ -67,6 +67,110 @@ impl Atmosphere {
     }
 }
 
+/// Wind driving the vegetation displacement in `world.wgsl`.
+///
+/// The default is *still air*: `strength` zero, so every existing sample
+/// renders exactly as it did before flora existed, even if it uploads
+/// wind-capable instances.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wind {
+    /// Horizontal direction the wind blows toward; normalized by the renderer.
+    /// A zero vector is still air regardless of `strength`.
+    pub direction_xz: [f32; 2],
+    /// Peak horizontal displacement in metres of a fully compliant plant tip.
+    pub strength_m: f32,
+    /// Animation time in seconds. Callers advance it; the renderer folds it so
+    /// a long session cannot lose sine precision.
+    pub time_s: f32,
+}
+
+impl Default for Wind {
+    fn default() -> Self {
+        Self {
+            direction_xz: [1.0, 0.0],
+            strength_m: 0.0,
+            time_s: 0.0,
+        }
+    }
+}
+
+impl Wind {
+    /// Largest displacement the renderer accepts. Past this a blade of grass
+    /// leaves its own footprint entirely, which is a settings mistake.
+    pub const MAX_STRENGTH_M: f32 = 1.5;
+    /// Period the animation time is folded into, in seconds.
+    pub(crate) const TIME_PERIOD_S: f32 = 3600.0;
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.direction_xz.iter().all(|v| v.is_finite()) {
+            return Err("Wind direction components must be finite".into());
+        }
+        if !self.strength_m.is_finite()
+            || !(0.0..=Self::MAX_STRENGTH_M).contains(&self.strength_m)
+        {
+            return Err(format!(
+                "Wind strength must be finite in 0..={}",
+                Self::MAX_STRENGTH_M
+            ));
+        }
+        if !self.time_s.is_finite() {
+            return Err("Wind time must be finite".into());
+        }
+        Ok(())
+    }
+
+    /// `(direction x, direction z, strength, time)` as the shader reads it. A
+    /// zero or degenerate direction collapses to still air rather than NaN.
+    pub(crate) fn packed(&self) -> [f32; 4] {
+        let [x, z] = self.direction_xz;
+        let length = (x * x + z * z).sqrt();
+        let (dx, dz, strength) = if length.is_finite() && length > 1.0e-6 {
+            (x / length, z / length, self.strength_m)
+        } else {
+            (1.0, 0.0, 0.0)
+        };
+        [dx, dz, strength, self.time_s.rem_euclid(Self::TIME_PERIOD_S)]
+    }
+}
+
+/// The player position vegetation is pushed away from.
+///
+/// The default radius is zero: no push, which is what every sample that never
+/// sets one gets.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlayerPush {
+    pub position: [f32; 3],
+    /// Radius in metres inside which flora is parted. Zero disables the push.
+    pub radius_m: f32,
+}
+
+impl PlayerPush {
+    /// Largest push radius the renderer accepts.
+    pub const MAX_RADIUS_M: f32 = 8.0;
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.position.iter().all(|v| v.is_finite()) {
+            return Err("Player push position must be finite".into());
+        }
+        if !self.radius_m.is_finite() || !(0.0..=Self::MAX_RADIUS_M).contains(&self.radius_m) {
+            return Err(format!(
+                "Player push radius must be finite in 0..={}",
+                Self::MAX_RADIUS_M
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn packed(&self) -> [f32; 4] {
+        [
+            self.position[0],
+            self.position[1],
+            self.position[2],
+            self.radius_m,
+        ]
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LightingSettings {
     pub sun: Sun,
@@ -76,6 +180,10 @@ pub struct LightingSettings {
     /// Fog and sky. The default reproduces the look every sample had before
     /// this was a per-frame setting.
     pub atmosphere: Atmosphere,
+    /// Vegetation wind. The default is still air.
+    pub wind: Wind,
+    /// Vegetation walk-through push. The default radius is zero: no push.
+    pub player: PlayerPush,
 }
 
 impl Default for LightingSettings {
@@ -85,6 +193,8 @@ impl Default for LightingSettings {
             shadows: true,
             shadow_map_size: 1024,
             atmosphere: Atmosphere::default(),
+            wind: Wind::default(),
+            player: PlayerPush::default(),
         }
     }
 }
