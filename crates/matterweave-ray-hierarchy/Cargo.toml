@@ -1,0 +1,13 @@
+[package]
+name = "matterweave-ray-hierarchy"
+version.workspace = true
+edition = "2021"
+rust-version = "1.96"
+publish = false
+
+[dependencies]
+matterweave-core = { path = "../matterweave-core" }
+matterweave-render = { path = "../matterweave-render" }
+
+[dev-dependencies]
+glam = "=0.30.9"
