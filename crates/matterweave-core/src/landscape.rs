@@ -295,7 +295,7 @@ impl Default for LodSample {
 /// grid. [`lod_tile_mesh`] omits cells whose centre lies inside and adds a skirt
 /// along the resulting boundary, which is how a finer ring's square is cut out of
 /// a coarser ring without overlap and without a gap.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Clip {
     pub min: [i32; 2],
     pub max: [i32; 2],
@@ -312,7 +312,7 @@ impl Clip {
 }
 
 /// What portion of the distance grid one tile mesh covers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TileFilter {
     /// Cells inside this square are omitted; a finer level covers them.
     pub hole: Option<Clip>,
