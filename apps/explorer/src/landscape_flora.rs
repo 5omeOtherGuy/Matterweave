@@ -14,15 +14,36 @@
 //! # When the field is rebuilt
 //!
 //! Placement is a function of the eye, so it only has to change when the eye
-//! does - and only enough for the plan to differ. A rebuild happens when the
-//! eye enters a new [`REBUILD_CELL_M`] cell, so walking at 5 m/s rebuilds a bit
-//! over once a second and standing still rebuilds never. Every other frame
-//! touches nothing but the wind uniform.
+//! does - and only enough for the plan to differ. A rebuild is triggered only
+//! when the eye's [`REBUILD_CELL_M`] cell has moved more than
+//! [`REBUILD_MARGIN_CELLS`] cells from the committed plan's cell, so a steady
+//! flight cannot rebuild every frame: at the scripted exercise path's one cell
+//! per frame the field rebuilds about once every six frames, and walking at
+//! 5 m/s rebuilds when the margin is crossed rather than at every cell edge.
+//! Every other frame touches nothing but the wind uniform.
 //!
-//! The rebuild is one transaction: the plan, the instance list and the upload
-//! all complete before the renderer swaps its buffers, and any failure leaves
-//! the previous field resident and drawn. A field therefore never flickers,
+//! A rebuild is incremental. [`matterweave_core::landscape::FloraField`] memoises
+//! the generated population of every lattice cell, so the plan for the new eye
+//! reuses the cells the old window already covered and pays only for the cells
+//! the new window adds; the completed plan is bit-identical to
+//! [`matterweave_core::landscape::plan_flora`] at the same eye. Work is admitted
+//! in [`MAX_PLAN_SAMPLES_PER_FRAME`]-cell slices, so a first plan or a large
+//! jump cannot overrun the frame. The plan, the instance list and the upload
+//! complete before the renderer swaps its buffers, and any failure or partial
+//! slice leaves the previous field resident and drawn: a field never flickers,
 //! empties for a frame, or shows a half-uploaded set.
+//!
+//! # Why the cell generation stays on the main thread
+//!
+//! The tile stream runs its mesh generation on a worker because a tile mesh is
+//! expensive and every tile is independent. A plant population is not: the
+//! plan is assembled from the memo in lattice order, generation is interleaved
+//! with that assembly, and the memo turns a rebuild into a few hundred cell
+//! samples rather than thousands. Backgrounding it would add a request/response
+//! latency to every rebuild and a second copy of the memo, to move roughly
+//! 120 cells per frame at 60 Hz - less than the frame's slice on its worst
+//! frame. The bounded memo is the reusable part of that pattern; the worker is
+//! not.
 //!
 //! # What is not here
 //!
@@ -32,7 +53,7 @@
 //! batches, which is the same bound the static path has always had.
 
 use matterweave_core::landscape::{
-    self, FloraKind, FloraPlan, PlacedFlora, FLORA_MAX_VARIATION_PERCENT,
+    FloraField, FloraKind, FloraPlan, PlacedFlora, FLORA_MAX_VARIATION_PERCENT,
     FLORA_MIN_VARIATION_PERCENT, LANDSCAPE_FLORA_TIERS,
 };
 use matterweave_core::Mesh;
@@ -51,8 +72,28 @@ use crate::detail_runtime::{DetailRuntime, RESIDENT_LODS};
 pub const MAX_PLANNED_SITES: usize = 9_000;
 /// Tree placements one plan may carry.
 pub const MAX_PLANNED_TREES: usize = 700;
-/// Eye movement, in metres, that triggers a rebuild.
+/// Eye movement, in metres, that names a rebuild cell. The committed field is
+/// only re-anchored when the eye has left this cell by [`REBUILD_MARGIN_CELLS`].
 pub const REBUILD_CELL_M: i32 = 4;
+/// Whole [`REBUILD_CELL_M`] cells the eye may drift from the committed plan's
+/// cell before the field is rebuilt.
+///
+/// The margin must exceed the eye's per-frame travel at flight speed -
+/// 90 m/s at 60 Hz is 1.5 m, well inside the 4 m cell - and must carry the
+/// scripted exercise path (4 m, one cell, per frame) far below one rebuild per
+/// frame. Five cells of margin means a rebuild is not even requested more often
+/// than once every six frames on that path, and the plan commits within a few
+/// frames of the request, so the field never trails the eye by more than the
+/// margin plus that latency.
+pub const REBUILD_MARGIN_CELLS: i32 = 5;
+/// Cells one frame may newly generate while planning.
+///
+/// The field only generates cells the previous window did not cover, so a
+/// rebuild after a normal hysteresis step needs a few hundred to about a
+/// thousand; this cap commits one in a few frames and keeps every planning
+/// frame's admitted work small, while a pathological jump is carried by the
+/// next frame's slice.
+pub const MAX_PLAN_SAMPLES_PER_FRAME: usize = 256;
 /// Main-thread milliseconds one rebuild may spend planning. Reported, not
 /// enforced by truncation: a plan that overran is still a correct plan, and
 /// hiding the overrun would be worse than showing it.
@@ -155,6 +196,10 @@ pub struct FloraCounters {
     pub worst_upload_ms: f64,
     /// Rebuilds whose plan exceeded [`MAX_REBUILD_MS`].
     pub over_budget: u64,
+    /// A slice of a rebuild is still pending; the resident field is unchanged.
+    pub pending: bool,
+    /// Lattice cells the field has generated over the run, i.e. memo misses.
+    pub samples: u64,
 }
 
 /// Pool index and prototype height in metres per `(prototype id, level)`.
@@ -164,11 +209,14 @@ type Resident = BTreeMap<(&'static str, Lod), (usize, f32)>;
 pub struct LandscapeFlora {
     runtime: DetailRuntime,
     resident: Resident,
-    plan: FloraPlan,
+    /// Incremental placement field: the committed plan plus the per-cell memo.
+    field: FloraField,
     instances: Vec<FloraInstance>,
     installed: bool,
-    /// The [`REBUILD_CELL_M`] cell the resident field was planned for.
-    cell: Option<[i32; 2]>,
+    /// [`FloraField::generation`] the renderer's current buffers were filled
+    /// from. Differs from the field's generation when a rebuild has committed
+    /// but not yet been uploaded.
+    uploaded_generation: u64,
     counters: FloraCounters,
 }
 
@@ -208,10 +256,10 @@ impl LandscapeFlora {
         Ok(Self {
             runtime,
             resident,
-            plan: FloraPlan::default(),
+            field: FloraField::new(crate::landscape::SEED),
             instances: Vec::with_capacity(MAX_PLANNED_SITES + MAX_PLANNED_TREES),
             installed: false,
-            cell: None,
+            uploaded_generation: 0,
             counters: FloraCounters::default(),
         })
     }
@@ -220,7 +268,7 @@ impl LandscapeFlora {
         self.counters
     }
 
-    /// The cell an eye position belongs to.
+    /// The rebuild cell an eye position belongs to.
     fn cell_of(eye: [f32; 3]) -> [i32; 2] {
         [
             (eye[0].floor() as i32).div_euclid(REBUILD_CELL_M),
@@ -228,28 +276,73 @@ impl LandscapeFlora {
         ]
     }
 
-    /// Rebuild and upload the field if the eye left its cell.
+    /// The rebuild cell a committed metre anchor belongs to.
+    fn metre_cell(metres: [i32; 2]) -> [i32; 2] {
+        [
+            metres[0].div_euclid(REBUILD_CELL_M),
+            metres[1].div_euclid(REBUILD_CELL_M),
+        ]
+    }
+
+    /// Whether the committed field still covers the eye within the hysteresis
+    /// margin, so no rebuild is due yet.
     ///
-    /// Returns without touching the renderer when the eye is still in the cell
-    /// the resident field was planned for, which is every frame but one in
-    /// several seconds of walking. On any error the previous field stays
-    /// resident and `cell` is not advanced, so the next frame retries.
+    /// This is the hysteresis: the field follows the eye once it is more than
+    /// [`REBUILD_MARGIN_CELLS`] cells from the cell the committed plan was made
+    /// in, not the instant the eye crosses a cell edge.
+    fn field_covers_eye(&self, eye: [f32; 3]) -> bool {
+        self.field
+            .anchor()
+            .is_some_and(|anchor| anchor_covers(anchor, eye))
+    }
+
+    /// Advance and upload the field when the eye leaves the committed plan's
+    /// hysteresis window.
+    ///
+    /// Returns without touching the renderer while the committed field covers
+    /// the eye and is already installed, which is every frame until the eye has
+    /// moved [`REBUILD_MARGIN_CELLS`] cells past the plan's cell. A slice that
+    /// runs out of budget also returns without uploading: the resident field
+    /// stays exactly as it was and the next frame carries the remainder. On an
+    /// upload error the plan stays committed but uninstalled, so the next frame
+    /// retries the upload rather than re-planning the field.
     pub fn sync(&mut self, renderer: &mut Renderer, eye: [f32; 3]) -> Result<(), String> {
-        let cell = Self::cell_of(eye);
-        if self.installed && self.cell == Some(cell) {
+        if self.installed
+            && self.uploaded_generation == self.field.generation()
+            && self.field_covers_eye(eye)
+        {
             return Ok(());
         }
+        let previous = self.counters;
         let plan_begin = Instant::now();
-        landscape::plan_flora_into(
-            crate::landscape::SEED,
+        let generation_before = self.field.generation();
+        let ready = self.field.advance(
             eye,
             &LANDSCAPE_FLORA_TIERS,
             MAX_PLANNED_SITES,
             MAX_PLANNED_TREES,
-            &mut self.plan,
+            MAX_PLAN_SAMPLES_PER_FRAME,
         );
-        let refused = fill_instances(&self.resident, &self.plan, &mut self.instances);
         let plan_ms = plan_begin.elapsed().as_secs_f64() * 1000.;
+        if !ready {
+            // A slice, not a failure: the committed field stays resident and
+            // drawn, and the next frame carries the remainder.
+            self.counters = FloraCounters {
+                plan_ms,
+                worst_plan_ms: previous.worst_plan_ms.max(plan_ms),
+                over_budget: previous.over_budget + u64::from(plan_ms > MAX_REBUILD_MS),
+                pending: true,
+                samples: self.field.samples(),
+                ..previous
+            };
+            return Ok(());
+        }
+        let rebuilt = self.field.generation() != generation_before;
+        let (planned_sites, planned_trees, dropped, refused) = {
+            let plan = self.field.plan();
+            let refused = fill_instances(&self.resident, plan, &mut self.instances);
+            (plan.sites.len(), plan.trees.len(), plan.dropped, refused)
+        };
         let upload_begin = Instant::now();
         // Transactional in both directions: the renderer validates and packs
         // the whole list before it swaps or writes a buffer, so a rejected
@@ -261,23 +354,25 @@ impl LandscapeFlora {
         };
         let upload_ms = upload_begin.elapsed().as_secs_f64() * 1000.;
         self.installed = true;
-        self.cell = Some(cell);
+        self.uploaded_generation = self.field.generation();
         self.counters = FloraCounters {
-            planned_sites: self.plan.sites.len(),
-            planned_trees: self.plan.trees.len(),
+            planned_sites,
+            planned_trees,
             // The planner's own refusals plus the placements this module could
             // not draw, so `dropped` accounts for every planned plant that is
             // not on screen: dropping is fine, under-reporting is not.
-            dropped: self.plan.dropped + refused,
+            dropped: dropped + refused,
             drawn: stats.instances,
             batches: stats.batches,
             instance_bytes: stats.instance_bytes,
             plan_ms,
             upload_ms,
-            rebuilds: self.counters.rebuilds + 1,
-            worst_plan_ms: self.counters.worst_plan_ms.max(plan_ms),
-            worst_upload_ms: self.counters.worst_upload_ms.max(upload_ms),
-            over_budget: self.counters.over_budget + u64::from(plan_ms > MAX_REBUILD_MS),
+            rebuilds: previous.rebuilds + u64::from(rebuilt),
+            worst_plan_ms: previous.worst_plan_ms.max(plan_ms),
+            worst_upload_ms: previous.worst_upload_ms.max(upload_ms),
+            over_budget: previous.over_budget + u64::from(plan_ms > MAX_REBUILD_MS),
+            pending: false,
+            samples: self.field.samples(),
         };
         Ok(())
     }
@@ -285,15 +380,21 @@ impl LandscapeFlora {
     /// Forget the renderer this field was installed into.
     ///
     /// A renderer recreation (Android suspend/resume, a lost device) destroys
-    /// the flora buffers with the renderer. The plan and the pooled CPU meshes
-    /// survive, so this only marks the field uninstalled: the next [`Self::sync`]
-    /// re-installs it instead of updating a scene that no longer exists. The
-    /// resident plan is kept so a same-cell frame after the recreation does not
-    /// have to replan, only re-upload.
+    /// the flora buffers with the renderer. The committed field and its cell
+    /// memo survive, so this only marks the field uninstalled: the next
+    /// [`Self::sync`] re-uploads the committed plan instead of re-planning it.
     pub fn forget_renderer(&mut self) {
         self.installed = false;
-        self.cell = None;
     }
+}
+
+/// Whether a committed metre anchor still covers an eye under the rebuild
+/// hysteresis. Shared by [`LandscapeFlora::field_covers_eye`] and its test so
+/// the trigger arithmetic is exercised without building any prototype.
+fn anchor_covers(anchor: [i32; 2], eye: [f32; 3]) -> bool {
+    let anchor = LandscapeFlora::metre_cell(anchor);
+    let eye = LandscapeFlora::cell_of(eye);
+    (anchor[0] - eye[0]).abs().max((anchor[1] - eye[1]).abs()) <= REBUILD_MARGIN_CELLS
 }
 
 /// Fill `instances` with every placement of `plan` that has resident geometry,
@@ -393,7 +494,7 @@ impl AsSite for PlacedFlora {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use matterweave_core::landscape::LANDSCAPE_TREE_RADIUS_M;
+    use matterweave_core::landscape::{self, LANDSCAPE_TREE_RADIUS_M};
 
     #[test]
     fn every_prototype_the_catalogue_can_place_is_pooled_with_a_height() {
@@ -625,5 +726,107 @@ mod tests {
             LandscapeFlora::cell_of([-1.0, 0.0, -1.0]),
             LandscapeFlora::cell_of([-3.9, 0.0, -3.9])
         );
+    }
+
+    #[test]
+    fn the_hysteresis_margin_exceeds_a_frame_of_flight() {
+        // Flight speed is 90 m/s: at 60 Hz one frame covers 1.5 m, far inside
+        // both the 4 m cell and the margin's 20 m. The scripted exercise path
+        // moves a whole 4 m cell per frame, which the margin must still absorb.
+        let flight_m = 90.0 / 60.0;
+        let margin_m = (REBUILD_MARGIN_CELLS * REBUILD_CELL_M) as f32;
+        assert!(flight_m < margin_m);
+        assert!(REBUILD_CELL_M as f32 <= margin_m);
+        // A whole cell of margin beyond the first, or a 4 m step would trigger
+        // the instant it crossed a cell edge.
+        const {
+            assert!(REBUILD_MARGIN_CELLS >= 1);
+        }
+    }
+
+    #[test]
+    fn the_exercise_path_stays_well_under_the_rebuild_budget() {
+        // One step of the scripted path is 200 m * 0.02 rad = 4 m, exactly one
+        // rebuild cell, so a field that followed every cell edge would rebuild
+        // on all 300 frames. The acceptance target is 60 or fewer.
+        let mut anchor: Option<[i32; 2]> = None;
+        let mut rebuilds = 0usize;
+        for frame in 0..300 {
+            let angle = frame as f32 * 0.02;
+            let eye = [200.0 * angle.sin(), 60.0, 200.0 * angle.cos()];
+            if !anchor.is_some_and(|anchor| anchor_covers(anchor, eye)) {
+                // The field commits at the eye metre, exactly as `advance` does.
+                anchor = Some([eye[0].floor() as i32, eye[2].floor() as i32]);
+                rebuilds += 1;
+            }
+        }
+        assert!(
+            rebuilds <= 60,
+            "the exercise path rebuilt {rebuilds} times in 300 frames"
+        );
+    }
+
+    #[test]
+    fn a_step_inside_the_margin_does_not_rebuild_and_a_step_past_it_does() {
+        let anchor = [0, 0];
+        // The margin is five cells; a step within it stays covered.
+        let inside = [
+            REBUILD_MARGIN_CELLS as f32 * REBUILD_CELL_M as f32,
+            0.0,
+            0.0,
+        ];
+        assert!(anchor_covers(anchor, inside));
+        let outside = [
+            (REBUILD_MARGIN_CELLS + 1) as f32 * REBUILD_CELL_M as f32,
+            0.0,
+            0.0,
+        ];
+        assert!(!anchor_covers(anchor, outside));
+        // Distance is Chebyshev on the cell grid: a diagonal inside the margin
+        // is still covered, and a diagonal past it is not.
+        let diagonal = [inside[0], 0.0, inside[0]];
+        assert!(anchor_covers(anchor, diagonal));
+        let past_diagonal = [outside[0], 0.0, outside[0]];
+        assert!(!anchor_covers(anchor, past_diagonal));
+    }
+
+    #[test]
+    fn each_rebuild_publishes_exactly_the_planner_output_for_its_camera() {
+        // `sync` commits only at the eye of the frame that completes an
+        // advance, and that commit must be exactly the old planner's output for
+        // the same camera position: sites, species, yaw, scale, height and
+        // bend variation, and the wind phase derived from them.
+        let mut field = FloraField::new(crate::landscape::SEED);
+        let mut rebuilds = 0usize;
+        for frame in 0..300 {
+            let angle = frame as f32 * 0.02;
+            let eye = [200.0 * angle.sin(), 60.0, 200.0 * angle.cos()];
+            if field
+                .anchor()
+                .is_some_and(|anchor| anchor_covers(anchor, eye))
+            {
+                continue;
+            }
+            assert!(field.advance(
+                eye,
+                &LANDSCAPE_FLORA_TIERS,
+                MAX_PLANNED_SITES,
+                MAX_PLANNED_TREES,
+                usize::MAX
+            ));
+            assert_eq!(
+                field.plan(),
+                &landscape::plan_flora(
+                    crate::landscape::SEED,
+                    eye,
+                    &LANDSCAPE_FLORA_TIERS,
+                    MAX_PLANNED_SITES,
+                    MAX_PLANNED_TREES,
+                ),
+                "rebuild {rebuilds} committed at frame {frame}"
+            );
+            rebuilds += 1;
+        }
+        assert!(rebuilds <= 60, "the path rebuilt {rebuilds} times");
     }
 }

@@ -47,6 +47,7 @@ use crate::hash;
 use crate::material;
 use crate::mesh::{Mesh, Vertex};
 use crate::{CHUNK_EDGE, STREAM_RADIUS_CHUNKS};
+use std::collections::HashMap;
 
 /// Identity of this generator's output. Bump for any change to the columns,
 /// materials or flora population it produces.
@@ -939,15 +940,156 @@ pub fn plan_flora_into(
     max_trees: usize,
     plan: &mut FloraPlan,
 ) {
+    let mut cache = FloraCellCache::default();
+    if !plan_flora_cached_into(
+        seed,
+        eye,
+        tiers,
+        max_sites,
+        max_trees,
+        usize::MAX,
+        &mut cache,
+        plan,
+    ) {
+        debug_assert!(false, "an unlimited sample budget must complete the plan");
+    }
+}
+
+/// Bounded memo of generated flora populations.
+///
+/// [`flora_cell`] and [`tree_cell`] are pure functions of the seed and the
+/// lattice coordinate, and a plan's cost is almost entirely the [`column`]
+/// samples those functions take. A memo lets a field that moves reuse every
+/// cell the previous window covered and pay only for the cells the new window
+/// adds. [`plan_flora_cached_into`] trims the memo back to the window after a
+/// completed plan, so a camera that never stops cannot grow it.
+///
+/// `samples` counts the misses, i.e. the cells actually generated. It is the
+/// number a test compares against a from-scratch plan to show the memo is doing
+/// the work, and the number a caller slices on.
+#[derive(Clone, Debug, Default)]
+pub struct FloraCellCache {
+    ground: HashMap<[i32; 2], FloraCell>,
+    trees: HashMap<[i32; 2], Option<FloraSite>>,
+    samples: u64,
+}
+
+impl FloraCellCache {
+    /// Ground-cover cells currently memoised.
+    pub fn ground_cells(&self) -> usize {
+        self.ground.len()
+    }
+
+    /// Tree cells currently memoised, including cells that hold no tree.
+    pub fn tree_cells(&self) -> usize {
+        self.trees.len()
+    }
+
+    /// Cells generated since construction, i.e. memo misses.
+    pub fn samples(&self) -> u64 {
+        self.samples
+    }
+
+    /// Drop every memoised cell.
+    pub fn clear(&mut self) {
+        self.ground.clear();
+        self.trees.clear();
+    }
+
+    /// The cell's population, generating it if it is not memoised. `None` means
+    /// the budget was exhausted; the cell may still be memoised by a later call.
+    fn ensure_ground(
+        &mut self,
+        seed: u64,
+        cell: [i32; 2],
+        remaining: &mut usize,
+    ) -> Option<FloraCell> {
+        if let Some(cached) = self.ground.get(&cell) {
+            return Some(*cached);
+        }
+        if *remaining == 0 {
+            return None;
+        }
+        *remaining -= 1;
+        self.samples += 1;
+        let sample = flora_cell(seed, cell[0], cell[1]);
+        self.ground.insert(cell, sample);
+        Some(sample)
+    }
+
+    /// Memoise the tree cell if it is not already known and return its tree.
+    /// `None` means the budget was exhausted before the cell could be
+    /// generated; `Some(None)` means the cell holds no tree.
+    fn tree(
+        &mut self,
+        seed: u64,
+        cell: [i32; 2],
+        remaining: &mut usize,
+    ) -> Option<Option<FloraSite>> {
+        if let Some(cached) = self.trees.get(&cell) {
+            return Some(*cached);
+        }
+        if *remaining == 0 {
+            return None;
+        }
+        *remaining -= 1;
+        self.samples += 1;
+        let sample = tree_cell(seed, cell[0], cell[1]);
+        self.trees.insert(cell, sample);
+        Some(sample)
+    }
+
+    /// Keep only the cells the completed plan's windows cover. Inclusive
+    /// `[min_x, max_x, min_z, max_z]` bounds, in lattice cells; `None` for the
+    /// ground window means the tier set carries no ground-cover cells at all.
+    fn trim(&mut self, ground: Option<[i32; 4]>, trees: [i32; 4]) {
+        self.ground.retain(|cell, _| {
+            ground.is_some_and(|window| {
+                (window[0]..=window[1]).contains(&cell[0])
+                    && (window[2]..=window[3]).contains(&cell[1])
+            })
+        });
+        self.trees.retain(|cell, _| {
+            (trees[0]..=trees[1]).contains(&cell[0]) && (trees[2]..=trees[3]).contains(&cell[1])
+        });
+    }
+}
+
+/// [`plan_flora_into`] over a caller-owned cell memo, generating at most
+/// `sample_budget` cells that are not yet memoised.
+///
+/// Returns whether the plan is complete. On `false`, `plan` holds a partial list
+/// the caller must not publish, but every cell the call reached is already in
+/// `cache`, so a retry restarts cheaply and continues past the point the budget
+/// stopped it. `usize::MAX` always completes.
+///
+/// The completed output is identical to [`plan_flora_into`] for the same
+/// arguments. The memo changes only where a cell's population comes from, and
+/// ground cells are generated in the same ascending lattice order as the plain
+/// planner visits them.
+#[allow(clippy::too_many_arguments)] // `plan_flora_into`'s arguments plus the memo and its budget
+pub fn plan_flora_cached_into(
+    seed: u64,
+    eye: [f32; 3],
+    tiers: &[FloraTier],
+    max_sites: usize,
+    max_trees: usize,
+    sample_budget: usize,
+    cache: &mut FloraCellCache,
+    plan: &mut FloraPlan,
+) -> bool {
     plan.clear();
+    let mut remaining = sample_budget;
     let eye_x = eye_metre(eye[0]);
     let eye_z = eye_metre(eye[2]);
     let outer = tiers.iter().map(|tier| tier.radius_m).max().unwrap_or(0);
+    let mut ground_window: Option<[i32; 4]> = None;
     if outer > 0 {
         let first = (eye_x - outer).div_euclid(FLORA_CELL_M);
         let last = (eye_x + outer).div_euclid(FLORA_CELL_M);
         let first_z = (eye_z - outer).div_euclid(FLORA_CELL_M);
         let last_z = (eye_z + outer).div_euclid(FLORA_CELL_M);
+        ground_window = Some([first, last, first_z, last_z]);
         for cell_z in first_z..=last_z {
             for cell_x in first..=last {
                 let origin_x = cell_x * FLORA_CELL_M;
@@ -958,7 +1100,10 @@ pub fn plan_flora_into(
                 if !keeps_cell(seed, cell_x, cell_z, tiers[tier as usize].keep_every) {
                     continue;
                 }
-                for site in flora_cell(seed, cell_x, cell_z).sites() {
+                let Some(cell) = cache.ensure_ground(seed, [cell_x, cell_z], &mut remaining) else {
+                    return false;
+                };
+                for site in cell.sites() {
                     if plan.sites.len() >= max_sites {
                         plan.dropped += 1;
                         continue;
@@ -975,7 +1120,10 @@ pub fn plan_flora_into(
     let last_z = (eye_z + LANDSCAPE_TREE_RADIUS_M).div_euclid(TREE_CELL_M);
     for cell_z in first_z..=last_z {
         for cell_x in first..=last {
-            let Some(site) = tree_cell(seed, cell_x, cell_z) else {
+            let Some(site) = cache.tree(seed, [cell_x, cell_z], &mut remaining) else {
+                return false;
+            };
+            let Some(site) = site else {
                 continue;
             };
             if chebyshev(site.x, site.z, eye_x, eye_z) > LANDSCAPE_TREE_RADIUS_M {
@@ -988,6 +1136,116 @@ pub fn plan_flora_into(
             let tier = tier_of(tiers, chebyshev(site.x, site.z, eye_x, eye_z)).unwrap_or(last_tier);
             plan.trees.push(PlacedFlora::from_site(site, tier, seed));
         }
+    }
+    cache.trim(ground_window, [first, last, first_z, last_z]);
+    true
+}
+
+/// Incremental flora placement field for one seed and tier configuration.
+///
+/// The field owns a [`FloraCellCache`] and the last committed [`FloraPlan`].
+/// [`Self::advance`] moves the field to an eye position by re-running
+/// [`plan_flora_cached_into`], so only the cells the new window adds are
+/// generated and the committed plan is exactly what [`plan_flora`] returns for
+/// the same eye. Work is admitted in bounded slices: an `advance` that runs out
+/// of budget returns `false` with the previous plan untouched, and the next
+/// call continues from the memo.
+///
+/// The tier slice and the caps are fixed for the field's lifetime: pass the
+/// same values on every call.
+#[derive(Clone, Debug)]
+pub struct FloraField {
+    seed: u64,
+    cache: FloraCellCache,
+    plan: FloraPlan,
+    pending: FloraPlan,
+    anchor: Option<[i32; 2]>,
+    generation: u64,
+}
+
+impl FloraField {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            seed,
+            cache: FloraCellCache::default(),
+            plan: FloraPlan::default(),
+            pending: FloraPlan::default(),
+            anchor: None,
+            generation: 0,
+        }
+    }
+
+    /// Eye metre position of the committed plan, `None` before the first
+    /// commit. The x and z axes are returned in that order.
+    pub fn anchor(&self) -> Option<[i32; 2]> {
+        self.anchor
+    }
+
+    /// Number of committed plans. Increments once per completed advance, so a
+    /// caller can tell a rebuild from re-uploading the same plan.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The committed plan. Equal to [`plan_flora`] for the committed eye.
+    pub fn plan(&self) -> &FloraPlan {
+        &self.plan
+    }
+
+    /// Cells the field has generated over its lifetime.
+    pub fn samples(&self) -> u64 {
+        self.cache.samples()
+    }
+
+    /// Ground-cover cells currently memoised.
+    pub fn cached_ground_cells(&self) -> usize {
+        self.cache.ground_cells()
+    }
+
+    /// Tree cells currently memoised.
+    pub fn cached_tree_cells(&self) -> usize {
+        self.cache.tree_cells()
+    }
+
+    /// Advance the field to `eye`, generating at most `sample_budget` cells.
+    ///
+    /// Returns `true` when [`Self::plan`] is the plan for `eye`; repeating the
+    /// call for the same eye is then free. Returns `false` when the budget ran
+    /// out: the previous committed plan is left in place and the next call
+    /// carries on. A non-finite eye folds to zero exactly as [`plan_flora`]
+    /// does.
+    pub fn advance(
+        &mut self,
+        eye: [f32; 3],
+        tiers: &[FloraTier],
+        max_sites: usize,
+        max_trees: usize,
+        sample_budget: usize,
+    ) -> bool {
+        let eye_x = eye_metre(eye[0]);
+        let eye_z = eye_metre(eye[2]);
+        if self.anchor == Some([eye_x, eye_z]) {
+            return true;
+        }
+        let complete = plan_flora_cached_into(
+            self.seed,
+            eye,
+            tiers,
+            max_sites,
+            max_trees,
+            sample_budget,
+            &mut self.cache,
+            &mut self.pending,
+        );
+        if !complete {
+            return false;
+        }
+        // Publish atomically, and hand the old plan's buffers to the next
+        // in-flight attempt instead of reallocating them.
+        std::mem::swap(&mut self.plan, &mut self.pending);
+        self.anchor = Some([eye_x, eye_z]);
+        self.generation = self.generation.wrapping_add(1);
+        true
     }
 }
 

@@ -29,6 +29,7 @@
 use crate::controls::{Camera, Controls};
 use crate::landscape_flora::{LandscapeFlora, PUSH_RADIUS_M, WIND_DIRECTION_XZ, WIND_STRENGTH_M};
 use crate::landscape_tiles::{TileStream, MAX_TILE_MS, MAX_TILE_UPLOADS};
+use crate::landscape_water::WaterStream;
 use crate::metrics;
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
@@ -38,7 +39,6 @@ use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
     Atmosphere, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun, Water, Wind,
 };
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -61,12 +61,6 @@ pub const MAX_MARKER_BYTES: u64 = 128;
 /// Generator seed of the sample world. The generator is a versioned function of
 /// this seed, so the same build always shows the same landscape.
 pub const SEED: u64 = 20260913;
-
-/// Derived water meshes built and uploaded in one frame. Only the sea-level
-/// chunk layer carries water, so this is at most one mesh per column stack.
-pub const MAX_WATER_UPLOADS: usize = 8;
-/// Main-thread milliseconds one frame may spend deriving and uploading water.
-pub const MAX_WATER_MS: f64 = 2.0;
 
 /// Eye height above the surface in walk mode.
 const EYE_HEIGHT: f32 = 1.7;
@@ -459,14 +453,15 @@ pub struct LandscapeSample {
     /// Which cloud setting this run is flying with. Switched by C at run time
     /// and by `--clouds` before the first frame.
     pub clouds: CloudChoice,
+    /// Water surfaces: the identity-keyed derived-mesh cache plus the window
+    /// residency that decides what the renderer holds.
+    water: WaterStream,
     /// Water meshes uploaded over the run, and this frame's phase times: the
     /// whole sync, the mesh derivation, and the upload calls (which fence).
     water_uploaded: u64,
     water_ms: f64,
     water_generate_ms: f64,
     water_upload_ms: f64,
-    /// World revision each resident water key was derived at.
-    water_stamps: BTreeMap<[i32; 3], u64>,
     /// Last sync's window size and sea-level candidate count, for the report.
     water_window: usize,
     water_candidates: usize,
@@ -574,11 +569,11 @@ impl LandscapeSample {
             wind_time: 0.,
             cloud_time: 0.,
             clouds: CloudChoice::default(),
+            water: WaterStream::new(terrain_source, SEED),
             water_uploaded: 0,
             water_ms: 0.,
             water_generate_ms: 0.,
             water_upload_ms: 0.,
-            water_stamps: BTreeMap::new(),
             water_window: 0,
             water_candidates: 0,
             profile,
@@ -702,15 +697,17 @@ impl LandscapeSample {
 
     /// Derive and upload the water surface of every resident sea-level chunk.
     ///
-    /// Only the chunk layer that contains sea level can hold water, so a window
-    /// change adds at most one water mesh per column stack. The derivation reads
-    /// the authoritative world, so an edit that raises land above sea level
-    /// removes its surface on the next sync, exactly like a chunk mesh.
+    /// [`WaterStream`] owns the identity-keyed derived-mesh cache and the
+    /// window residency: a surface is derived once per generator identity and
+    /// re-uploaded only when it enters the renderer's window, and a surface the
+    /// window drops keeps its derived mesh pinned in the CPU cache for a
+    /// bounded window, so a camera on a chunk edge is an upload, not a
+    /// regeneration. Only the chunk layer that contains sea level can hold
+    /// water, so the stream ignores every other layer.
     fn sync_water(&mut self) -> Result<(), String> {
         let Some(renderer) = self.renderer.as_mut() else {
             return Ok(());
         };
-        let begin = Instant::now();
         // Residency, not `chunk_keys`: an open-water column stores no voxels at
         // all, so its chunk is absent and a surface over it still has to be
         // derived. Residency is exactly the set of chunks the window published.
@@ -718,43 +715,13 @@ impl LandscapeSample {
             .world
             .stream_resident_chunks()
             .unwrap_or_else(|| self.world.chunk_keys());
-        renderer.retain_water_chunks(&keys)?;
-        let level = matterweave_core::water::sea_level_chunk_y();
-        let revision = self.world.revision();
-        self.water_window = keys.len();
-        self.water_candidates = keys.iter().filter(|key| key[1] == level).count();
-        let mut uploaded = 0usize;
-        let mut generate_ms = 0.0;
-        let mut upload_ms = 0.0;
-        for key in &keys {
-            if key[1] != level {
-                continue;
-            }
-            // The stamp is the whole-world revision: any edit can change the
-            // terrain under a water surface, and re-deriving the sea-level layer
-            // costs one mesh per column stack, not one per resident chunk.
-            if self.water_stamps.get(key) == Some(&revision) {
-                continue;
-            }
-            let generate_begin = Instant::now();
-            let mesh = self.world.water_mesh_chunk(*key);
-            generate_ms += generate_begin.elapsed().as_secs_f64() * 1000.;
-            let upload_begin = Instant::now();
-            renderer.upload_water_chunk(*key, &mesh)?;
-            upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
-            self.water_stamps.insert(*key, revision);
-            uploaded += 1;
-            if uploaded >= MAX_WATER_UPLOADS
-                || begin.elapsed().as_secs_f64() * 1000. >= MAX_WATER_MS
-            {
-                break;
-            }
-        }
-        self.water_stamps.retain(|key, _| keys.contains(key));
-        self.water_uploaded += uploaded as u64;
-        self.water_ms = begin.elapsed().as_secs_f64() * 1000.;
-        self.water_generate_ms = generate_ms;
-        self.water_upload_ms = upload_ms;
+        let counters = self.water.sync(renderer, &self.world, &keys, self.frames)?;
+        self.water_uploaded = counters.uploaded;
+        self.water_ms = counters.wall_ms;
+        self.water_generate_ms = counters.generate_ms;
+        self.water_upload_ms = counters.upload_ms;
+        self.water_window = counters.window;
+        self.water_candidates = counters.candidates;
         Ok(())
     }
 
@@ -1083,6 +1050,7 @@ impl LandscapeSample {
                 .unwrap_or_default();
             let water = self.renderer.as_ref().unwrap().water_stats();
             let tile_work = self.tiles.counters();
+            let water_work = self.water.counters();
             eprintln!(
                 "LANDSCAPE SMOKE PASS: {} presented frames; {}",
                 self.frames,
@@ -1095,7 +1063,8 @@ impl LandscapeSample {
                  LANDSCAPE CHUNK: {} uploaded over the run | last frame {:.2} ms (generate {:.2}, \
                  upload {:.2}) | {} requested {} polled\n\
                  LANDSCAPE WATER: resident {} visible {} uploaded {} | {} KiB | {} ms this frame \
-                 (generate {:.2}, upload {:.2}) | window {} candidates {}\n\
+                 (generate {:.2}, upload {:.2}) | window {} candidates {} | derived {} served {} \
+                 evicted {} | cache {} KiB / {} entries\n\
                  frame {:.1} ms\n\
                  LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms generating + {:.2} ms \
                  uploading (the upload waits on the frame fence) + {:.2} ms planning; \
@@ -1131,6 +1100,11 @@ impl LandscapeSample {
                 self.water_upload_ms,
                 self.water_window,
                 self.water_candidates,
+                water_work.generated,
+                water_work.served_from_cache,
+                water_work.evicted,
+                self.water.cache_bytes() / 1024,
+                self.water.cache_entries(),
                 self.frame_ms,
                 tile_work.worst.tiles,
                 tile_work.worst.build_ms,
@@ -1147,8 +1121,8 @@ impl LandscapeSample {
             eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
             eprintln!(
                 "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
-                 bytes {} | plan {:.2} ms (worst {:.2}, budget {:.1}, over {}) upload {:.2} ms \
-                 | rebuilds {}",
+                 bytes {} | plan {:.2} ms (worst {:.2}, budget {:.1}, over {}, pending {}) \
+                 upload {:.2} ms | rebuilds {} cells {}",
                 flora.planned_sites,
                 flora.planned_trees,
                 flora.dropped,
@@ -1159,8 +1133,10 @@ impl LandscapeSample {
                 flora.worst_plan_ms,
                 crate::landscape_flora::MAX_REBUILD_MS,
                 flora.over_budget,
+                flora.pending,
                 flora.upload_ms,
                 flora.rebuilds,
+                flora.samples,
             );
             event_loop.exit();
         }
@@ -1373,6 +1349,9 @@ impl ApplicationHandler for LandscapeSample {
         // The CPU cache and the generation worker hold no GPU objects and
         // stay, so the next resume re-uploads instead of regenerating.
         self.tiles.forgot_renderer();
+        // The water cache holds CPU meshes only; the renderer's surfaces die
+        // with it, so only the residency bookkeeping is cleared.
+        self.water.forgot_renderer();
         self.controls.clear();
         self.focused = false;
         if let Some(profile) = &mut self.profile {
