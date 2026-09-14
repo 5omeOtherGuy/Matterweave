@@ -590,6 +590,9 @@ pub struct TileCounters {
     pub total_generate_ms: f64,
     /// Meshes the worker produced (or the fallback generated) over the run.
     pub generated: u64,
+    /// Of `generated`, the meshes the main-thread fallback generated because
+    /// the worker was unavailable.
+    pub fallback_generated: u64,
     /// Jobs handed to the worker this frame.
     pub requested: u32,
     /// Builds served by the CPU cache instead of the generator.
@@ -742,6 +745,7 @@ impl TileStream {
                     generate_ms += elapsed;
                     self.counters.total_generate_ms += elapsed;
                     self.counters.generated += 1;
+                    self.counters.fallback_generated += 1;
                     self.cache.insert(key, mesh)
                 }
                 // Still being generated; a later frame uploads it.

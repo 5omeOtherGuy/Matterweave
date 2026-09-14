@@ -1056,7 +1056,8 @@ impl LandscapeSample {
                  LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms generating + {:.2} ms \
                  uploading (the upload waits on the frame fence) + {:.2} ms planning; \
                  budget {} tiles / {:.1} ms\n\
-                 LANDSCAPE TILE COST: {} meshes generated in {:.1} ms total = {:.2} ms each",
+                 LANDSCAPE TILE GENERATION: {} meshes generated ({} by the background worker, {} by \
+                 the main-thread fallback in {:.1} ms)",
                 self.renderer.as_ref().unwrap().visible_chunks,
                 self.renderer.as_ref().unwrap().resident_chunks,
                 tiles.resident,
@@ -1095,8 +1096,9 @@ impl LandscapeSample {
                 MAX_TILE_UPLOADS,
                 MAX_TILE_MS,
                 tile_work.generated,
-                tile_work.total_generate_ms,
-                tile_work.total_generate_ms / tile_work.generated.max(1) as f64
+                tile_work.generated - tile_work.fallback_generated,
+                tile_work.fallback_generated,
+                tile_work.total_generate_ms
             );
             eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
             eprintln!(
