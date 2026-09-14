@@ -24,6 +24,7 @@
 //! with the path the camera took.
 use crate::controls::{Camera, Controls};
 use crate::landscape_flora::{LandscapeFlora, PUSH_RADIUS_M, WIND_DIRECTION_XZ, WIND_STRENGTH_M};
+use crate::landscape_tiles::{TileStream, MAX_TILE_MS, MAX_TILE_UPLOADS};
 use crate::metrics;
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
@@ -31,10 +32,9 @@ use matterweave_core::landscape::{
 };
 use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
-    Atmosphere, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun,
-    TerrainTileKey, Wind, MAX_TERRAIN_TILES,
+    Atmosphere, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun, Wind,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -57,13 +57,6 @@ pub const MAX_MARKER_BYTES: u64 = 128;
 /// Generator seed of the sample world. The generator is a versioned function of
 /// this seed, so the same build always shows the same landscape.
 pub const SEED: u64 = 20260913;
-
-/// Tile meshes built and uploaded in one frame.
-pub const MAX_TILE_UPLOADS: usize = 8;
-/// Main-thread milliseconds one frame may spend planning, building and
-/// uploading tiles. Checked after each tile, so one tile can overrun it; the
-/// next cannot start.
-pub const MAX_TILE_MS: f64 = 2.0;
 
 /// Derived water meshes built and uploaded in one frame. Only the sea-level
 /// chunk layer carries water, so this is at most one mesh per column stack.
@@ -183,36 +176,6 @@ pub fn marker_clouds(directory: &Path) -> CloudChoice {
 
 // -- Tile work planning ------------------------------------------------------
 
-/// Per-frame limits for [`plan_tile_work`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TileBudget {
-    /// Tiles that may be built and uploaded this frame.
-    pub uploads: usize,
-    /// Hard bound on resident tiles, including the ones built this frame.
-    pub resident: usize,
-}
-
-impl Default for TileBudget {
-    fn default() -> Self {
-        Self {
-            uploads: MAX_TILE_UPLOADS,
-            resident: MAX_TERRAIN_TILES,
-        }
-    }
-}
-
-/// What one frame should do to the tile cache.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TileWork {
-    /// Tiles to build and upload, in plan order: nearest ring first.
-    pub build: Vec<RingTile>,
-    /// Resident tiles the plan no longer wants.
-    pub evict: Vec<TerrainTileKey>,
-    /// Tiles the plan still needs after this frame's budget is spent. Zero
-    /// means the rings are fully resident for this eye position.
-    pub outstanding: usize,
-}
-
 /// The filter that actually affects one tile, with parts that cannot change its
 /// mesh removed.
 ///
@@ -249,52 +212,6 @@ pub fn normalized_filter(tile: &RingTile) -> TileFilter {
         hole: tile.filter.hole.and_then(overlap),
         // A bound containing the tile removes nothing.
         bound: tile.filter.bound.filter(|bound| !contains(*bound)),
-    }
-}
-
-/// Diff a plan against the resident tiles and apply this frame's budget.
-///
-/// A tile is rebuilt when it is absent or when its normalized filter changed,
-/// which is what happens to the few innermost tiles the streaming window cuts
-/// into as the player walks. Eviction is not budgeted: a tile the plan dropped
-/// is off-screen and holding it would let the cache grow along the camera's
-/// path.
-pub fn plan_tile_work(
-    plan: &[RingTile],
-    resident: &BTreeMap<TerrainTileKey, TileFilter>,
-    budget: TileBudget,
-) -> TileWork {
-    let wanted: BTreeSet<TerrainTileKey> = plan.iter().map(|tile| (tile.level, tile.key)).collect();
-    let evict: Vec<TerrainTileKey> = resident
-        .keys()
-        .filter(|key| !wanted.contains(*key))
-        .copied()
-        .collect();
-    let kept = resident.len() - evict.len();
-    let mut build = Vec::new();
-    let mut outstanding = 0;
-    let mut new_keys = 0;
-    for tile in plan {
-        let key = (tile.level, tile.key);
-        let current = resident.get(&key);
-        if current == Some(&normalized_filter(tile)) {
-            continue;
-        }
-        // Only growth is bounded: rebuilding a tile that is already resident
-        // replaces its buffers and cannot push the cache over its limit.
-        let grows = current.is_none();
-        let blocked = grows && kept + new_keys + 1 > budget.resident;
-        if build.len() >= budget.uploads || blocked {
-            outstanding += 1;
-            continue;
-        }
-        new_keys += usize::from(grows);
-        build.push(*tile);
-    }
-    TileWork {
-        build,
-        evict,
-        outstanding,
     }
 }
 
@@ -420,48 +337,34 @@ impl CloudChoice {
     }
 }
 
-/// Counters the HUD shows and the smoke line prints. Every one of them is a
-/// count this sample actually performed, not a target.
-#[derive(Clone, Copy, Debug, Default)]
-struct TileCounters {
-    uploaded: u64,
-    evicted: u64,
-    outstanding: usize,
-    /// Main-thread time spent building and uploading tiles. This is the
-    /// quantity [`MAX_TILE_MS`] bounds.
-    build_ms: f64,
-    /// The part of `build_ms` spent generating tile meshes from the generator.
-    /// This is the sample's own cost.
-    generate_ms: f64,
-    /// The part of `build_ms` spent inside `upload_terrain_tile`, which waits
-    /// on the frame fence before it replaces a buffer. On a software rasterizer
-    /// that wait is most of a frame, so it is reported rather than blamed on
-    /// tile generation.
-    upload_ms: f64,
-    /// Main-thread time spent planning and declaring residency. Declaring can
-    /// block on the frame fence when a tile has to be evicted, which is a GPU
-    /// wait rather than tile work, so it is reported apart from the budget
-    /// instead of being hidden inside it.
-    declare_ms: f64,
-    /// Total main-thread time spent generating tile meshes over the run, and
-    /// the number of meshes that time covers. Their ratio is the only per-tile
-    /// cost this sample can honestly report.
-    total_generate_ms: f64,
-    generated: u64,
-    /// The single worst frame seen so far, chosen by build time and kept as one
-    /// record. Independent maxima taken from different frames would describe a
-    /// frame that never happened.
-    worst: WorstFrame,
+/// `Some(ms)` as `0.00`, `None` as `-`, for the periodic log line: a missing
+/// diagnostics reading must not print as a zero.
+fn option_ms(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".into(), |value| format!("{value:.2}"))
 }
 
-/// The most expensive tile frame of a run.
+fn option_count(value: Option<u32>) -> String {
+    value.map_or_else(|| "-".into(), |value| value.to_string())
+}
+
+/// One frame's chunk mesh sync, measured where the work happens. Generation is
+/// background preparation, so `generate_ms` is nonzero only on the synchronous
+/// fallback path; `upload_ms` is the part inside `upload_chunk`, which waits on
+/// the frame fence before it replaces a buffer.
 #[derive(Clone, Copy, Debug, Default)]
-struct WorstFrame {
-    tiles: usize,
-    build_ms: f64,
+struct ChunkFrame {
+    /// Chunk meshes uploaded to the renderer this frame.
+    uploads: u32,
+    /// Completed background meshes accepted from the pool this frame.
+    polled: u32,
+    /// Mesh jobs handed to the background pool this frame.
+    requested: u32,
+    /// Main-thread mesh generation this frame (synchronous fallback only).
     generate_ms: f64,
+    /// Main-thread time inside `upload_chunk` calls this frame.
     upload_ms: f64,
-    declare_ms: f64,
+    /// Wall time of the whole chunk sync this frame, including retain/declare.
+    wall_ms: f64,
 }
 
 pub struct LandscapeSample {
@@ -476,11 +379,23 @@ pub struct LandscapeSample {
     /// Planned tiles for this eye, reused every frame so the plan allocates
     /// nothing after the first frame.
     plan: Vec<RingTile>,
-    /// Declared keys handed to the renderer, reused for the same reason.
-    declared: Vec<TerrainTileKey>,
-    /// Resident tiles and the normalized filter each was built with.
-    resident: BTreeMap<TerrainTileKey, TileFilter>,
-    tiles: TileCounters,
+    /// Background tile generation, the CPU mesh cache and residency, including
+    /// the hysteresis that keeps a just-dropped tile resident.
+    tiles: TileStream,
+    /// This frame's chunk mesh sync, and the running upload total.
+    chunks: ChunkFrame,
+    chunks_uploaded: u64,
+    /// Frame-capture identity: increments once per renderer creation or
+    /// recreation, so per-renderer GPU submission counters cannot be joined
+    /// across one.
+    renderer_epoch: u64,
+    /// Frame-capture identity: increments once per recorded draw attempt.
+    /// [`Self::frames`] only advances on a presented attempt, so a retry after
+    /// rotation would otherwise share an attempt id with the row before it.
+    draw_attempts: u64,
+    /// Deduplicates repeated reads of one completed GPU submission; the
+    /// renderer epoch is part of the identity.
+    gpu_completions: metrics::GpuCompletionTracker,
     /// Dense vegetation: the pooled prototypes plus the field for the eye's
     /// cell. `None` until the renderer exists, because the first
     /// [`LandscapeFlora::sync`] installs the scene rather than updating one.
@@ -495,9 +410,12 @@ pub struct LandscapeSample {
     /// Which cloud setting this run is flying with. Switched by C at run time
     /// and by `--clouds` before the first frame.
     pub clouds: CloudChoice,
-    /// Water meshes uploaded over the run, and this frame's derivation time.
+    /// Water meshes uploaded over the run, and this frame's phase times: the
+    /// whole sync, the mesh derivation, and the upload calls (which fence).
     water_uploaded: u64,
     water_ms: f64,
+    water_generate_ms: f64,
+    water_upload_ms: f64,
     /// World revision each resident water key was derived at.
     water_stamps: BTreeMap<[i32; 3], u64>,
     /// Last sync's window size and sea-level candidate count, for the report.
@@ -542,6 +460,7 @@ impl LandscapeSample {
             }
         };
         let mut world = World::landscape(SEED);
+        let terrain_source = world.terrain_source();
         let mut camera = spawn_camera();
         clamp_camera(&mut camera);
         world.stream_around(camera.position.to_array());
@@ -588,15 +507,20 @@ impl LandscapeSample {
             },
             walking: false,
             plan: Vec::new(),
-            declared: Vec::new(),
-            resident: BTreeMap::new(),
-            tiles: TileCounters::default(),
+            tiles: TileStream::new(terrain_source, SEED),
+            chunks: ChunkFrame::default(),
+            chunks_uploaded: 0,
+            renderer_epoch: 0,
+            draw_attempts: 0,
+            gpu_completions: metrics::GpuCompletionTracker::default(),
             flora: None,
             wind_time: 0.,
             cloud_time: 0.,
             clouds: CloudChoice::default(),
             water_uploaded: 0,
             water_ms: 0.,
+            water_generate_ms: 0.,
+            water_upload_ms: 0.,
             water_stamps: BTreeMap::new(),
             water_window: 0,
             water_candidates: 0,
@@ -652,6 +576,7 @@ impl LandscapeSample {
             return Ok(());
         };
         let begin = Instant::now();
+        let mut frame = ChunkFrame::default();
         let keys = self.world.chunk_keys();
         renderer.retain_chunks(&keys)?;
         if self.preparation.available() {
@@ -659,8 +584,12 @@ impl LandscapeSample {
                 let Some((key, mesh)) = self.preparation.poll_mesh(&self.world) else {
                     break;
                 };
+                frame.polled += 1;
                 if renderer.chunk_revision(key) != Some(mesh.revision) {
+                    let upload_begin = Instant::now();
                     renderer.upload_chunk(key, &mesh)?;
+                    frame.upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
+                    frame.uploads += 1;
                 }
                 if begin.elapsed().as_secs_f64() >= 0.002 {
                     break;
@@ -673,13 +602,12 @@ impl LandscapeSample {
                 let dz = key[2] * 16 + 8 - eye.z as i32;
                 dx * dx + dz * dz
             });
-            let mut requested = 0;
             for key in keys {
                 if renderer.chunk_revision(key) != self.world.chunk_revision(key)
                     && self.preparation.request_mesh(&self.world, key)
                 {
-                    requested += 1;
-                    if requested >= 4 {
+                    frame.requested += 1;
+                    if frame.requested >= 4 {
                         break;
                     }
                 }
@@ -687,76 +615,32 @@ impl LandscapeSample {
         } else {
             for key in keys {
                 if renderer.chunk_revision(key) != self.world.chunk_revision(key) {
-                    renderer.upload_chunk(key, &self.world.mesh_chunk(key))?;
+                    let generate_begin = Instant::now();
+                    let mesh = self.world.mesh_chunk(key);
+                    frame.generate_ms += generate_begin.elapsed().as_secs_f64() * 1000.;
+                    let upload_begin = Instant::now();
+                    renderer.upload_chunk(key, &mesh)?;
+                    frame.upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
+                    frame.uploads += 1;
                 }
             }
         }
+        frame.wall_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.chunks_uploaded += u64::from(frame.uploads);
+        self.chunks = frame;
         Ok(())
     }
 
-    /// Plan the rings for this eye, evict what the plan dropped and build what
-    /// it is missing, inside the frame budget.
+    /// Plan the rings for this eye, then let the tile stream declare residency,
+    /// evict, collect generated meshes and upload what the cache can serve.
     fn sync_tiles(&mut self) -> Result<(), String> {
-        let declare_begin = Instant::now();
         let Some(renderer) = self.renderer.as_mut() else {
             return Ok(());
         };
         let eye = self.camera.position.to_array();
         let fine = landscape::fine_clip(eye);
         landscape::ring_plan_into(eye, fine, &LANDSCAPE_RINGS, &mut self.plan);
-        self.declared.clear();
-        self.declared
-            .extend(self.plan.iter().map(|tile| (tile.level, tile.key)));
-        // Declare first: the renderer drops what the plan no longer wants before
-        // this frame adds anything, so residency never exceeds plan + budget.
-        renderer.retain_terrain_tiles(&self.declared)?;
-        let work = plan_tile_work(&self.plan, &self.resident, TileBudget::default());
-        self.tiles.declare_ms = declare_begin.elapsed().as_secs_f64() * 1000.;
-        let begin = Instant::now();
-        for key in &work.evict {
-            self.resident.remove(key);
-        }
-        self.tiles.evicted += work.evict.len() as u64;
-        let mut uploaded = 0u64;
-        let mut skipped = 0usize;
-        let mut generate_ms = 0.0;
-        let mut upload_ms = 0.0;
-        for (index, tile) in work.build.iter().enumerate() {
-            if begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
-                skipped = work.build.len() - index;
-                break;
-            }
-            let filter = normalized_filter(tile);
-            let generate_begin = Instant::now();
-            let mesh = landscape::lod_tile_mesh(SEED, tile.level, tile.key, filter);
-            generate_ms += generate_begin.elapsed().as_secs_f64() * 1000.;
-            // A tile entirely inside the hole meshes to nothing. It stays a
-            // planned, resident-as-empty tile so it is not rebuilt every frame.
-            if !mesh.indices.is_empty() {
-                let upload_begin = Instant::now();
-                renderer.upload_terrain_tile(tile.level, tile.key, &mesh)?;
-                upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
-                uploaded += 1;
-            }
-            self.resident.insert((tile.level, tile.key), filter);
-        }
-        self.tiles.uploaded += uploaded;
-        self.tiles.outstanding = work.outstanding + skipped;
-        self.tiles.build_ms = begin.elapsed().as_secs_f64() * 1000.;
-        self.tiles.generate_ms = generate_ms;
-        self.tiles.total_generate_ms += generate_ms;
-        self.tiles.generated += (work.build.len() - skipped) as u64;
-        self.tiles.upload_ms = upload_ms;
-        if self.tiles.build_ms > self.tiles.worst.build_ms {
-            self.tiles.worst = WorstFrame {
-                tiles: work.build.len() - skipped,
-                build_ms: self.tiles.build_ms,
-                generate_ms,
-                upload_ms,
-                declare_ms: self.tiles.declare_ms,
-            };
-        }
-        Ok(())
+        self.tiles.sync(renderer, &self.plan, self.frames)
     }
 
     /// Derive and upload the water surface of every resident sea-level chunk.
@@ -783,6 +667,8 @@ impl LandscapeSample {
         self.water_window = keys.len();
         self.water_candidates = keys.iter().filter(|key| key[1] == level).count();
         let mut uploaded = 0usize;
+        let mut generate_ms = 0.0;
+        let mut upload_ms = 0.0;
         for key in &keys {
             if key[1] != level {
                 continue;
@@ -793,7 +679,12 @@ impl LandscapeSample {
             if self.water_stamps.get(key) == Some(&revision) {
                 continue;
             }
-            renderer.upload_water_chunk(*key, &self.world.water_mesh_chunk(*key))?;
+            let generate_begin = Instant::now();
+            let mesh = self.world.water_mesh_chunk(*key);
+            generate_ms += generate_begin.elapsed().as_secs_f64() * 1000.;
+            let upload_begin = Instant::now();
+            renderer.upload_water_chunk(*key, &mesh)?;
+            upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
             self.water_stamps.insert(*key, revision);
             uploaded += 1;
             if uploaded >= MAX_WATER_UPLOADS
@@ -805,6 +696,8 @@ impl LandscapeSample {
         self.water_stamps.retain(|key, _| keys.contains(key));
         self.water_uploaded += uploaded as u64;
         self.water_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.water_generate_ms = generate_ms;
+        self.water_upload_ms = upload_ms;
         Ok(())
     }
 
@@ -825,6 +718,7 @@ impl LandscapeSample {
             ),
             None => (0, 0, Default::default(), Default::default()),
         };
+        let tile_work = self.tiles.counters();
         hud.text(
             30.,
             54.,
@@ -837,9 +731,9 @@ impl LandscapeSample {
                 tiles.visible,
                 water.resident,
                 water.visible,
-                self.tiles.uploaded,
-                self.tiles.evicted,
-                self.tiles.outstanding
+                tile_work.uploaded,
+                tile_work.evicted,
+                tile_work.outstanding
             ),
             1.15,
             accent,
@@ -848,9 +742,12 @@ impl LandscapeSample {
             30.,
             74.,
             &format!(
-                "TILE {:.2}+{:.2} MS | FRAME {:.1} MS | TILE MEM {} KIB | {}",
-                self.tiles.build_ms,
-                self.tiles.declare_ms,
+                "TILE {:.2}+{:.2} MS | HOLD {} GEN {} HIT {} | FRAME {:.1} MS | MEM {} KIB | {}",
+                tile_work.build_ms,
+                tile_work.declare_ms,
+                tile_work.held,
+                tile_work.generated,
+                tile_work.served_from_cache,
                 self.frame_ms,
                 tiles.bytes / 1024,
                 if self.walking { "WALK" } else { "FLY" }
@@ -941,6 +838,7 @@ impl LandscapeSample {
             self.frame_ms * 0.9 + f64::from(dt) * 100.
         };
         let capturing = self.profile.is_some();
+        let cpu_busy = metrics::CpuBusySpan::begin(capturing);
         if let Some(renderer) = &mut self.renderer {
             renderer.begin_frame_diagnostics();
         }
@@ -1013,11 +911,13 @@ impl LandscapeSample {
         self.lighting.clouds = self.clouds.settings(self.cloud_time);
         let hud = self.hud();
         let matrix = view_projection(&self.camera, size.width as f32 / size.height as f32);
+        let render_begin = capturing.then(Instant::now);
         let outcome =
             self.renderer
                 .as_mut()
                 .unwrap()
                 .render_with_lighting(matrix, eye, &hud, &self.lighting);
+        let render_ms = render_begin.map(|begin| begin.elapsed().as_secs_f64() * 1000.);
         let result = match &outcome {
             FrameResult::Presented => metrics::DrawOutcome::Presented,
             FrameResult::OutOfMemory => metrics::DrawOutcome::OutOfMemory,
@@ -1029,30 +929,58 @@ impl LandscapeSample {
                 if self.frames.is_multiple_of(30) {
                     let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
                     let water = self.renderer.as_ref().unwrap().water_stats();
-                    log::info!(
-                        "LANDSCAPE frame {} frame_ms {:.2} tile_build_ms {:.2} tile_declare_ms {:.2} \
-                         tile_generate_ms {:.2} tile_upload_ms {:.2} tiles {}/{} visible {} \
-                         uploaded {} evicted {} outstanding {} tile_kib {} \
-                         water {}/{} up {} {:.2} ms eye {:?}",
+                    let fence = self.renderer.as_ref().and_then(|r| r.draw_diagnostics());
+                    let tile_work = self.tiles.counters();
+                    // Built as one string so the desktop host, which has no
+                    // logger installed, prints the same per-phase line to
+                    // stderr that an Android run sends to logcat.
+                    let message = format!(
+                        "LANDSCAPE frame {} frame_ms {:.2} \
+                         chunk_ms {:.2} chunk_up {} chunk_req {} chunk_poll {} \
+                         chunk_generate_ms {:.2} chunk_upload_ms {:.2} \
+                         tile_build_ms {:.2} tile_declare_ms {:.2} \
+                         tile_generate_ms {:.2} tile_upload_ms {:.2} tile_req {} tiles {}/{} visible {} \
+                         uploaded {} evicted {} outstanding {} held {} cache_hit {} cache_kib {} \
+                         worker_pending {} tile_kib {} \
+                         water {}/{} up {} {:.2} ms generate {:.2} upload {:.2} \
+                         fence_ms {} fence_waits {} eye {:?}",
                         self.frames,
                         self.frame_ms,
-                        self.tiles.build_ms,
-                        self.tiles.declare_ms,
-                        self.tiles.generate_ms,
-                        self.tiles.upload_ms,
+                        self.chunks.wall_ms,
+                        self.chunks.uploads,
+                        self.chunks.requested,
+                        self.chunks.polled,
+                        self.chunks.generate_ms,
+                        self.chunks.upload_ms,
+                        tile_work.build_ms,
+                        tile_work.declare_ms,
+                        tile_work.generate_ms,
+                        tile_work.upload_ms,
+                        tile_work.requested,
                         tiles.resident,
                         tiles.declared,
                         tiles.visible,
-                        self.tiles.uploaded,
-                        self.tiles.evicted,
-                        self.tiles.outstanding,
+                        tile_work.uploaded,
+                        tile_work.evicted,
+                        tile_work.outstanding,
+                        tile_work.held,
+                        tile_work.served_from_cache,
+                        self.tiles.cache_bytes() / 1024,
+                        tile_work.pending,
                         tiles.bytes / 1024,
                         water.resident,
                         water.visible,
                         self.water_uploaded,
                         self.water_ms,
+                        self.water_generate_ms,
+                        self.water_upload_ms,
+                        option_ms(fence.and_then(|d| d.upload_fence_wait_ms)),
+                        option_count(fence.and_then(|d| d.upload_fence_waits)),
                         eye
                     );
+                    log::info!("{message}");
+                    #[cfg(not(target_os = "android"))]
+                    eprintln!("{message}");
                 }
             }
             FrameResult::Retry => {}
@@ -1072,8 +1000,9 @@ impl LandscapeSample {
                 return;
             }
         }
+        let cpu_busy_ms = cpu_busy.finish();
         if capturing {
-            self.record(result, dt, stream_ms, mesh_ms, now);
+            self.record(result, dt, stream_ms, mesh_ms, cpu_busy_ms, render_ms, now);
         }
         if !self.failed && self.frame_limit.is_some_and(|limit| self.frames >= limit) {
             let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
@@ -1083,6 +1012,7 @@ impl LandscapeSample {
                 .map(LandscapeFlora::counters)
                 .unwrap_or_default();
             let water = self.renderer.as_ref().unwrap().water_stats();
+            let tile_work = self.tiles.counters();
             eprintln!(
                 "LANDSCAPE SMOKE PASS: {} presented frames; {}",
                 self.frames,
@@ -1090,9 +1020,12 @@ impl LandscapeSample {
             );
             eprintln!(
                 "LANDSCAPE COUNTERS: chunks {}/{} | tiles resident {} declared {} visible {} \
-                 | uploaded {} evicted {} outstanding {} | tile mem {} KiB \n\
-                 LANDSCAPE WATER: resident {} visible {} uploaded {} | {} KiB | {} ms this frame | \
-                 window {} candidates {}\n\
+                 | uploaded {} evicted {} outstanding {} held {} | cache hit {} {} KiB / {} \
+                 entries | worker {} pending | tile mem {} KiB \n\
+                 LANDSCAPE CHUNK: {} uploaded over the run | last frame {:.2} ms (generate {:.2}, \
+                 upload {:.2}) | {} requested {} polled\n\
+                 LANDSCAPE WATER: resident {} visible {} uploaded {} | {} KiB | {} ms this frame \
+                 (generate {:.2}, upload {:.2}) | window {} candidates {}\n\
                  frame {:.1} ms\n\
                  LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms generating + {:.2} ms \
                  uploading (the upload waits on the frame fence) + {:.2} ms planning; \
@@ -1103,28 +1036,41 @@ impl LandscapeSample {
                 tiles.resident,
                 tiles.declared,
                 tiles.visible,
-                self.tiles.uploaded,
-                self.tiles.evicted,
-                self.tiles.outstanding,
+                tile_work.uploaded,
+                tile_work.evicted,
+                tile_work.outstanding,
+                tile_work.held,
+                tile_work.served_from_cache,
+                self.tiles.cache_bytes() / 1024,
+                self.tiles.cache_entries(),
+                tile_work.pending,
                 tiles.bytes / 1024,
+                self.chunks_uploaded,
+                self.chunks.wall_ms,
+                self.chunks.generate_ms,
+                self.chunks.upload_ms,
+                self.chunks.requested,
+                self.chunks.polled,
                 water.resident,
                 water.visible,
                 self.water_uploaded,
                 water.bytes / 1024,
                 self.water_ms,
+                self.water_generate_ms,
+                self.water_upload_ms,
                 self.water_window,
                 self.water_candidates,
                 self.frame_ms,
-                self.tiles.worst.tiles,
-                self.tiles.worst.build_ms,
-                self.tiles.worst.generate_ms,
-                self.tiles.worst.upload_ms,
-                self.tiles.worst.declare_ms,
+                tile_work.worst.tiles,
+                tile_work.worst.build_ms,
+                tile_work.worst.generate_ms,
+                tile_work.worst.upload_ms,
+                tile_work.worst.declare_ms,
                 MAX_TILE_UPLOADS,
                 MAX_TILE_MS,
-                self.tiles.generated,
-                self.tiles.total_generate_ms,
-                self.tiles.total_generate_ms / self.tiles.generated.max(1) as f64
+                tile_work.generated,
+                tile_work.total_generate_ms,
+                tile_work.total_generate_ms / tile_work.generated.max(1) as f64
             );
             eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
             eprintln!(
@@ -1157,19 +1103,59 @@ impl LandscapeSample {
         dt: f32,
         stream_ms: f64,
         mesh_ms: f64,
+        cpu_busy_ms: Option<f64>,
+        render_ms: Option<f64>,
         frame_begin: Instant,
     ) {
+        let epoch = self.renderer_epoch;
         let diagnostics = self.renderer.as_ref().and_then(|r| r.draw_diagnostics());
+        // Completions repeat until the next submission finishes; the epoch keeps
+        // a recreated renderer's restarted ids from joining an old submission.
+        let gpu = self
+            .renderer
+            .as_ref()
+            .and_then(|r| r.gpu_timings())
+            .filter(|timings| self.gpu_completions.accept(epoch, timings.frame_id));
+        let shadow_casters = self
+            .renderer
+            .as_ref()
+            .map(|r| r.shadow_caster_meshes())
+            .and_then(|n| u32::try_from(n).ok());
+        // A recorded attempt is its own attempt, whether it presented or
+        // retried; `frames` only advances on a successful present API call.
+        self.draw_attempts += 1;
         let row = metrics::FrameRow {
-            draw_attempt_id: self.frames,
+            draw_attempt_id: self.draw_attempts,
+            renderer_epoch: epoch,
             presented_count: self.frames,
             result,
             submitted_gpu_frame_id: diagnostics.and_then(|d| d.submitted_frame_id),
+            completed_gpu_frame_id: gpu.map(|t| t.frame_id),
+            completed_gpu_renderer_epoch: gpu.map(|_| epoch),
             draw_interval_wall_ms: Some(f64::from(dt) * 1000.),
             main_wall_ms: Some(frame_begin.elapsed().as_secs_f64() * 1000.),
+            main_cpu_busy_ms: cpu_busy_ms,
             stream_request_elapsed_ms: Some(stream_ms),
             mesh_sync_wall_ms: Some(mesh_ms),
-            chunk_mesh_uploads: u32::try_from(self.tiles.uploaded).ok(),
+            mesh_sync_fence_wait_wall_ms: diagnostics.and_then(|d| d.upload_fence_wait_ms),
+            mesh_sync_fence_waits: diagnostics.and_then(|d| d.upload_fence_waits),
+            render_wall_ms: render_ms,
+            render_fence_wait_wall_ms: diagnostics.and_then(|d| d.render_fence_wait_ms),
+            acquire_wall_ms: diagnostics.and_then(|d| d.acquire_ms),
+            present_wall_ms: diagnostics.and_then(|d| d.present_ms),
+            gpu_prev_render_ms: gpu.map(|t| t.render_ms),
+            gpu_prev_shadow_ms: gpu.and_then(|t| t.shadow_ms),
+            gpu_prev_shadows: gpu.map(|t| t.shadows),
+            gpu_prev_shadow_map_size: gpu.map(|t| t.shadow_map_size),
+            // Actual chunk uploads this frame. Tile uploads are reported in the
+            // log; the schema has no tile column, and this one is named chunks.
+            chunk_mesh_uploads: Some(self.chunks.uploads),
+            // Shadow work counts only for an attempt that submitted; a retry
+            // must not inherit the previous pass's caster count.
+            shadow_caster_meshes: metrics::shadow_casters_for_attempt(
+                diagnostics.and_then(|d| d.submitted_frame_id),
+                shadow_casters,
+            ),
             ..Default::default()
         };
         let Some(profile) = &mut self.profile else {
@@ -1272,6 +1258,9 @@ impl ApplicationHandler for LandscapeSample {
             Ok(mut renderer) => {
                 log::info!("Landscape graphics: {}", renderer.capabilities);
                 eprintln!("Landscape graphics: {}", renderer.capabilities);
+                // A new renderer restarts its GPU submission counter; the epoch
+                // labels every capture row so the two generations cannot join.
+                self.renderer_epoch += 1;
                 renderer.set_diagnostics_enabled(self.profile.is_some());
                 self.renderer = Some(renderer);
                 self.window = Some(window);
@@ -1312,7 +1301,10 @@ impl ApplicationHandler for LandscapeSample {
         }
         self.renderer = None;
         self.window = None;
-        self.resident.clear();
+        // Every GPU tile dies with the renderer, so residency is cleared too.
+        // The CPU cache and the generation worker hold no GPU objects and
+        // stay, so the next resume re-uploads instead of regenerating.
+        self.tiles.forgot_renderer();
         self.controls.clear();
         self.focused = false;
         if let Some(profile) = &mut self.profile {
@@ -1431,12 +1423,6 @@ mod tests {
 
     fn plan_at(eye: [f32; 3]) -> Vec<RingTile> {
         landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS)
-    }
-
-    fn resident_from(plan: &[RingTile]) -> BTreeMap<TerrainTileKey, TileFilter> {
-        plan.iter()
-            .map(|tile| ((tile.level, tile.key), normalized_filter(tile)))
-            .collect()
     }
 
     #[test]
@@ -1579,112 +1565,6 @@ mod tests {
             plan.iter()
                 .any(|tile| normalized_filter(tile).hole.is_some()),
             "the streaming window must cut at least one planned tile"
-        );
-    }
-
-    #[test]
-    fn a_full_plan_is_built_over_several_frames_within_the_budget() {
-        let plan = plan_at([0.0, 40.0, 0.0]);
-        let mut resident = BTreeMap::new();
-        let budget = TileBudget::default();
-        let mut frames = 0;
-        loop {
-            let work = plan_tile_work(&plan, &resident, budget);
-            if work.build.is_empty() {
-                assert_eq!(work.outstanding, 0, "nothing buildable but work remaining");
-                break;
-            }
-            assert!(work.build.len() <= budget.uploads);
-            assert!(work.evict.is_empty(), "a stable plan evicts nothing");
-            for tile in &work.build {
-                resident.insert((tile.level, tile.key), normalized_filter(tile));
-            }
-            frames += 1;
-            assert!(frames < 1000, "tile work never converged");
-        }
-        assert_eq!(resident.len(), plan.len());
-        assert_eq!(frames, plan.len().div_ceil(budget.uploads));
-        // A fully resident plan asks for nothing at all.
-        assert_eq!(
-            plan_tile_work(&plan, &resident, budget),
-            TileWork::default()
-        );
-    }
-
-    #[test]
-    fn moving_evicts_dropped_tiles_and_rebuilds_only_what_changed() {
-        let here = plan_at([0.0, 40.0, 0.0]);
-        let resident = resident_from(&here);
-        // One chunk of movement keeps every tile key, but moves the streaming
-        // window, so only the tiles the window cuts may be rebuilt.
-        let nudged = plan_at([16.0, 40.0, 0.0]);
-        assert_eq!(
-            nudged.iter().map(|t| (t.level, t.key)).collect::<Vec<_>>(),
-            here.iter().map(|t| (t.level, t.key)).collect::<Vec<_>>()
-        );
-        let work = plan_tile_work(&nudged, &resident, TileBudget::default());
-        assert!(work.evict.is_empty(), "the tile set did not change");
-        let rebuilt = work.build.len() + work.outstanding;
-        assert!(
-            (1..=16).contains(&rebuilt),
-            "one chunk of movement rebuilt {rebuilt} tiles"
-        );
-        assert!(work
-            .build
-            .iter()
-            .all(|tile| tile.level == LANDSCAPE_RINGS[0].level));
-
-        // A long jump drops most tiles from the plan. Everything the new plan
-        // does not want goes in the same frame, with no budget: an off-screen
-        // tile held back would let the cache grow along the camera's path.
-        let far = plan_at([4096.0, 40.0, 4096.0]);
-        let wanted: BTreeSet<TerrainTileKey> =
-            far.iter().map(|tile| (tile.level, tile.key)).collect();
-        let work = plan_tile_work(&far, &resident, TileBudget::default());
-        let expected: Vec<TerrainTileKey> = resident
-            .keys()
-            .filter(|key| !wanted.contains(*key))
-            .copied()
-            .collect();
-        assert_eq!(work.evict, expected);
-        assert!(
-            work.evict.len() > resident.len() / 2,
-            "a jump of two rings should drop most of the cache"
-        );
-        assert_eq!(work.build.len(), MAX_TILE_UPLOADS);
-        // Everything the new plan needs is either built now or still owed.
-        let needed = far
-            .iter()
-            .filter(|tile| resident.get(&(tile.level, tile.key)) != Some(&normalized_filter(tile)))
-            .count();
-        assert_eq!(work.build.len() + work.outstanding, needed);
-    }
-
-    #[test]
-    fn the_residency_bound_refuses_growth_instead_of_exceeding_it() {
-        let plan = plan_at([0.0, 40.0, 0.0]);
-        let budget = TileBudget {
-            uploads: MAX_TILE_UPLOADS,
-            resident: 5,
-        };
-        let work = plan_tile_work(&plan, &BTreeMap::new(), budget);
-        assert_eq!(work.build.len(), 5);
-        assert_eq!(work.build.len() + work.outstanding, plan.len());
-        // Rebuilding a resident tile does not grow the cache, so it is allowed
-        // even with the bound already reached.
-        let resident = resident_from(&plan);
-        let moved = plan_at([16.0, 40.0, 0.0]);
-        let work = plan_tile_work(
-            &moved,
-            &resident,
-            TileBudget {
-                uploads: 8,
-                resident: 1,
-            },
-        );
-        assert!(
-            !work.build.is_empty(),
-            "a filter change on a resident tile must still be rebuilt"
         );
     }
 

@@ -10,6 +10,7 @@ mod experience;
 mod gallery;
 mod landscape;
 mod landscape_flora;
+mod landscape_tiles;
 mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
