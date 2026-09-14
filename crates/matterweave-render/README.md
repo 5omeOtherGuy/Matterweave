@@ -15,6 +15,7 @@ comparison or a final renderer selection until equivalent-quality device evidenc
 | Static instancing | `replace_static_scene` pools unique prototype geometry into shared buffers plus one packed instance buffer; `update_static_instances` changes placements without rebuilding geometry. |
 | HUD | `Hud` accumulates rectangles and `font8x8` text; the app owns logical pixel layout. |
 | Lighting and shadows | `Sun`/`LightingSettings` and `render_with_lighting` implement direct sun, ambient, distance fog, a depth buffer and a directional shadow pass. |
+| Sky and clouds | `Atmosphere::sky_gradient` draws a procedural dome derived from the fog colour before opaque geometry; `Clouds` adds an opt-in volumetric layer marched into a reduced-resolution offscreen target. Both are off by default. |
 | Indirect light | `IndirectVolume` is an opt-in one-bounce diffuse surface-irradiance cache; `AsyncIndirectLight` prepares it on one background worker. |
 | Reflection | `ReflectionVolume` is an opt-in, bounded, single-bounce specular reflection source; nonreflective rendering is the default and is bit-identical to the pre-reflection output. |
 | Ray reference | `ray_reference::RayVolume` packs a bounded unit-voxel grid for an isolated traversal prototype; it owns no GPU resources and makes no path selection. |
@@ -39,10 +40,12 @@ claimed.
 | --- | --- |
 | `Renderer` | `new`; `resize`, `upload`, `upload_chunk`, `chunk_revision`, `retain_chunks`, `upload_dynamic`; `replace_static_scene`, `update_static_instances`, `static_scene_stats`; `set_world_visible`, `set_wetland_material_time`; `render`, `render_with_lighting`; `upload_indirect`, `disable_indirect`, `indirect_enabled`; `upload_reflection`, `disable_reflection`, `reflection_enabled`, `reflection_state`; `gpu_timings`, `gpu_timestamps_supported`; diagnostics methods. |
 | Renderer fields | `mesh_revision`, `capabilities`, `mesh_bytes`, `visible_chunks`, `resident_chunks`. |
+| Cloud accounting | `cloud_target()` reports the allocated offscreen resolution and quality, or `None` when no target exists. |
 | `FrameResult` | `Presented`, `Retry`, `OutOfMemory`, `Fatal(String)`. |
 | `Hud`, `Sun`, `LightingSettings` | HUD vertex accumulation; sun direction/intensity; `shadows` and `shadow_map_size` (1024 or 2048). |
 | `StaticInstance`, `StaticSceneStats` | `prototype`, `translation`, `yaw_quarters`; honest source/allocated byte accounting. |
-| `GpuTimings` | `frame_id`, `render_ms`, `shadow_ms`, `shadows`, `shadow_map_updated`, `shadow_map_size`. |
+| `GpuTimings` | `frame_id`, `render_ms`, `shadow_ms`, `cloud_ms`, `shadows`, `shadow_map_updated`, `shadow_map_size`. |
+| `Atmosphere`, `Clouds` | `fog_density`, `sky`, `sky_gradient`; `enabled`, `quality` (0 or 1), `time_s`, `Clouds::MAX_QUALITY`, `Clouds::TIME_PERIOD_S`. |
 | Modules | `indirect` (`IndirectVolume`, `UpdateBudget`, `UpdateStats`, `MAX_FACE_SLOTS`, `MAX_UPDATE_RAYS`, `MAX_UPDATE_WORK`), `async_indirect` (`AsyncIndirectLight`, `AsyncIndirectConfig`, `AsyncIndirectStats`), `reflection` (`ReflectionVolume`, `MaterialTable`, `ReflectionSample`, `ReflectionMemoryStats`, trace/bound constants), `ray_reference` (`RayVolume`, `RayUniform`, `RayMemoryStats`), `shader_contract` (shader byte slices, binding indices, `LightingUniform`, `LIGHTING_UNIFORM_BYTES`). |
 
 ## Invariants and guarantees
@@ -130,6 +133,34 @@ claimed.
   4/16 MiB at D32 for 1024/2048 (2/8 MiB at D16), excluding allocation padding; these bytes
   are not included in `mesh_bytes`.
 
+### Sky dome and volumetric clouds
+
+- Both are opt-in and both are off by default, so a caller that sets neither submits the
+  frame it submitted before they existed: no extra pipeline is created and no offscreen
+  memory is allocated.
+- `Atmosphere::sky_gradient` draws one full-screen triangle first in the frame's render pass,
+  with depth test, depth write and blending all off, so every opaque surface, the translucent
+  water pass and the HUD cover it in exactly their existing order. Its gradient, ground-side
+  floor and sun glow are derived from `Atmosphere::sky` and `Sun`, and its value at the
+  horizon is `Atmosphere::sky` itself: the same colour the world pass fogs to and the frame is
+  cleared to, so the far terrain still meets the background without a seam. It fetches no
+  texture.
+- `Clouds` marches a slab between 900 m and 1500 m: a wrapping-lattice coverage field times a
+  vertical profile, eroded by two or three octaves of value noise, lit by four to six
+  Beer-Lambert steps toward the sun with a powder term and an ambient contribution from
+  `Atmosphere::sky`. The noise is an integer hash on a lattice that wraps every 32768 m, and
+  `Clouds::TIME_PERIOD_S` is the drift clock's fold point, which is exactly that distance at
+  the shader's 0.5 m/s: folding the clock cannot move the layer.
+- Quality 0 marches 28 steps at quarter resolution, quality 1 marches 56 at half resolution;
+  the result is composited with four bilinear taps before opaque geometry. There is no
+  temporal history in this renderer, so the first step is offset by a static per-pixel hash:
+  that trades step banding for fixed fine-grained noise, which does not crawl between frames
+  but is also never averaged away.
+- The offscreen target is recreated when the frame's extent, the quality level or the frame's
+  render pass changes, and is freed as soon as clouds are disabled. Replacement happens after
+  the existing frame fence, and the sky resources are retired with the swapchain rather than
+  compared by handle, because Vulkan may reuse a destroyed render pass handle.
+
 ### Optional indirect light and reflection
 
 - `IndirectVolume` samples exposed unit voxel faces (no cross-wall interpolation) with
@@ -165,8 +196,11 @@ claimed.
   presentation engine to release an acquired image. It is not a measure of active GPU work
   alone. `shadow_ms` is the start-to-shadow-pass-end GPU interval when shadows are enabled
   and this submission executed the depth pass (including a first-use clear); it is `None` when
-  shadows are disabled or the stored depth map was reused. Queue-stage overlap means it is not
-  an independently additive cost or a substitute for matched off/on runs.
+  shadows are disabled or the stored depth map was reused. `cloud_ms` is the shadow-pass-end
+  to cloud-pass-end interval when this submission marched clouds, and `None` when it did not;
+  the marks are written either way, so a frame without clouds keeps a valid total. Queue-stage
+  overlap means neither is an independently additive cost or a substitute for matched off/on
+  runs.
 - Query availability is checked after the already required frame fence, with no new wait and no
   `WAIT` query flag. Reads account for the device's timestamp period and valid counter bits; a
   conservative CPU recording-to-read bound rejects samples that could span a full counter
@@ -226,7 +260,9 @@ It must print `cache_smoke: ten frames passed` and produce no Vulkan validation 
 exercise is correctness evidence only, not a frame-time comparison. Other examples exercise
 static instancing (`instancing_smoke`), shadow reuse (`shadow_cache_smoke`), indirect and
 reflection upload/publish (`indirect_smoke`, `reflection_smoke`, `reflection_validation`),
-asynchronous indirect preparation (`async_indirect`) and the ray reference
+asynchronous indirect preparation (`async_indirect`), the sky dome and cloud pass
+(`clouds_smoke`: dome off/on, both cloud quality levels, a resize while marching, the target
+freed when clouds are disabled, and teardown) and the ray reference
 (`ray_reference_vulkan`). Host lavapipe values are correctness evidence only.
 
 Workspace commands and actual validation results belong to

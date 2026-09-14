@@ -1,4 +1,5 @@
 //! Backend-independent sunlight settings and stable directional projection.
+use crate::clouds::Clouds;
 use glam::{Mat4, Vec3};
 
 /// Direction points from a surface toward the sun; callers need not normalize it.
@@ -27,6 +28,12 @@ pub struct Atmosphere {
     pub fog_density: f32,
     /// Linear rgb the fog and the cleared background converge to.
     pub sky: [f32; 3],
+    /// Draw the procedural dome - gradient, sun disc, ground-side floor -
+    /// before opaque geometry instead of leaving the flat cleared colour.
+    /// Every colour it draws is derived from [`Atmosphere::sky`], and the
+    /// value at the horizon is exactly that colour. Default false: a sample
+    /// that does not ask for it keeps the background it always had.
+    pub sky_gradient: bool,
 }
 
 /// The look every sample rendered before atmosphere became a setting.
@@ -38,6 +45,7 @@ impl Default for Atmosphere {
         Self {
             fog_density: DEFAULT_FOG_DENSITY,
             sky: DEFAULT_SKY,
+            sky_gradient: false,
         }
     }
 }
@@ -188,6 +196,9 @@ pub struct LightingSettings {
     pub wind: Wind,
     /// Vegetation walk-through push. The default radius is zero: no push.
     pub player: PlayerPush,
+    /// Volumetric clouds. The default is disabled, which allocates no
+    /// offscreen target and leaves the frame exactly as it was.
+    pub clouds: Clouds,
 }
 
 impl Default for LightingSettings {
@@ -199,6 +210,7 @@ impl Default for LightingSettings {
             atmosphere: Atmosphere::default(),
             wind: Wind::default(),
             player: PlayerPush::default(),
+            clouds: Clouds::default(),
         }
     }
 }
@@ -342,7 +354,14 @@ mod tests {
         assert_eq!(settings.atmosphere.fog_density, 0.013);
         assert_eq!(settings.atmosphere.sky, [0.16, 0.24, 0.29]);
         assert_eq!(Atmosphere::default(), Atmosphere::default());
+        // The sky dome and the cloud layer are additions, not new defaults: a
+        // sample that sets neither draws the flat cleared background it always
+        // drew, and the renderer allocates no offscreen target for it.
+        assert!(!settings.atmosphere.sky_gradient);
+        assert!(!settings.clouds.enabled);
+        assert_eq!(settings.clouds.quality, 0);
         settings.atmosphere.validate().unwrap();
+        settings.clouds.validate().unwrap();
     }
 
     #[test]
@@ -375,6 +394,7 @@ mod tests {
         Atmosphere {
             fog_density: 0.0,
             sky: [0.0; 3],
+            sky_gradient: true,
         }
         .validate()
         .unwrap();
