@@ -104,8 +104,13 @@ const SKY: [f32; 3] = [0.60, 0.71, 0.82];
 /// treated as absent - a broken marker must not stop the app from starting, and
 /// this file is never a game save.
 fn marker_text(directory: &Path) -> Option<String> {
+    bounded_marker_text(directory, MARKER_FILE)
+}
+
+/// One bounded, non-fatal marker read, shared by every marker beside the save.
+fn bounded_marker_text(directory: &Path, name: &str) -> Option<String> {
     use std::io::Read;
-    let path = directory.join(MARKER_FILE);
+    let path = directory.join(name);
     let file = match std::fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
@@ -128,6 +133,25 @@ fn marker_text(directory: &Path) -> Option<String> {
             log::warn!("Landscape marker {}: {error}", path.display());
             None
         }
+    }
+}
+
+/// Marker selecting the scripted exercise path (a 200 m circle flown at 60 m):
+/// the device entry for streaming and per-frame-budget evidence, because a
+/// phone run has no command line.
+pub const EXERCISE_MARKER_FILE: &str = "landscape-exercise.txt";
+
+/// True when the exercise marker selects the scripted flight. It is read with
+/// the same tolerance as the sample marker - unreadable or oversized is absent,
+/// never fatal - and `off` keeps the file while stopping the flight, so a
+/// captured run can be replayed without deleting it.
+pub fn exercise_marker_present(directory: &Path) -> bool {
+    match bounded_marker_text(directory, EXERCISE_MARKER_FILE) {
+        Some(text) => {
+            let text = text.trim();
+            text.is_empty() || !text.eq_ignore_ascii_case("off")
+        }
+        None => false,
     }
 }
 
@@ -1431,6 +1455,34 @@ mod tests {
         )
         .unwrap();
         assert!(!marker_present(&dir));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_exercise_marker_is_a_separate_opt_in_with_an_off_switch() {
+        let dir = temp_dir("exercise-marker");
+        assert!(
+            !exercise_marker_present(&dir),
+            "a plain landscape run must not fly itself"
+        );
+        // The two markers are independent: selecting the sample does not
+        // select the scripted path.
+        std::fs::write(dir.join(MARKER_FILE), "").unwrap();
+        assert!(!exercise_marker_present(&dir));
+        std::fs::write(dir.join(EXERCISE_MARKER_FILE), "").unwrap();
+        assert!(exercise_marker_present(&dir), "an empty marker selects it");
+        std::fs::write(dir.join(EXERCISE_MARKER_FILE), "on\n").unwrap();
+        assert!(exercise_marker_present(&dir));
+        // `off` is the documented way to keep the file but stop the flight, so
+        // a captured run can be replayed without deleting the marker.
+        std::fs::write(dir.join(EXERCISE_MARKER_FILE), "OFF\n").unwrap();
+        assert!(!exercise_marker_present(&dir));
+        std::fs::write(
+            dir.join(EXERCISE_MARKER_FILE),
+            "x".repeat(MAX_MARKER_BYTES as usize + 1),
+        )
+        .unwrap();
+        assert!(!exercise_marker_present(&dir));
         std::fs::remove_dir_all(&dir).ok();
     }
 
