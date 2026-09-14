@@ -28,7 +28,10 @@ use crate::{
 use matterweave_core::landscape::{FloraKind, FloraSite};
 
 /// Landscape flora generator version, recorded in gallery manifests.
-pub const LANDSCAPE_FLORA_VERSION: u32 = 1;
+///
+/// Version 2: grass tufts are eight-blade leaning fans in a 3x3 clump with a
+/// two-cell tip (version 1 was four straight posts with a one-cell tip).
+pub const LANDSCAPE_FLORA_VERSION: u32 = 2;
 /// Explicit scale for every prototype in this module (12.5 cm cells).
 pub const LANDSCAPE_LEAF_SCALE_M: f32 = 0.125;
 
@@ -135,63 +138,126 @@ fn contact_pad(volume: &mut DetailVolume, m: u8) -> Result<()> {
 // Grass tufts
 // ---------------------------------------------------------------------------
 
-/// Blade specs: (base [x, z], height in blade cells, lean [x, z]). All sizes
-/// carry four blades on the plus-pad; the size variant scales heights
-/// (0.75x/1.0x/1.25x), not the blade count, which keeps the large tuft inside
-/// its 40-cell cap (lean elbows cost extra cells on tall blades).
-const GRASS_BLADES_S: [([i32; 2], i32, [i32; 2]); 4] = [
-    ([0, 0], 3, [1, 0]),
-    ([1, 0], 4, [0, 1]),
-    ([0, 1], 3, [-1, 0]),
-    ([-1, 0], 4, [0, -1]),
-];
-const GRASS_BLADES_M: [([i32; 2], i32, [i32; 2]); 4] = [
-    ([0, 0], 4, [1, 0]),
-    ([1, 0], 5, [0, 1]),
-    ([0, 1], 4, [-1, 0]),
-    ([-1, 0], 5, [0, -1]),
-];
-const GRASS_BLADES_L: [([i32; 2], i32, [i32; 2]); 4] = [
-    ([0, 0], 5, [1, 0]),
-    ([1, 0], 6, [0, 1]),
-    ([0, 1], 5, [-1, 0]),
-    ([-1, 0], 6, [0, -1]),
+/// Blades in every grass tuft. A tuft is a fan: every blade rises from the one
+/// crown cell at local (0, 1, 0), which is what makes eight blades fit where
+/// four separate posts used to. The eight blades lie along the eight compass
+/// directions, so the lower levels of the clump are a solid 3x3 block whose
+/// interior faces the greedy mesher drops, which is why a clump costs fewer
+/// triangles than its blade count suggests. Nine blades were measured and are
+/// over a cap at every tier: a ninth stalk costs 126 triangles at the small
+/// tier, over the 120-triangle cap, and 41 and 43 cells at the medium and large
+/// tiers, over the 40-cell cap.
+pub const GRASS_BLADES_PER_TUFT: usize = 8;
+/// Cells of each blade that carry the lighter [`material::GRASS_TIP`]: its top
+/// two, so a tuft catches the sun along its whole upper silhouette.
+pub const GRASS_TIP_CELLS_PER_BLADE: usize = 2;
+
+/// One blade of a tuft, in the fan order of [`GRASS_LEANS`]: stalk height in
+/// cells, the level it leans from, and the lean direction.
+///
+/// Height means stalk cells, the top [`GRASS_TIP_CELLS_PER_BLADE`] of which are
+/// tip material. A blade leans at most once and only ever *before* its top two
+/// cells, so the tip always stands vertically on the elbow; beyond that the
+/// per-tier tables below vary height and lean row freely, because the clump
+/// silhouette is the whole point of this pass.
+#[derive(Clone, Copy)]
+struct GrassBlade {
+    height: i32,
+    lean_level: i32,
+    lean: [i32; 2],
+}
+
+const fn blade(height: i32, lean_level: i32, lean: [i32; 2]) -> GrassBlade {
+    GrassBlade {
+        height,
+        lean_level,
+        lean,
+    }
+}
+
+/// The eight lean directions, in the order the tier tables use them: +x, -x,
+/// +z, -z, then the four diagonals.
+const GRASS_LEANS: [[i32; 2]; GRASS_BLADES_PER_TUFT] = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [1, 1],
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
 ];
 
-/// One blade: a leaning stalk of `height` cells grown from the pad with a
-/// lighter tip cell. Sideways steps happen at most every third row and are
-/// routed through [`set_path`], so the blade is one connected stalk.
-fn grass_blade(
-    volume: &mut DetailVolume,
-    base: [i32; 2],
-    height: i32,
-    lean: [i32; 2],
-) -> Result<()> {
-    let mut prev = [base[0], 1, base[1]];
+/// Lean levels, one per blade: six blades fan out at the first row and the last
+/// two diagonals lean a row later, so the clump reads as a fan with a split
+/// rather than eight identical spokes. Together with [`GRASS_LEANS`] this gives
+/// every blade its own `(lean_level, lean)` pair, so no two blades in a
+/// prototype share a silhouette. A delayed blade must be at least
+/// `GRASS_TIP_CELLS_PER_BLADE + 2` cells tall, or its tip material would land in
+/// the shared stem column where several blades overlap.
+const GRASS_LEAN_LEVELS: [i32; GRASS_BLADES_PER_TUFT] = [1, 1, 1, 1, 1, 1, 2, 2];
+
+/// Tier heights in cells, one per blade in the fan order of [`GRASS_LEANS`]:
+/// centre (+x), then the axis blades, then the four diagonals, the last two of
+/// which lean a row later and so must clear
+/// `GRASS_TIP_CELLS_PER_BLADE + 2` cells. The tiers stay distinct in both
+/// height (4/5/6 cells to the tallest blade) and mass (32/38/40 occupied
+/// cells), measured through the gallery example. Taller tables were measured
+/// and rejected as over a cap: a 5-cell skirt costs 41 cells, and a 5-cell
+/// skirt under a centre of 6 costs 122 triangles against the 120-triangle cap.
+const GRASS_HEIGHTS_S: [i32; GRASS_BLADES_PER_TUFT] = [4, 3, 3, 3, 3, 3, 4, 4];
+const GRASS_HEIGHTS_M: [i32; GRASS_BLADES_PER_TUFT] = [5, 4, 4, 4, 4, 4, 4, 4];
+const GRASS_HEIGHTS_L: [i32; GRASS_BLADES_PER_TUFT] = [6, 5, 4, 4, 4, 4, 4, 4];
+
+/// Build one tier's blade table from its heights, pairing each blade with the
+/// lean direction and lean level that give it a silhouette of its own.
+const fn tuft(heights: [i32; GRASS_BLADES_PER_TUFT]) -> [GrassBlade; GRASS_BLADES_PER_TUFT] {
+    let mut blades = [blade(0, 1, [1, 0]); GRASS_BLADES_PER_TUFT];
+    let mut index = 0;
+    while index < GRASS_BLADES_PER_TUFT {
+        blades[index] = blade(heights[index], GRASS_LEAN_LEVELS[index], GRASS_LEANS[index]);
+        index += 1;
+    }
+    blades
+}
+
+const GRASS_BLADES_S: [GrassBlade; GRASS_BLADES_PER_TUFT] = tuft(GRASS_HEIGHTS_S);
+const GRASS_BLADES_M: [GrassBlade; GRASS_BLADES_PER_TUFT] = tuft(GRASS_HEIGHTS_M);
+const GRASS_BLADES_L: [GrassBlade; GRASS_BLADES_PER_TUFT] = tuft(GRASS_HEIGHTS_L);
+
+/// One blade: a leaning stalk of `height` cells grown from the shared crown
+/// cell, whose top [`GRASS_TIP_CELLS_PER_BLADE`] cells are the lighter tip
+/// material. A lean is a horizontal step followed by a vertical one, both
+/// routed through [`set_path`], so the blade stays six-connected and the elbow
+/// cell itself is stalk: the tip colour never reaches down to the clump base.
+fn grass_blade(volume: &mut DetailVolume, blade: &GrassBlade) -> Result<()> {
+    let mut prev = [0, 1, 0];
     volume.set(prev, material::GRASS_BLADE)?;
-    for level in 1..height {
-        let mut next = [prev[0], prev[1] + 1, prev[2]];
-        if level % 3 == 0 {
-            if lean[0] != 0 {
-                next[0] += lean[0];
-            } else {
-                next[2] += lean[1];
-            }
-        }
-        set_path(volume, prev, next, material::GRASS_BLADE)?;
+    for level in 1..blade.height {
+        let next = if level == blade.lean_level {
+            let elbow = [prev[0] + blade.lean[0], prev[1], prev[2] + blade.lean[1]];
+            set_path(volume, prev, elbow, material::GRASS_BLADE)?;
+            [elbow[0], prev[1] + 1, elbow[2]]
+        } else {
+            [prev[0], prev[1] + 1, prev[2]]
+        };
+        let m = if level >= blade.height - GRASS_TIP_CELLS_PER_BLADE as i32 {
+            material::GRASS_TIP
+        } else {
+            material::GRASS_BLADE
+        };
+        set_path(volume, prev, next, m)?;
         prev = next;
     }
-    let tip = [prev[0], prev[1] + 1, prev[2]];
-    set_path(volume, prev, tip, material::GRASS_TIP)?;
     Ok(())
 }
 
-fn grass_tuft_with(id: &str, blades: &[([i32; 2], i32, [i32; 2])]) -> Result<DetailVolume> {
+fn grass_tuft_with(id: &str, blades: &[GrassBlade; GRASS_BLADES_PER_TUFT]) -> Result<DetailVolume> {
     let scale = Scale::new(LANDSCAPE_LEAF_SCALE_M)?;
     let mut volume = DetailVolume::new(id, scale);
     contact_pad(&mut volume, material::GRASS_BLADE)?;
-    for (base, height, lean) in blades.iter().copied() {
-        grass_blade(&mut volume, base, height, lean)?;
+    for blade in blades {
+        grass_blade(&mut volume, blade)?;
     }
     debug_assert!(is_single_body(&volume));
     Ok(volume)
@@ -206,7 +272,6 @@ pub fn grass_tuft_m(id: &str) -> Result<DetailVolume> {
 pub fn grass_tuft_l(id: &str) -> Result<DetailVolume> {
     grass_tuft_with(id, &GRASS_BLADES_L)
 }
-
 // ---------------------------------------------------------------------------
 // Flowers
 // ---------------------------------------------------------------------------

@@ -42,10 +42,11 @@ struct Input {
     // identity record (0,0,0,0) leaves non-instanced geometry unchanged.
     @location(3) instance: vec4<f32>,
     // Packed wind record: (sway phase 0..1, bend 0..1, prototype height in
-    // metres, enabled). The identity record (0,0,0,0) has enabled = 0, which
-    // is the early-out in `displace` below, so every draw that binds it - every
-    // chunk, terrain tile, legacy, dynamic and plain static-scene draw - is
-    // rasterized from exactly the position it was before this path existed.
+    // metres, per-instance scale). The identity record (0,0,0,0) has scale = 0,
+    // which is the early-out in `displace` below *and* the mark a non-flora
+    // draw's record carries, so every draw that binds it - every chunk, terrain
+    // tile, legacy, dynamic and plain static-scene draw - is rasterized at its
+    // own scale from exactly the position it was before this path existed.
     @location(4) wind: vec4<f32>,
 };
 struct Output {
@@ -67,11 +68,15 @@ fn quarter_rotation(yaw: f32) -> mat2x2<f32> {
 }
 // The one place vegetation is displaced. Two effects share it:
 //
-//   h            = clamp(local_y / height_m, 0, 1), so the ground contact never
-//                  moves and the tip moves most;
+//   scale        = wind.w, the instance's uniform scale, which multiplies the
+//                  local position in `vs_main` before this runs;
+//   h            = clamp(local_y / (height_m * scale), 0, 1), the fraction of
+//                  the *drawn* plant height, so the ground contact never moves
+//                  and the tip moves most at every scale;
 //   sway         = two decorrelated sines of time, the instance phase and the
 //                  world position, so neighbours never pulse together;
-//   bend_amount  = bend * strength * h^1.5, in metres;
+//   bend_amount  = bend * scale * strength * h^1.5, in metres: a short instance
+//                  bows proportionally less than a tall one;
 //   push         = (1 - d/radius)^2 * radius * 0.5 metres away from the player
 //                  inside the push radius, weighted by the same h. The push
 //                  strength is derived from the radius rather than carried in
@@ -82,39 +87,43 @@ fn quarter_rotation(yaw: f32) -> mat2x2<f32> {
 // Normals are deliberately left alone: displacement is horizontal and small
 // next to a voxel face, and recomputing a normal per vertex would need the
 // neighbouring displaced positions, which an instanced vertex does not have.
-// Shading therefore follows the rest pose. `shadow.wgsl` does not call this at
-// all, so a swaying plant casts its rest-pose shadow; both are stated
-// limitations of this slice.
-fn displace(local_y: f32, world_position: vec3<f32>, wind: vec4<f32>) -> vec3<f32> {
-    if wind.w < 0.5 { return world_position; }
-    let height_m = max(wind.z, 0.01);
-    let h = clamp(local_y / height_m, 0.0, 1.0);
+// Shading therefore follows the rest pose. `shadow.wgsl` applies the same scale
+// but not this displacement, so a swaying plant casts its rest-pose shadow at
+// its drawn size; both are stated limitations of this slice.
+fn displace(local: vec3<f32>, rest: vec3<f32>, wind: vec4<f32>) -> vec3<f32> {
+    if wind.w <= 0.0 { return rest; }
+    let scale = wind.w;
+    let height_m = max(wind.z * scale, 0.01);
+    let h = clamp(local.y / height_m, 0.0, 1.0);
     let phase = wind.x;
     let bend = wind.y;
     let time = lighting.wind.w;
     let strength = lighting.wind.z;
     let freq = 1.7;
     let TAU = 6.2831853;
-    let sway = sin(time * freq + phase * TAU + world_position.x * 0.11 + world_position.z * 0.07)
+    let sway = sin(time * freq + phase * TAU + rest.x * 0.11 + rest.z * 0.07)
         + 0.5 * sin(time * freq * 1.7 + phase * 3.1);
-    let bend_amount = bend * strength * pow(h, 1.5);
+    let bend_amount = bend * scale * strength * pow(h, 1.5);
     var offset = lighting.wind.xy * sway * bend_amount;
     let radius = lighting.player.w;
     if radius > 0.0 {
-        let away = world_position.xz - lighting.player.xz;
+        let away = rest.xz - lighting.player.xz;
         let d = length(away);
         if d < radius && d > 1.0e-4 {
             let falloff = 1.0 - d / radius;
             offset = offset + (away / d) * falloff * falloff * radius * 0.5 * h;
         }
     }
-    return vec3(world_position.x + offset.x, world_position.y, world_position.z + offset.y);
+    return vec3(rest.x + offset.x, rest.y, rest.z + offset.y);
 }
 @vertex fn vs_main(v: Input) -> Output {
     let rotation = quarter_rotation(v.instance.w);
-    let xz = rotation * vec2(v.position.x, v.position.z);
-    let rest = vec3(xz.x, v.position.y, xz.y) + v.instance.xyz;
-    let world_position = displace(v.position.y, rest, v.wind);
+    // A zero scale marks a record that is not flora, which draws unscaled.
+    let scale = select(1.0, v.wind.w, v.wind.w > 0.0);
+    let local = v.position * scale;
+    let xz = rotation * vec2(local.x, local.z);
+    let rest = vec3(xz.x, local.y, xz.y) + v.instance.xyz;
+    let world_position = displace(local, rest, v.wind);
     let nxz = rotation * vec2(v.normal.x, v.normal.z);
     let world_normal = vec3(nxz.x, v.normal.y, nxz.y);
     var out: Output;

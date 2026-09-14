@@ -782,7 +782,8 @@ pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 4] = [
 /// is why this radius is documented rather than tuned per frame.
 pub const LANDSCAPE_TREE_RADIUS_M: i32 = 160;
 
-/// One planned plant: a [`FloraSite`] plus the band it was kept by.
+/// One planned plant: a [`FloraSite`] plus the band it was kept by and the
+/// per-site variation the renderer needs to make it an individual.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlacedFlora {
     pub kind: FloraKind,
@@ -791,13 +792,35 @@ pub struct PlacedFlora {
     pub z: i32,
     pub yaw_quarters: u8,
     pub scale_eighths: u8,
+    /// Per-site height multiplier in percent, `FLORA_MIN_VARIATION_PERCENT
+    /// ..=FLORA_MAX_VARIATION_PERCENT` (0.75x to 1.25x). Two plants in the same
+    /// size tier are then not the same height, which is what stops a field from
+    /// reading as one prototype repeated.
+    pub height_percent: u8,
+    /// Per-site wind compliance multiplier in percent, same range. Independent
+    /// of [`Self::height_percent`]: stiffness is not a copy of tallness.
+    pub bend_percent: u8,
     /// Index into the tier slice the caller passed; trees use the band their
     /// distance falls in, clamped to the last tier.
     pub tier: u8,
 }
 
+/// Lower bound of the per-site variation range, as a percentage.
+pub const FLORA_MIN_VARIATION_PERCENT: u8 = 75;
+/// Upper bound of the per-site variation range, as a percentage.
+pub const FLORA_MAX_VARIATION_PERCENT: u8 = 125;
+
+/// One variation field from its own hash of the site's column: a percentage in
+/// the inclusive range `FLORA_MIN_VARIATION_PERCENT..=FLORA_MAX_VARIATION_PERCENT`.
+/// Integer throughout: the same column returns the same value on every target,
+/// and the modulo only ever folds the hash into the 51-value range.
+fn varied_percent(seed: u64, salt: u64, x: i32, z: i32) -> u8 {
+    let span = u64::from(FLORA_MAX_VARIATION_PERCENT - FLORA_MIN_VARIATION_PERCENT) + 1;
+    (u64::from(FLORA_MIN_VARIATION_PERCENT) + hash3(seed ^ salt, x, z) % span) as u8
+}
+
 impl PlacedFlora {
-    fn from_site(site: FloraSite, tier: u8) -> Self {
+    fn from_site(site: FloraSite, tier: u8, seed: u64) -> Self {
         Self {
             kind: site.kind,
             x: site.x,
@@ -805,6 +828,8 @@ impl PlacedFlora {
             z: site.z,
             yaw_quarters: site.yaw_quarters,
             scale_eighths: site.scale_eighths,
+            height_percent: varied_percent(seed, SALT_FLORA_HEIGHT, site.x, site.z),
+            bend_percent: varied_percent(seed, SALT_FLORA_BEND, site.x, site.z),
             tier,
         }
     }
@@ -845,6 +870,14 @@ fn tier_of(tiers: &[FloraTier], distance: i32) -> Option<u8> {
 }
 
 const SALT_FLORA_KEEP: u64 = 0x7f4a_7c15_bf58_476d;
+
+/// Per-site height and bend variation salts. Each field hashes its own salt and
+/// its own column coordinate, so a site's height and its wind compliance vary
+/// independently: a tall tuft is as likely to be the stiff one as the flexible
+/// one, and neither follows the yaw or the size tier (which come from the
+/// site's own roll in [`flora_cell`]).
+const SALT_FLORA_HEIGHT: u64 = 0x94d0_49bb_1331_11eb;
+const SALT_FLORA_BEND: u64 = 0xd2b7_4405_3f4a_6a1d;
 
 /// Whether a flora lattice cell survives its tier's decimation.
 ///
@@ -891,6 +924,12 @@ pub fn plan_flora(
 /// inside [`LANDSCAPE_TREE_RADIUS_M`]. Iteration is row-major in ascending
 /// lattice order, so the same eye and tiers always produce the same list.
 ///
+/// Every placement also carries the per-site variation of its column:
+/// [`PlacedFlora::height_percent`] and [`PlacedFlora::bend_percent`], each from
+/// its own salt (see [`SALT_FLORA_HEIGHT`]) and therefore independent of the
+/// yaw, the size tier and of each other. The fields are part of the plan, so the
+/// determinism this function guarantees covers them too.
+///
 /// A non-finite eye coordinate folds to zero exactly as [`ring_plan`] folds it.
 pub fn plan_flora_into(
     seed: u64,
@@ -924,7 +963,7 @@ pub fn plan_flora_into(
                         plan.dropped += 1;
                         continue;
                     }
-                    plan.sites.push(PlacedFlora::from_site(*site, tier));
+                    plan.sites.push(PlacedFlora::from_site(*site, tier, seed));
                 }
             }
         }
@@ -947,7 +986,7 @@ pub fn plan_flora_into(
                 continue;
             }
             let tier = tier_of(tiers, chebyshev(site.x, site.z, eye_x, eye_z)).unwrap_or(last_tier);
-            plan.trees.push(PlacedFlora::from_site(site, tier));
+            plan.trees.push(PlacedFlora::from_site(site, tier, seed));
         }
     }
 }
@@ -1568,12 +1607,91 @@ mod tests {
                 assert!(placed.yaw_quarters <= 3);
                 assert!((4..=12).contains(&placed.scale_eighths));
                 assert!((placed.tier as usize) < LANDSCAPE_FLORA_TIERS.len());
+                // The per-site variation is part of the plan, so the equality
+                // above already covers it; these bound it and check that the
+                // field is actually varied rather than a constant that would
+                // make the equality trivially true.
+                assert!((FLORA_MIN_VARIATION_PERCENT..=FLORA_MAX_VARIATION_PERCENT)
+                    .contains(&placed.height_percent));
+                assert!((FLORA_MIN_VARIATION_PERCENT..=FLORA_MAX_VARIATION_PERCENT)
+                    .contains(&placed.bend_percent));
             }
         }
         // A non-finite eye folds to the origin, exactly as the ring plan does.
         assert_eq!(
             plan_default([f32::NAN, 0.0, f32::INFINITY]),
             plan_default([0.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn per_site_variation_is_ranged_varied_and_decorrelated() {
+        use std::collections::BTreeSet;
+        let seed = SEED_UNDER_TEST;
+        let mut heights = BTreeSet::new();
+        let mut bends = BTreeSet::new();
+        let mut pairs = BTreeSet::new();
+        let mut adjacent = 0usize;
+        let mut same_height = 0usize;
+        let mut same_both = 0usize;
+        for x in -50..50 {
+            for z in -50..50 {
+                let height = varied_percent(seed, SALT_FLORA_HEIGHT, x, z);
+                let bend = varied_percent(seed, SALT_FLORA_BEND, x, z);
+                assert!(
+                    (FLORA_MIN_VARIATION_PERCENT..=FLORA_MAX_VARIATION_PERCENT).contains(&height),
+                    "{height} out of range"
+                );
+                assert!(
+                    (FLORA_MIN_VARIATION_PERCENT..=FLORA_MAX_VARIATION_PERCENT).contains(&bend),
+                    "{bend} out of range"
+                );
+                heights.insert(height);
+                bends.insert(bend);
+                pairs.insert((height, bend));
+                for (dx, dz) in [(1, 0), (0, 1)] {
+                    let other_height = varied_percent(seed, SALT_FLORA_HEIGHT, x + dx, z + dz);
+                    let other_bend = varied_percent(seed, SALT_FLORA_BEND, x + dx, z + dz);
+                    adjacent += 1;
+                    same_height += usize::from(height == other_height);
+                    same_both += usize::from(height == other_height && bend == other_bend);
+                }
+            }
+        }
+        // Every value in the range is reachable, so the field is a real
+        // variation and not a clamped constant.
+        assert_eq!(heights.len(), 51, "height values");
+        assert_eq!(bends.len(), 51, "bend values");
+        // Independence, stated as coverage: if the bend were a relabelling of
+        // the height, the joint field would occupy 51 of the 51x51 cells. The
+        // measured coverage over this grid is 2491 of 2601, so the two fields
+        // carry independent hash bits.
+        assert!(
+            pairs.len() >= 2400,
+            "height and bend are not independent: {} of 2601 pairs",
+            pairs.len()
+        );
+        // Adjacent columns: measured over this grid, 385 of the 20000 adjacent
+        // pairs (1.9%) share a height and 10 (0.05%) share both fields, which is
+        // the birthday rate for 51 values. The margins below guard a collapse
+        // into a constant, not a collision, which no hash can rule out.
+        assert!(
+            same_height * 33 < adjacent,
+            "{same_height} of {adjacent} neighbours share a height"
+        );
+        assert!(
+            same_both * 500 < adjacent,
+            "{same_both} of {adjacent} neighbours share both fields"
+        );
+        // The fields are integer arithmetic on the column, so they are stable
+        // across calls and across targets.
+        assert_eq!(
+            varied_percent(seed, SALT_FLORA_HEIGHT, -137, 913),
+            varied_percent(seed, SALT_FLORA_HEIGHT, -137, 913)
+        );
+        assert_ne!(
+            varied_percent(seed, SALT_FLORA_HEIGHT, 0, 0),
+            varied_percent(seed, SALT_FLORA_HEIGHT, 1, 0)
         );
     }
 
