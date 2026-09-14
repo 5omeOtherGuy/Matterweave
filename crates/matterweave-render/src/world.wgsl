@@ -18,6 +18,10 @@ struct Lighting {
     reflection_dimensions: vec4<u32>,
     reflection_params: vec4<f32>,
     atmosphere: vec4<f32>,
+    // (wind direction x, wind direction z, strength in metres, time in seconds)
+    wind: vec4<f32>,
+    // (player x, y, z, push radius in metres); radius 0 disables the push
+    player: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> lighting: Lighting;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
@@ -37,6 +41,12 @@ struct Input {
     // Packed instance record: translation xyz, quarter-turn yaw in w. The
     // identity record (0,0,0,0) leaves non-instanced geometry unchanged.
     @location(3) instance: vec4<f32>,
+    // Packed wind record: (sway phase 0..1, bend 0..1, prototype height in
+    // metres, enabled). The identity record (0,0,0,0) has enabled = 0, which
+    // is the early-out in `displace` below, so every draw that binds it - every
+    // chunk, terrain tile, legacy, dynamic and plain static-scene draw - is
+    // rasterized from exactly the position it was before this path existed.
+    @location(4) wind: vec4<f32>,
 };
 struct Output {
     @builtin(position) clip: vec4<f32>,
@@ -55,10 +65,56 @@ fn quarter_rotation(yaw: f32) -> mat2x2<f32> {
         vec2(quarter_sin[q], quarter_cos[q]),
     );
 }
+// The one place vegetation is displaced. Two effects share it:
+//
+//   h            = clamp(local_y / height_m, 0, 1), so the ground contact never
+//                  moves and the tip moves most;
+//   sway         = two decorrelated sines of time, the instance phase and the
+//                  world position, so neighbours never pulse together;
+//   bend_amount  = bend * strength * h^1.5, in metres;
+//   push         = (1 - d/radius)^2 * radius * 0.5 metres away from the player
+//                  inside the push radius, weighted by the same h. The push
+//                  strength is derived from the radius rather than carried in
+//                  its own uniform: one number describes how wide the player
+//                  parts the field and how far, and the h weighting keeps the
+//                  ground contact planted while the tips bow away.
+//
+// Normals are deliberately left alone: displacement is horizontal and small
+// next to a voxel face, and recomputing a normal per vertex would need the
+// neighbouring displaced positions, which an instanced vertex does not have.
+// Shading therefore follows the rest pose. `shadow.wgsl` does not call this at
+// all, so a swaying plant casts its rest-pose shadow; both are stated
+// limitations of this slice.
+fn displace(local_y: f32, world_position: vec3<f32>, wind: vec4<f32>) -> vec3<f32> {
+    if wind.w < 0.5 { return world_position; }
+    let height_m = max(wind.z, 0.01);
+    let h = clamp(local_y / height_m, 0.0, 1.0);
+    let phase = wind.x;
+    let bend = wind.y;
+    let time = lighting.wind.w;
+    let strength = lighting.wind.z;
+    let freq = 1.7;
+    let TAU = 6.2831853;
+    let sway = sin(time * freq + phase * TAU + world_position.x * 0.11 + world_position.z * 0.07)
+        + 0.5 * sin(time * freq * 1.7 + phase * 3.1);
+    let bend_amount = bend * strength * pow(h, 1.5);
+    var offset = lighting.wind.xy * sway * bend_amount;
+    let radius = lighting.player.w;
+    if radius > 0.0 {
+        let away = world_position.xz - lighting.player.xz;
+        let d = length(away);
+        if d < radius && d > 1.0e-4 {
+            let falloff = 1.0 - d / radius;
+            offset = offset + (away / d) * falloff * falloff * radius * 0.5 * h;
+        }
+    }
+    return vec3(world_position.x + offset.x, world_position.y, world_position.z + offset.y);
+}
 @vertex fn vs_main(v: Input) -> Output {
     let rotation = quarter_rotation(v.instance.w);
     let xz = rotation * vec2(v.position.x, v.position.z);
-    let world_position = vec3(xz.x, v.position.y, xz.y) + v.instance.xyz;
+    let rest = vec3(xz.x, v.position.y, xz.y) + v.instance.xyz;
+    let world_position = displace(v.position.y, rest, v.wind);
     let nxz = rotation * vec2(v.normal.x, v.normal.z);
     let world_normal = vec3(nxz.x, v.normal.y, nxz.y);
     var out: Output;

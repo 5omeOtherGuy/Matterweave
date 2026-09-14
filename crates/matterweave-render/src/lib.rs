@@ -17,16 +17,23 @@ pub mod shader_contract;
 mod shadow;
 mod static_scene;
 mod timing;
+#[cfg(test)]
+mod wind_tests;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
 use frustum::Frustum;
 pub use hud::Hud;
-pub use lighting::{Atmosphere, LightingSettings, Sun, DEFAULT_FOG_DENSITY, DEFAULT_SKY};
+pub use lighting::{
+    Atmosphere, LightingSettings, PlayerPush, Sun, Wind, DEFAULT_FOG_DENSITY, DEFAULT_SKY,
+};
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use shadow::Shadow;
 use static_scene::StaticScene;
-pub use static_scene::{StaticInstance, StaticSceneStats};
+pub use static_scene::{
+    FloraInstance, StaticInstance, StaticSceneStats, MAX_FLORA_BYTES, MAX_FLORA_HEIGHT_M,
+    MAX_FLORA_INSTANCES, MAX_WIND_DISPLACEMENT_M,
+};
 use std::{collections::BTreeMap, ffi::CStr, sync::Arc, time::Instant};
 pub use timing::GpuTimings;
 use timing::TimestampQueries;
@@ -798,14 +805,19 @@ fn pipeline(
                     input_rate: vk::VertexInputRate::VERTEX,
                 }];
                 // World and shadow pipelines read one packed instance record
-                // (translation xyz, quarter yaw) per instance at location 3.
-                // Legacy/chunk/dynamic draws bind a single identity record.
+                // (translation xyz, quarter yaw) per instance at location 3 and
+                // one wind record (phase, bend, height, enabled) at location 4.
+                // Legacy/chunk/dynamic draws bind a single identity record to
+                // both; the shader's `wind.w < 0.5` early-out then leaves their
+                // geometry exactly where it was.
                 if !hud {
-                    bindings.push(vk::VertexInputBindingDescription {
-                        binding: 1,
-                        stride: 16,
-                        input_rate: vk::VertexInputRate::INSTANCE,
-                    });
+                    for binding in [1, 2] {
+                        bindings.push(vk::VertexInputBindingDescription {
+                            binding,
+                            stride: 16,
+                            input_rate: vk::VertexInputRate::INSTANCE,
+                        });
+                    }
                 }
                 let mut attributes: Vec<_> = if hud {
                     vec![
@@ -833,12 +845,14 @@ fn pipeline(
                         .collect()
                 };
                 if !hud {
-                    attributes.push(vk::VertexInputAttributeDescription {
-                        location: 3,
-                        binding: 1,
-                        format: vk::Format::R32G32B32A32_SFLOAT,
-                        offset: 0,
-                    });
+                    for (location, binding) in [(3, 1), (4, 2)] {
+                        attributes.push(vk::VertexInputAttributeDescription {
+                            location,
+                            binding,
+                            format: vk::Format::R32G32B32A32_SFLOAT,
+                            offset: 0,
+                        });
+                    }
                 }
                 let vertex = vk::PipelineVertexInputStateCreateInfo::default()
                     .vertex_binding_descriptions(&bindings)
@@ -1186,7 +1200,12 @@ pub struct Renderer {
     terrain_visible: usize,
     dynamic: Option<GpuMesh>,
     static_scene: Option<StaticScene>,
+    /// Wind-capable prototype instancing, drawn after the static scene through
+    /// the same pipeline. Kept apart so the static path cannot change shape.
+    flora_scene: Option<StaticScene>,
     // One zeroed instance record: identity transform for non-instanced draws.
+    // The same zeroed bytes are bound to the wind attribute, where w = 0 is the
+    // shader's early-out, so every non-instanced draw is undisplaced.
     identity: Buffer,
     hud: Option<Buffer>,
     requested: vk::Extent2D,
@@ -1408,6 +1427,7 @@ impl Renderer {
             terrain_visible: 0,
             dynamic: None,
             static_scene: None,
+            flora_scene: None,
             identity,
             hud: None,
             requested: vk::Extent2D {
@@ -1678,6 +1698,72 @@ impl Renderer {
         self.static_scene.as_ref().map(|scene| scene.stats())
     }
 
+    /// [`Self::replace_static_scene`] for wind-capable flora.
+    ///
+    /// Identical pooling, batching and bounds culling; the only difference is
+    /// the parallel per-instance wind buffer that `world.wgsl` reads, and the
+    /// tighter [`MAX_FLORA_BYTES`] instance budget, which is *rejected* rather
+    /// than silently truncated. The flora scene is separate from the static
+    /// scene, so a sample can carry both and the static path is untouched.
+    pub fn replace_flora_scene(
+        &mut self,
+        meshes: &[Mesh],
+        instances: &[FloraInstance],
+    ) -> Result<StaticSceneStats> {
+        if instances.len() > MAX_FLORA_INSTANCES {
+            return Err(format!(
+                "Flora scene requests {} instances, over the {MAX_FLORA_INSTANCES}-instance budget",
+                instances.len()
+            ));
+        }
+        let plan = static_scene::plan_flora_scene(meshes, instances)?;
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        if plan.instance_count == 0 {
+            self.flora_scene = None;
+            self.update_counters();
+            return Ok(StaticSceneStats::default());
+        }
+        let scene = StaticScene::new(self.device.clone(), plan)?;
+        let stats = scene.stats();
+        self.flora_scene = Some(scene);
+        self.update_counters();
+        Ok(stats)
+    }
+
+    /// [`Self::update_static_instances`] for the flora scene: placement and
+    /// wind records change, pooled geometry is retained.
+    pub fn update_flora_instances(
+        &mut self,
+        instances: &[FloraInstance],
+    ) -> Result<StaticSceneStats> {
+        if instances.len() > MAX_FLORA_INSTANCES {
+            return Err(format!(
+                "Flora update requests {} instances, over the {MAX_FLORA_INSTANCES}-instance budget",
+                instances.len()
+            ));
+        }
+        let scene = self
+            .flora_scene
+            .as_ref()
+            .ok_or("No resident flora geometry")?;
+        let plan = scene.plan_flora_instances(instances)?;
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        let scene = self.flora_scene.as_mut().expect("retained flora scene");
+        scene.update_instances(plan)?;
+        let stats = scene.stats();
+        self.update_counters();
+        Ok(stats)
+    }
+
+    /// Honest accounting of the currently resident flora scene, if any.
+    pub fn flora_scene_stats(&self) -> Option<StaticSceneStats> {
+        self.flora_scene.as_ref().map(|scene| scene.stats())
+    }
+
     /// Drop every derived water surface: a whole-world upload or a world change
     /// invalidates them all. Retained through the caller's fence.
     pub fn clear_water(&mut self) -> Result<()> {
@@ -1713,6 +1799,10 @@ impl Renderer {
             // capacities are broken out in StaticSceneStats.
             + self
                 .static_scene
+                .as_ref()
+                .map_or(0, |scene| scene.allocated_bytes)
+            + self
+                .flora_scene
                 .as_ref()
                 .map_or(0, |scene| scene.allocated_bytes);
     }
@@ -1767,7 +1857,8 @@ impl Renderer {
         self.shadow.disable_indirect();
         if !volume.has_mesh_proxy()
             && (self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
-                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry))
+                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry)
+                || self.flora_scene.as_ref().is_some_and(|s| s.has_geometry))
         {
             return Err("Indirect World cache does not cover mesh-only objects/instances".into());
         }
@@ -1815,7 +1906,8 @@ impl Renderer {
         }
         if volume.source_mesh_digest().is_none()
             && (self.dynamic.as_ref().is_some_and(|m| m.index_count != 0)
-                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry))
+                || self.static_scene.as_ref().is_some_and(|s| s.has_geometry)
+                || self.flora_scene.as_ref().is_some_and(|s| s.has_geometry))
         {
             return Err("Reflection source does not cover mesh-only objects/instances".into());
         }
@@ -1974,7 +2066,7 @@ impl Renderer {
             .collect();
         // Shadow depth fitting must include the instanced scene bounds so
         // offscreen static casters stay inside the map.
-        if let Some(scene) = &self.static_scene {
+        for scene in self.static_scene.iter().chain(self.flora_scene.iter()) {
             if self.world_visible && scene.has_geometry {
                 bounds.push(scene.bounds);
             }
@@ -2055,6 +2147,7 @@ impl Renderer {
                     .chain(self.legacy.iter())
                     .chain(self.dynamic.iter()),
                 self.static_scene.as_ref(),
+                self.flora_scene.as_ref(),
                 self.identity.raw,
             );
             if let Some(timestamps) = &self.timestamps {
@@ -2111,8 +2204,9 @@ impl Renderer {
                 &[self.shadow.set],
                 &[],
             );
-            // Identity instance record for the non-instanced draws below.
-            d.cmd_bind_vertex_buffers(cmd, 1, &[self.identity.raw], &[0]);
+            // Identity instance and wind records for the non-instanced draws
+            // below: zero translation, zero yaw, and wind.w = 0.
+            d.cmd_bind_vertex_buffers(cmd, 1, &[self.identity.raw, self.identity.raw], &[0, 0]);
             d.cmd_push_constants(
                 cmd,
                 s.layout,
@@ -2173,6 +2267,11 @@ impl Renderer {
             // to the shadow pass above.
             if self.world_visible {
                 if let Some(scene) = &self.static_scene {
+                    scene.record_batches(d, cmd, Some(&frustum));
+                }
+                // Flora shares the pipeline and the same batch culling; only
+                // its bound wind records differ from the static scene's.
+                if let Some(scene) = &self.flora_scene {
                     scene.record_batches(d, cmd, Some(&frustum));
                 }
             }

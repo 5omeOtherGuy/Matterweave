@@ -1425,6 +1425,9 @@ fn main() {
                     ],
                     reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
                     atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
+                    // Still air, no player: this harness renders undisplaced.
+                    wind: [1.0, 0.0, 0.0, 0.0],
+                    player: [0.0; 4],
                 };
                 let on = probe_harness
                     .render(&mesh, &camera, &lighting, true)
@@ -1529,6 +1532,9 @@ fn main() {
                 ],
                 reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
                 atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
+                // Still air, no player: this harness renders undisplaced.
+                wind: [1.0, 0.0, 0.0, 0.0],
+                player: [0.0; 4],
             };
             let pixel = probe_harness
                 .render(&mesh, &camera, &lighting, true)
@@ -1674,6 +1680,9 @@ fn main() {
                     ],
                     reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
                     atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
+                    // Still air, no player: this harness renders undisplaced.
+                    wind: [1.0, 0.0, 0.0, 0.0],
+                    player: [0.0; 4],
                 };
                 let pixel = probe_harness
                     .render(&mesh, &camera, &lighting, true)
@@ -1760,6 +1769,9 @@ fn main() {
             ],
             reflection_params: [volume.trace_bound() as f32, SURFACE_OFFSET, 0., 0.],
             atmosphere: [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], FOG_DENSITY],
+            // Still air, no player: this harness renders undisplaced.
+            wind: [1.0, 0.0, 0.0, 0.0],
+            player: [0.0; 4],
         };
         let mesh = scene_mesh(&world, &t);
         let camera_on = camera(projection * view, eye);

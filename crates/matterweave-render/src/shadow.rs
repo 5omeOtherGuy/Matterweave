@@ -169,11 +169,19 @@ impl Shadow {
                 .iter()
                 .enumerate()
                 .map(|(i, &ty)| {
+                    // Binding 0 is the frame uniform: the wind displacement added
+                    // for flora reads it from the vertex stage, so the layout has
+                    // to admit both stages or the pipeline is invalid.
+                    let stages = if i == 0 {
+                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT
+                    } else {
+                        vk::ShaderStageFlags::FRAGMENT
+                    };
                     vk::DescriptorSetLayoutBinding::default()
                         .binding(i as u32)
                         .descriptor_type(ty)
                         .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                        .stage_flags(stages)
                 })
                 .collect();
             out.set_layout = d
@@ -340,6 +348,8 @@ impl Shadow {
         bounds: &[[[f32; 3]; 2]],
     ) -> Result<()> {
         settings.atmosphere.validate()?;
+        settings.wind.validate()?;
+        settings.player.validate()?;
         self.camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
         let sun = self.camera.direction;
         if self.indirect_sun != Some(crate::indirect::light_key(settings.sun)?) {
@@ -363,6 +373,8 @@ impl Shadow {
                     settings.atmosphere.sky[2],
                     settings.atmosphere.fog_density,
                 ],
+                wind: settings.wind.packed(),
+                player: settings.player.packed(),
                 sun: [sun[0], sun[1], sun[2], settings.sun.intensity],
                 // World-space bias preserves its scale when the fitted depth span changes.
                 params: [
@@ -534,12 +546,19 @@ impl Shadow {
     /// Static instanced batches are recorded without frustum culling so
     /// offscreen casters are retained; non-instanced meshes draw one identity
     /// instance through the shared record at `identity`.
+    ///
+    /// `shadow.wgsl` does not read the wind attribute: flora casts from its
+    /// rest pose, so a swaying plant's shadow does not sway with it. That is a
+    /// stated limitation of this slice, not an oversight - the alternative is a
+    /// second copy of the displacement maths that must stay bit-identical to
+    /// `world.wgsl`'s, and grass shadows are centimetres wide.
     pub fn record<'a>(
         &mut self,
         cmd: vk::CommandBuffer,
         enabled: bool,
         meshes: impl Iterator<Item = &'a GpuMesh>,
         static_scene: Option<&StaticScene>,
+        flora_scene: Option<&StaticScene>,
         identity: vk::Buffer,
     ) -> bool {
         self.caster_meshes = 0;
@@ -596,7 +615,7 @@ impl Shadow {
                 0,
                 bytemuck::cast_slice(&self.camera.view_proj),
             );
-            d.cmd_bind_vertex_buffers(cmd, 1, &[identity], &[0]);
+            d.cmd_bind_vertex_buffers(cmd, 1, &[identity, identity], &[0, 0]);
             if enabled {
                 let frustum = Frustum::new(self.camera.view_proj);
                 for mesh in meshes.filter(|m| m.index_count > 0 && frustum.intersects(m.bounds)) {
@@ -609,7 +628,7 @@ impl Shadow {
                 }
                 // Instanced batches apply the same transforms and are never
                 // discarded here: the shadow camera frustum does not gate casters.
-                if let Some(scene) = static_scene {
+                for scene in static_scene.into_iter().chain(flora_scene) {
                     self.caster_meshes += scene.record_batches(d, cmd, None);
                 }
             }

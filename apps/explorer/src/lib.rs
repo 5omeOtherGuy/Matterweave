@@ -9,6 +9,7 @@ mod engine_check;
 mod experience;
 mod gallery;
 mod landscape;
+mod landscape_flora;
 mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;

@@ -735,6 +735,223 @@ pub fn tree_cell(seed: u64, cell_x: i32, cell_z: i32) -> Option<FloraSite> {
     })
 }
 
+// -- Flora placement planning ------------------------------------------------
+
+/// One distance band of the flora placement plan.
+///
+/// `radius_m` is a Chebyshev (square) half-extent around the eye, not a circle:
+/// the flora lattice is a square grid and a square band is an exact integer
+/// predicate on the lattice coordinate, so a site never changes band because a
+/// float distance landed either side of a rounding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FloraTier {
+    pub radius_m: i32,
+    /// Keep one lattice cell in `keep_every`; `1` keeps every cell.
+    pub keep_every: u32,
+}
+
+/// The shipped density falloff: full density to 16 m, then half, quarter and
+/// eighth out to 96 m. Radii ascend and each is a whole number of
+/// [`FLORA_CELL_M`] cells, which is what makes the band predicate exact.
+pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 4] = [
+    FloraTier {
+        radius_m: 16,
+        keep_every: 1,
+    },
+    FloraTier {
+        radius_m: 32,
+        keep_every: 2,
+    },
+    FloraTier {
+        radius_m: 64,
+        keep_every: 4,
+    },
+    FloraTier {
+        radius_m: 96,
+        keep_every: 8,
+    },
+];
+
+/// Chebyshev half-extent in metres inside which [`plan_flora`] populates trees.
+///
+/// Trees are landmarks, not ground cover, so they reach far past the outermost
+/// [`LANDSCAPE_FLORA_TIERS`] band: at 160 m a [`Biome::Forest`] cell yields
+/// about 0.69 trees per [`TREE_CELL_M`] cell over 1600 cells, so a forest is
+/// still closing in around the eye at the edge of the plan rather than thinning
+/// into scattered props. The cost is one [`column`] sample per tree cell, which
+/// is why this radius is documented rather than tuned per frame.
+pub const LANDSCAPE_TREE_RADIUS_M: i32 = 160;
+
+/// One planned plant: a [`FloraSite`] plus the band it was kept by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlacedFlora {
+    pub kind: FloraKind,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub yaw_quarters: u8,
+    pub scale_eighths: u8,
+    /// Index into the tier slice the caller passed; trees use the band their
+    /// distance falls in, clamped to the last tier.
+    pub tier: u8,
+}
+
+impl PlacedFlora {
+    fn from_site(site: FloraSite, tier: u8) -> Self {
+        Self {
+            kind: site.kind,
+            x: site.x,
+            y: site.y,
+            z: site.z,
+            yaw_quarters: site.yaw_quarters,
+            scale_eighths: site.scale_eighths,
+            tier,
+        }
+    }
+}
+
+/// A bounded, deterministic placement plan for one eye position.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FloraPlan {
+    pub sites: Vec<PlacedFlora>,
+    pub trees: Vec<PlacedFlora>,
+    /// Sites and trees the caps refused. Reported instead of silently
+    /// truncating, so a caller can show placement pressure rather than
+    /// wondering why a field stops at an invisible line.
+    pub dropped: usize,
+}
+
+impl FloraPlan {
+    /// Clear the plan without releasing its buffers.
+    pub fn clear(&mut self) {
+        self.sites.clear();
+        self.trees.clear();
+        self.dropped = 0;
+    }
+}
+
+/// Chebyshev distance in metres from the eye column.
+fn chebyshev(x: i32, z: i32, eye_x: i32, eye_z: i32) -> i32 {
+    (x - eye_x).abs().max((z - eye_z).abs())
+}
+
+/// Index of the first tier whose radius covers `distance`, or `None` beyond the
+/// outermost tier.
+fn tier_of(tiers: &[FloraTier], distance: i32) -> Option<u8> {
+    tiers
+        .iter()
+        .position(|tier| distance <= tier.radius_m)
+        .map(|index| index as u8)
+}
+
+const SALT_FLORA_KEEP: u64 = 0x7f4a_7c15_bf58_476d;
+
+/// Whether a flora lattice cell survives its tier's decimation.
+///
+/// Decimation is decided from the *lattice cell*, before [`flora_cell`] samples
+/// any column, because the columns are the whole cost: keeping every cell
+/// inside 96 m would sample 9216 cells (36 864 [`column`] evaluations) where
+/// tiered decimation samples about 2 000. Per-site decimation cannot save that
+/// work, since a site only exists once its column has been generated. The
+/// consequence is stated rather than hidden: decimation thins the field in
+/// whole 2 m cells, not individual plants.
+fn keeps_cell(seed: u64, cell_x: i32, cell_z: i32, keep_every: u32) -> bool {
+    if keep_every <= 1 {
+        return true;
+    }
+    hash3(seed ^ SALT_FLORA_KEEP, cell_x, cell_z).is_multiple_of(keep_every as u64)
+}
+
+/// Plan the flora around one eye position.
+///
+/// See [`plan_flora_into`]; this allocates a fresh plan and is meant for tests
+/// and tools, not a frame loop.
+pub fn plan_flora(
+    seed: u64,
+    eye: [f32; 3],
+    tiers: &[FloraTier],
+    max_sites: usize,
+    max_trees: usize,
+) -> FloraPlan {
+    let mut plan = FloraPlan::default();
+    plan_flora_into(seed, eye, tiers, max_sites, max_trees, &mut plan);
+    plan
+}
+
+/// [`plan_flora`] writing into a caller-owned plan.
+///
+/// The plan's vectors are cleared, not reallocated, so a frame loop that keeps
+/// one plan allocates nothing after its buffers have grown once.
+///
+/// Ground cover comes from [`flora_cell`] on its [`FLORA_CELL_M`] lattice,
+/// inside the outermost tier's square. A cell belongs to the first tier whose
+/// radius covers the Chebyshev distance from the eye to the cell origin, and is
+/// kept when [`keeps_cell`] accepts it; no cell is visited twice, so no site
+/// appears twice. Trees come from [`tree_cell`] on its [`TREE_CELL_M`] lattice
+/// inside [`LANDSCAPE_TREE_RADIUS_M`]. Iteration is row-major in ascending
+/// lattice order, so the same eye and tiers always produce the same list.
+///
+/// A non-finite eye coordinate folds to zero exactly as [`ring_plan`] folds it.
+pub fn plan_flora_into(
+    seed: u64,
+    eye: [f32; 3],
+    tiers: &[FloraTier],
+    max_sites: usize,
+    max_trees: usize,
+    plan: &mut FloraPlan,
+) {
+    plan.clear();
+    let eye_x = eye_metre(eye[0]);
+    let eye_z = eye_metre(eye[2]);
+    let outer = tiers.iter().map(|tier| tier.radius_m).max().unwrap_or(0);
+    if outer > 0 {
+        let first = (eye_x - outer).div_euclid(FLORA_CELL_M);
+        let last = (eye_x + outer).div_euclid(FLORA_CELL_M);
+        let first_z = (eye_z - outer).div_euclid(FLORA_CELL_M);
+        let last_z = (eye_z + outer).div_euclid(FLORA_CELL_M);
+        for cell_z in first_z..=last_z {
+            for cell_x in first..=last {
+                let origin_x = cell_x * FLORA_CELL_M;
+                let origin_z = cell_z * FLORA_CELL_M;
+                let Some(tier) = tier_of(tiers, chebyshev(origin_x, origin_z, eye_x, eye_z)) else {
+                    continue;
+                };
+                if !keeps_cell(seed, cell_x, cell_z, tiers[tier as usize].keep_every) {
+                    continue;
+                }
+                for site in flora_cell(seed, cell_x, cell_z).sites() {
+                    if plan.sites.len() >= max_sites {
+                        plan.dropped += 1;
+                        continue;
+                    }
+                    plan.sites.push(PlacedFlora::from_site(*site, tier));
+                }
+            }
+        }
+    }
+    let last_tier = tiers.len().saturating_sub(1) as u8;
+    let first = (eye_x - LANDSCAPE_TREE_RADIUS_M).div_euclid(TREE_CELL_M);
+    let last = (eye_x + LANDSCAPE_TREE_RADIUS_M).div_euclid(TREE_CELL_M);
+    let first_z = (eye_z - LANDSCAPE_TREE_RADIUS_M).div_euclid(TREE_CELL_M);
+    let last_z = (eye_z + LANDSCAPE_TREE_RADIUS_M).div_euclid(TREE_CELL_M);
+    for cell_z in first_z..=last_z {
+        for cell_x in first..=last {
+            let Some(site) = tree_cell(seed, cell_x, cell_z) else {
+                continue;
+            };
+            if chebyshev(site.x, site.z, eye_x, eye_z) > LANDSCAPE_TREE_RADIUS_M {
+                continue;
+            }
+            if plan.trees.len() >= max_trees {
+                plan.dropped += 1;
+                continue;
+            }
+            let tier = tier_of(tiers, chebyshev(site.x, site.z, eye_x, eye_z)).unwrap_or(last_tier);
+            plan.trees.push(PlacedFlora::from_site(site, tier));
+        }
+    }
+}
+
 // -- Distance levels ---------------------------------------------------------
 
 /// Coarse cell edge in metres for a level: level 0 is one metre.
@@ -1290,6 +1507,260 @@ mod tests {
                 assert!(site.yaw_quarters <= 3);
             }
         }
+    }
+
+    // -- Flora planning ------------------------------------------------------
+
+    /// The landscape sample's seed. Kept here so the planner tests exercise the
+    /// world the sample actually shows.
+    const SEED_UNDER_TEST: u64 = 20260913;
+    const PLAINS_EYE: [f32; 3] = [0.0, 40.0, 0.0];
+
+    fn find_biome(seed: u64, want: Biome) -> Option<[f32; 3]> {
+        // A coarse sweep of the domain; the generator is a function of (x, z),
+        // so the first hit is deterministic.
+        for step_z in -40..40 {
+            for step_x in -40..40 {
+                let x = step_x * 97;
+                let z = step_z * 89;
+                if biome_at(seed, x, z) == want {
+                    return Some([x as f32 + 0.5, 40.0, z as f32 + 0.5]);
+                }
+            }
+        }
+        None
+    }
+
+    fn plan_default(eye: [f32; 3]) -> FloraPlan {
+        plan_flora(SEED_UNDER_TEST, eye, &LANDSCAPE_FLORA_TIERS, 20_000, 4_000)
+    }
+
+    #[test]
+    fn flora_plans_are_deterministic_and_free_of_duplicates() {
+        use std::collections::BTreeSet;
+        for eye in [PLAINS_EYE, [-137.5, 12.0, 913.25], [7.0, 0.0, -3.0]] {
+            let plan = plan_default(eye);
+            assert_eq!(
+                plan,
+                plan_default(eye),
+                "the plan must be a function of the eye"
+            );
+            // No lattice cell is visited twice, so no site is emitted twice.
+            // (A single column may legitimately carry two plants of the same
+            // kind: `flora_cell` rolls ground cover and flowers separately.)
+            let mut cells = BTreeSet::new();
+            let mut previous: Option<(i32, i32)> = None;
+            for site in &plan.sites {
+                let cell = (
+                    site.x.div_euclid(FLORA_CELL_M),
+                    site.z.div_euclid(FLORA_CELL_M),
+                );
+                if previous != Some(cell) {
+                    assert!(cells.insert(cell), "flora cell {cell:?} was visited twice");
+                    previous = Some(cell);
+                }
+            }
+            let mut trees = BTreeSet::new();
+            for tree in &plan.trees {
+                assert!(trees.insert((tree.x, tree.z)), "duplicate tree {tree:?}");
+            }
+            for placed in plan.sites.iter().chain(&plan.trees) {
+                assert!(placed.yaw_quarters <= 3);
+                assert!((4..=12).contains(&placed.scale_eighths));
+                assert!((placed.tier as usize) < LANDSCAPE_FLORA_TIERS.len());
+            }
+        }
+        // A non-finite eye folds to the origin, exactly as the ring plan does.
+        assert_eq!(
+            plan_default([f32::NAN, 0.0, f32::INFINITY]),
+            plan_default([0.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn tiers_thin_the_field_with_distance() {
+        let eye = PLAINS_EYE;
+        let plan = plan_default(eye);
+        let eye_x = eye_metre(eye[0]);
+        let eye_z = eye_metre(eye[2]);
+        let mut counts = [0usize; LANDSCAPE_FLORA_TIERS.len()];
+        for site in &plan.sites {
+            // The tier is a property of the site's lattice cell, not of the
+            // metre column inside it; see `plan_flora_into`.
+            let origin_x = site.x.div_euclid(FLORA_CELL_M) * FLORA_CELL_M;
+            let origin_z = site.z.div_euclid(FLORA_CELL_M) * FLORA_CELL_M;
+            assert_eq!(
+                Some(site.tier),
+                tier_of(
+                    &LANDSCAPE_FLORA_TIERS,
+                    chebyshev(origin_x, origin_z, eye_x, eye_z)
+                ),
+                "site {site:?} carries the wrong tier"
+            );
+            counts[site.tier as usize] += 1;
+        }
+        // Sites per square metre of each band's annulus. The ratios follow
+        // keep_every, not the band's area, so this measures the decimation.
+        let mut previous = f64::INFINITY;
+        for (index, tier) in LANDSCAPE_FLORA_TIERS.iter().enumerate() {
+            let inner = if index == 0 {
+                0
+            } else {
+                LANDSCAPE_FLORA_TIERS[index - 1].radius_m
+            };
+            let outer = tier.radius_m;
+            let area = (2 * outer) * (2 * outer) - (2 * inner) * (2 * inner);
+            let density = counts[index] as f64 / area as f64;
+            assert!(density > 0.0, "tier {index} is empty");
+            assert!(
+                density < previous,
+                "tier {index} density {density} is not below {previous}"
+            );
+            previous = density;
+        }
+    }
+
+    #[test]
+    fn caps_refuse_placements_and_report_them() {
+        let full = plan_default(PLAINS_EYE);
+        assert_eq!(full.dropped, 0, "the generous caps must not bite");
+        assert!(full.sites.len() > 500, "{} sites", full.sites.len());
+        let capped = plan_flora(SEED_UNDER_TEST, PLAINS_EYE, &LANDSCAPE_FLORA_TIERS, 100, 7);
+        assert_eq!(capped.sites.len(), 100);
+        assert_eq!(capped.trees.len(), full.trees.len().min(7));
+        assert_eq!(
+            capped.dropped,
+            (full.sites.len() - 100) + (full.trees.len() - capped.trees.len()),
+            "every refused placement must be counted"
+        );
+        // Capping drops the tail; it does not reshuffle the kept prefix.
+        assert_eq!(capped.sites, full.sites[..100]);
+    }
+
+    #[test]
+    fn the_plan_reuses_its_buffers() {
+        let mut plan = FloraPlan::default();
+        // Warm the buffers on a few eyes first; capacity must then hold.
+        for step in 0..6 {
+            let eye = [step as f32 * 37.0, 20.0, step as f32 * -53.0];
+            plan_flora_into(
+                SEED_UNDER_TEST,
+                eye,
+                &LANDSCAPE_FLORA_TIERS,
+                20_000,
+                4_000,
+                &mut plan,
+            );
+        }
+        let sites = plan.sites.capacity();
+        let trees = plan.trees.capacity();
+        for step in 0..6 {
+            let eye = [step as f32 * -17.0, 20.0, step as f32 * 29.0];
+            plan_flora_into(
+                SEED_UNDER_TEST,
+                eye,
+                &LANDSCAPE_FLORA_TIERS,
+                sites,
+                trees,
+                &mut plan,
+            );
+            assert_eq!(plan.sites.capacity(), sites, "a warm site buffer grew");
+            assert_eq!(plan.trees.capacity(), trees, "a warm tree buffer grew");
+        }
+    }
+
+    #[test]
+    fn trees_stay_inside_their_documented_radius() {
+        for eye in [PLAINS_EYE, [-903.5, 20.0, 411.25]] {
+            let plan = plan_default(eye);
+            let eye_x = eye_metre(eye[0]);
+            let eye_z = eye_metre(eye[2]);
+            for tree in &plan.trees {
+                assert!(
+                    chebyshev(tree.x, tree.z, eye_x, eye_z) <= LANDSCAPE_TREE_RADIUS_M,
+                    "tree {tree:?} escaped the plan radius"
+                );
+                assert!(matches!(
+                    tree.kind,
+                    FloraKind::TreeBroadleaf | FloraKind::TreeConifer
+                ));
+            }
+            for site in &plan.sites {
+                assert!(
+                    !matches!(site.kind, FloraKind::TreeBroadleaf | FloraKind::TreeConifer),
+                    "a tree reached the ground-cover list"
+                );
+                assert!(chebyshev(site.x, site.z, eye_x, eye_z) <= 96 + FLORA_CELL_M);
+            }
+        }
+    }
+
+    #[test]
+    fn biomes_grow_what_they_should() {
+        let seed = SEED_UNDER_TEST;
+        let plains = find_biome(seed, Biome::Plains).expect("the world has plains");
+        let plan = plan_flora(seed, plains, &LANDSCAPE_FLORA_TIERS, 20_000, 4_000);
+        assert!(
+            plan.sites
+                .iter()
+                .filter(|s| s.kind == FloraKind::GrassTuft)
+                .count()
+                > 100,
+            "plains must be grassy"
+        );
+        assert!(plan.sites.iter().any(|s| matches!(
+            s.kind,
+            FloraKind::FlowerRed | FloraKind::FlowerWhite | FloraKind::FlowerYellow
+        )));
+
+        let desert = find_biome(seed, Biome::Desert).expect("the world has desert");
+        let plan = plan_flora(seed, desert, &LANDSCAPE_FLORA_TIERS, 20_000, 4_000);
+        assert!(
+            plan.sites.iter().any(|s| s.kind == FloraKind::Cactus),
+            "desert must grow cacti"
+        );
+
+        let forest = find_biome(seed, Biome::Forest).expect("the world has forest");
+        let plan = plan_flora(seed, forest, &LANDSCAPE_FLORA_TIERS, 20_000, 4_000);
+        assert!(
+            plan.trees.len() > 200,
+            "a forest must read as forest: {} trees",
+            plan.trees.len()
+        );
+    }
+
+    /// Structural placement budget for one 16 m square at full density: 8x8
+    /// flora cells of at most [`MAX_FLORA_PER_CELL`] sites plus 2x2 tree cells
+    /// of one tree each.
+    const MAX_PLACED_PER_16M_SQUARE: usize = 64 * MAX_FLORA_PER_CELL + 4;
+
+    #[test]
+    fn per_16m_square_density_stays_inside_its_budget() {
+        use std::collections::BTreeMap;
+        let plains = find_biome(SEED_UNDER_TEST, Biome::Plains).expect("the world has plains");
+        let plan = plan_flora(
+            SEED_UNDER_TEST,
+            plains,
+            &LANDSCAPE_FLORA_TIERS,
+            20_000,
+            4_000,
+        );
+        let mut squares: BTreeMap<(i32, i32), usize> = BTreeMap::new();
+        for placed in plan.sites.iter().chain(&plan.trees) {
+            *squares
+                .entry((placed.x.div_euclid(16), placed.z.div_euclid(16)))
+                .or_default() += 1;
+        }
+        let worst = *squares.values().max().expect("a plains plan is not empty");
+        assert!(
+            worst <= MAX_PLACED_PER_16M_SQUARE,
+            "{worst} placements in one 16 m square exceeds {MAX_PLACED_PER_16M_SQUARE}"
+        );
+        // Full-density squares must still read as dense ground cover.
+        assert!(
+            worst >= 64,
+            "the densest 16 m square holds only {worst} plants"
+        );
     }
 
     #[test]
