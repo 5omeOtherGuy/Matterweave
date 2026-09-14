@@ -16,6 +16,7 @@
 //! twice. Both the pinned set and the cache bytes are bounded, so a flight that
 //! never stops cannot grow either one.
 use crate::landscape::normalized_filter;
+use crate::mesh_cache::{mesh_bytes, MeshCache};
 use matterweave_core::{
     landscape::{self, RingTile, TileFilter, LANDSCAPE_GENERATOR_VERSION},
     Mesh, TerrainSource,
@@ -23,7 +24,6 @@ use matterweave_core::{
 use matterweave_render::{Renderer, TerrainTileKey, MAX_TERRAIN_TILES};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    mem::size_of,
     sync::{
         mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
         Arc, Mutex, PoisonError,
@@ -153,128 +153,11 @@ impl TileMeshKey {
     }
 }
 
-fn mesh_bytes(mesh: &Mesh) -> usize {
-    mesh.vertices.capacity() * size_of::<matterweave_core::Vertex>()
-        + mesh.indices.capacity() * size_of::<u32>()
-}
-
-struct CacheEntry {
-    mesh: Arc<Mesh>,
-    bytes: usize,
-    last_use: u64,
-}
-
-/// Byte-budgeted CPU cache of generated tile meshes. Eviction is least
-/// recently used, with the key as a deterministic tie-break, so the same
-/// sequence of requests and hits always evicts the same entry. A recently
-/// dropped tile can be pinned for a bounded number of frames: its mesh then
-/// survives the trim, so a plan that comes back to it is an upload, not a
-/// regeneration.
-pub struct TileMeshCache {
-    entries: BTreeMap<TileMeshKey, CacheEntry>,
-    bytes: usize,
-    budget: usize,
-    clock: u64,
-    /// Frame through which a key may not be evicted while unpinned entries
-    /// remain. Bounded by the caller to the hysteresis cap.
-    pinned_until: BTreeMap<TileMeshKey, u64>,
-}
-
-impl TileMeshCache {
-    pub fn new(budget: usize) -> Self {
-        Self {
-            entries: BTreeMap::new(),
-            bytes: 0,
-            budget,
-            clock: 0,
-            pinned_until: BTreeMap::new(),
-        }
-    }
-
-    /// Drop pins that have expired.
-    pub fn begin_frame(&mut self, frame: u64) {
-        self.pinned_until.retain(|_, until| *until > frame);
-    }
-
-    /// Keep `key` in the cache through `until` (exclusive) even under byte
-    /// pressure, while unpinned entries remain.
-    pub fn pin(&mut self, key: TileMeshKey, until: u64) {
-        self.pinned_until.insert(key, until);
-    }
-
-    /// The cached mesh for `key`, marking it as most recently used.
-    pub fn get(&mut self, key: &TileMeshKey) -> Option<Arc<Mesh>> {
-        let clock = self.clock;
-        self.clock += 1;
-        let entry = self.entries.get_mut(key)?;
-        entry.last_use = clock;
-        Some(Arc::clone(&entry.mesh))
-    }
-
-    pub fn contains(&self, key: &TileMeshKey) -> bool {
-        self.entries.contains_key(key)
-    }
-
-    /// Insert a mesh and return the stored handle. The handle stays valid even
-    /// if the entry is trimmed immediately, so the caller can still upload it.
-    pub fn insert(&mut self, key: TileMeshKey, mut mesh: Mesh) -> Arc<Mesh> {
-        // Measure the payload the cache actually holds, not the growth slack.
-        mesh.vertices.shrink_to_fit();
-        mesh.indices.shrink_to_fit();
-        let mesh = Arc::new(mesh);
-        let bytes = mesh_bytes(&mesh);
-        if let Some(old) = self.entries.insert(
-            key,
-            CacheEntry {
-                mesh: Arc::clone(&mesh),
-                bytes,
-                last_use: self.clock,
-            },
-        ) {
-            self.bytes -= old.bytes;
-        }
-        self.clock += 1;
-        self.bytes += bytes;
-        self.trim();
-        mesh
-    }
-
-    /// Trim to the budget. Unpinned entries go first, least recently used;
-    /// only when every entry is pinned does a pin (the earliest expiring) get
-    /// evicted, so the cache can always return under its byte budget.
-    fn trim(&mut self) {
-        while self.bytes > self.budget {
-            let unpinned = self
-                .entries
-                .iter()
-                .filter(|(key, _)| !self.pinned_until.contains_key(key))
-                .min_by_key(|(key, entry)| (entry.last_use, **key))
-                .map(|(key, _)| *key);
-            let victim = unpinned.or_else(|| {
-                self.pinned_until
-                    .iter()
-                    .filter(|(key, _)| self.entries.contains_key(key))
-                    .min_by_key(|(key, until)| (**until, **key))
-                    .map(|(key, _)| *key)
-            });
-            let Some(key) = victim else {
-                break;
-            };
-            self.pinned_until.remove(&key);
-            if let Some(entry) = self.entries.remove(&key) {
-                self.bytes -= entry.bytes;
-            }
-        }
-    }
-
-    pub fn bytes(&self) -> usize {
-        self.bytes
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
-    }
-}
+/// Byte-budgeted CPU cache of generated tile meshes. The eviction and pin
+/// rules live in [`crate::mesh_cache`] and are shared with the water stream; a
+/// recently dropped tile pinned by this alias survives the trim, so a plan
+/// that comes back to it is an upload, not a regeneration.
+type TileMeshCache = MeshCache<TileMeshKey>;
 
 #[derive(Default)]
 struct WorkerState {
