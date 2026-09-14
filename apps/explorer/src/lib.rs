@@ -10,6 +10,7 @@ mod experience;
 mod gallery;
 mod landscape;
 mod landscape_flora;
+mod landscape_tiles;
 mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
@@ -1646,7 +1647,9 @@ pub fn run_desktop() {
     // equivalent and wins when both are present.
     if landscape_sample || landscape::marker_present(&directory) {
         let mut sample = landscape::LandscapeSample::new(save_path, smoke_frames);
-        sample.exercise = landscape_exercise;
+        // The flag wins on the desktop; the marker is how a device run selects
+        // the scripted path, since a phone has no command line.
+        sample.exercise = landscape_exercise || landscape::exercise_marker_present(&directory);
         sample.clouds = clouds.unwrap_or_else(|| landscape::marker_clouds(&directory));
         event_loop
             .run_app(&mut sample)
@@ -1813,6 +1816,9 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     // it while its own recorder is still paused in the menu.
     if landscape::marker_present(&directory) {
         let mut sample = landscape::LandscapeSample::new(directory.join("world.json"), None);
+        // The phone entry: this path, not the desktop flag above, is the one a
+        // device run takes, so both markers have to be read here too.
+        sample.exercise = landscape::exercise_marker_present(&directory);
         sample.clouds = landscape::marker_clouds(&directory);
         if let Err(e) = event_loop.run_app(&mut sample) {
             log::error!("Landscape sample: {e}");
