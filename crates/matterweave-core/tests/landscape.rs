@@ -4,7 +4,7 @@ use matterweave_core::landscape::{
     self, Biome, Clip, RingTile, TileFilter, FLORA_CELL_M, LANDSCAPE_GENERATOR_VERSION,
     LANDSCAPE_RINGS, LOD_TILE_CELLS, MAX_SURFACE_Y, MIN_SURFACE_Y, SEA_LEVEL,
 };
-use matterweave_core::{material, Mesh, TerrainSource, World, CHUNK_EDGE};
+use matterweave_core::{material, Mesh, TerrainSource, Vertex, World, CHUNK_EDGE};
 use std::collections::{BTreeMap, BTreeSet};
 
 const SEED: u64 = 20260913;
@@ -315,15 +315,22 @@ fn material_flora_and_tile_fingerprint_is_stable() {
             for channel in vertex.position {
                 mix((channel * 8.0) as i64);
             }
-            mix(vertex.normal[1].to_bits() as i64);
+            for channel in vertex.normal {
+                mix(channel.to_bits() as i64);
+            }
             mix(vertex.color[0].to_bits() as i64);
         }
         for index in &mesh.indices {
             mix(*index as i64);
         }
     }
+    // The columns, materials and flora above are the generator's own output. The
+    // tile meshes are derived render output: this digest moves whenever the mesh
+    // builder changes, so a value change is expected exactly when the builder
+    // changed on purpose, and the old and new values belong in the change that
+    // made it.
     assert_eq!(
-        value, 0xa5ee_08d9_33ba_1fc4,
+        value, 0x63ec_1387_d1e7_09da,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }
@@ -391,112 +398,358 @@ fn lod_samples_are_conservative_aggregates() {
     }
 }
 
-/// Heights along one tile edge, keyed by the coordinate that runs *along* that
-/// edge (z for an x-normal edge and vice versa), sorted by that coordinate.
-fn tile_edge_heights(mesh: &Mesh, axis: usize, value: f32) -> Vec<(f32, f32)> {
-    let along = if axis == 0 { 2 } else { 0 };
-    let mut heights = Vec::new();
-    for vertex in &mesh.vertices {
-        if (vertex.position[axis] - value).abs() < 1.0e-3 {
-            heights.push((vertex.position[along], vertex.position[1]));
-        }
-    }
-    heights.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    heights
+/// One flat-shaded face read back from a tile mesh.
+#[derive(Clone, Copy, Debug)]
+struct Face {
+    normal: [f32; 3],
+    colour: [f32; 3],
+    /// Footprint in world metres: min x, max x, min z, max z.
+    span: [f32; 4],
+    /// Low and high y of the face.
+    limits: [f32; 2],
 }
 
-#[test]
-fn lod_tiles_share_their_edges_exactly() {
-    // Two horizontally adjacent level-1 tiles must report identical heights on
-    // the shared edge; otherwise a fine/coarse seam could open at run time.
-    let level = 1;
-    let cell = landscape::lod_cell_m(level);
-    for key_x in [-3, 0, 4] {
-        let left = landscape::lod_tile_mesh(SEED, level, [key_x, 1], TileFilter::default());
-        let right = landscape::lod_tile_mesh(SEED, level, [key_x + 1, 1], TileFilter::default());
-        assert!(!left.vertices.is_empty() && !right.vertices.is_empty());
-        let edge_x = ((key_x + 1) * landscape::LOD_TILE_CELLS) as f32 * cell as f32;
-        let left_edge = tile_edge_heights(&left, 0, edge_x);
-        let right_edge = tile_edge_heights(&right, 0, edge_x);
+impl Face {
+    fn is_top(&self) -> bool {
+        self.normal == [0.0, 1.0, 0.0]
+    }
+}
+
+/// Read a tile mesh back as faces, checking the flat-shading and winding
+/// contract of every quad on the way: four vertices, one normal, one colour, and
+/// a winding whose cross product points along that normal.
+fn tile_faces(mesh: &Mesh) -> Vec<Face> {
+    assert!(!mesh.indices.is_empty());
+    assert_eq!(mesh.indices.len() % 6, 0, "quads are two triangles");
+    let mut faces = Vec::new();
+    for quad in mesh.indices.chunks(6) {
+        let base = quad[0];
         assert_eq!(
-            left_edge.len(),
-            right_edge.len(),
-            "shared edge vertex count must match"
+            quad,
+            [base, base + 1, base + 2, base, base + 2, base + 3],
+            "quads are emitted low-index first"
         );
-        for ((z, height), (other_z, other)) in left_edge.iter().zip(&right_edge) {
-            assert!((z - other_z).abs() < 1.0e-3, "edge z mismatch");
-            assert!(
-                (height - other).abs() < 1.0e-3,
-                "tile edge height mismatch at z {z}: {height} vs {other}"
-            );
+        let vertices: Vec<Vertex> = (base..base + 4)
+            .map(|index| mesh.vertices[index as usize])
+            .collect();
+        let normal = vertices[0].normal;
+        let colour = vertices[0].color;
+        let mut limits = [f32::INFINITY, f32::NEG_INFINITY];
+        for vertex in &vertices {
+            assert_eq!(vertex.normal, normal, "one normal per face");
+            assert_eq!(vertex.color, colour, "one colour per face");
+            assert!(vertex.position.iter().all(|value| value.is_finite()));
+            limits[0] = limits[0].min(vertex.position[1]);
+            limits[1] = limits[1].max(vertex.position[1]);
         }
+        let span = [
+            vertices
+                .iter()
+                .map(|v| v.position[0])
+                .fold(f32::INFINITY, f32::min),
+            vertices
+                .iter()
+                .map(|v| v.position[0])
+                .fold(f32::NEG_INFINITY, f32::max),
+            vertices
+                .iter()
+                .map(|v| v.position[2])
+                .fold(f32::INFINITY, f32::min),
+            vertices
+                .iter()
+                .map(|v| v.position[2])
+                .fold(f32::NEG_INFINITY, f32::max),
+        ];
+        let cross = cross_product(&vertices);
+        assert_eq!(
+            cross, normal,
+            "back-face culling reads this winding: {vertices:?}"
+        );
+        faces.push(Face {
+            normal,
+            colour,
+            span,
+            limits,
+        });
     }
+    faces
 }
 
-#[test]
-fn lod_tiles_share_their_z_edges_exactly() {
-    // The x pair alone cannot detect a z-row inversion: this is the seam that
-    // caught one.
-    let level = 1;
+/// `cross(p1 - p0, p2 - p0)`, normalised. A quad's corners are axis-aligned, so
+/// every component of the result is exact.
+fn cross_product(vertices: &[Vertex]) -> [f32; 3] {
+    let u: [f32; 3] =
+        std::array::from_fn(|axis| vertices[1].position[axis] - vertices[0].position[axis]);
+    let v: [f32; 3] =
+        std::array::from_fn(|axis| vertices[2].position[axis] - vertices[0].position[axis]);
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    let length = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+    assert!(
+        length > 0.0,
+        "a degenerate face has no facing: {vertices:?}"
+    );
+    cross.map(|value| value / length)
+}
+
+/// The height one coarse cell carries: the generator sampled at the cell centre,
+/// floored to the level's step.
+fn cell_height(seed: u64, level: u32, key: [i32; 2], cx: i32, cz: i32) -> i32 {
     let cell = landscape::lod_cell_m(level);
-    for key_z in [-3, 0, 4] {
-        let north = landscape::lod_tile_mesh(SEED, level, [1, key_z], TileFilter::default());
-        let south = landscape::lod_tile_mesh(SEED, level, [1, key_z + 1], TileFilter::default());
-        assert!(!north.vertices.is_empty() && !south.vertices.is_empty());
-        let edge_z = ((key_z + 1) * landscape::LOD_TILE_CELLS) as f32 * cell as f32;
-        let north_edge = tile_edge_heights(&north, 2, edge_z);
-        let south_edge = tile_edge_heights(&south, 2, edge_z);
-        assert_eq!(north_edge.len(), south_edge.len());
-        for ((x, height), (other_x, other)) in north_edge.iter().zip(&south_edge) {
-            assert!((x - other_x).abs() < 1.0e-3, "edge x mismatch");
-            assert!(
-                (height - other).abs() < 1.0e-3,
-                "tile edge height mismatch at x {x}: {height} vs {other}"
-            );
-        }
-    }
+    let step = landscape::lod_step_m(level);
+    let centre = [
+        (key[0] * LOD_TILE_CELLS + cx) * cell + cell / 2,
+        (key[1] * LOD_TILE_CELLS + cz) * cell + cell / 2,
+    ];
+    let sample = landscape::lod_vertex(seed, centre[0], centre[1]);
+    sample.height.div_euclid(step) * step
 }
 
 #[test]
-fn tile_vertices_sample_the_generator_at_their_own_coordinate() {
-    // A z-mirrored corner would put a neighbour's height at a grid point; taking
-    // the highest vertex at each grid point catches exactly that.
-    for level in [1, 2, 4] {
+fn lod_cells_are_flat_tops_at_their_quantised_height() {
+    for level in [1, 2, 4, 6] {
         let cell = landscape::lod_cell_m(level);
         let key = [1, -1];
         let mesh = landscape::lod_tile_mesh(SEED, level, key, TileFilter::default());
-        assert!(!mesh.vertices.is_empty());
-        let mut seen = std::collections::BTreeMap::new();
-        for vertex in &mesh.vertices {
-            for (gx, gz) in [(
-                vertex.position[0] as i32 / cell,
-                vertex.position[2] as i32 / cell,
-            )] {
-                if vertex.position[0] as i32 % cell != 0 || vertex.position[2] as i32 % cell != 0 {
-                    continue;
+        let faces = tile_faces(&mesh);
+        let mut tops: BTreeMap<(i32, i32), f32> = BTreeMap::new();
+        for face in faces.iter().filter(|face| face.is_top()) {
+            assert_eq!(
+                face.limits[0], face.limits[1],
+                "a top face is flat: one height for all four corners"
+            );
+            for (low, high) in [(face.span[0], face.span[1]), (face.span[2], face.span[3])] {
+                assert_eq!(low % cell as f32, 0.0, "top edges align to the cell grid");
+                assert_eq!(high % cell as f32, 0.0, "top edges align to the cell grid");
+                assert!(high > low, "a rectangle has area");
+            }
+            let first = [
+                (face.span[0] / cell as f32) as i32 - key[0] * LOD_TILE_CELLS,
+                (face.span[2] / cell as f32) as i32 - key[1] * LOD_TILE_CELLS,
+            ];
+            let across = [
+                ((face.span[1] - face.span[0]) / cell as f32) as i32,
+                ((face.span[3] - face.span[2]) / cell as f32) as i32,
+            ];
+            for cz in first[1]..first[1] + across[1] {
+                for cx in first[0]..first[0] + across[0] {
+                    let previous = tops.insert((cx, cz), face.limits[0]);
+                    assert!(
+                        previous.is_none(),
+                        "cell ({cx}, {cz}) is covered by two top faces"
+                    );
                 }
-                let entry = seen.entry((gx, gz)).or_insert((i32::MIN, 0usize));
-                entry.0 = entry.0.max(vertex.position[1] as i32);
-                entry.1 += 1;
             }
         }
-        assert!(!seen.is_empty());
-        for ((gx, gz), (top, count)) in seen {
-            assert!(count > 0);
-            let x = gx * cell;
-            let z = gz * cell;
-            let column = landscape::column(SEED, x, z);
-            let expected = if column.flooded() {
-                SEA_LEVEL
-            } else {
-                column.height
-            };
+        assert_eq!(
+            tops.len(),
+            (LOD_TILE_CELLS * LOD_TILE_CELLS) as usize,
+            "a default-filter tile draws every cell"
+        );
+        for ((cx, cz), height) in tops {
             assert_eq!(
-                top, expected,
-                "level {level} grid point ({x}, {z}) must carry its own column height"
+                height,
+                cell_height(SEED, level, key, cx, cz) as f32,
+                "level {level} cell ({cx}, {cz}) must be flat at its own height"
             );
         }
     }
+}
+
+#[test]
+fn lod_faces_carry_their_own_normal_and_colour() {
+    for level in [1, 3, 6] {
+        let mesh = landscape::lod_tile_mesh(SEED, level, [2, -3], TileFilter::default());
+        let faces = tile_faces(&mesh);
+        let (mut tops, mut walls) = (0, 0);
+        for face in &faces {
+            let axes = face.normal.iter().filter(|value| **value != 0.0).count();
+            assert_eq!(axes, 1, "{:?} is not axis aligned", face.normal);
+            assert_eq!(
+                face.normal.iter().map(|value| value * value).sum::<f32>(),
+                1.0,
+                "{:?} is not a unit axis normal",
+                face.normal
+            );
+            if face.is_top() {
+                tops += 1;
+            } else {
+                walls += 1;
+                assert_eq!(face.normal[1], 0.0, "a wall stands upright");
+            }
+        }
+        assert!(
+            tops > 0 && walls > 0,
+            "level {level}: {tops} tops, {walls} walls"
+        );
+    }
+}
+
+/// Every face of `meshes` that lies in the plane `plane` normal to world axis
+/// `plane_axis` (0 for x, 2 for z) and covers the run `low .. high` along the
+/// other horizontal axis.
+fn walls_in_plane(
+    meshes: &[&Mesh],
+    plane_axis: usize,
+    plane: f32,
+    low: f32,
+    high: f32,
+) -> Vec<[f32; 2]> {
+    let along_start = 2 - plane_axis;
+    let mut found = Vec::new();
+    for mesh in meshes {
+        for face in tile_faces(mesh) {
+            if face.normal[plane_axis] == 0.0 || face.normal[1] != 0.0 {
+                continue;
+            }
+            let (flat_low, flat_high) = (face.span[plane_axis], face.span[plane_axis + 1]);
+            if (flat_low - plane).abs() > 1.0e-3 || flat_high != plane {
+                continue;
+            }
+            let (run_low, run_high) = (face.span[along_start], face.span[along_start + 1]);
+            if run_low <= low + 1.0e-3 && run_high >= high - 1.0e-3 {
+                found.push(face.limits);
+            }
+        }
+    }
+    found
+}
+
+/// Two tiles side by side must agree on the wall between them: one wall per cell
+/// row, spanning the whole step, and never two walls over the same ground.
+/// `plane_axis` is 0 for tiles sharing an x border and 2 for a z border.
+fn assert_border_walls(level: u32, key: [i32; 2], neighbour: [i32; 2], plane_axis: usize) {
+    let cell = landscape::lod_cell_m(level);
+    let span = LOD_TILE_CELLS * cell;
+    let key_axis = plane_axis / 2;
+    let along_axis = 1 - key_axis;
+    let left = landscape::lod_tile_mesh(SEED, level, key, TileFilter::default());
+    let right = landscape::lod_tile_mesh(SEED, level, neighbour, TileFilter::default());
+    let plane = ((key[key_axis] + 1) * span) as f32;
+    for run in 0..LOD_TILE_CELLS {
+        let low = ((key[along_axis] * LOD_TILE_CELLS + run) * cell) as f32;
+        let high = low + cell as f32;
+        let mut cells = [0i32; 2];
+        for (side, tile) in [key, neighbour].into_iter().enumerate() {
+            let mut index = [0i32; 2];
+            index[key_axis] = if side == 0 { LOD_TILE_CELLS - 1 } else { 0 };
+            index[along_axis] = run;
+            cells[side] = cell_height(SEED, level, tile, index[0], index[1]);
+        }
+        let walls = walls_in_plane(&[&left, &right], plane_axis, plane, low, high);
+        if cells[0] == cells[1] {
+            assert!(
+                walls.is_empty(),
+                "equal heights need no wall at level {level} key {key:?} run {run}"
+            );
+            continue;
+        }
+        let expected = [cells[0].min(cells[1]) as f32, cells[0].max(cells[1]) as f32];
+        assert_eq!(
+            walls.len(),
+            1,
+            "level {level} key {key:?} run {run}: {walls:?} walls for one step of {cells:?}"
+        );
+        assert_eq!(
+            walls[0], expected,
+            "the wall spans the full height difference at level {level} key {key:?} run {run}"
+        );
+    }
+}
+
+#[test]
+fn lod_tiles_meet_across_their_x_borders_with_one_wall() {
+    // The x pair cannot detect a z-row inversion on its own: the z pair below
+    // covers that, and both are checked at two levels so a coarse step is
+    // covered as well as a fine one.
+    for level in [1, 4] {
+        for key_x in [-3, 0, 4] {
+            assert_border_walls(level, [key_x, 1], [key_x + 1, 1], 0);
+        }
+    }
+}
+
+#[test]
+fn lod_tiles_meet_across_their_z_borders_with_one_wall() {
+    for level in [1, 4] {
+        for key_z in [-3, 0, 4] {
+            assert_border_walls(level, [1, key_z], [1, key_z + 1], 2);
+        }
+    }
+}
+
+#[test]
+fn lod_hole_edges_wall_the_step_into_the_hole() {
+    // A clipped tile must not stop in mid-air. Every drawn cell facing a cell
+    // the filter cut out carries one wall, and that wall starts at the cell top
+    // and reaches at least the old skirt depth below it.
+    let level = 2;
+    let cell = landscape::lod_cell_m(level);
+    let key = [2, -3];
+    let span = LOD_TILE_CELLS * cell;
+    let hole = Clip {
+        min: [key[0] * span, key[1] * span],
+        max: [key[0] * span + span / 2, key[1] * span + span / 2],
+    };
+    let mesh = landscape::lod_tile_mesh(
+        SEED,
+        level,
+        key,
+        TileFilter {
+            hole: Some(hole),
+            ..TileFilter::default()
+        },
+    );
+    // The hole is the low quadrant, so only the two faces facing it can be
+    // filtered; the other two meet an equally drawn neighbour tile.
+    let mut checked = 0;
+    for cz in 0..LOD_TILE_CELLS {
+        for cx in 0..LOD_TILE_CELLS {
+            let at = |index: [i32; 2]| {
+                [
+                    (key[0] * LOD_TILE_CELLS + index[0]) * cell + cell / 2,
+                    (key[1] * LOD_TILE_CELLS + index[1]) * cell + cell / 2,
+                ]
+            };
+            if hole.contains_centre(at([cx, cz])) {
+                continue;
+            }
+            for (plane_axis, offset) in [(0usize, [-1, 0]), (2usize, [0, -1])] {
+                let (nx, nz) = (cx + offset[0], cz + offset[1]);
+                if nx < 0 || nz < 0 || !hole.contains_centre(at([nx, nz])) {
+                    continue;
+                }
+                // The face lies in the drawn cell's own edge, and its run is
+                // that cell's own extent along the other horizontal axis.
+                let key_axis = plane_axis / 2;
+                let along_axis = 1 - key_axis;
+                let plane_cell = if key_axis == 0 { cx } else { cz };
+                let run = if along_axis == 0 { cx } else { cz };
+                let plane = ((key[key_axis] * LOD_TILE_CELLS + plane_cell) * cell) as f32;
+                let low = ((key[along_axis] * LOD_TILE_CELLS + run) * cell) as f32;
+                let top = cell_height(SEED, level, key, cx, cz) as f32;
+                let walls = walls_in_plane(&[&mesh], plane_axis, plane, low, low + cell as f32);
+                assert_eq!(
+                    walls.len(),
+                    1,
+                    "cell ({cx}, {cz}) faces the hole on axis {plane_axis} with {walls:?} walls"
+                );
+                assert_eq!(walls[0][1], top, "the wall starts at the cell's own top");
+                assert!(
+                    walls[0][0] <= top - 2.0 * cell as f32,
+                    "the wall {walls:?} must reach the skirt depth below {top}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked >= LOD_TILE_CELLS,
+        "only {checked} hole-edge faces were checked"
+    );
 }
 
 #[test]
@@ -516,7 +769,8 @@ fn lod_tiles_are_well_formed_and_respect_their_filter() {
         let normal = vertex.normal;
         let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
         assert!((length - 1.0).abs() < 1.0e-4, "normal {normal:?}");
-        // Surface vertices stay inside the tile footprint (skirts only go down).
+        // Surface vertices stay inside the tile footprint: a wall stands on a
+        // cell edge and only reaches down.
         let x = vertex.position[0] as i32;
         let z = vertex.position[2] as i32;
         assert!(
@@ -526,7 +780,7 @@ fn lod_tiles_are_well_formed_and_respect_their_filter() {
         );
     }
     // The bound removes the far quarter of the tile, so it must contain fewer
-    // vertices, while a hole must keep the ring and add skirt geometry.
+    // vertices, while a hole must keep the ring and add wall geometry.
     let bound = Clip {
         min: [key[0] * span, key[1] * span],
         max: [key[0] * span + span / 2, key[1] * span + span],
@@ -566,8 +820,8 @@ fn lod_tiles_are_well_formed_and_respect_their_filter() {
         "a hole must leave a ring behind"
     );
     assert!(holed.vertices.len() < full.vertices.len());
-    // Every vertex of the ring must lie outside the hole or be skirt geometry
-    // that shares a cell corner with the boundary.
+    // Every vertex of the ring must lie outside the hole or be wall geometry on
+    // the hole's own cell boundary.
     for vertex in &holed.vertices {
         let inside = (vertex.position[0] as i32) > hole.min[0]
             && (vertex.position[0] as i32) < hole.max[0]
@@ -1010,6 +1264,70 @@ fn ring_tiles_agree_with_their_meshes() {
             );
         }
     }
+}
+
+#[test]
+fn a_flat_sea_tile_costs_one_quad() {
+    // Two open-water tiles at different levels: 1024 cells of one height and one
+    // colour must merge into a single top quad however many cells they hold.
+    for (level, key) in [(3u32, [-1, -2]), (4, [4, 3])] {
+        let cell = landscape::lod_cell_m(level);
+        let mesh = landscape::lod_tile_mesh(SEED, level, key, TileFilter::default());
+        let faces = tile_faces(&mesh);
+        assert_eq!(faces.len(), 1, "level {level} key {key:?}: {faces:?}");
+        assert!(faces[0].is_top());
+        assert_eq!(
+            mesh.indices.len(),
+            6,
+            "one quad is two triangles, not {} cells' worth",
+            LOD_TILE_CELLS * LOD_TILE_CELLS
+        );
+        assert_eq!(mesh.vertices.len(), 4);
+        assert_eq!(faces[0].limits, [SEA_LEVEL as f32, SEA_LEVEL as f32]);
+        assert_eq!(faces[0].colour, material::color(material::WATER));
+        assert_eq!(
+            faces[0].span,
+            [
+                (key[0] * LOD_TILE_CELLS * cell) as f32,
+                ((key[0] + 1) * LOD_TILE_CELLS * cell) as f32,
+                (key[1] * LOD_TILE_CELLS * cell) as f32,
+                ((key[1] + 1) * LOD_TILE_CELLS * cell) as f32,
+            ]
+        );
+    }
+}
+
+/// Geometry the pre-voxel mesh builder produced for the same plan and eye, at
+/// 36 bytes a vertex and 4 bytes an index: 57240 KiB and 697792 triangles, which
+/// is what the sample's own counters reported on the device and on the host. A
+/// vertex grid plus boundary skirts; kept here as the budget this mesh is
+/// measured against.
+const PRE_VOXEL_PLAN_BYTES: usize = 57_240 * 1024;
+const PRE_VOXEL_PLAN_TRIANGLES: usize = 697_792;
+
+#[test]
+fn ring_plan_geometry_stays_within_its_budget() {
+    // The sample's spawn camera at its own seed (see `spawn_camera` in the
+    // explorer): the position the device numbers were taken at.
+    let eye = [-192.0, 11.0, 1472.0];
+    let plan = landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS);
+    assert_eq!(plan.len(), 384, "the shipped ring plan is the one measured");
+    let mut bytes = 0usize;
+    let mut triangles = 0usize;
+    for tile in &plan {
+        let mesh = landscape::lod_tile_mesh(SEED, tile.level, tile.key, tile.filter);
+        bytes += mesh.vertices.len() * std::mem::size_of::<matterweave_core::Vertex>()
+            + mesh.indices.len() * std::mem::size_of::<u32>();
+        triangles += mesh.indices.len() / 3;
+    }
+    assert!(
+        bytes * 10 <= PRE_VOXEL_PLAN_BYTES * 13,
+        "{bytes} bytes of tile geometry exceeds 1.3x the {PRE_VOXEL_PLAN_BYTES} byte budget"
+    );
+    assert!(
+        triangles <= PRE_VOXEL_PLAN_TRIANGLES,
+        "{triangles} triangles is more than the {PRE_VOXEL_PLAN_TRIANGLES} the old mesh used"
+    );
 }
 
 #[test]
