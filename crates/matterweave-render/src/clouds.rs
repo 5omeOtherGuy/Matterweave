@@ -987,6 +987,7 @@ mod tests {
     #[test]
     fn push_constants_fit_the_guaranteed_range() {
         assert_eq!(size_of::<SkyPush>(), SKY_PUSH_BYTES as usize);
-        assert!(SKY_PUSH_BYTES <= 128 && COMPOSITE_PUSH_BYTES <= 128);
+        // 128 bytes is the range every Vulkan implementation guarantees.
+        const { assert!(SKY_PUSH_BYTES <= 128 && COMPOSITE_PUSH_BYTES <= 128) };
     }
 }

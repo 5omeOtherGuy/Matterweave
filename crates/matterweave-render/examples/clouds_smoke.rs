@@ -111,7 +111,7 @@ impl ApplicationHandler for App {
         let lighting = match frame {
             0 => settings(false, None, 0.),
             1 => settings(true, None, 0.),
-            2 | 3 | 4 => settings(true, Some(0), frame as f32 * 30.),
+            2..=4 => settings(true, Some(0), frame as f32 * 30.),
             5 => settings(true, Some(1), 150.),
             _ => settings(false, None, 180.),
         };
@@ -130,7 +130,7 @@ impl ApplicationHandler for App {
         let target = renderer.cloud_target();
         match frame {
             0 | 1 => assert_eq!(target, None, "a disabled cloud pass allocates no target"),
-            2 | 3 | 4 => {
+            2..=4 => {
                 let ((width, height), quality) = target.expect("cheap cloud target allocated");
                 assert_eq!(quality, 0);
                 assert!(width > 0 && height > 0);
