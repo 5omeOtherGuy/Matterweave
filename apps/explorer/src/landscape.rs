@@ -18,18 +18,35 @@
 //!
 //! Tile meshes are cheap (33x33 = 1089 column samples each) but not free, so a
 //! frame builds at most [`MAX_TILE_UPLOADS`] of them and stops as soon as
-//! [`MAX_TILE_MS`] of main-thread time has gone into tile work, whichever comes
-//! first. Residency is bounded by [`matterweave_render::MAX_TERRAIN_TILES`] and
-//! every tile the plan drops is evicted the same frame, so the cache cannot grow
+//! [`MAX_TILE_MS`] of main-thread time has gone into copying them to the GPU.
+//! Generation runs on [`landscape_tiles::TileWorker`], a bounded background
+//! queue, and every generated mesh is kept in [`landscape_tiles::TileCache`], so
+//! a tile the plan drops and wants again is re-uploaded instead of regenerated.
+//! Residency is bounded by [`matterweave_render::MAX_TERRAIN_TILES`] and every
+//! tile the plan drops is evicted the same frame, so the drawing set cannot grow
 //! with the path the camera took.
+//!
+//! # Frame shape
+//!
+//! One submission is in flight at a time: the renderer's upload and retain calls
+//! wait on that submission's fence, so *when* this sample touches the renderer
+//! decides how much of the frame overlaps the previous one. A frame therefore
+//! runs in two steps - [`LandscapeSample::prepare_geometry`], which is CPU work
+//! only (streaming, background mesh requests, tile planning, water derivation),
+//! then [`LandscapeSample::upload_geometry`], which takes the frame's single
+//! fence wait explicitly and does every upload and retain. Everything that is
+//! only generation therefore happens while the previous frame is still on the
+//! GPU, instead of serializing behind the fence.
+use crate::capture::Capture;
 use crate::controls::{Camera, Controls};
 use crate::landscape_flora::{LandscapeFlora, PUSH_RADIUS_M, WIND_DIRECTION_XZ, WIND_STRENGTH_M};
+use crate::landscape_tiles::{self, TileCache, TileJob, TileWorker, DEFAULT_TILE_CACHE_BYTES};
 use crate::metrics;
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
 };
-use matterweave_core::{AsyncWorld, World};
+use matterweave_core::{AsyncWorld, Mesh, World};
 use matterweave_render::{
     Atmosphere, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun, TerrainTileKey,
     Wind, MAX_TERRAIN_TILES,
@@ -58,17 +75,33 @@ pub const MAX_MARKER_BYTES: u64 = 128;
 /// this seed, so the same build always shows the same landscape.
 pub const SEED: u64 = 20260913;
 
-/// Tile meshes built and uploaded in one frame.
+/// Tile meshes uploaded in one frame, and the most tiles one frame may request
+/// from the background generator. Both are bounded so a saturated frame drops
+/// work instead of queuing it.
 pub const MAX_TILE_UPLOADS: usize = 8;
-/// Main-thread milliseconds one frame may spend planning, building and
-/// uploading tiles. Checked after each tile, so one tile can overrun it; the
-/// next cannot start.
+/// Main-thread milliseconds one frame may spend declaring and uploading tiles.
+/// The first upload's fence wait is taken explicitly before this phase (see
+/// [`LandscapeSample::upload_geometry`]), so this bounds tile work rather than
+/// the GPU wait the frame cannot avoid.
+/// Checked after each tile, so one tile can overrun it; the next cannot start.
 pub const MAX_TILE_MS: f64 = 2.0;
+/// Completed tile meshes one frame takes from the background worker. Bounded by
+/// the worker's own result bound as well.
+pub const MAX_TILE_POLLS: usize = 4;
+
+/// Chunk meshes one frame takes from the background preparation pool and
+/// uploads, and chunk mesh requests one frame may queue. Both are the bounds the
+/// sandbox uses for the same pool.
+pub const MAX_CHUNK_UPLOADS: usize = 4;
+pub const MAX_CHUNK_REQUESTS: usize = 4;
+/// Main-thread milliseconds one frame may spend taking completed chunk meshes
+/// and requesting new ones. Uploading them is bounded by [`MAX_CHUNK_UPLOADS`].
+pub const MAX_CHUNK_MS: f64 = 2.0;
 
 /// Derived water meshes built and uploaded in one frame. Only the sea-level
 /// chunk layer carries water, so this is at most one mesh per column stack.
 pub const MAX_WATER_UPLOADS: usize = 8;
-/// Main-thread milliseconds one frame may spend deriving and uploading water.
+/// Main-thread milliseconds one frame may spend deriving water meshes.
 pub const MAX_WATER_MS: f64 = 2.0;
 
 /// Eye height above the surface in walk mode.
@@ -244,8 +277,11 @@ pub fn normalized_filter(tile: &RingTile) -> TileFilter {
 /// A tile is rebuilt when it is absent or when its normalized filter changed,
 /// which is what happens to the few innermost tiles the streaming window cuts
 /// into as the player walks. Eviction is not budgeted: a tile the plan dropped
-/// is off-screen and holding it would let the cache grow along the camera's
-/// path.
+/// is off-screen, and keeping it **resident** would draw its square a second
+/// time under the coarser tile that replaced it, which is the coverage
+/// guarantee the ring plan exists to provide. What survives a drop is the CPU
+/// mesh in [`landscape_tiles::TileCache`], so a tile the eye returns to is a
+/// re-upload instead of a regeneration.
 pub fn plan_tile_work(
     plan: &[RingTile],
     resident: &BTreeMap<TerrainTileKey, TileFilter>,
@@ -359,35 +395,78 @@ fn view_projection(camera: &Camera, aspect: f32) -> [[f32; 4]; 4] {
     .to_cols_array_2d()
 }
 
+/// Whether two derived meshes describe the same geometry, ignoring the revision
+/// they carry.
+///
+/// A derived mesh is a pure function of its identity, so equal inputs produce
+/// bit-identical floats and equality is exact. The revision is deliberately not
+/// compared: a water mesh carries its column stack's chunk revision, which moves
+/// whenever the stack identity does, and that is exactly the case this check
+/// exists for. Keeping the older buffer cannot hide a later change either, since
+/// chunk revisions only increase and the renderer ignores an upload older than
+/// the one it holds.
+fn same_geometry(a: &Mesh, b: &Mesh) -> bool {
+    a.vertices.len() == b.vertices.len()
+        && a.indices == b.indices
+        && a.vertices
+            .iter()
+            .zip(&b.vertices)
+            .all(|(a, b)| a.position == b.position && a.normal == b.normal && a.color == b.color)
+}
+
 /// Counters the HUD shows and the smoke line prints. Every one of them is a
 /// count this sample actually performed, not a target.
+///
+/// The phases are separated because they cost different things: the plan
+/// timings are CPU work that overlaps the previous frame's submission, the
+/// upload timings are copy work that follows the frame's fence wait, and
+/// `fence_ms` is that wait itself.
 #[derive(Clone, Copy, Debug, Default)]
-struct TileCounters {
+struct SyncCounters {
+    /// Whole mesh sync: the CPU phase plus the upload phase, per frame.
+    fence_ms: f64,
+    /// Chunk phase. The plan half is split because "list the window" and "take
+    /// and request meshes" are different costs with different fixes.
+    chunk_plan_ms: f64,
+    chunk_keys_ms: f64,
+    chunk_poll_ms: f64,
+    chunk_upload_ms: f64,
+    chunk_uploads: u64,
+    chunk_frame_uploads: u32,
+    /// Tile phase.
+    plan_ms: f64,
+    declare_ms: f64,
+    upload_ms: f64,
+    /// The part of `upload_ms` spent inside `upload_terrain_tile` proper.
+    copy_ms: f64,
     uploaded: u64,
+    tile_frame_uploads: u32,
     evicted: u64,
     outstanding: usize,
-    /// Main-thread time spent building and uploading tiles. This is the
-    /// quantity [`MAX_TILE_MS`] bounds.
-    build_ms: f64,
-    /// The part of `build_ms` spent generating tile meshes from the generator.
-    /// This is the sample's own cost.
-    generate_ms: f64,
-    /// The part of `build_ms` spent inside `upload_terrain_tile`, which waits
-    /// on the frame fence before it replaces a buffer. On a software rasterizer
-    /// that wait is most of a frame, so it is reported rather than blamed on
-    /// tile generation.
-    upload_ms: f64,
-    /// Main-thread time spent planning and declaring residency. Declaring can
-    /// block on the frame fence when a tile has to be evicted, which is a GPU
-    /// wait rather than tile work, so it is reported apart from the budget
-    /// instead of being hidden inside it.
-    declare_ms: f64,
-    /// Total main-thread time spent generating tile meshes over the run, and
-    /// the number of meshes that time covers. Their ratio is the only per-tile
-    /// cost this sample can honestly report.
-    total_generate_ms: f64,
-    generated: u64,
-    /// The single worst frame seen so far, chosen by build time and kept as one
+    /// Tiles the plan wanted while their mesh was still cached, i.e. an upload
+    /// instead of a regeneration.
+    reused: u64,
+    /// Water phase.
+    water_plan_ms: f64,
+    water_upload_ms: f64,
+    water_uploads: u64,
+    water_frame_uploads: u32,
+    /// Water meshes that were re-derived to the same geometry already resident.
+    water_unchanged: u64,
+    /// Run totals of each per-frame phase time, for the means the smoke line
+    /// prints. Every one is a sum of measured spans, never a modelled value.
+    fence_total_ms: f64,
+    chunk_plan_total_ms: f64,
+    chunk_keys_total_ms: f64,
+    chunk_poll_total_ms: f64,
+    chunk_upload_total_ms: f64,
+    declare_total_ms: f64,
+    plan_total_ms: f64,
+    upload_total_ms: f64,
+    copy_total_ms: f64,
+    water_plan_total_ms: f64,
+    water_upload_total_ms: f64,
+    /// The single worst frame seen so far, chosen by upload time and kept as one
     /// record. Independent maxima taken from different frames would describe a
     /// frame that never happened.
     worst: WorstFrame,
@@ -397,10 +476,9 @@ struct TileCounters {
 #[derive(Clone, Copy, Debug, Default)]
 struct WorstFrame {
     tiles: usize,
-    build_ms: f64,
-    generate_ms: f64,
+    plan_ms: f64,
     upload_ms: f64,
-    declare_ms: f64,
+    copy_ms: f64,
 }
 
 pub struct LandscapeSample {
@@ -419,7 +497,18 @@ pub struct LandscapeSample {
     declared: Vec<TerrainTileKey>,
     /// Resident tiles and the normalized filter each was built with.
     resident: BTreeMap<TerrainTileKey, TileFilter>,
-    tiles: TileCounters,
+    /// Background tile generation and the CPU-side mesh cache that makes a tile
+    /// the eye returns to a re-upload instead of a regeneration.
+    tile_worker: TileWorker,
+    tile_cache: TileCache,
+    /// Tiles selected for upload this frame, filled by `prepare_geometry` and
+    /// drained by `upload_geometry`. Reused so a frame allocates nothing.
+    tile_uploads: Vec<RingTile>,
+    /// Chunk keys of the streaming window, and the completed chunk meshes this
+    /// frame will upload. Reused for the same reason.
+    chunk_keys: Vec<[i32; 3]>,
+    chunk_uploads: Vec<([i32; 3], Mesh)>,
+    tiles: SyncCounters,
     /// Dense vegetation: the pooled prototypes plus the field for the eye's
     /// cell. `None` until the renderer exists, because the first
     /// [`LandscapeFlora::sync`] installs the scene rather than updating one.
@@ -428,15 +517,36 @@ pub struct LandscapeSample {
     /// folds it into its animation period, so a long session cannot lose sine
     /// precision here.
     wind_time: f32,
-    /// Water meshes uploaded over the run, and this frame's derivation time.
+    /// Water meshes uploaded over the run, this frame's derivation and upload
+    /// times, and the keys this frame will retain.
     water_uploaded: u64,
-    water_ms: f64,
-    /// World revision each resident water key was derived at.
-    water_stamps: BTreeMap<[i32; 3], u64>,
+    water_keys: Vec<[i32; 3]>,
+    water_uploads: Vec<([i32; 3], Mesh)>,
+    /// CPU copies of the resident water meshes, so a re-derivation that returns
+    /// the same geometry does not replace a GPU buffer for nothing. Tiny: a
+    /// water mesh is a few quads, and this holds one per resident sea-level
+    /// chunk, bounded by the streaming window.
+    water_resident: BTreeMap<[i32; 3], Mesh>,
+    /// Vertical chunk layers a water mesh can be derived from: the world's whole
+    /// band, because `column_is_flooded` scans a column from its top down to the
+    /// band's floor, so an edit in any layer can add or remove a surface.
+    water_stack: Vec<i32>,
+    /// Reusable scratch for the stack revisions of the key being examined.
+    water_stack_now: Vec<Option<u64>>,
+    /// Identity each resident water key was derived at: the revision of every
+    /// chunk in its column stack.
+    ///
+    /// The world revision is deliberately *not* the key. A streaming publish
+    /// advances it without changing a single column, so keying on it re-derived
+    /// every candidate mesh after every chunk step: 437 uploads in 60 flying
+    /// frames on the host, saturated against the per-frame cap the whole time. A
+    /// stack revision changes exactly when an edit touches a chunk that the
+    /// derivation reads.
+    water_stamps: BTreeMap<[i32; 3], Vec<Option<u64>>>,
     /// Last sync's window size and sea-level candidate count, for the report.
     water_window: usize,
     water_candidates: usize,
-    profile: Option<metrics::FrameLog>,
+    capture: Capture,
     status: String,
     frames: u64,
     frame_limit: Option<u64>,
@@ -461,21 +571,17 @@ impl LandscapeSample {
         // that selected this sample with the marker records from its first
         // frame. A sample entered from the menu finds the request already taken
         // by the chooser, which is why the marker is the scriptable path.
-        let profile = match metrics::FrameLog::requested(&directory) {
-            Ok(profile) => {
-                if let Some(profile) = &profile {
-                    log::info!("Landscape frame capture: {}", profile.path.display());
-                    eprintln!("Landscape frame capture: {}", profile.path.display());
-                }
-                profile
-            }
-            Err(error) => {
-                log::warn!("Landscape frame capture request failed: {error}");
-                None
-            }
-        };
+        let capture = Capture::new("Landscape", &directory);
+        if let Some(path) = capture.path() {
+            log::info!("Landscape frame capture: {}", path.display());
+            eprintln!("Landscape frame capture: {}", path.display());
+        }
         let mut world = World::landscape(SEED);
         let mut camera = spawn_camera();
+        // The vertical chunk layers a water mesh can be derived from, fixed for
+        // the life of this sample's world band.
+        let water_stack: Vec<i32> = world.stream_y_chunks().collect();
+        let water_stack_now: Vec<Option<u64>> = vec![None; water_stack.len()];
         clamp_camera(&mut camera);
         world.stream_around(camera.position.to_array());
         log::info!(
@@ -517,15 +623,24 @@ impl LandscapeSample {
             plan: Vec::new(),
             declared: Vec::new(),
             resident: BTreeMap::new(),
-            tiles: TileCounters::default(),
+            tile_worker: TileWorker::new(),
+            tile_cache: TileCache::new(DEFAULT_TILE_CACHE_BYTES),
+            tile_uploads: Vec::new(),
+            chunk_keys: Vec::new(),
+            chunk_uploads: Vec::new(),
+            tiles: SyncCounters::default(),
             flora: None,
             wind_time: 0.,
             water_uploaded: 0,
-            water_ms: 0.,
+            water_keys: Vec::new(),
+            water_uploads: Vec::new(),
+            water_resident: BTreeMap::new(),
+            water_stack,
+            water_stack_now,
             water_stamps: BTreeMap::new(),
             water_window: 0,
             water_candidates: 0,
-            profile,
+            capture,
             status: format!(
                 "Fly the landscape. Rings reach {} km.",
                 landscape::LANDSCAPE_RINGS
@@ -572,115 +687,337 @@ impl LandscapeSample {
     /// Stream the authoritative window and publish its chunk meshes, exactly as
     /// the sandbox does: bounded uploads per frame, background preparation when
     /// it is available and a synchronous fallback when it is not.
-    fn sync_chunks(&mut self) -> Result<(), String> {
-        let Some(renderer) = self.renderer.as_mut() else {
+    /// Take completed chunk meshes and request new ones, exactly as the sandbox
+    /// does: bounded per frame, background preparation when it is available and
+    /// a synchronous mesh when it is not. No renderer call, so it runs before
+    /// the frame's fence wait.
+    fn prepare_chunks(&mut self) -> Result<(), String> {
+        let Some(renderer) = self.renderer.as_ref() else {
             return Ok(());
         };
         let begin = Instant::now();
-        let keys = self.world.chunk_keys();
-        renderer.retain_chunks(&keys)?;
+        self.chunk_keys = self.world.chunk_keys();
+        self.tiles.chunk_keys_ms = begin.elapsed().as_secs_f64() * 1000.;
+        let request_begin = Instant::now();
         if self.preparation.available() {
-            for _ in 0..4 {
+            while self.chunk_uploads.len() < MAX_CHUNK_UPLOADS {
                 let Some((key, mesh)) = self.preparation.poll_mesh(&self.world) else {
                     break;
                 };
-                if renderer.chunk_revision(key) != Some(mesh.revision) {
-                    renderer.upload_chunk(key, &mesh)?;
+                // A mesh the renderer already holds at this revision is not worth
+                // an upload; a newer one replaces it.
+                if renderer.chunk_revision(key) == Some(mesh.revision) {
+                    continue;
                 }
-                if begin.elapsed().as_secs_f64() >= 0.002 {
+                self.chunk_uploads.push((key, mesh));
+                if begin.elapsed().as_secs_f64() * 1000. >= MAX_CHUNK_MS {
                     break;
                 }
             }
-            let mut keys = keys;
+            // Nearest first: the eye's own column is what a viewer notices first.
+            // The sort is part of the request half below, not the key listing.
             let eye = self.camera.position;
-            keys.sort_by_key(|key| {
+            self.chunk_keys.sort_by_key(|key| {
                 let dx = key[0] * 16 + 8 - eye.x as i32;
                 let dz = key[2] * 16 + 8 - eye.z as i32;
                 dx * dx + dz * dz
             });
             let mut requested = 0;
-            for key in keys {
-                if renderer.chunk_revision(key) != self.world.chunk_revision(key)
-                    && self.preparation.request_mesh(&self.world, key)
+            for key in &self.chunk_keys {
+                if renderer.chunk_revision(*key) != self.world.chunk_revision(*key)
+                    && self.preparation.request_mesh(&self.world, *key)
                 {
                     requested += 1;
-                    if requested >= 4 {
+                    if requested >= MAX_CHUNK_REQUESTS {
                         break;
                     }
                 }
             }
         } else {
-            for key in keys {
-                if renderer.chunk_revision(key) != self.world.chunk_revision(key) {
-                    renderer.upload_chunk(key, &self.world.mesh_chunk(key))?;
+            for key in &self.chunk_keys {
+                if renderer.chunk_revision(*key) != self.world.chunk_revision(*key) {
+                    self.chunk_uploads.push((*key, self.world.mesh_chunk(*key)));
+                    if self.chunk_uploads.len() >= MAX_CHUNK_UPLOADS {
+                        break;
+                    }
                 }
             }
         }
+        self.tiles.chunk_poll_ms = request_begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.chunk_plan_ms += begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.chunk_plan_total_ms += self.tiles.chunk_plan_ms;
+        self.tiles.chunk_keys_total_ms += self.tiles.chunk_keys_ms;
+        self.tiles.chunk_poll_total_ms += self.tiles.chunk_poll_ms;
         Ok(())
     }
 
-    /// Plan the rings for this eye, evict what the plan dropped and build what
-    /// it is missing, inside the frame budget.
-    fn sync_tiles(&mut self) -> Result<(), String> {
-        let declare_begin = Instant::now();
-        let Some(renderer) = self.renderer.as_mut() else {
-            return Ok(());
-        };
+    /// Plan the rings for this eye, keep the cache's recency honest, request what
+    /// the background worker does not have, take its completed meshes and select
+    /// this frame's uploads. No renderer call: it runs before the fence wait.
+    fn prepare_tiles(&mut self) {
+        let begin = Instant::now();
+        self.tile_cache.begin_frame();
+        // Take completed meshes first, so the plan below sees them and a tile that
+        // arrives this frame can still be uploaded this frame.
+        for _ in 0..MAX_TILE_POLLS {
+            let Some((id, mesh)) = self.tile_worker.poll() else {
+                break;
+            };
+            self.tile_cache.insert(id, mesh);
+        }
         let eye = self.camera.position.to_array();
         let fine = landscape::fine_clip(eye);
         landscape::ring_plan_into(eye, fine, &LANDSCAPE_RINGS, &mut self.plan);
         self.declared.clear();
         self.declared
             .extend(self.plan.iter().map(|tile| (tile.level, tile.key)));
-        // Declare first: the renderer drops what the plan no longer wants before
-        // this frame adds anything, so residency never exceeds plan + budget.
-        renderer.retain_terrain_tiles(&self.declared)?;
+        // The plan is the only thing that decides what is drawn: a tile it drops
+        // is evicted this frame, in the render phase, so the drawing set stays
+        // exactly the plan. The cache below keeps its mesh, which is what makes a
+        // tile the eye returns to a re-upload rather than a regeneration.
         let work = plan_tile_work(&self.plan, &self.resident, TileBudget::default());
-        self.tiles.declare_ms = declare_begin.elapsed().as_secs_f64() * 1000.;
-        let begin = Instant::now();
         for key in &work.evict {
             self.resident.remove(key);
         }
         self.tiles.evicted += work.evict.len() as u64;
-        let mut uploaded = 0u64;
+        // This frame's selection, rebuilt from scratch: a tile left over from the
+        // previous frame is not a decision this frame made.
+        self.tile_uploads.clear();
+        // Without a worker (thread startup failed) the sample generates what it
+        // can on this thread instead of queueing work nobody runs. Bounded by the
+        // same per-frame count and time budget as the uploads.
+        let worker_available = self.tile_worker.available();
+        let mut requests = 0;
+        let mut uploads = 0;
+        let mut uncached = 0;
+        for tile in &work.build {
+            let id = landscape_tiles::tile_id(tile);
+            let mut cached = self.tile_cache.want(id);
+            if cached {
+                // Wanted again while still cached: exactly what the byte budget is
+                // for, and what an eviction-only cache would pay for twice.
+                self.tiles.reused += 1;
+            } else if !worker_available {
+                let filter = normalized_filter(tile);
+                self.tile_cache.insert(
+                    id,
+                    landscape::lod_tile_mesh(SEED, tile.level, tile.key, filter),
+                );
+                cached = true;
+                if begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
+                    break;
+                }
+            } else if !self.tile_worker.claimed(id) && requests < MAX_TILE_UPLOADS {
+                let job = TileJob::new(
+                    landscape_tiles::generator_id(),
+                    SEED,
+                    tile,
+                    normalized_filter(tile),
+                );
+                requests += usize::from(self.tile_worker.request(job));
+            }
+            // Select the upload now and copy it during the render phase: the
+            // selection is CPU work, the copy waits on the frame fence.
+            if self.resident.get(&landscape_tiles::renderer_key(tile))
+                != Some(&normalized_filter(tile))
+            {
+                if cached && uploads < MAX_TILE_UPLOADS {
+                    self.tile_uploads.push(*tile);
+                    uploads += 1;
+                } else if !cached {
+                    uncached += 1;
+                }
+            }
+        }
+        self.tiles.outstanding = work.outstanding + uncached;
+        self.tiles.plan_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.plan_total_ms += self.tiles.plan_ms;
+    }
+
+    /// Derive the water surface of every resident sea-level chunk whose column
+    /// stack changed.
+    ///
+    /// Only the chunk layer that contains sea level can hold water, so a window
+    /// change adds at most one water mesh per column stack. The derivation reads
+    /// the authoritative world, which is CPU work, so it happens before the
+    /// frame's fence wait and the upload happens after it.
+    fn prepare_water(&mut self) {
+        let begin = Instant::now();
+        // Residency, not `chunk_keys`: an open-water column stores no voxels at
+        // all, so its chunk is absent and a surface over it still has to be
+        // derived. Residency is exactly the set of chunks the window published.
+        self.water_keys = self
+            .world
+            .stream_resident_chunks()
+            .unwrap_or_else(|| self.world.chunk_keys());
+        let level = matterweave_core::water::sea_level_chunk_y();
+        self.water_window = self.water_keys.len();
+        self.water_candidates = self.water_keys.iter().filter(|key| key[1] == level).count();
+        self.water_uploads.clear();
+        for index in 0..self.water_keys.len() {
+            let key = self.water_keys[index];
+            if key[1] != level {
+                continue;
+            }
+            // The stamp is the revision of every chunk in the column stack: an
+            // edit invalidates the surface exactly when the derivation could read
+            // it. A streaming publish re-stamps the columns at the window edge
+            // and their neighbours for face coupling, which cannot change a water
+            // surface, so a re-derivation there usually returns the mesh already
+            // resident. Comparing costs a few hundred bytes of memory traffic and
+            // saves a GPU buffer replacement, so the identical result refreshes
+            // the stamp and is not uploaded again.
+            if self.water_stack_changed(key) {
+                let mesh = self.world.water_mesh_chunk(key);
+                if self
+                    .water_resident
+                    .get(&key)
+                    .is_some_and(|old| same_geometry(old, &mesh))
+                {
+                    self.tiles.water_unchanged += 1;
+                } else {
+                    self.water_uploads.push((key, mesh));
+                }
+            }
+            if self.water_uploads.len() >= MAX_WATER_UPLOADS
+                || begin.elapsed().as_secs_f64() * 1000. >= MAX_WATER_MS
+            {
+                break;
+            }
+        }
+        self.tiles.water_plan_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.water_plan_total_ms += self.tiles.water_plan_ms;
+    }
+
+    /// Whether the column stack `key` was derived from still matches what the
+    /// resident water mesh was built from, updating the recorded revisions.
+    ///
+    /// Called only for the sea-level layer, whose stack is every chunk layer the
+    /// derivation can read.
+    fn water_stack_changed(&mut self, key: [i32; 3]) -> bool {
+        for (index, y) in self.water_stack.iter().enumerate() {
+            self.water_stack_now[index] = self.world.chunk_revision([key[0], *y, key[2]]);
+        }
+        match self.water_stamps.get(&key) {
+            Some(previous) if previous.as_slice() == self.water_stack_now.as_slice() => false,
+            _ => {
+                self.water_stamps.insert(key, self.water_stack_now.clone());
+                true
+            }
+        }
+    }
+
+    /// The frame's single fence wait, then every retain and upload.
+    ///
+    /// One submission is in flight at a time, so the first call that touches the
+    /// GPU waits for the previous frame to complete. Doing it here - after all
+    /// generation, before any upload - both makes that wait visible in the
+    /// capture's fence columns and lets everything above overlap the previous
+    /// frame instead of serializing behind it.
+    fn upload_geometry(&mut self) -> Result<(), String> {
+        let begin = Instant::now();
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Ok(());
+        };
+        renderer.wait_for_frame()?;
+        self.tiles.fence_ms = begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.fence_total_ms += self.tiles.fence_ms;
+
+        // Chunks: after the frame fence. A window change also drops the chunks
+        // that left it, which is why the retain comes before the uploads.
+        let chunk_begin = Instant::now();
+        renderer.retain_chunks(&self.chunk_keys)?;
+        let uploads = std::mem::take(&mut self.chunk_uploads);
+        let uploaded = uploads.len();
+        for (key, mesh) in &uploads {
+            renderer.upload_chunk(*key, mesh)?;
+        }
+        self.tiles.chunk_upload_ms = chunk_begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.chunk_upload_total_ms += self.tiles.chunk_upload_ms;
+        self.tiles.chunk_uploads += uploaded as u64;
+        self.tiles.chunk_frame_uploads = u32::try_from(uploaded).unwrap_or(u32::MAX);
+
+        // Tiles: declare the plan first, so the renderer drops what the plan no
+        // longer wants before this frame adds anything.
+        let declare_begin = Instant::now();
+        renderer.retain_terrain_tiles(&self.declared)?;
+        self.tiles.declare_ms = declare_begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.declare_total_ms += self.tiles.declare_ms;
+        let tile_begin = Instant::now();
+        let mut tile_uploads = 0u64;
         let mut skipped = 0usize;
-        let mut generate_ms = 0.0;
-        let mut upload_ms = 0.0;
-        for (index, tile) in work.build.iter().enumerate() {
-            if begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
-                skipped = work.build.len() - index;
+        let mut copy_ms = 0.0;
+        for (index, tile) in self.tile_uploads.iter().enumerate() {
+            if tile_begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
+                skipped = self.tile_uploads.len() - index;
                 break;
             }
             let filter = normalized_filter(tile);
-            let generate_begin = Instant::now();
-            let mesh = landscape::lod_tile_mesh(SEED, tile.level, tile.key, filter);
-            generate_ms += generate_begin.elapsed().as_secs_f64() * 1000.;
+            let id = landscape_tiles::tile_id(tile);
+            let Some(mesh) = self.tile_cache.get(id) else {
+                // The entry can only disappear if the identity changed under us;
+                // skip it rather than upload geometry for a different surface.
+                skipped += 1;
+                continue;
+            };
             // A tile entirely inside the hole meshes to nothing. It stays a
             // planned, resident-as-empty tile so it is not rebuilt every frame.
             if !mesh.indices.is_empty() {
-                let upload_begin = Instant::now();
-                renderer.upload_terrain_tile(tile.level, tile.key, &mesh)?;
-                upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
-                uploaded += 1;
+                let copy_begin = Instant::now();
+                renderer.upload_terrain_tile(tile.level, tile.key, mesh)?;
+                copy_ms += copy_begin.elapsed().as_secs_f64() * 1000.;
+                tile_uploads += 1;
             }
-            self.resident.insert((tile.level, tile.key), filter);
+            self.resident
+                .insert(landscape_tiles::renderer_key(tile), filter);
         }
-        self.tiles.uploaded += uploaded;
-        self.tiles.outstanding = work.outstanding + skipped;
-        self.tiles.build_ms = begin.elapsed().as_secs_f64() * 1000.;
-        self.tiles.generate_ms = generate_ms;
-        self.tiles.total_generate_ms += generate_ms;
-        self.tiles.generated += (work.build.len() - skipped) as u64;
-        self.tiles.upload_ms = upload_ms;
-        if self.tiles.build_ms > self.tiles.worst.build_ms {
+        self.tiles.uploaded += tile_uploads;
+        self.tiles.tile_frame_uploads = u32::try_from(tile_uploads).unwrap_or(u32::MAX);
+        self.tiles.outstanding += skipped;
+        self.tiles.upload_ms = tile_begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.copy_ms = copy_ms;
+        self.tiles.copy_total_ms += copy_ms;
+        self.tiles.upload_total_ms += self.tiles.upload_ms;
+        if self.tiles.upload_ms > self.tiles.worst.upload_ms {
             self.tiles.worst = WorstFrame {
-                tiles: work.build.len() - skipped,
-                build_ms: self.tiles.build_ms,
-                generate_ms,
-                upload_ms,
-                declare_ms: self.tiles.declare_ms,
+                tiles: self.tile_uploads.len() - skipped,
+                plan_ms: self.tiles.plan_ms,
+                upload_ms: self.tiles.upload_ms,
+                copy_ms,
             };
         }
+
+        // Water: keep only the keys the window published, then upload the meshes
+        // derived above. `retain_water_chunks` drops a mesh whose chunk left the
+        // window, which is a fence wait of its own unless nothing was dropped.
+        let water_begin = Instant::now();
+        renderer.retain_water_chunks(&self.water_keys)?;
+        let water_uploads = std::mem::take(&mut self.water_uploads);
+        let uploaded = water_uploads.len();
+        for (key, mesh) in &water_uploads {
+            renderer.upload_water_chunk(*key, mesh)?;
+        }
+        for (key, mesh) in water_uploads {
+            self.water_resident.insert(key, mesh);
+        }
+        // Forget stamps whose key left the window. Guarded, because the scan is
+        // quadratic in the window and it only has work to do when a key the
+        // window dropped is still stamped.
+        if self.water_stamps.len() > self.water_candidates {
+            let live: BTreeSet<[i32; 3]> = self
+                .water_keys
+                .iter()
+                .copied()
+                .filter(|key| key[1] == matterweave_core::water::sea_level_chunk_y())
+                .collect();
+            self.water_stamps.retain(|key, _| live.contains(key));
+            self.water_resident.retain(|key, _| live.contains(key));
+        }
+        self.water_uploaded += uploaded as u64;
+        self.tiles.water_upload_ms = water_begin.elapsed().as_secs_f64() * 1000.;
+        self.tiles.water_upload_total_ms += self.tiles.water_upload_ms;
+        self.tiles.water_uploads += uploaded as u64;
+        self.tiles.water_frame_uploads = u32::try_from(uploaded).unwrap_or(u32::MAX);
         Ok(())
     }
 
@@ -690,49 +1027,6 @@ impl LandscapeSample {
     /// change adds at most one water mesh per column stack. The derivation reads
     /// the authoritative world, so an edit that raises land above sea level
     /// removes its surface on the next sync, exactly like a chunk mesh.
-    fn sync_water(&mut self) -> Result<(), String> {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return Ok(());
-        };
-        let begin = Instant::now();
-        // Residency, not `chunk_keys`: an open-water column stores no voxels at
-        // all, so its chunk is absent and a surface over it still has to be
-        // derived. Residency is exactly the set of chunks the window published.
-        let keys = self
-            .world
-            .stream_resident_chunks()
-            .unwrap_or_else(|| self.world.chunk_keys());
-        renderer.retain_water_chunks(&keys)?;
-        let level = matterweave_core::water::sea_level_chunk_y();
-        let revision = self.world.revision();
-        self.water_window = keys.len();
-        self.water_candidates = keys.iter().filter(|key| key[1] == level).count();
-        let mut uploaded = 0usize;
-        for key in &keys {
-            if key[1] != level {
-                continue;
-            }
-            // The stamp is the whole-world revision: any edit can change the
-            // terrain under a water surface, and re-deriving the sea-level layer
-            // costs one mesh per column stack, not one per resident chunk.
-            if self.water_stamps.get(key) == Some(&revision) {
-                continue;
-            }
-            renderer.upload_water_chunk(*key, &self.world.water_mesh_chunk(*key))?;
-            self.water_stamps.insert(*key, revision);
-            uploaded += 1;
-            if uploaded >= MAX_WATER_UPLOADS
-                || begin.elapsed().as_secs_f64() * 1000. >= MAX_WATER_MS
-            {
-                break;
-            }
-        }
-        self.water_stamps.retain(|key, _| keys.contains(key));
-        self.water_uploaded += uploaded as u64;
-        self.water_ms = begin.elapsed().as_secs_f64() * 1000.;
-        Ok(())
-    }
-
     fn hud(&self) -> Hud {
         let mut hud = Hud::new(1000., 600.);
         let white = [0.95, 0.97, 0.99, 1.];
@@ -773,9 +1067,10 @@ impl LandscapeSample {
             30.,
             74.,
             &format!(
-                "TILE {:.2}+{:.2} MS | FRAME {:.1} MS | TILE MEM {} KIB | {}",
-                self.tiles.build_ms,
-                self.tiles.declare_ms,
+                "TILE PLAN {:.2} UP {:.2} | CHUNK {:.2} | FRAME {:.1} MS | TILE MEM {} KIB | {}",
+                self.tiles.plan_ms,
+                self.tiles.upload_ms,
+                self.tiles.chunk_plan_ms + self.tiles.chunk_upload_ms,
                 self.frame_ms,
                 tiles.bytes / 1024,
                 if self.walking { "WALK" } else { "FLY" }
@@ -864,10 +1159,26 @@ impl LandscapeSample {
         } else {
             self.frame_ms * 0.9 + f64::from(dt) * 100.
         };
-        let capturing = self.profile.is_some();
+        let capturing = self.capture.enabled();
+        // Wall clock first, then the thread CPU clock: the busy interval stays
+        // inside the wall interval. The two readings are adjacent, not
+        // simultaneous.
+        let cpu_busy = metrics::CpuBusySpan::begin(capturing);
         if let Some(renderer) = &mut self.renderer {
             renderer.begin_frame_diagnostics();
         }
+        self.tiles.chunk_plan_ms = 0.;
+        self.tiles.chunk_keys_ms = 0.;
+        self.tiles.chunk_poll_ms = 0.;
+        self.tiles.chunk_upload_ms = 0.;
+        self.tiles.chunk_frame_uploads = 0;
+        self.tiles.declare_ms = 0.;
+        self.tiles.upload_ms = 0.;
+        self.tiles.copy_ms = 0.;
+        self.tiles.tile_frame_uploads = 0;
+        self.tiles.water_plan_ms = 0.;
+        self.tiles.water_upload_ms = 0.;
+        self.tiles.water_frame_uploads = 0;
         let (motion, look) = self.controls.consume();
         fly(&mut self.camera, motion, look, dt, FLY_SPEED);
         if self.exercise {
@@ -887,17 +1198,27 @@ impl LandscapeSample {
         if self.preparation.available() {
             self.preparation
                 .request_stream(&self.world, self.camera.position.to_array());
+            // A published window replaces the world and advances its revision
+            // without changing a column; nothing here depends on which of the
+            // two happened, because water is stamped by column-stack revision.
             self.preparation.poll_stream(&mut self.world);
         } else {
             self.world.stream_around(self.camera.position.to_array());
         }
         let stream_ms = stream_begin.elapsed().as_secs_f64() * 1000.;
+        // -- CPU phase: generation only, overlapping the previous submission. --
         let mesh_begin = Instant::now();
-        if let Err(error) = self
-            .sync_chunks()
-            .and_then(|()| self.sync_tiles())
-            .and_then(|()| self.sync_water())
-        {
+        self.prepare_water();
+        self.prepare_tiles();
+        if let Err(error) = self.prepare_chunks() {
+            log::error!("Landscape geometry failed: {error}");
+            eprintln!("Landscape geometry failed: {error}");
+            self.failed = true;
+            event_loop.exit();
+            return;
+        }
+        // -- GPU phase: one explicit fence wait, then every upload. --
+        if let Err(error) = self.upload_geometry() {
             log::error!("Landscape geometry failed: {error}");
             eprintln!("Landscape geometry failed: {error}");
             self.failed = true;
@@ -932,44 +1253,65 @@ impl LandscapeSample {
         };
         let hud = self.hud();
         let matrix = view_projection(&self.camera, size.width as f32 / size.height as f32);
+        let render_begin = Instant::now();
         let outcome =
             self.renderer
                 .as_mut()
                 .unwrap()
                 .render_with_lighting(matrix, eye, &hud, &self.lighting);
-        let result = match &outcome {
-            FrameResult::Presented => metrics::DrawOutcome::Presented,
-            FrameResult::OutOfMemory => metrics::DrawOutcome::OutOfMemory,
-            FrameResult::Retry | FrameResult::Fatal(_) => metrics::DrawOutcome::Retry,
-        };
-        match outcome {
+        let render_ms = render_begin.elapsed().as_secs_f64() * 1000.;
+        match &outcome {
             FrameResult::Presented => {
                 self.frames += 1;
                 if self.frames.is_multiple_of(30) {
                     let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
                     let water = self.renderer.as_ref().unwrap().water_stats();
+                    let worker = self.tile_worker.stats();
+                    let cache = self.tile_cache.stats();
                     log::info!(
-                        "LANDSCAPE frame {} frame_ms {:.2} tile_build_ms {:.2} tile_declare_ms {:.2} \
-                         tile_generate_ms {:.2} tile_upload_ms {:.2} tiles {}/{} visible {} \
-                         uploaded {} evicted {} outstanding {} tile_kib {} \
-                         water {}/{} up {} {:.2} ms eye {:?}",
+                        "LANDSCAPE frame {} frame_ms {:.2} fence_ms {:.2} \
+                         chunk_plan_ms {:.2} chunk_upload_ms {:.2} chunk_up {} \
+                         tile_plan_ms {:.2} tile_declare_ms {:.2} tile_upload_ms {:.2} tile_copy_ms {:.2} \
+                         water_plan_ms {:.2} water_upload_ms {:.2} water {}/{} up {} \
+                         tiles {}/{} visible {} up {} ev {} reused {} left {} tile_kib {} \
+                         tile_worker q {} r {} {} KiB gen {} {:.1} ms in bounds {} \
+                         tile_cache {} {}/{} KiB hit {} miss {} evict {} \
+                         eye {:?}",
                         self.frames,
                         self.frame_ms,
-                        self.tiles.build_ms,
+                        self.tiles.fence_ms,
+                        self.tiles.chunk_plan_ms,
+                        self.tiles.chunk_upload_ms,
+                        self.tiles.chunk_frame_uploads,
+                        self.tiles.plan_ms,
                         self.tiles.declare_ms,
-                        self.tiles.generate_ms,
                         self.tiles.upload_ms,
+                        self.tiles.copy_ms,
+                        self.tiles.water_plan_ms,
+                        self.tiles.water_upload_ms,
+                        water.resident,
+                        water.visible,
+                        self.tiles.water_frame_uploads,
                         tiles.resident,
                         tiles.declared,
                         tiles.visible,
                         self.tiles.uploaded,
                         self.tiles.evicted,
+                        self.tiles.reused,
                         self.tiles.outstanding,
                         tiles.bytes / 1024,
-                        water.resident,
-                        water.visible,
-                        self.water_uploaded,
-                        self.water_ms,
+                        worker.pending,
+                        worker.results,
+                        worker.result_bytes / 1024,
+                        worker.generated,
+                        worker.generate_ms,
+                        worker.within_bounds(),
+                        cache.entries,
+                        cache.bytes / 1024,
+                        cache.budget_bytes / 1024,
+                        cache.hits,
+                        cache.misses,
+                        cache.evictions,
                         eye
                     );
                 }
@@ -992,7 +1334,7 @@ impl LandscapeSample {
             }
         }
         if capturing {
-            self.record(result, dt, stream_ms, mesh_ms, now);
+            self.record(&outcome, dt, stream_ms, mesh_ms, render_ms, now, cpu_busy);
         }
         if !self.failed && self.frame_limit.is_some_and(|limit| self.frames >= limit) {
             let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
@@ -1002,21 +1344,40 @@ impl LandscapeSample {
                 .map(LandscapeFlora::counters)
                 .unwrap_or_default();
             let water = self.renderer.as_ref().unwrap().water_stats();
+            let worker = self.tile_worker.stats();
+            let cache = self.tile_cache.stats();
+            let frames = self.frames.max(1) as f64;
             eprintln!(
                 "LANDSCAPE SMOKE PASS: {} presented frames; {}",
                 self.frames,
                 self.renderer.as_ref().unwrap().capabilities
             );
+            // Per-phase means over the run: the plan timings are CPU work that
+            // overlaps the previous submission, the upload timings are copies
+            // after the frame fence, and the fence wait is the frame's own
+            // serialization point. The schema has one span column, so the split
+            // lives here.
+            eprintln!(
+                "LANDSCAPE MESH SYNC (mean per frame, ms): fence {:.2} + chunk list {:.2} + chunk \
+                 meshes {:.2} + tile plan {:.2} + water plan {:.2} + tile declare {:.2} + chunk \
+                 upload {:.2} + tile upload {:.2} (copy {:.2}) + water upload {:.2}; budget {} tiles \
+                 / {:.1} ms",
+                self.tiles.fence_total_ms / frames,
+                self.tiles.chunk_keys_total_ms / frames,
+                self.tiles.chunk_poll_total_ms / frames,
+                self.tiles.plan_total_ms / frames,
+                self.tiles.water_plan_total_ms / frames,
+                self.tiles.declare_total_ms / frames,
+                self.tiles.chunk_upload_total_ms / frames,
+                self.tiles.upload_total_ms / frames,
+                self.tiles.copy_total_ms / frames,
+                self.tiles.water_upload_total_ms / frames,
+                MAX_TILE_UPLOADS,
+                MAX_TILE_MS
+            );
             eprintln!(
                 "LANDSCAPE COUNTERS: chunks {}/{} | tiles resident {} declared {} visible {} \
-                 | uploaded {} evicted {} outstanding {} | tile mem {} KiB \n\
-                 LANDSCAPE WATER: resident {} visible {} uploaded {} | {} KiB | {} ms this frame | \
-                 window {} candidates {}\n\
-                 frame {:.1} ms\n\
-                 LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms generating + {:.2} ms \
-                 uploading (the upload waits on the frame fence) + {:.2} ms planning; \
-                 budget {} tiles / {:.1} ms\n\
-                 LANDSCAPE TILE COST: {} meshes generated in {:.1} ms total = {:.2} ms each",
+                 | uploaded {} evicted {} reused {} outstanding {} | tile mem {} KiB",
                 self.renderer.as_ref().unwrap().visible_chunks,
                 self.renderer.as_ref().unwrap().resident_chunks,
                 tiles.resident,
@@ -1024,26 +1385,52 @@ impl LandscapeSample {
                 tiles.visible,
                 self.tiles.uploaded,
                 self.tiles.evicted,
+                self.tiles.reused,
                 self.tiles.outstanding,
                 tiles.bytes / 1024,
+            );
+            eprintln!(
+                "LANDSCAPE WATER: resident {} visible {} uploaded {} | {} KiB | plan {:.2} ms \
+                 upload {:.2} ms this frame | window {} candidates {}",
                 water.resident,
                 water.visible,
                 self.water_uploaded,
                 water.bytes / 1024,
-                self.water_ms,
+                self.tiles.water_plan_ms,
+                self.tiles.water_upload_ms,
                 self.water_window,
                 self.water_candidates,
-                self.frame_ms,
+            );
+            eprintln!("LANDSCAPE FRAME: {:.1} ms", self.frame_ms);
+            eprintln!(
+                "LANDSCAPE WORST TILE FRAME: {} tiles in {:.2} ms = {:.2} ms planning + {:.2} ms \
+                 uploading (of which {:.2} ms inside the upload calls); budget {} tiles / {:.1} ms",
                 self.tiles.worst.tiles,
-                self.tiles.worst.build_ms,
-                self.tiles.worst.generate_ms,
+                self.tiles.worst.plan_ms + self.tiles.worst.upload_ms,
+                self.tiles.worst.plan_ms,
                 self.tiles.worst.upload_ms,
-                self.tiles.worst.declare_ms,
+                self.tiles.worst.copy_ms,
                 MAX_TILE_UPLOADS,
                 MAX_TILE_MS,
-                self.tiles.generated,
-                self.tiles.total_generate_ms,
-                self.tiles.total_generate_ms / self.tiles.generated.max(1) as f64
+            );
+            eprintln!(
+                "LANDSCAPE TILE WORK: {} meshes generated by the background worker in {:.1} ms \
+                 total = {:.2} ms each | worker queue {} pending {} results {} KiB",
+                worker.generated,
+                worker.generate_ms,
+                worker.generate_ms / worker.generated.max(1) as f64,
+                worker.pending,
+                worker.results,
+                worker.result_bytes / 1024,
+            );
+            eprintln!(
+                "LANDSCAPE TILE CACHE: {} entries {}/{} KiB | hit {} miss {} evict {}",
+                cache.entries,
+                cache.bytes / 1024,
+                cache.budget_bytes / 1024,
+                cache.hits,
+                cache.misses,
+                cache.evictions,
             );
             eprintln!(
                 "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
@@ -1067,48 +1454,36 @@ impl LandscapeSample {
     }
 
     /// One capture row. Only fields this sample actually measures are filled;
-    /// systems it does not run stay empty rather than borrowing another
-    /// sample's number.
+    /// systems it does not run (physics, dynamic meshes, saves) stay empty rather
+    /// than borrowing another sample's number, and `chunk_mesh_uploads` counts
+    /// chunk meshes rather than the tile meshes a previous version put there.
+    ///
+    /// The capture wrapper owns attempt, epoch, presented and completion
+    /// identity; this function supplies the per-frame measurements.
+    #[allow(clippy::too_many_arguments)]
     fn record(
         &mut self,
-        result: metrics::DrawOutcome,
+        result: &FrameResult,
         dt: f32,
         stream_ms: f64,
         mesh_ms: f64,
+        render_ms: f64,
         frame_begin: Instant,
+        cpu_busy: metrics::CpuBusySpan,
     ) {
-        let diagnostics = self.renderer.as_ref().and_then(|r| r.draw_diagnostics());
         let row = metrics::FrameRow {
-            draw_attempt_id: self.frames,
-            presented_count: self.frames,
-            result,
-            submitted_gpu_frame_id: diagnostics.and_then(|d| d.submitted_frame_id),
             draw_interval_wall_ms: Some(f64::from(dt) * 1000.),
-            main_wall_ms: Some(frame_begin.elapsed().as_secs_f64() * 1000.),
+            render_wall_ms: Some(render_ms),
             stream_request_elapsed_ms: Some(stream_ms),
             mesh_sync_wall_ms: Some(mesh_ms),
-            chunk_mesh_uploads: u32::try_from(self.tiles.uploaded).ok(),
+            chunk_mesh_uploads: Some(self.tiles.chunk_frame_uploads),
             ..Default::default()
         };
-        let Some(profile) = &mut self.profile else {
+        let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        match profile.record(&row) {
-            Ok(true) => {}
-            Ok(false) => {
-                log::info!("Landscape capture complete: {}", profile.path.display());
-                self.profile = None;
-            }
-            Err(error) => {
-                log::warn!("Landscape capture failed: {error}");
-                self.profile = None;
-            }
-        }
-        if self.profile.is_none() {
-            if let Some(renderer) = &mut self.renderer {
-                renderer.set_diagnostics_enabled(false);
-            }
-        }
+        self.capture
+            .record(renderer, result, row, frame_begin, cpu_busy);
     }
 
     fn point(&self, x: f64, y: f64) -> Vec2 {
@@ -1161,7 +1536,9 @@ impl ApplicationHandler for LandscapeSample {
             Ok(mut renderer) => {
                 log::info!("Landscape graphics: {}", renderer.capabilities);
                 eprintln!("Landscape graphics: {}", renderer.capabilities);
-                renderer.set_diagnostics_enabled(self.profile.is_some());
+                // One renderer, one epoch: the capture's epoch advances here so a
+                // recreated renderer's restarted submission ids stay distinct.
+                self.capture.renderer_created(&mut renderer);
                 self.renderer = Some(renderer);
                 self.window = Some(window);
                 // Prototype pooling is CPU work that does not need the
@@ -1201,14 +1578,17 @@ impl ApplicationHandler for LandscapeSample {
         }
         self.renderer = None;
         self.window = None;
+        // Every resident tile and water mesh dies with the renderer. The CPU
+        // tile cache survives, because its meshes are pure functions of the
+        // generator identity and nothing about them belongs to the renderer; the
+        // water stamps do not, because they describe buffers the renderer still
+        // holds. Clearing them re-derives and re-uploads the surfaces on resume.
         self.resident.clear();
+        self.water_stamps.clear();
+        self.water_resident.clear();
         self.controls.clear();
         self.focused = false;
-        if let Some(profile) = &mut self.profile {
-            if let Err(error) = profile.flush() {
-                log::warn!("Landscape capture flush failed: {error}");
-            }
-        }
+        self.capture.flush();
     }
 
     fn window_event(
@@ -1290,11 +1670,7 @@ impl ApplicationHandler for LandscapeSample {
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        if let Some(profile) = &mut self.profile {
-            if let Err(error) = profile.flush() {
-                log::warn!("Landscape capture flush failed: {error}");
-            }
-        }
+        self.capture.flush();
         self.renderer = None;
         self.window = None;
     }
@@ -1303,6 +1679,7 @@ impl ApplicationHandler for LandscapeSample {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use matterweave_core::Vertex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
@@ -1383,7 +1760,7 @@ mod tests {
         // The capture request is consumed at construction, before the first
         // frame, so a marker-selected device run records from frame one.
         assert!(
-            sample.profile.is_some(),
+            sample.capture.enabled(),
             "the capture request was not taken"
         );
         assert!(!dir.join("profile-frames.txt").exists());
@@ -1392,6 +1769,214 @@ mod tests {
         drop(sample);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// Mirrors what `upload_geometry` does with a water upload, so a test can
+    /// drive the derivation pipeline without a renderer.
+    fn take_water_uploads(sample: &mut LandscapeSample) -> Vec<[i32; 3]> {
+        let uploads = std::mem::take(&mut sample.water_uploads);
+        let keys = uploads.iter().map(|(key, _)| *key).collect();
+        for (key, mesh) in uploads {
+            sample.water_resident.insert(key, mesh);
+        }
+        keys
+    }
+
+    /// Deep copy of a derived mesh, for comparing geometry across a change.
+    fn mesh_copy(mesh: &Mesh) -> Mesh {
+        Mesh {
+            vertices: mesh.vertices.clone(),
+            indices: mesh.indices.clone(),
+            revision: mesh.revision,
+        }
+    }
+
+    /// Runs frames until the water phase has no work left for the current window,
+    /// returning the keys whose mesh actually had to be uploaded. A call that
+    /// changes nothing and uploads nothing repeats itself exactly, so the loop
+    /// stops there; the bound is the candidates plus the frames the real budget
+    /// needs to visit them.
+    fn drain_water(sample: &mut LandscapeSample) -> Vec<[i32; 3]> {
+        let mut uploaded = Vec::new();
+        for _ in 0..(sample.water_candidates + 2).max(4) + 8 {
+            let unchanged = sample.tiles.water_unchanged;
+            sample.prepare_water();
+            let pushed = sample.water_uploads.len() as u64;
+            uploaded.extend(take_water_uploads(sample));
+            if pushed == 0 && sample.tiles.water_unchanged == unchanged {
+                break;
+            }
+        }
+        uploaded
+    }
+
+    /// A window publish advances the world revision and re-stamps the chunk
+    /// revisions of the columns that entered or left plus their neighbours, for
+    /// face coupling that cannot change a water surface. Keying water on the world
+    /// revision re-derived every candidate on every chunk step; keying on the
+    /// column stack, then comparing the derived geometry, re-derives only that
+    /// handful and uploads only what actually differs.
+    #[test]
+    fn water_is_re_derived_for_the_window_edge_but_uploaded_only_when_it_changed() {
+        let dir = temp_dir("water-stamps");
+        let mut sample = LandscapeSample::new(dir.join("world.json"), None);
+        let level = matterweave_core::water::sea_level_chunk_y();
+        let first = drain_water(&mut sample);
+        assert!(!first.is_empty(), "the first frame derived nothing");
+        let flooded = sample
+            .water_resident
+            .iter()
+            .any(|(key, mesh)| key[1] == level && !mesh.indices.is_empty());
+        assert!(
+            flooded,
+            "the shore spawn should hold flooded sea-level chunks"
+        );
+        let candidates = sample.water_candidates;
+        let quiet = sample.tiles.water_unchanged;
+
+        // A publish moves the window by one chunk column: nothing to upload for
+        // the columns whose combined stack revision did not move.
+        let eye = sample.camera.position;
+        sample
+            .world
+            .stream_around([eye.x + 16.0, eye.y, eye.z]);
+        let rederived = drain_water(&mut sample);
+        assert!(
+            rederived.len() < candidates,
+            "a publish re-derived every candidate: {rederived:?}"
+        );
+        assert!(
+            sample.tiles.water_unchanged > quiet,
+            "the columns re-stamped for face coupling were re-uploaded"
+        );
+        assert!(
+            !rederived.is_empty(),
+            "the columns that entered the window were never uploaded"
+        );
+
+        // An edit changes the column it is in and nothing else. Raising the
+        // surface to sea level removes that column's water, so the mesh differs
+        // and is uploaded.
+        // A flooded column that is still in the window (the test keeps the
+        // resident copies a real frame would have pruned).
+        let edited = sample
+            .water_resident
+            .iter()
+            .find(|(key, mesh)| {
+                key[1] == level && !mesh.indices.is_empty() && sample.water_keys.contains(key)
+            })
+            .map(|(key, _)| *key)
+            .expect("a flooded column in the window");
+        let before = mesh_copy(
+            sample
+                .water_resident
+                .get(&edited)
+                .expect("a resident water mesh"),
+        );
+        assert!(!before.indices.is_empty(), "the column should be flooded");
+        assert!(
+            sample.world.set([edited[0] * 16 + 8, level, edited[2] * 16 + 8], 3),
+            "the edit of {edited:?} was refused"
+        );
+        let rederived = drain_water(&mut sample);
+        assert_eq!(
+            rederived,
+            vec![edited],
+            "an edit must upload its own column and no other"
+        );
+        assert!(
+            sample
+                .water_resident
+                .get(&edited)
+                .is_some_and(|mesh| !same_geometry(&before, mesh)),
+            "the edited column's surface must change"
+        );
+        drop(sample);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mesh_equality_is_exact_and_not_shared_identity() {
+        let vertex = Vertex {
+            position: [1., 2., 3.],
+            normal: [0., 1., 0.],
+            color: [0.5; 3],
+        };
+        let a = Mesh {
+            vertices: vec![vertex],
+            indices: vec![0, 1, 2],
+            revision: 7,
+        };
+        let mut b = mesh_copy(&a);
+        assert!(same_geometry(&a, &b), "equal meshes must compare equal");
+        b.vertices[0].position[0] = 1.000_001;
+        assert!(!same_geometry(&a, &b), "a moved vertex is a different mesh");
+        b.vertices[0].normal[1] = 0.5;
+        assert!(!same_geometry(&a, &b), "a different normal is different");
+        b = mesh_copy(&a);
+        b.indices.push(3);
+        assert!(!same_geometry(&a, &b), "a longer index list is different");
+        b = mesh_copy(&a);
+        b.revision += 1;
+        assert!(
+            same_geometry(&a, &b),
+            "a revision that moved with no geometry change is the same surface"
+        );
+        b.vertices.clear();
+        assert!(!same_geometry(&a, &b), "a shorter vertex list is different");
+    }
+
+    /// Tile meshes are generated on the worker, not in the frame, and a tile that
+    /// is already cached is selected for upload instead of being regenerated.
+    #[test]
+    fn tiles_are_generated_off_the_frame_and_served_from_the_cache() {
+        let dir = temp_dir("tile-worker");
+        let mut sample = LandscapeSample::new(dir.join("world.json"), None);
+        sample.prepare_tiles();
+        assert!(
+            sample.tile_uploads.is_empty(),
+            "nothing can be uploaded before the worker has generated it"
+        );
+        let queued = sample.tile_worker.stats();
+        assert!(
+            queued.pending + queued.inflight + queued.results > 0,
+            "the frame requested no generation: {queued:?}"
+        );
+        // Wait the way a frame does: bounded polls, never a busy spin. A frame
+        // moves the worker's completed meshes into the cache itself.
+        let mut waited = 0;
+        while sample.tile_cache.stats().entries == 0 && waited < 5_000 {
+            sample.prepare_tiles();
+            if sample.tile_cache.stats().entries > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            waited += 1;
+        }
+        assert!(
+            sample.tile_cache.stats().entries > 0,
+            "the worker never produced a mesh"
+        );
+        assert!(sample.tile_worker.available());
+        // The next frame over the same eye uploads what the worker finished and
+        // regenerates none of it.
+        sample.prepare_tiles();
+        assert!(!sample.tile_uploads.is_empty(), "no tile was selected");
+        assert!(
+            sample.tiles.reused > 0,
+            "no cached tile was reported as reused"
+        );
+        for tile in &sample.tile_uploads {
+            let id = crate::landscape_tiles::tile_id(tile);
+            assert!(
+                sample.tile_cache.get(id).is_some(),
+                "a selected tile was not cached"
+            );
+        }
+        assert!(sample.tile_worker.stats().within_bounds());
+        drop(sample);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
 
     #[test]
     fn normalizing_a_filter_cannot_change_the_mesh() {

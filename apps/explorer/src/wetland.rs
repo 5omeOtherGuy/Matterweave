@@ -2,6 +2,7 @@
 //! remain separate. Legacy sandbox files are never used by this mode.
 use crate::{
     audio_service::{EventQueue, GameplayEvent},
+    capture::Capture,
     controls::{
         action_at, contains, draw_settings_panel, settings_panel_click, wetland_layout, Action,
         Camera, Controls, SettingsPanelClick,
@@ -9,7 +10,6 @@ use crate::{
     detail_runtime::DetailRuntime,
     metrics,
     settings::SharedSettings,
-    wetland_metrics::Capture,
     wetland_replay::{Replay, Route},
     wetland_state::{self, Edit, SavedWetland},
 };
@@ -967,7 +967,7 @@ impl WetlandApp {
     pub fn new(directory: PathBuf, auto_start: bool, frame_limit: Option<u64>) -> Self {
         Self {
             started: Instant::now(),
-            capture: Capture::new(&directory),
+            capture: Capture::new("Wetland", &directory),
             directory,
             renderer: None,
             window: None,

@@ -1,5 +1,6 @@
 //! Native platform/sample orchestration. Authoritative world and GPU backend are separate crates.
 mod audio_service;
+mod capture;
 mod controls;
 mod destruction_check;
 mod detail_check;
@@ -10,6 +11,7 @@ mod experience;
 mod gallery;
 mod landscape;
 mod landscape_flora;
+mod landscape_tiles;
 mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
@@ -19,7 +21,6 @@ mod terrain_lab;
 pub mod voxel_relay;
 mod wetland;
 mod wetland_lighting;
-mod wetland_metrics;
 mod wetland_replay;
 mod wetland_state;
 use controls::{Action, Camera, Controls};

@@ -1464,6 +1464,23 @@ impl Renderer {
         Ok(())
     }
 
+    /// Waits for the submission fence of the in-flight frame, without uploading
+    /// anything, and records the wait in this frame's diagnostics.
+    ///
+    /// One submission is in flight at a time, so the first call that touches
+    /// GPU-visible memory waits for it: an upload, a retain, or this. Waiting
+    /// explicitly at the start of a frame's upload phase makes that
+    /// serialization point visible in `upload_fence_wait_ms` and lets a caller
+    /// do all of its generation before it, where it overlaps the previous
+    /// submission instead of queueing behind the fence. Every upload and retain
+    /// call after it returns without waiting.
+    pub fn wait_for_frame(&mut self) -> Result<()> {
+        let wait = self.upload_waits.timed_begin();
+        self.commands.wait()?;
+        self.upload_waits.record(wait);
+        Ok(())
+    }
+
     /// World-space geometry, normally one 16-cubed voxel chunk. Empty meshes
     /// retain their revision so occluded chunks are not rebuilt every frame.
     /// Older revisions are ignored. A successful upload switches off legacy mesh.
