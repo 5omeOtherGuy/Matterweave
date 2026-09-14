@@ -8,6 +8,7 @@
 //! its public interface.
 
 use super::{validate_mesh, Buffer, Frustum, Result};
+use crate::lighting::{PlayerPush, Wind};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use matterweave_core::{Mesh, Vertex};
@@ -30,6 +31,11 @@ pub const MAX_FLORA_BYTES: usize = MAX_FLORA_INSTANCES * INSTANCE_RECORD_SIZE;
 /// scales with the height a vertex sits at, so an absurd height would turn a
 /// gentle breeze into a catapult.
 pub const MAX_FLORA_HEIGHT_M: f32 = 64.0;
+/// Largest per-instance uniform scale the flora path accepts. The scale travels
+/// in the wind record's fourth slot, where `0` marks a record that is not flora
+/// (the zero record every non-flora draw binds), and it multiplies both the
+/// prototype's local vertices and the wind displacement.
+pub const MAX_FLORA_SCALE: f32 = 4.0;
 
 /// One instanced placement of a prototype mesh. `yaw_quarters` rotates the
 /// prototype about the Y axis in quarter turns (0..=3); translation is world
@@ -43,12 +49,12 @@ pub struct StaticInstance {
 
 /// One instanced placement of a wind-capable flora prototype.
 ///
-/// Everything [`StaticInstance`] carries, plus the three numbers `world.wgsl`
-/// needs to displace it: `phase` decorrelates neighbouring plants, `bend` is
-/// how far this plant gives in a unit wind, and `height_m` is the prototype's
-/// own height so the shader can weight displacement by height above the ground
-/// contact. [`StaticInstance`] deliberately keeps its shape: existing scenes
-/// pack and draw exactly as before.
+/// Everything [`StaticInstance`] carries, plus the numbers `world.wgsl` needs to
+/// size and displace it: `phase` decorrelates neighbouring plants, `bend` is how
+/// far this plant gives in a unit wind, `height_m` is the prototype's own height
+/// in metres so the shader can weight displacement by height above the ground
+/// contact, and `scale` is how large this one instance is drawn. [`StaticInstance`]
+/// deliberately keeps its shape: existing scenes pack and draw exactly as before.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FloraInstance {
     pub prototype: usize,
@@ -58,8 +64,13 @@ pub struct FloraInstance {
     pub phase: f32,
     /// Compliance in `0..=1`: 0 is rigid, 1 bends the full wind amount.
     pub bend: f32,
-    /// Prototype height in metres, in `(0, MAX_FLORA_HEIGHT_M]`.
+    /// Prototype height in metres, in `(0, MAX_FLORA_HEIGHT_M]` before `scale`.
     pub height_m: f32,
+    /// Uniform scale in `(0, MAX_FLORA_SCALE]`. Every instance of a prototype
+    /// can then be its own size without a prototype per size, which is what a
+    /// dense field needs: a mat of one silhouette repeated is still a mat of one
+    /// silhouette.
+    pub scale: f32,
 }
 
 /// Packed GPU instance record: vertex input location 3 as vec4<f32> holds
@@ -71,8 +82,9 @@ struct InstanceRecord {
 }
 
 /// Packed GPU wind record: vertex input location 4 as vec4<f32> holds
-/// `(phase, bend, height_m, enabled)`. `enabled == 0` is the early-out every
-/// non-flora draw binds, which is why the zero record is the identity.
+/// `(phase, bend, height_m, scale)`. `scale == 0` is the early-out every
+/// non-flora draw binds, which is why the zero record is the identity: it
+/// disables both the displacement and the scale.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct WindRecord {
@@ -81,7 +93,8 @@ pub(crate) struct WindRecord {
 
 const INSTANCE_RECORD_SIZE: usize = std::mem::size_of::<InstanceRecord>();
 pub(crate) const WIND_RECORD_SIZE: usize = std::mem::size_of::<WindRecord>();
-/// The record a non-flora draw reads: `w = 0` disables all displacement.
+/// The record a non-flora draw reads: a zero scale disables both the wind
+/// displacement and the per-instance scale.
 pub(crate) const ZERO_WIND: WindRecord = WindRecord { data: [0.0; 4] };
 // Both per-instance bindings are declared with the same stride in the pipeline
 // vertex input; keeping the records the same size is what makes that true.
@@ -99,6 +112,9 @@ pub(crate) trait Placement: Copy {
     const WIND: bool;
     fn base(&self) -> StaticInstance;
     fn wind(&self) -> WindRecord;
+    /// Uniform scale this placement draws its prototype at. One for anything
+    /// that is not scaled, so the bounds maths below can be written once.
+    fn scale(&self) -> f32;
     /// Host validation of the fields this kind adds beyond the base instance.
     fn validate_wind(&self) -> Result<()>;
 }
@@ -110,6 +126,9 @@ impl Placement for StaticInstance {
     }
     fn wind(&self) -> WindRecord {
         ZERO_WIND
+    }
+    fn scale(&self) -> f32 {
+        1.0
     }
     fn validate_wind(&self) -> Result<()> {
         Ok(())
@@ -127,8 +146,11 @@ impl Placement for FloraInstance {
     }
     fn wind(&self) -> WindRecord {
         WindRecord {
-            data: [self.phase, self.bend, self.height_m, 1.0],
+            data: [self.phase, self.bend, self.height_m, self.scale],
         }
+    }
+    fn scale(&self) -> f32 {
+        self.scale
     }
     fn validate_wind(&self) -> Result<()> {
         if !self.phase.is_finite() || !(0.0..=1.0).contains(&self.phase) {
@@ -140,11 +162,19 @@ impl Placement for FloraInstance {
         if !self.bend.is_finite() || !(0.0..=1.0).contains(&self.bend) {
             return Err(format!("Flora instance bend {} is not in 0..=1", self.bend));
         }
-        if !self.height_m.is_finite() || self.height_m <= 0.0 || self.height_m > MAX_FLORA_HEIGHT_M
-        {
+        if !self.scale.is_finite() || self.scale <= 0.0 || self.scale > MAX_FLORA_SCALE {
             return Err(format!(
-                "Flora instance height {} m is not in (0, {MAX_FLORA_HEIGHT_M}]",
-                self.height_m
+                "Flora instance scale {} is not in (0, {MAX_FLORA_SCALE}]",
+                self.scale
+            ));
+        }
+        // The scaled height is what the shader sees, so that is what the cap
+        // applies to: an instance cannot escape the height bound by scaling up.
+        let height_m = self.height_m * self.scale;
+        if !self.height_m.is_finite() || height_m <= 0.0 || height_m > MAX_FLORA_HEIGHT_M {
+            return Err(format!(
+                "Flora instance height {} m at scale {} is {} m, not in (0, {MAX_FLORA_HEIGHT_M}]",
+                self.height_m, self.scale, height_m
             ));
         }
         Ok(())
@@ -274,23 +304,64 @@ fn translate_bounds(bounds: [[f32; 3]; 2], translation: [f32; 3]) -> [[f32; 3]; 
     ]
 }
 
-/// Largest horizontal displacement `world.wgsl` can apply to a flora vertex.
+/// Largest horizontal sway `world.wgsl` applies to a flora vertex at scale 1.
 ///
-/// Sway reaches `1.5 * bend * strength` metres and the walk-through push adds
-/// at most `MAX_PUSH_STRENGTH_M`; both are validated on the Rust side. Flora
-/// batch bounds are grown by this margin in x and z so whole-batch frustum
-/// culling cannot clip a plant that swayed into view.
-pub const MAX_WIND_DISPLACEMENT_M: f32 = 2.5;
+/// The shader's two decorrelated sines span ±1.5, the per-instance `bend` is in
+/// `0..=1` and the wind strength is capped by [`Wind::MAX_STRENGTH_M`]:
+/// `1.5 * 1 * 1.5 = 2.25` m. A per-instance scale multiplies this term.
+pub const MAX_WIND_SWAY_M: f32 = 1.5 * Wind::MAX_STRENGTH_M;
 
-/// Grow bounds horizontally by the wind margin, for wind-capable placements only.
-fn wind_margin<P: Placement>(bounds: [[f32; 3]; 2]) -> [[f32; 3]; 2] {
+/// Largest walk-through push `world.wgsl` applies to a flora vertex.
+///
+/// The shader's `(1 - d/r)^2 * r * 0.5 * h` peaks at `r / 2` with `h = 1`, and
+/// the radius is capped by [`PlayerPush::MAX_RADIUS_M`]: `8 * 0.5 = 4` m. The
+/// push is *not* multiplied by the instance scale - it parts the field around
+/// the player, not around the plant.
+pub const MAX_PLAYER_PUSH_M: f32 = 0.5 * PlayerPush::MAX_RADIUS_M;
+
+/// Largest horizontal displacement `world.wgsl` can apply to a flora vertex at
+/// scale 1 in total.
+///
+/// Sway and push are independent terms and can point the same way, so the bound
+/// is their sum, `6.25` m - not the wind the landscape sample happens to blow.
+/// The terms are derived from the two *validated* maxima above, so raising
+/// [`Wind::MAX_STRENGTH_M`] or [`PlayerPush::MAX_RADIUS_M`] moves this bound with
+/// them instead of silently invalidating it: flora batch bounds grown by this
+/// margin are what keeps whole-batch frustum culling from clipping a plant that
+/// swayed into view.
+pub const MAX_WIND_DISPLACEMENT_M: f32 = MAX_WIND_SWAY_M + MAX_PLAYER_PUSH_M;
+
+/// Grow bounds horizontally by the wind margin, for wind-capable placements only:
+/// the sway term scales with the instance and the push does not, and both are
+/// bounded by the validated settings maxima rather than by the sample's weather.
+fn wind_margin<P: Placement>(bounds: [[f32; 3]; 2], scale: f32) -> [[f32; 3]; 2] {
     if !P::WIND {
         return bounds;
     }
-    let m = MAX_WIND_DISPLACEMENT_M;
+    let m = MAX_WIND_SWAY_M * scale + MAX_PLAYER_PUSH_M;
     [
         [bounds[0][0] - m, bounds[0][1], bounds[0][2] - m],
         [bounds[1][0] + m, bounds[1][1], bounds[1][2] + m],
+    ]
+}
+
+/// Scale bounds about the prototype's own origin, which is where the ground
+/// contact is, so a scaled instance stands on the same cell it always did.
+fn scale_bounds(bounds: [[f32; 3]; 2], scale: f32) -> [[f32; 3]; 2] {
+    if scale == 1.0 {
+        return bounds;
+    }
+    [
+        [
+            bounds[0][0] * scale,
+            bounds[0][1] * scale,
+            bounds[0][2] * scale,
+        ],
+        [
+            bounds[1][0] * scale,
+            bounds[1][1] * scale,
+            bounds[1][2] * scale,
+        ],
     ]
 }
 
@@ -460,10 +531,16 @@ pub(crate) fn plan_static_scene_with_budgets<P: Placement>(
                         .extend_from_slice(bytemuck::bytes_of(&instance_record(instance)));
                     plan.wind_bytes
                         .extend_from_slice(bytemuck::bytes_of(&placement.wind()));
-                    let placed = wind_margin::<P>(translate_bounds(
-                        rotate_bounds(bounds, instance.yaw_quarters),
-                        instance.translation,
-                    ));
+                    let placed = wind_margin::<P>(
+                        translate_bounds(
+                            rotate_bounds(
+                                scale_bounds(bounds, placement.scale()),
+                                instance.yaw_quarters,
+                            ),
+                            instance.translation,
+                        ),
+                        placement.scale(),
+                    );
                     if !placed.iter().flatten().all(|v| v.is_finite()) {
                         return Err(
                             "Static instance translation produces non-finite scene bounds".into(),
@@ -541,10 +618,16 @@ fn plan_instance_update<P: Placement>(
         let mut bounds = None;
         for placement in &placements {
             let instance = &placement.base();
-            let placed = wind_margin::<P>(translate_bounds(
-                rotate_bounds(mesh.bounds, instance.yaw_quarters),
-                instance.translation,
-            ));
+            let placed = wind_margin::<P>(
+                translate_bounds(
+                    rotate_bounds(
+                        scale_bounds(mesh.bounds, placement.scale()),
+                        instance.yaw_quarters,
+                    ),
+                    instance.translation,
+                ),
+                placement.scale(),
+            );
             if !placed.iter().flatten().all(|v| v.is_finite()) {
                 return Err("Static instance produces nonfinite bounds".into());
             }

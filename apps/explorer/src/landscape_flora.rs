@@ -31,7 +31,10 @@
 //! materials. No per-plant culling either - the renderer culls whole prototype
 //! batches, which is the same bound the static path has always had.
 
-use matterweave_core::landscape::{self, FloraKind, FloraPlan, PlacedFlora, LANDSCAPE_FLORA_TIERS};
+use matterweave_core::landscape::{
+    self, FloraKind, FloraPlan, PlacedFlora, FLORA_MAX_VARIATION_PERCENT,
+    FLORA_MIN_VARIATION_PERCENT, LANDSCAPE_FLORA_TIERS,
+};
 use matterweave_core::Mesh;
 use matterweave_detail::{
     landscape_prototype, prototype_for, DetailScene, Lod, LANDSCAPE_FLORA_SPECIES,
@@ -71,7 +74,9 @@ fn species() -> Vec<&'static str> {
 }
 
 /// How compliant each kind is in the wind, in `0..=1`. A cactus barely moves; a
-/// blade of grass gives completely.
+/// blade of grass gives completely. This is the *stiffest* an instance of the
+/// kind bends: [`bend_factor`] scales it down per site, so two tufts of the same
+/// kind do not sway as one.
 fn bend_of(kind: FloraKind) -> f32 {
     match kind {
         FloraKind::GrassTuft | FloraKind::Reed => 1.0,
@@ -81,6 +86,21 @@ fn bend_of(kind: FloraKind) -> f32 {
         FloraKind::TreeBroadleaf | FloraKind::TreeConifer => 0.22,
         FloraKind::Cactus => 0.04,
     }
+}
+
+/// The plan's per-site bend percentage as a factor on the kind's compliance, in
+/// `0.75..=1.0`.
+///
+/// The percentage maps onto the top of the compliance range rather than around
+/// its middle for two reasons: the stiffest instance of every kind bends exactly
+/// as far as it did before the variation existed, and `bend_of(kind) * factor`
+/// stays inside the wind record's `0..=1` for every kind - the two most compliant
+/// kinds sit at 1.0 and 0.85, so a factor above 1 would simply clamp and make
+/// their variation invisible.
+fn bend_factor(bend_percent: u8) -> f32 {
+    let span = f32::from(FLORA_MAX_VARIATION_PERCENT - FLORA_MIN_VARIATION_PERCENT);
+    let offset = f32::from(bend_percent.saturating_sub(FLORA_MIN_VARIATION_PERCENT));
+    0.75 + 0.25 * (offset / span).min(1.0)
 }
 
 /// Detail level for a placement's distance band. The nearest band draws the
@@ -116,9 +136,14 @@ fn phase_of(x: i32, z: i32) -> f32 {
 pub struct FloraCounters {
     pub planned_sites: usize,
     pub planned_trees: usize,
+    /// Every planned placement that is not drawn: the planner's own cap
+    /// refusals, a placement whose prototype has no resident geometry at its
+    /// level or at the source fallback, and a placement refused because the
+    /// renderer's instance budget was already full. `planned_sites +
+    /// planned_trees - drawn` equals it exactly, which is what makes the number
+    /// checkable rather than trusted.
     pub dropped: usize,
-    /// Instances handed to the renderer, after prototype mapping. Lower than
-    /// the plan when a placement's level has no resident geometry.
+    /// Instances handed to the renderer, after prototype mapping.
     pub drawn: usize,
     pub batches: usize,
     /// Allocated bytes of the two per-instance buffers.
@@ -132,11 +157,13 @@ pub struct FloraCounters {
     pub over_budget: u64,
 }
 
+/// Pool index and prototype height in metres per `(prototype id, level)`.
+type Resident = BTreeMap<(&'static str, Lod), (usize, f32)>;
+
 /// Resident flora geometry plus the current field.
 pub struct LandscapeFlora {
     runtime: DetailRuntime,
-    /// Pool index and prototype height in metres per `(prototype id, level)`.
-    resident: BTreeMap<(&'static str, Lod), (usize, f32)>,
+    resident: Resident,
     plan: FloraPlan,
     instances: Vec<FloraInstance>,
     installed: bool,
@@ -221,15 +248,7 @@ impl LandscapeFlora {
             MAX_PLANNED_TREES,
             &mut self.plan,
         );
-        self.instances.clear();
-        for placed in self.plan.sites.iter().chain(&self.plan.trees) {
-            if self.instances.len() >= MAX_FLORA_INSTANCES {
-                break;
-            }
-            if let Some(instance) = self.instance_for(placed) {
-                self.instances.push(instance);
-            }
-        }
+        let refused = fill_instances(&self.resident, &self.plan, &mut self.instances);
         let plan_ms = plan_begin.elapsed().as_secs_f64() * 1000.;
         let upload_begin = Instant::now();
         // Transactional in both directions: the renderer validates and packs
@@ -246,7 +265,10 @@ impl LandscapeFlora {
         self.counters = FloraCounters {
             planned_sites: self.plan.sites.len(),
             planned_trees: self.plan.trees.len(),
-            dropped: self.plan.dropped,
+            // The planner's own refusals plus the placements this module could
+            // not draw, so `dropped` accounts for every planned plant that is
+            // not on screen: dropping is fine, under-reporting is not.
+            dropped: self.plan.dropped + refused,
             drawn: stats.instances,
             batches: stats.batches,
             instance_bytes: stats.instance_bytes,
@@ -272,35 +294,72 @@ impl LandscapeFlora {
         self.installed = false;
         self.cell = None;
     }
+}
 
-    /// Map one placement onto a pooled prototype at the level its band asks
-    /// for, falling back to the source level when the coarse one is absent.
-    /// A placement whose prototype produced no geometry at all is skipped.
-    fn instance_for(&self, placed: &PlacedFlora) -> Option<FloraInstance> {
-        let id = prototype_for(&placed.as_site());
-        let lod = lod_for_tier(placed.tier);
-        let &(prototype, height_m) = self
-            .resident
-            .get(&(id, lod))
-            .or_else(|| self.resident.get(&(id, Lod::Source)))?;
-        Some(FloraInstance {
-            prototype,
-            // Plants stand on top of the surface voxel, which is the same
-            // surface walk mode puts the eye above. Beyond the streaming
-            // window the visible ground is the derived ring tile, whose
-            // vertices interpolate 4 m generator samples, so a distant plant
-            // can sit a metre or two off the surface it is drawn against.
-            translation: [
-                placed.x as f32 + 0.5,
-                placed.y as f32 + 1.0,
-                placed.z as f32 + 0.5,
-            ],
-            yaw_quarters: placed.yaw_quarters.min(3),
-            phase: phase_of(placed.x, placed.z),
-            bend: bend_of(placed.kind),
-            height_m,
-        })
+/// Fill `instances` with every placement of `plan` that has resident geometry,
+/// in plan order, and return how many planned placements this module refused.
+///
+/// Refusing is allowed - a placement whose geometry failed to build, or a field
+/// larger than the renderer's instance budget, must not be drawn - but the count
+/// is returned rather than discarded so [`LandscapeFlora::sync`] can add it to
+/// the reported `dropped` total. An earlier version broke out of the loop on the
+/// budget and skipped silent placements, which made `dropped` a number nobody
+/// could check.
+fn fill_instances(
+    resident: &Resident,
+    plan: &FloraPlan,
+    instances: &mut Vec<FloraInstance>,
+) -> usize {
+    let mut refused = 0;
+    instances.clear();
+    for placed in plan.sites.iter().chain(&plan.trees) {
+        if instances.len() >= MAX_FLORA_INSTANCES {
+            // Keep counting: the field is refused from here on, and every
+            // refused placement is reported, not just the first.
+            refused += 1;
+            continue;
+        }
+        match instance_for(resident, placed) {
+            Some(instance) => instances.push(instance),
+            None => refused += 1,
+        }
     }
+    refused
+}
+
+/// Map one placement onto a pooled prototype at the level its band asks for,
+/// falling back to the source level when the coarse one is absent. A placement
+/// whose prototype produced no geometry at all is skipped, and [`fill_instances`]
+/// counts that skip rather than letting it disappear.
+///
+/// The plan's per-site variation lands here: `height_percent` becomes the
+/// instance scale (0.75x to 1.25x, so neighbours differ in size without a
+/// prototype per size) and `bend_percent` scales the kind's compliance down
+/// through [`bend_factor`].
+fn instance_for(resident: &Resident, placed: &PlacedFlora) -> Option<FloraInstance> {
+    let id = prototype_for(&placed.as_site());
+    let lod = lod_for_tier(placed.tier);
+    let &(prototype, height_m) = resident
+        .get(&(id, lod))
+        .or_else(|| resident.get(&(id, Lod::Source)))?;
+    Some(FloraInstance {
+        prototype,
+        // Plants stand on top of the surface voxel, which is the same surface
+        // walk mode puts the eye above. Beyond the streaming window the visible
+        // ground is the derived ring tile, whose vertices interpolate 4 m
+        // generator samples, so a distant plant can sit a metre or two off the
+        // surface it is drawn against.
+        translation: [
+            placed.x as f32 + 0.5,
+            placed.y as f32 + 1.0,
+            placed.z as f32 + 0.5,
+        ],
+        yaw_quarters: placed.yaw_quarters.min(3),
+        phase: phase_of(placed.x, placed.z),
+        bend: bend_of(placed.kind) * bend_factor(placed.bend_percent),
+        height_m,
+        scale: f32::from(placed.height_percent) / 100.0,
+    })
 }
 
 /// Height of a pooled prototype mesh in metres: the largest local `y` its
@@ -367,16 +426,129 @@ mod tests {
                 &mut plan,
             );
             for placed in plan.sites.iter().chain(&plan.trees) {
-                let instance = flora
-                    .instance_for(placed)
+                let instance = instance_for(&flora.resident, placed)
                     .unwrap_or_else(|| panic!("{placed:?} produced no instance"));
                 assert!((0.0..=1.0).contains(&instance.phase));
                 assert!((0.0..=1.0).contains(&instance.bend));
                 assert!(instance.height_m > 0.0);
+                assert!(
+                    (0.75..=1.25).contains(&instance.scale),
+                    "{placed:?} scale {} outside the plan's variation range",
+                    instance.scale
+                );
                 assert!(instance.yaw_quarters <= 3);
                 assert!(instance.translation.iter().all(|v| v.is_finite()));
             }
         }
+    }
+
+    #[test]
+    fn every_planned_placement_is_drawn_or_counted_as_dropped() {
+        let mut flora = LandscapeFlora::new().expect("prototypes must build");
+        let mut plan = FloraPlan::default();
+        landscape::plan_flora_into(
+            crate::landscape::SEED,
+            [0.0f32, 40.0, 0.0],
+            &LANDSCAPE_FLORA_TIERS,
+            MAX_PLANNED_SITES,
+            MAX_PLANNED_TREES,
+            &mut plan,
+        );
+        let planned = plan.sites.len() + plan.trees.len();
+        assert!(planned > 1_000, "a plains eye plans a field, got {planned}");
+        let mut instances = Vec::new();
+        let refused = fill_instances(&flora.resident, &plan, &mut instances);
+        // The catalogue has geometry for every id at every level, so nothing is
+        // refused here and the two counts still agree.
+        assert_eq!(refused, 0, "the full catalogue must draw every placement");
+        assert_eq!(instances.len() + refused, planned);
+
+        // Remove one prototype's geometry entirely: its placements must still be
+        // accounted for, not silently vanish.
+        let victim = prototype_for(&plan.sites[0].as_site());
+        flora.resident.remove(&(victim, Lod::Source));
+        for lod in RESIDENT_LODS {
+            flora.resident.remove(&(victim, lod));
+        }
+        let mut instances = Vec::new();
+        let refused = fill_instances(&flora.resident, &plan, &mut instances);
+        let expected = plan
+            .sites
+            .iter()
+            .chain(&plan.trees)
+            .filter(|placed| prototype_for(&placed.as_site()) == victim)
+            .count();
+        assert!(expected > 0, "{victim} must be planned for this eye");
+        assert_eq!(refused, expected, "refused placements must be counted");
+        assert_eq!(
+            instances.len() + refused,
+            planned,
+            "every planned placement is drawn or dropped"
+        );
+    }
+
+    #[test]
+    fn per_site_variation_reaches_the_instances() {
+        // The plan's variation is only real if it changes the drawn instance:
+        // neighbouring placements of the same kind must differ in scale, and
+        // their sway must not be in lockstep either.
+        let flora = LandscapeFlora::new().expect("prototypes must build");
+        let mut plan = FloraPlan::default();
+        landscape::plan_flora_into(
+            crate::landscape::SEED,
+            [0.0f32, 40.0, 0.0],
+            &LANDSCAPE_FLORA_TIERS,
+            MAX_PLANNED_SITES,
+            MAX_PLANNED_TREES,
+            &mut plan,
+        );
+        let grass: Vec<_> = plan
+            .sites
+            .iter()
+            .filter(|placed| placed.kind == FloraKind::GrassTuft)
+            .collect();
+        assert!(grass.len() > 32, "a plains eye holds a real field");
+        let scales: std::collections::BTreeSet<u32> = grass
+            .iter()
+            .map(|placed| (instance_for(&flora.resident, placed).unwrap().scale * 1000.0) as u32)
+            .collect();
+        assert!(
+            scales.len() >= 40,
+            "grass instances collapsed onto {} sizes",
+            scales.len()
+        );
+        let bends: std::collections::BTreeSet<u32> = grass
+            .iter()
+            .map(|placed| (instance_for(&flora.resident, placed).unwrap().bend * 1000.0) as u32)
+            .collect();
+        assert!(
+            bends.len() >= 8,
+            "grass compliance collapsed onto {} values",
+            bends.len()
+        );
+        // Neighbours must not be twins: over the thousands of adjacent pairs a
+        // plains eye plans, the share matching on *both* size and sway is the
+        // birthday rate for a 51x51 field, far under one percent. An earlier
+        // version of this mapping clamped grass compliance at 1.0 for every
+        // site and measured 17 twin pairs here, so the check has teeth.
+        let mut adjacent = 0usize;
+        let mut matching = 0usize;
+        for window in grass.windows(2) {
+            if (window[0].x - window[1].x).abs() > 1 || (window[0].z - window[1].z).abs() > 1 {
+                continue;
+            }
+            adjacent += 1;
+            let a = instance_for(&flora.resident, window[0]).unwrap();
+            let b = instance_for(&flora.resident, window[1]).unwrap();
+            if a.scale == b.scale && a.bend == b.bend {
+                matching += 1;
+            }
+        }
+        assert!(adjacent > 1000, "only {adjacent} adjacent grass pairs");
+        assert!(
+            matching * 100 < adjacent,
+            "{matching} of {adjacent} adjacent tufts share size and sway"
+        );
     }
 
     #[test]

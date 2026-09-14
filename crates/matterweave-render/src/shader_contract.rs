@@ -31,8 +31,9 @@ pub const WORLD_FRAGMENT_SPIRV: &[u8] =
 /// colour the frame is cleared to.
 /// `wind` is (direction x, direction z, strength in metres, time in seconds)
 /// and `player` is (x, y, z, push radius in metres). Both drive `displace` in
-/// `world.wgsl` and reach only vertices whose per-instance wind record is
-/// enabled; a zero strength and a zero radius leave even those undisplaced.
+/// `world.wgsl` and reach only vertices whose per-instance wind record carries a
+/// nonzero scale; a zero strength and a zero radius leave even those
+/// undisplaced.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct LightingUniform {

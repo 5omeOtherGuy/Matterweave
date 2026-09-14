@@ -378,13 +378,56 @@ fn landscape_flora_classes_cover_every_species() {
 
 #[test]
 fn grass_and_tree_shapes_match_their_spec() {
-    // Grass: 4 blades, 4..6 tall plus a lighter tip, one cell thick.
-    let tuft = grass_tuft_m("tuft").unwrap();
-    let tips = tuft
-        .iter_cells()
-        .filter(|(_, m)| *m == material::GRASS_TIP)
-        .count();
-    assert_eq!(tips, 4, "one lighter tip cell per blade");
+    // Grass: a fan of GRASS_BLADES_PER_TUFT leaning blades, each with its top
+    // GRASS_TIP_CELLS_PER_BLADE cells in the lighter tip material.
+    let mut tier_mass = [0usize; 3];
+    let mut tier_top = [0i32; 3];
+    for (index, (id, tuft)) in [
+        ("grass_tuft_s", grass_tuft_s("tuft_s").unwrap()),
+        ("grass_tuft_m", grass_tuft_m("tuft_m").unwrap()),
+        ("grass_tuft_l", grass_tuft_l("tuft_l").unwrap()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let tips = tuft
+            .iter_cells()
+            .filter(|(_, m)| *m == material::GRASS_TIP)
+            .count();
+        assert_eq!(
+            tips,
+            GRASS_BLADES_PER_TUFT * GRASS_TIP_CELLS_PER_BLADE,
+            "{id}: every blade carries its own tip cells"
+        );
+        // Every blade leaves the shared stem, so the tuft occupies more
+        // columns above the pad than the stem alone, and the eight compass
+        // leans put a blade in each of the eight blade columns.
+        let (min, max) = tuft.cell_bounds().unwrap();
+        assert_eq!((min[0], min[2]), (-1, -1), "{id} spans the 3x3 fan");
+        assert_eq!((max[0], max[2]), (1, 1), "{id} spans the 3x3 fan");
+        let blade_columns: BTreeSet<[i32; 2]> = tuft
+            .iter_cells()
+            .filter(|(c, m)| c[1] > 0 && *m == material::GRASS_BLADE)
+            .map(|(c, _)| [c[0], c[2]])
+            .collect();
+        assert_eq!(
+            blade_columns.len(),
+            GRASS_BLADES_PER_TUFT + 1,
+            "{id}: the eight blade columns plus the shared stem"
+        );
+        tier_mass[index] = tuft.occupied_cells();
+        tier_top[index] = max[1];
+    }
+    // S/M/L stay distinct in height and mass, so `prototype_for`'s size tier
+    // still means something beyond a label.
+    assert!(
+        tier_top[0] < tier_top[1] && tier_top[1] < tier_top[2],
+        "tier heights must ascend: {tier_top:?}"
+    );
+    assert!(
+        tier_mass[0] < tier_mass[1] && tier_mass[1] < tier_mass[2],
+        "tier mass must ascend: {tier_mass:?}"
+    );
     // Flowers: stem + two leaves + petal cross + heart, heights differ by colour.
     let red = flower_red_m("red").unwrap();
     let white = flower_white_m("white").unwrap();

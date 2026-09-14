@@ -187,6 +187,23 @@ timeout 60s xvfb-run -a cargo run --locked -p matterweave-render --example cache
 It covers submitted-buffer replacement, stale/invalid uploads, eviction, culling,
 dynamic buffer reuse/growth and teardown under Vulkan validation.
 
+### Sky and cloud smoke
+
+```sh
+timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example clouds_smoke
+timeout 300s xvfb-run -a target/debug/matterweave-explorer --landscape --clouds low \
+  --smoke-frames 12 --save /tmp/landscape-clouds/world.json
+```
+
+The example covers the sky dome off and on, both cloud quality levels, a resize while
+marching, the offscreen target being freed when clouds are disabled and teardown, all
+under Vulkan validation. The landscape run proves the pass order (sky, clouds, opaque
+terrain, water, HUD) in the real sample and prints `LANDSCAPE SKY:` with the allocated
+target and the cloud pass's GPU time. `--clouds off|low|high` chooses the setting, C
+cycles it at run time, and a `clouds low` word inside `landscape.txt` selects one on a
+device, where there is no command line. Cloud cost on llvmpipe says nothing about the
+phone.
+
 ### Bounded reflection gate
 
 The headless host validator compiles the shipping `world.wgsl` through the renderer's

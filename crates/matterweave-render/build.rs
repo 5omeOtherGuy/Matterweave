@@ -1,10 +1,15 @@
 use std::{env, fs, path::PathBuf};
 fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
-    // (name, fragment entry points). Only the world shader has a second
-    // fragment entry: the translucency water pass shares its vertex stage.
-    let shaders: [(&str, &[&str]); 6] = [
+    // (name, fragment entry points). A shader with two fragment entries shares
+    // one vertex stage between two pipelines: water with the world pass, the
+    // cloud march with the sky dome.
+    let shaders: [(&str, &[&str]); 8] = [
         ("world", &["fs_main", "fs_water"]),
+        // The sky dome and the volumetric cloud march share a full-screen
+        // vertex stage and the group-0 lighting uniform.
+        ("sky", &["fs_main", "fs_clouds"]),
+        ("cloud_composite", &["fs_main"]),
         ("hud", &["fs_main"]),
         ("shadow", &[]),
         ("ray_reference", &["fs_main"]),

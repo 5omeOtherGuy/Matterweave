@@ -1,5 +1,6 @@
 //! Direct Vulkan exposed-surface baseline. See README.md for ownership and synchronization.
 pub mod async_indirect;
+mod clouds;
 mod frustum;
 mod hud;
 pub mod indirect;
@@ -21,6 +22,8 @@ mod timing;
 mod wind_tests;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
+pub use clouds::Clouds;
+use clouds::{SkyPass, SkyPush};
 use frustum::Frustum;
 pub use hud::Hud;
 pub use lighting::{
@@ -32,7 +35,8 @@ use shadow::Shadow;
 use static_scene::StaticScene;
 pub use static_scene::{
     FloraInstance, StaticInstance, StaticSceneStats, MAX_FLORA_BYTES, MAX_FLORA_HEIGHT_M,
-    MAX_FLORA_INSTANCES, MAX_WIND_DISPLACEMENT_M,
+    MAX_FLORA_INSTANCES, MAX_FLORA_SCALE, MAX_PLAYER_PUSH_M, MAX_WIND_DISPLACEMENT_M,
+    MAX_WIND_SWAY_M,
 };
 use std::{collections::BTreeMap, ffi::CStr, sync::Arc, time::Instant};
 pub use timing::GpuTimings;
@@ -806,10 +810,10 @@ fn pipeline(
                 }];
                 // World and shadow pipelines read one packed instance record
                 // (translation xyz, quarter yaw) per instance at location 3 and
-                // one wind record (phase, bend, height, enabled) at location 4.
+                // one wind record (phase, bend, height, scale) at location 4.
                 // Legacy/chunk/dynamic draws bind a single identity record to
-                // both; the shader's `wind.w < 0.5` early-out then leaves their
-                // geometry exactly where it was.
+                // both; the shader's `wind.w <= 0.0` early-out then leaves their
+                // geometry exactly where it was, at its own scale.
                 if !hud {
                     for binding in [1, 2] {
                         bindings.push(vk::VertexInputBindingDescription {
@@ -1182,6 +1186,9 @@ pub struct Renderer {
     device: Arc<Device>,
     commands: Commands,
     swapchain: Option<Swapchain>,
+    /// Sky dome and, while clouds are enabled, the reduced-resolution cloud
+    /// target. Absent whenever the frame asks for neither.
+    sky: Option<SkyPass>,
     shadow: Shadow,
     shadow_map_updated: bool,
     timestamps: Option<TimestampQueries>,
@@ -1411,6 +1418,7 @@ impl Renderer {
             device,
             commands,
             swapchain: None,
+            sky: None,
             shadow,
             shadow_map_updated: false,
             timestamps,
@@ -1979,6 +1987,14 @@ impl Renderer {
         self.timestamps.as_ref().and_then(|q| q.completed)
     }
 
+    /// Resolution of the offscreen cloud target and the quality level it was
+    /// built for, or `None` when no target is allocated. This is the allocation
+    /// itself, not a request: a disabled cloud pass reports nothing.
+    pub fn cloud_target(&self) -> Option<((u32, u32), u8)> {
+        let sky = self.sky.as_ref()?;
+        Some((sky.cloud_extent()?, sky.cloud_quality()?))
+    }
+
     pub fn gpu_timestamps_supported(&self) -> bool {
         self.timestamps.is_some()
     }
@@ -2079,6 +2095,10 @@ impl Renderer {
             unsafe {
                 self.device.raw.device_wait_idle().map_err(err)?;
             }
+            // The sky pipelines were built against the retiring render pass, and
+            // Vulkan may hand the replacement the same handle value. Retire them
+            // with it rather than trusting the handle comparison in `ensure`.
+            self.sky = None;
             self.swapchain.take();
             self.swapchain =
                 match Swapchain::new(self.device.clone(), self.requested, self.shadow.set_layout) {
@@ -2103,6 +2123,36 @@ impl Renderer {
         } else {
             self.hud.as_ref().expect("HUD allocated").write(bytes)?;
         }
+        // Sky and clouds follow this frame's settings and extent. Nothing is
+        // allocated for a frame that asks for neither, and the previous frame's
+        // fence is already waited above, so a replaced target is idle.
+        let (frame_pass, frame_extent) = {
+            let s = self.swapchain.as_ref().expect("swapchain created");
+            (s.pass, s.size)
+        };
+        SkyPass::ensure(
+            &mut self.sky,
+            &self.device,
+            self.shadow.set_layout,
+            frame_pass,
+            frame_extent,
+            &lighting.atmosphere,
+            &lighting.clouds,
+        )?;
+        // Both sky entries reconstruct a world ray by unprojecting the frame's
+        // own matrix; a matrix that cannot be inverted skips them for this frame
+        // rather than marching NaN directions.
+        let inverse = glam::Mat4::from_cols_array_2d(&view_proj).inverse();
+        let sky_push = inverse.is_finite().then(|| SkyPush {
+            inv_view_proj: inverse.to_cols_array_2d(),
+            eye: [eye[0], eye[1], eye[2], lighting.clouds.time()],
+            params: [
+                lighting.clouds.march_steps() as f32,
+                lighting.clouds.light_steps() as f32,
+                1.0 / frame_extent.width.max(1) as f32,
+                1.0 / frame_extent.height.max(1) as f32,
+            ],
+        });
         let s = self.swapchain.as_ref().expect("swapchain created");
         let hud_count =
             u32::try_from(hud.vertices.len()).map_err(|_| "HUD exceeds u32 vertex count")?;
@@ -2153,6 +2203,15 @@ impl Renderer {
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 1);
             }
+            // Volumetric clouds march into their own reduced-resolution target,
+            // outside this frame's render pass. The composite below reads it.
+            let clouds_recorded = match (&self.sky, sky_push) {
+                (Some(sky), Some(push)) => sky.record_clouds(cmd, self.shadow.set, push),
+                _ => false,
+            };
+            if let Some(timestamps) = &self.timestamps {
+                timestamps.mark(cmd, 2);
+            }
             // The background is the same colour distance fades to, so the
             // horizon and the end of the world are indistinguishable.
             let sky = lighting.atmosphere.sky;
@@ -2195,6 +2254,16 @@ impl Renderer {
                 }],
             );
             d.cmd_set_scissor(cmd, 0, &[area]);
+            // Sky first: no depth test, no depth write, no blending, so every
+            // opaque surface below still covers it exactly as it covered the
+            // cleared colour. The cloud composite follows immediately, before
+            // any geometry, and the water and HUD passes keep their order.
+            if let (Some(sky), Some(push)) = (&self.sky, sky_push) {
+                if lighting.atmosphere.sky_gradient {
+                    sky.record_dome(cmd, self.shadow.set, push);
+                }
+                sky.record_composite(cmd);
+            }
             d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
             d.cmd_bind_descriptor_sets(
                 cmd,
@@ -2309,7 +2378,7 @@ impl Renderer {
             }
             d.cmd_end_render_pass(cmd);
             if let Some(timestamps) = &self.timestamps {
-                timestamps.mark(cmd, 2);
+                timestamps.mark(cmd, 3);
             }
             d.end_command_buffer(cmd).map_err(err)?;
             let waits = [self.commands.available];
@@ -2333,7 +2402,12 @@ impl Renderer {
             self.submissions += 1;
             self.diagnostics.submitted_frame_id = Some(self.submissions);
             if let Some(timestamps) = &mut self.timestamps {
-                timestamps.submitted(lighting.shadows, shadow_updated, lighting.shadow_map_size);
+                timestamps.submitted(
+                    lighting.shadows,
+                    clouds_recorded,
+                    shadow_updated,
+                    lighting.shadow_map_size,
+                );
             }
             let chains = [s.raw];
             let indices = [index];

@@ -11,6 +11,9 @@ pub struct GpuTimings {
     pub render_ms: f64,
     /// None when disabled or when this submission reused the stored depth map.
     pub shadow_ms: Option<f64>,
+    /// The offscreen volumetric cloud pass. None when this submission drew no
+    /// clouds; the marks are still written, so the frame total stays available.
+    pub cloud_ms: Option<f64>,
     pub shadows: bool,
     /// This submission executed a depth pass, including a first-use clear.
     pub shadow_map_updated: bool,
@@ -26,10 +29,14 @@ pub(crate) struct TimestampQueries {
     recorded_at: Option<Instant>,
     frame_id: u64,
     shadows: bool,
+    clouds: bool,
     shadow_map_updated: bool,
     size: u32,
     pub completed: Option<GpuTimings>,
 }
+
+/// Frame start, after the shadow pass, after the cloud pass, and frame end.
+const QUERIES: u32 = 4;
 
 fn elapsed_ms(start: u64, end: u64, bits: u32, period_ns: f64) -> Option<f64> {
     if !(1..=64).contains(&bits) || !period_ns.is_finite() || period_ns <= 0. {
@@ -66,7 +73,7 @@ impl TimestampQueries {
                 .create_query_pool(
                     &vk::QueryPoolCreateInfo::default()
                         .query_type(vk::QueryType::TIMESTAMP)
-                        .query_count(3),
+                        .query_count(QUERIES),
                     None,
                 )
                 .map_err(err)?;
@@ -79,6 +86,7 @@ impl TimestampQueries {
                 recorded_at: None,
                 frame_id: 0,
                 shadows: false,
+                clouds: false,
                 shadow_map_updated: false,
                 size: 0,
                 completed: None,
@@ -102,7 +110,7 @@ impl TimestampQueries {
             self.completed = None;
             return Ok(());
         }
-        let mut values = [[0_u64; 2]; 3];
+        let mut values = [[0_u64; 2]; QUERIES as usize];
         // SAFETY: the caller completed the submit fence; query pool is owned and
         // results use Vulkan's 64-bit value/availability pair layout. No WAIT flag.
         let result = unsafe {
@@ -118,13 +126,18 @@ impl TimestampQueries {
         match result {
             Ok(()) if values.iter().all(|v| v[1] != 0) => {
                 if let Some(render_ms) =
-                    elapsed_ms(values[0][0], values[2][0], self.bits, self.period_ns)
+                    elapsed_ms(values[0][0], values[3][0], self.bits, self.period_ns)
                 {
                     self.completed = Some(GpuTimings {
                         frame_id: self.frame_id,
                         render_ms,
                         shadow_ms: if self.shadows && self.shadow_map_updated {
                             elapsed_ms(values[0][0], values[1][0], self.bits, self.period_ns)
+                        } else {
+                            None
+                        },
+                        cloud_ms: if self.clouds {
+                            elapsed_ms(values[1][0], values[2][0], self.bits, self.period_ns)
                         } else {
                             None
                         },
@@ -143,7 +156,9 @@ impl TimestampQueries {
         self.recorded_at = Some(Instant::now());
         // SAFETY: prior use completed before reset; caller is recording this command buffer.
         unsafe {
-            self.device.raw.cmd_reset_query_pool(cmd, self.pool, 0, 3);
+            self.device
+                .raw
+                .cmd_reset_query_pool(cmd, self.pool, 0, QUERIES);
             self.device.raw.cmd_write_timestamp(
                 cmd,
                 vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -153,7 +168,9 @@ impl TimestampQueries {
         }
     }
     pub fn mark(&self, cmd: vk::CommandBuffer, query: u32) {
-        // SAFETY: internal callers use query 1 or 2 once per reset while recording.
+        // SAFETY: internal callers write each of queries 1..QUERIES once per reset
+        // while recording. Every one is written even when its pass did not run, so
+        // results stay available and only the derived duration is withheld.
         unsafe {
             self.device.raw.cmd_write_timestamp(
                 cmd,
@@ -163,10 +180,11 @@ impl TimestampQueries {
             );
         }
     }
-    pub fn submitted(&mut self, shadows: bool, shadow_map_updated: bool, size: u32) {
+    pub fn submitted(&mut self, shadows: bool, clouds: bool, shadow_map_updated: bool, size: u32) {
         self.pending = true;
         self.frame_id += 1;
         self.shadows = shadows;
+        self.clouds = clouds;
         self.shadow_map_updated = shadow_map_updated;
         self.size = size;
     }
