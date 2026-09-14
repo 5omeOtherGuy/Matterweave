@@ -8,10 +8,13 @@
 //! that generated it. Generation runs on one bounded worker thread; the main
 //! thread only uploads meshes the worker or the cache produced.
 //!
-//! Residency keeps a tile the plan just dropped for a short, capped window, so
-//! a camera that hovers on a ring boundary does not evict and re-upload the same
-//! tiles every frame. Both the held set and the CPU cache are bounded: a flight
-//! that never stops cannot grow either one.
+//! Hysteresis keeps a dropped tile's mesh for a short, capped window, so a
+//! camera that hovers on a ring boundary does not regenerate the same meshes
+//! every few frames. The hold is a pin on the CPU cache, not deferred GPU
+//! residency: a tile the plan drops leaves the renderer at once, because a held
+//! tile can sit under the new plan's coarser ring and draw the same ground
+//! twice. Both the pinned set and the cache bytes are bounded, so a flight that
+//! never stops cannot grow either one.
 use crate::landscape::normalized_filter;
 use matterweave_core::{
     landscape::{self, RingTile, TileFilter, LANDSCAPE_GENERATOR_VERSION},
@@ -43,10 +46,10 @@ const MAX_TILE_RESULTS: usize = 8;
 const MAX_TILE_RESULT_BYTES: usize = 2 * 1024 * 1024;
 /// Tile mesh jobs handed to the worker per frame.
 const MAX_TILE_REQUESTS: usize = 8;
-/// Frames a tile the plan dropped stays resident before it is evicted.
+/// Frames a tile the plan dropped stays pinned in the CPU mesh cache.
 pub const TILE_HYSTERESIS_FRAMES: u64 = 30;
-/// Most dropped tiles held at once, bounding the extra residency the
-/// hysteresis can add to the plan.
+/// Most dropped tiles pinned at once, bounding what the hysteresis can add to
+/// the cache's live set.
 pub const TILE_HYSTERESIS_HELD: usize = 24;
 /// Byte budget of the CPU-side tile mesh cache. Resident meshes already own
 /// their GPU copies; this only holds meshes evicted from the plan so a return
@@ -71,7 +74,8 @@ impl Default for TileBudget {
     }
 }
 
-/// How long a dropped tile stays resident, and how many may be held at once.
+/// How long a dropped mesh stays pinned in the cache, and how many may be
+/// pinned at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hysteresis {
     pub frames: u64,
@@ -91,16 +95,20 @@ impl Hysteresis {
 /// What one frame should do to the tile cache.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TilePlanWork {
-    /// Keys the renderer must keep resident: the plan plus held recent tiles.
+    /// Keys the renderer must keep resident. Exactly the plan: a tile the plan
+    /// drops is never held on the GPU, because a held tile can sit under the
+    /// new plan's coarser ring and draw the same ground twice.
     pub declared: Vec<TerrainTileKey>,
-    /// Resident tiles to drop now.
+    /// Resident tiles to drop now. Every tile the plan no longer wants goes;
+    /// hysteresis is a CPU-cache pin, not deferred residency.
     pub evict: Vec<TerrainTileKey>,
     /// Tiles to build and upload, in plan order: nearest ring first.
     pub build: Vec<RingTile>,
     /// Tiles the plan still needs after this frame's budget is spent.
     pub outstanding: usize,
-    /// Dropped tiles hysteresis is holding this frame.
-    pub held: usize,
+    /// Recently dropped tiles, with the filter they were built with. Their
+    /// meshes are pinned in the CPU cache for a bounded window.
+    pub pinned: Vec<(TerrainTileKey, TileFilter)>,
 }
 
 impl TilePlanWork {
@@ -109,7 +117,7 @@ impl TilePlanWork {
         self.evict.clear();
         self.build.clear();
         self.outstanding = 0;
-        self.held = 0;
+        self.pinned.clear();
     }
 }
 
@@ -158,12 +166,18 @@ struct CacheEntry {
 
 /// Byte-budgeted CPU cache of generated tile meshes. Eviction is least
 /// recently used, with the key as a deterministic tie-break, so the same
-/// sequence of requests and hits always evicts the same entry.
+/// sequence of requests and hits always evicts the same entry. A recently
+/// dropped tile can be pinned for a bounded number of frames: its mesh then
+/// survives the trim, so a plan that comes back to it is an upload, not a
+/// regeneration.
 pub struct TileMeshCache {
     entries: BTreeMap<TileMeshKey, CacheEntry>,
     bytes: usize,
     budget: usize,
     clock: u64,
+    /// Frame through which a key may not be evicted while unpinned entries
+    /// remain. Bounded by the caller to the hysteresis cap.
+    pinned_until: BTreeMap<TileMeshKey, u64>,
 }
 
 impl TileMeshCache {
@@ -173,7 +187,19 @@ impl TileMeshCache {
             bytes: 0,
             budget,
             clock: 0,
+            pinned_until: BTreeMap::new(),
         }
+    }
+
+    /// Drop pins that have expired.
+    pub fn begin_frame(&mut self, frame: u64) {
+        self.pinned_until.retain(|_, until| *until > frame);
+    }
+
+    /// Keep `key` in the cache through `until` (exclusive) even under byte
+    /// pressure, while unpinned entries remain.
+    pub fn pin(&mut self, key: TileMeshKey, until: u64) {
+        self.pinned_until.insert(key, until);
     }
 
     /// The cached mesh for `key`, marking it as most recently used.
@@ -213,16 +239,28 @@ impl TileMeshCache {
         mesh
     }
 
+    /// Trim to the budget. Unpinned entries go first, least recently used;
+    /// only when every entry is pinned does a pin (the earliest expiring) get
+    /// evicted, so the cache can always return under its byte budget.
     fn trim(&mut self) {
         while self.bytes > self.budget {
-            let oldest = self
+            let unpinned = self
                 .entries
                 .iter()
+                .filter(|(key, _)| !self.pinned_until.contains_key(key))
                 .min_by_key(|(key, entry)| (entry.last_use, **key))
                 .map(|(key, _)| *key);
-            let Some(key) = oldest else {
+            let victim = unpinned.or_else(|| {
+                self.pinned_until
+                    .iter()
+                    .filter(|(key, _)| self.entries.contains_key(key))
+                    .min_by_key(|(key, until)| (**until, **key))
+                    .map(|(key, _)| *key)
+            });
+            let Some(key) = victim else {
                 break;
             };
+            self.pinned_until.remove(&key);
             if let Some(entry) = self.entries.remove(&key) {
                 self.bytes -= entry.bytes;
             }
@@ -274,7 +312,10 @@ impl TileMeshWorker {
             })
             .ok();
         if worker.is_none() {
-            state.lock().unwrap_or_else(PoisonError::into_inner).shutdown = true;
+            state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .shutdown = true;
         }
         Self {
             jobs: Some(job_tx),
@@ -287,7 +328,11 @@ impl TileMeshWorker {
 
     /// False after worker startup failure or an unexpected worker exit.
     pub fn available(&self) -> bool {
-        !self.state.lock().unwrap_or_else(PoisonError::into_inner).shutdown
+        !self
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .shutdown
             && self
                 .worker
                 .as_ref()
@@ -383,9 +428,9 @@ fn run_worker(
     }
 }
 
-/// Resident tiles and the frame history that decides when a dropped tile is
-/// really evicted. Pure bookkeeping: no GPU or thread state, so the plan and
-/// hysteresis are unit-testable without a renderer.
+/// Resident tiles and the frame history that decides which dropped meshes stay
+/// pinned in the CPU cache. Pure bookkeeping: no GPU or thread state, so the
+/// plan and hysteresis are unit-testable without a renderer.
 #[derive(Default)]
 pub struct TileResidency {
     resident: BTreeMap<TerrainTileKey, TileFilter>,
@@ -393,7 +438,7 @@ pub struct TileResidency {
     last_plan: BTreeMap<TerrainTileKey, u64>,
     wanted: BTreeSet<TerrainTileKey>,
     evicting: BTreeSet<TerrainTileKey>,
-    held: Vec<(u64, TerrainTileKey)>,
+    pinned: Vec<(u64, TerrainTileKey, TileFilter)>,
 }
 
 impl TileResidency {
@@ -437,31 +482,37 @@ impl TileResidency {
             self.last_plan.insert((tile.level, tile.key), frame);
         }
         self.wanted.clear();
-        self.wanted.extend(plan.iter().map(|tile| (tile.level, tile.key)));
+        self.wanted
+            .extend(plan.iter().map(|tile| (tile.level, tile.key)));
 
-        // Resident tiles the plan no longer wants: hold the recently wanted
-        // ones for the hysteresis window, evict the rest now.
-        self.held.clear();
-        for key in self.resident.keys() {
+        // Resident tiles the plan no longer wants go now; the recently wanted
+        // ones additionally pin their cached mesh for the hysteresis window,
+        // so a return is an upload from the CPU cache, not a regeneration. A
+        // dropped tile is never held on the GPU: it could overlap the new
+        // plan's coarser ring and draw the same ground twice.
+        self.pinned.clear();
+        for (key, filter) in &self.resident {
             if self.wanted.contains(key) {
                 continue;
             }
-            match self.last_plan.get(key).copied() {
-                Some(stamp) if frame.saturating_sub(stamp) <= hysteresis.frames => {
-                    self.held.push((stamp, *key));
+            out.evict.push(*key);
+            if let Some(stamp) = self.last_plan.get(key).copied() {
+                if frame.saturating_sub(stamp) <= hysteresis.frames {
+                    self.pinned.push((stamp, *key, *filter));
                 }
-                _ => out.evict.push(*key),
             }
         }
-        if self.held.len() > hysteresis.max_held {
-            self.held.sort_unstable_by_key(|(stamp, key)| (*stamp, *key));
-            let excess = self.held.len() - hysteresis.max_held;
-            out.evict
-                .extend(self.held.drain(..excess).map(|(_, key)| key));
+        if self.pinned.len() > hysteresis.max_held {
+            // Keep the most recently wanted; the oldest dropped are not pinned.
+            self.pinned
+                .sort_unstable_by_key(|(stamp, key, _)| (*stamp, *key));
+            let excess = self.pinned.len() - hysteresis.max_held;
+            self.pinned.drain(..excess);
         }
         out.evict.sort_unstable();
         out.evict.dedup();
-        out.held = self.held.len();
+        out.pinned
+            .extend(self.pinned.iter().map(|(_, key, filter)| (*key, *filter)));
 
         // Stamps only matter while a key is resident or in the plan; anything
         // older than the window is dropped so a long flight cannot grow this.
@@ -473,7 +524,6 @@ impl TileResidency {
 
         out.declared
             .extend(plan.iter().map(|tile| (tile.level, tile.key)));
-        out.declared.extend(self.held.iter().map(|(_, key)| *key));
 
         self.evicting.clear();
         self.evicting.extend(out.evict.iter().copied());
@@ -544,8 +594,8 @@ pub struct TileCounters {
     pub requested: u32,
     /// Builds served by the CPU cache instead of the generator.
     pub served_from_cache: u64,
-    /// Dropped tiles hysteresis is holding resident this frame.
-    pub held: usize,
+    /// Recently dropped meshes pinned in the CPU cache this frame.
+    pub pinned: usize,
     /// Worker jobs queued or generating.
     pub pending: usize,
     /// The single worst frame seen so far, by build time.
@@ -627,17 +677,24 @@ impl TileStream {
         frame: u64,
     ) -> Result<(), String> {
         let declare_begin = Instant::now();
+        self.cache.begin_frame(frame);
         self.residency
             .plan_into(plan, frame, self.budget, self.hysteresis, &mut self.work);
-        // Declare first: the renderer drops what is neither planned nor held
-        // before this frame adds anything, so residency never exceeds
-        // plan + held + budget.
+        // Declare first: the renderer drops every tile the plan no longer wants
+        // before this frame adds anything, so GPU residency never exceeds the
+        // plan plus this frame's budget. A dropped tile stays in the CPU cache,
+        // pinned for the hysteresis window, so a return is an upload.
         renderer.retain_terrain_tiles(&self.work.declared)?;
         let declare_ms = declare_begin.elapsed().as_secs_f64() * 1000.;
         for key in &self.work.evict {
             self.residency.remove(*key);
         }
         self.counters.evicted += self.work.evict.len() as u64;
+        for (key, filter) in &self.work.pinned {
+            let mesh_key = TileMeshKey::new(self.source, self.seed, key.0, key.1, *filter);
+            self.cache.pin(mesh_key, frame + self.hysteresis.frames + 1);
+        }
+        self.counters.pinned = self.work.pinned.len();
 
         let build_begin = Instant::now();
         // Collect finished meshes first, so one that completed this frame can
@@ -679,7 +736,8 @@ impl TileStream {
                     // Background preparation is unavailable: generate on the
                     // main thread rather than leaving a hole in the rings.
                     let generate_begin = Instant::now();
-                    let mesh = landscape::lod_tile_mesh(self.seed, tile.level, tile.key, key.filter);
+                    let mesh =
+                        landscape::lod_tile_mesh(self.seed, tile.level, tile.key, key.filter);
                     let elapsed = generate_begin.elapsed().as_secs_f64() * 1000.;
                     generate_ms += elapsed;
                     self.counters.total_generate_ms += elapsed;
@@ -698,7 +756,8 @@ impl TileStream {
                 upload_ms += upload_begin.elapsed().as_secs_f64() * 1000.;
                 uploaded += 1;
             }
-            self.residency.mark_uploaded((tile.level, tile.key), key.filter);
+            self.residency
+                .mark_uploaded((tile.level, tile.key), key.filter);
         }
         let build_ms = build_begin.elapsed().as_secs_f64() * 1000.;
 
@@ -709,7 +768,6 @@ impl TileStream {
         self.counters.uploaded += uploaded;
         self.counters.served_from_cache += served;
         self.counters.requested = requested;
-        self.counters.held = self.work.held;
         self.counters.pending = self.worker.pending();
         // Outstanding is what the plan still wants after this frame: a tile
         // whose generated mesh was not ready yet counts, because the next
@@ -780,7 +838,7 @@ mod tests {
         assert_eq!(work.build.len(), 0);
         assert_eq!(work.evict.len(), 0);
         assert_eq!(work.outstanding, 0);
-        assert_eq!(work.held, 0);
+        assert_eq!(work.pinned.len(), 0);
     }
 
     #[test]
@@ -800,7 +858,13 @@ mod tests {
             nudged.iter().map(|t| (t.level, t.key)).collect::<Vec<_>>(),
             here.iter().map(|t| (t.level, t.key)).collect::<Vec<_>>()
         );
-        residency.plan_into(&nudged, 1, TileBudget::default(), Hysteresis::NONE, &mut work);
+        residency.plan_into(
+            &nudged,
+            1,
+            TileBudget::default(),
+            Hysteresis::NONE,
+            &mut work,
+        );
         assert!(work.evict.is_empty(), "the tile set did not change");
         let rebuilt = work.build.len() + work.outstanding;
         assert!(
@@ -821,7 +885,14 @@ mod tests {
             "a jump of two rings should drop most of the cache"
         );
         assert_eq!(work.build.len(), MAX_TILE_UPLOADS);
-        assert_eq!(work.held, 0);
+        // A dropped tile leaves the GPU at once; nothing is held resident.
+        let far_keys: BTreeSet<TerrainTileKey> =
+            far.iter().map(|tile| (tile.level, tile.key)).collect();
+        let shared = here
+            .iter()
+            .filter(|tile| far_keys.contains(&(tile.level, tile.key)))
+            .count();
+        assert_eq!(work.evict.len(), here.len() - shared);
         // Everything the new plan needs is either built now or still owed.
         let needed = far
             .iter()
@@ -867,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn hysteresis_holds_a_dropped_tile_for_a_bounded_window() {
+    fn hysteresis_pins_recently_dropped_tiles_and_is_capped() {
         let here = plan_at([0.0, 40.0, 0.0]);
         let far = plan_at([4096.0, 40.0, 4096.0]);
         let far_keys: BTreeSet<TerrainTileKey> =
@@ -891,7 +962,8 @@ mod tests {
         }
         assert!(residency.resident_len() > TILE_HYSTERESIS_HELD);
 
-        // The frame after the jump, most dropped tiles are held, not evicted.
+        // The frame after the jump every dropped tile is evicted from the
+        // plan, and only the capped, most recently wanted ones are pinned.
         let frame = frame + 1;
         let dropped = residency
             .resident
@@ -899,14 +971,16 @@ mod tests {
             .filter(|key| !far_keys.contains(key))
             .count();
         residency.plan_into(&far, frame, TileBudget::default(), window, &mut work);
-        assert_eq!(work.held, TILE_HYSTERESIS_HELD.min(dropped));
+        assert_eq!(work.evict.len(), dropped, "the GPU holds the new plan only");
+        assert_eq!(work.pinned.len(), TILE_HYSTERESIS_HELD.min(dropped));
+        assert!(work.pinned.iter().all(|(key, _)| !far_keys.contains(key)));
         assert_eq!(
-            work.evict.len() + work.held,
-            dropped,
-            "every dropped tile is either held or evicted"
+            work.declared.len(),
+            far.len(),
+            "the declared set is exactly the plan"
         );
 
-        // Past the window the held tiles go, even with no new plan.
+        // Past the window nothing is pinned, even with no new plan.
         residency.plan_into(
             &far,
             frame + window.frames + 1,
@@ -914,15 +988,8 @@ mod tests {
             window,
             &mut work,
         );
-        assert_eq!(work.held, 0);
-        let mut expected: Vec<TerrainTileKey> = residency
-            .resident
-            .keys()
-            .filter(|key| !far_keys.contains(key))
-            .copied()
-            .collect();
-        expected.sort_unstable();
-        assert_eq!(work.evict, expected);
+        assert!(work.pinned.is_empty());
+        assert_eq!(work.evict.len(), dropped);
     }
 
     #[test]
@@ -936,6 +1003,7 @@ mod tests {
         let mut work = TilePlanWork::default();
         let mut max_resident = 0usize;
         let mut max_stamps = 0usize;
+        let mut max_pinned = 0usize;
         // A flight that never stops: 10 000 frames of 4 m east and 3 m north.
         for frame in 0..10_000u64 {
             let eye = [frame as f32 * 4.0, 40.0, frame as f32 * 3.0];
@@ -944,14 +1012,73 @@ mod tests {
             apply(&mut residency, &work);
             max_resident = max_resident.max(residency.resident_len());
             max_stamps = max_stamps.max(residency.last_plan.len());
+            max_pinned = max_pinned.max(work.pinned.len());
             assert!(
-                residency.resident_len() <= plan.len() + window.max_held,
-                "frame {frame}: {} resident exceeds plan + held",
+                residency.resident_len() <= plan.len(),
+                "frame {frame}: {} resident exceeds the plan",
                 residency.resident_len()
             );
+            assert!(work.pinned.len() <= window.max_held);
         }
-        assert!(max_resident <= plan_at([40_000.0, 40.0, 30_000.0]).len() + window.max_held);
+        assert!(max_resident <= plan_at([40_000.0, 40.0, 30_000.0]).len());
         assert!(max_stamps <= max_resident + plan_at([0.0; 3]).len());
+        assert!(max_pinned <= window.max_held);
+    }
+
+    /// Whether one tile's mesh includes the aligned cell whose centre is
+    /// `centre`: the centre must be inside the tile's own square and pass its
+    /// normalized filter.
+    fn includes_cell(tile: &RingTile, centre: [i32; 2]) -> bool {
+        let cell = landscape::lod_cell_m(tile.level);
+        let span = landscape::LOD_TILE_CELLS * cell;
+        let min = [tile.key[0] * span, tile.key[1] * span];
+        let filter = normalized_filter(tile);
+        centre[0] >= min[0]
+            && centre[0] < min[0] + span
+            && centre[1] >= min[1]
+            && centre[1] < min[1] + span
+            && filter.hole.is_none_or(|hole| !hole.contains_centre(centre))
+            && filter
+                .bound
+                .is_none_or(|bound| bound.contains_centre(centre))
+    }
+
+    #[test]
+    fn a_dropped_tile_overlaps_the_new_plan_so_it_must_leave_the_gpu() {
+        // Hysteresis deliberately evicts the GPU copy immediately. Holding it
+        // would be wrong: when the ring centre steps, a dropped tile of the
+        // inner ring can sit under the new plan's coarser ring, so both meshes
+        // would draw the same ground. This test shows that overlap exists for
+        // the actual ring set, which is why `declared` is exactly the plan.
+        for shift in [64.0f32, 128.0, 256.0, 512.0] {
+            let here = plan_at([0.0, 40.0, 0.0]);
+            let there = plan_at([shift, 40.0, 0.0]);
+            let there_keys: BTreeSet<TerrainTileKey> =
+                there.iter().map(|tile| (tile.level, tile.key)).collect();
+            let overlapping = here
+                .iter()
+                .filter(|tile| !there_keys.contains(&(tile.level, tile.key)))
+                .any(|old| {
+                    let cell = landscape::lod_cell_m(old.level);
+                    (0..landscape::LOD_TILE_CELLS).any(|cz| {
+                        (0..landscape::LOD_TILE_CELLS).any(|cx| {
+                            let centre = [
+                                (old.key[0] * landscape::LOD_TILE_CELLS + cx) * cell + cell / 2,
+                                (old.key[1] * landscape::LOD_TILE_CELLS + cz) * cell + cell / 2,
+                            ];
+                            includes_cell(old, centre)
+                                && there.iter().any(|new| {
+                                    (new.level, new.key) != (old.level, old.key)
+                                        && includes_cell(new, centre)
+                                })
+                        })
+                    })
+                });
+            assert!(
+                overlapping,
+                "a {shift} m ring step should drop a tile the new plan covers"
+            );
+        }
     }
 
     fn test_mesh(vertices: usize) -> Mesh {
@@ -970,7 +1097,13 @@ mod tests {
     }
 
     fn cache_key(level: u32, key: [i32; 2]) -> TileMeshKey {
-        TileMeshKey::new(TerrainSource::Landscape, SEED, level, key, TileFilter::default())
+        TileMeshKey::new(
+            TerrainSource::Landscape,
+            SEED,
+            level,
+            key,
+            TileFilter::default(),
+        )
     }
 
     #[test]
@@ -995,8 +1128,43 @@ mod tests {
         assert!(cache.bytes() <= one * 2, "the byte budget bounds the cache");
         assert_eq!(cache.bytes(), one * 2, "the budget bounds the payload");
         assert!(cache.contains(&a) && cache.contains(&c));
-        assert!(!cache.contains(&b), "the least recently used entry was evicted");
+        assert!(
+            !cache.contains(&b),
+            "the least recently used entry was evicted"
+        );
         assert!(Arc::ptr_eq(&third, &cache.get(&c).unwrap()));
+    }
+
+    #[test]
+    fn a_pinned_mesh_survives_trim_that_evicts_the_rest() {
+        let one = mesh_bytes(&test_mesh(100));
+        let mut cache = TileMeshCache::new(one * 2);
+        let (a, b, c) = (
+            cache_key(1, [0, 0]),
+            cache_key(1, [1, 0]),
+            cache_key(1, [2, 0]),
+        );
+        let pinned = cache.insert(a, test_mesh(100));
+        cache.insert(b, test_mesh(100));
+        // Pin `a` for 30 frames, then force a trim with a third mesh.
+        cache.pin(a, 30);
+        cache.insert(c, test_mesh(100));
+        assert!(cache.bytes() <= one * 2, "the byte budget still bounds it");
+        assert!(cache.contains(&a), "the pinned mesh survived the trim");
+        assert!(Arc::ptr_eq(&pinned, &cache.get(&a).unwrap()));
+        assert!(
+            !cache.contains(&b),
+            "the unpinned least recently used entry was evicted first"
+        );
+        // The pin expires; once nothing is pinned the ordinary LRU trim can
+        // evict it again.
+        cache.begin_frame(31);
+        cache.get(&c).expect("c is cached");
+        cache.insert(cache_key(1, [3, 0]), test_mesh(100));
+        assert!(
+            !cache.contains(&a),
+            "an expired pin must not block eviction"
+        );
     }
 
     #[test]
@@ -1031,7 +1199,10 @@ mod tests {
             source: TerrainSource::LegacyIsland,
             ..base
         }));
-        assert!(!cache.contains(&TileMeshKey { seed: SEED + 1, ..base }));
+        assert!(!cache.contains(&TileMeshKey {
+            seed: SEED + 1,
+            ..base
+        }));
     }
 
     #[test]
@@ -1040,7 +1211,10 @@ mod tests {
         let mut worker = TileMeshWorker::landscape(SEED);
         assert!(worker.available(), "the worker thread must start");
         assert!(worker.request(key));
-        assert!(!worker.request(key), "a duplicate request must not queue twice");
+        assert!(
+            !worker.request(key),
+            "a duplicate request must not queue twice"
+        );
         // A key for another generator or seed is refused outright.
         assert!(!worker.request(TileMeshKey {
             seed: SEED + 1,

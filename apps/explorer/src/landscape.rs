@@ -1,10 +1,10 @@
-//! Far-terrain sample: the authoritative streaming window plus three nested
+//! Far-terrain sample: the authoritative streaming window plus six nested
 //! distance rings derived from the same generator, out to six kilometres.
 //!
 //! The 7x7-chunk window around the player is the real world: authoritative one
 //! metre voxels, streamed and meshed exactly as the other samples stream them.
 //! Everything beyond it is derived on demand from
-//! [`matterweave_core::landscape`] at 4 m, 16 m and 64 m cells by
+//! [`matterweave_core::landscape`] at 2 m to 64 m cells by
 //! [`matterweave_core::landscape::ring_plan`], which guarantees the rings and
 //! the window cover every surface cell exactly once. Nothing outside the window
 //! is authoritative, editable or collidable, and no ring tile is ever written to
@@ -16,12 +16,16 @@
 //!
 //! # Budgets
 //!
-//! Tile meshes are cheap (33x33 = 1089 column samples each) but not free, so a
-//! frame builds at most [`MAX_TILE_UPLOADS`] of them and stops as soon as
-//! [`MAX_TILE_MS`] of main-thread time has gone into tile work, whichever comes
-//! first. Residency is bounded by [`matterweave_render::MAX_TERRAIN_TILES`] and
-//! every tile the plan drops is evicted the same frame, so the cache cannot grow
-//! with the path the camera took.
+//! Tile meshes are cheap (33x33 = 1089 column samples each) but not free.
+//! Generation runs on one bounded background worker; a frame uploads at most
+//! [`MAX_TILE_UPLOADS`] meshes and stops as soon as [`MAX_TILE_MS`] of
+//! main-thread time has gone into collecting and uploading them, whichever comes
+//! first. GPU residency is bounded by `MAX_TERRAIN_TILES`, and every tile the
+//! plan drops leaves the renderer the same frame, so a held tile can never sit
+//! under the new plan's coarser ring. The dropped mesh stays in a byte-budgeted
+//! CPU cache, pinned for a bounded window when the plan has only just wanted
+//! it, so an oscillation is an upload rather than a regeneration. See
+//! [`crate::landscape_tiles`].
 use crate::controls::{Camera, Controls};
 use crate::landscape_flora::{LandscapeFlora, PUSH_RADIUS_M, WIND_DIRECTION_XZ, WIND_STRENGTH_M};
 use crate::landscape_tiles::{TileStream, MAX_TILE_MS, MAX_TILE_UPLOADS};
@@ -365,6 +369,18 @@ struct ChunkFrame {
     upload_ms: f64,
     /// Wall time of the whole chunk sync this frame, including retain/declare.
     wall_ms: f64,
+}
+
+/// One draw attempt's phase measurements, taken where each span happened and
+/// handed to [`LandscapeSample::record`] as one value. All wall times; each is
+/// `None` when that term was not measured for this attempt.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameTimings {
+    dt: f32,
+    stream_ms: f64,
+    mesh_ms: f64,
+    cpu_busy_ms: Option<f64>,
+    render_ms: Option<f64>,
 }
 
 pub struct LandscapeSample {
@@ -742,10 +758,10 @@ impl LandscapeSample {
             30.,
             74.,
             &format!(
-                "TILE {:.2}+{:.2} MS | HOLD {} GEN {} HIT {} | FRAME {:.1} MS | MEM {} KIB | {}",
+                "TILE {:.2}+{:.2} MS | PIN {} GEN {} HIT {} | FRAME {:.1} MS | MEM {} KIB | {}",
                 tile_work.build_ms,
                 tile_work.declare_ms,
-                tile_work.held,
+                tile_work.pinned,
                 tile_work.generated,
                 tile_work.served_from_cache,
                 self.frame_ms,
@@ -940,7 +956,7 @@ impl LandscapeSample {
                          chunk_generate_ms {:.2} chunk_upload_ms {:.2} \
                          tile_build_ms {:.2} tile_declare_ms {:.2} \
                          tile_generate_ms {:.2} tile_upload_ms {:.2} tile_req {} tiles {}/{} visible {} \
-                         uploaded {} evicted {} outstanding {} held {} cache_hit {} cache_kib {} \
+                         uploaded {} evicted {} outstanding {} pinned {} cache_hit {} cache_kib {} \
                          worker_pending {} tile_kib {} \
                          water {}/{} up {} {:.2} ms generate {:.2} upload {:.2} \
                          fence_ms {} fence_waits {} eye {:?}",
@@ -963,7 +979,7 @@ impl LandscapeSample {
                         tile_work.uploaded,
                         tile_work.evicted,
                         tile_work.outstanding,
-                        tile_work.held,
+                        tile_work.pinned,
                         tile_work.served_from_cache,
                         self.tiles.cache_bytes() / 1024,
                         tile_work.pending,
@@ -1002,7 +1018,17 @@ impl LandscapeSample {
         }
         let cpu_busy_ms = cpu_busy.finish();
         if capturing {
-            self.record(result, dt, stream_ms, mesh_ms, cpu_busy_ms, render_ms, now);
+            self.record(
+                result,
+                FrameTimings {
+                    dt,
+                    stream_ms,
+                    mesh_ms,
+                    cpu_busy_ms,
+                    render_ms,
+                },
+                now,
+            );
         }
         if !self.failed && self.frame_limit.is_some_and(|limit| self.frames >= limit) {
             let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
@@ -1020,7 +1046,7 @@ impl LandscapeSample {
             );
             eprintln!(
                 "LANDSCAPE COUNTERS: chunks {}/{} | tiles resident {} declared {} visible {} \
-                 | uploaded {} evicted {} outstanding {} held {} | cache hit {} {} KiB / {} \
+                 | uploaded {} evicted {} outstanding {} pinned {} | cache hit {} {} KiB / {} \
                  entries | worker {} pending | tile mem {} KiB \n\
                  LANDSCAPE CHUNK: {} uploaded over the run | last frame {:.2} ms (generate {:.2}, \
                  upload {:.2}) | {} requested {} polled\n\
@@ -1039,7 +1065,7 @@ impl LandscapeSample {
                 tile_work.uploaded,
                 tile_work.evicted,
                 tile_work.outstanding,
-                tile_work.held,
+                tile_work.pinned,
                 tile_work.served_from_cache,
                 self.tiles.cache_bytes() / 1024,
                 self.tiles.cache_entries(),
@@ -1100,11 +1126,7 @@ impl LandscapeSample {
     fn record(
         &mut self,
         result: metrics::DrawOutcome,
-        dt: f32,
-        stream_ms: f64,
-        mesh_ms: f64,
-        cpu_busy_ms: Option<f64>,
-        render_ms: Option<f64>,
+        timings: FrameTimings,
         frame_begin: Instant,
     ) {
         let epoch = self.renderer_epoch;
@@ -1132,14 +1154,14 @@ impl LandscapeSample {
             submitted_gpu_frame_id: diagnostics.and_then(|d| d.submitted_frame_id),
             completed_gpu_frame_id: gpu.map(|t| t.frame_id),
             completed_gpu_renderer_epoch: gpu.map(|_| epoch),
-            draw_interval_wall_ms: Some(f64::from(dt) * 1000.),
+            draw_interval_wall_ms: Some(f64::from(timings.dt) * 1000.),
             main_wall_ms: Some(frame_begin.elapsed().as_secs_f64() * 1000.),
-            main_cpu_busy_ms: cpu_busy_ms,
-            stream_request_elapsed_ms: Some(stream_ms),
-            mesh_sync_wall_ms: Some(mesh_ms),
+            main_cpu_busy_ms: timings.cpu_busy_ms,
+            stream_request_elapsed_ms: Some(timings.stream_ms),
+            mesh_sync_wall_ms: Some(timings.mesh_ms),
             mesh_sync_fence_wait_wall_ms: diagnostics.and_then(|d| d.upload_fence_wait_ms),
             mesh_sync_fence_waits: diagnostics.and_then(|d| d.upload_fence_waits),
-            render_wall_ms: render_ms,
+            render_wall_ms: timings.render_ms,
             render_fence_wait_wall_ms: diagnostics.and_then(|d| d.render_fence_wait_ms),
             acquire_wall_ms: diagnostics.and_then(|d| d.acquire_ms),
             present_wall_ms: diagnostics.and_then(|d| d.present_ms),
