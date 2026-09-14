@@ -48,6 +48,14 @@ jobs:
           if grep -E 'Vulkan validation ERROR|Validation Error|VUID-' artifacts/landscape-exercise.log; then exit 1; fi
           # Camera motion has to exercise eviction, not just first-fill.
           grep -E 'LANDSCAPE COUNTERS: .* evicted [1-9][0-9]*' artifacts/landscape-exercise.log
+          # Clouds on: the same landscape scene, short, only to prove the pass
+          # order and that the offscreen target is allocated and read.
+          timeout 300s xvfb-run -a target/debug/matterweave-explorer --landscape --clouds low --smoke-frames 12 --save "$RUNNER_TEMP/landscape-clouds/world.json" 2>&1 | tee artifacts/landscape-clouds.log
+          if grep -E 'Vulkan validation ERROR|Validation Error|VUID-' artifacts/landscape-clouds.log; then exit 1; fi
+          grep -E 'LANDSCAPE SKY: SKY DOME ON \| CLOUDS LOW \| TARGET [0-9]+x[0-9]+ Q0' artifacts/landscape-clouds.log
+          timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example clouds_smoke 2>&1 | tee artifacts/clouds-smoke.log
+          grep 'clouds_smoke: eight frames passed' artifacts/clouds-smoke.log
+          if grep -E 'Vulkan validation ERROR|Validation Error|VUID-' artifacts/clouds-smoke.log; then exit 1; fi
           timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example instancing_smoke 2>&1 | tee artifacts/instancing-smoke.log
           if grep -E 'Vulkan validation ERROR|Validation Error' artifacts/instancing-smoke.log; then exit 1; fi
           timeout 90s xvfb-run -a cargo run --locked -p matterweave-render --example shadow_cache_smoke 2>&1 | tee artifacts/shadow-cache-smoke.log

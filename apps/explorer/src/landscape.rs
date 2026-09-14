@@ -31,8 +31,8 @@ use matterweave_core::landscape::{
 };
 use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
-    Atmosphere, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun, TerrainTileKey,
-    Wind, MAX_TERRAIN_TILES,
+    Atmosphere, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun,
+    TerrainTileKey, Wind, MAX_TERRAIN_TILES,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -98,21 +98,20 @@ const FAR_PLANE: f32 = 9500.0;
 const FOG_DENSITY: f32 = 0.0006;
 const SKY: [f32; 3] = [0.60, 0.71, 0.82];
 
-/// Whether the opt-in marker is present beside the save.
+/// The opt-in marker's contents, or `None` when there is no usable marker.
 ///
-/// The file's content is reserved and ignored: any bytes within the bound select
-/// the sample. A marker that cannot be read, or that exceeds the bound, is
-/// reported and treated as absent - a broken marker must not stop the app from
-/// starting, and this file is never a game save.
-pub fn marker_present(directory: &Path) -> bool {
+/// A marker that cannot be read, or that exceeds the bound, is reported and
+/// treated as absent - a broken marker must not stop the app from starting, and
+/// this file is never a game save.
+fn marker_text(directory: &Path) -> Option<String> {
     use std::io::Read;
     let path = directory.join(MARKER_FILE);
     let file = match std::fs::File::open(&path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(error) => {
             log::warn!("Landscape marker {}: {error}", path.display());
-            return false;
+            return None;
         }
     };
     let mut text = String::new();
@@ -122,15 +121,40 @@ pub fn marker_present(directory: &Path) -> bool {
                 "Landscape marker {} exceeds {MAX_MARKER_BYTES} bytes; ignored",
                 path.display()
             );
-            false
+            None
         }
-        // Content is reserved: whatever it says, the marker selects the sample.
-        Ok(_) => true,
+        Ok(_) => Some(text),
         Err(error) => {
             log::warn!("Landscape marker {}: {error}", path.display());
-            false
+            None
         }
     }
+}
+
+/// Whether the opt-in marker is present beside the save. Any bytes within the
+/// bound select the sample, whatever they say.
+pub fn marker_present(directory: &Path) -> bool {
+    marker_text(directory).is_some()
+}
+
+/// The cloud setting a device run asked for in the marker, since NativeActivity
+/// passes no command line and a phone has no C key. A marker word of `clouds
+/// low`, `clouds high` or `clouds off` selects it; anything else, including the
+/// empty marker every existing device run writes, stays off.
+pub fn marker_clouds(directory: &Path) -> CloudChoice {
+    let Some(text) = marker_text(directory) else {
+        return CloudChoice::Off;
+    };
+    let mut words = text.split_whitespace();
+    while let Some(word) = words.next() {
+        if word.eq_ignore_ascii_case("clouds") {
+            return words
+                .next()
+                .and_then(CloudChoice::parse)
+                .unwrap_or_default();
+        }
+    }
+    CloudChoice::Off
 }
 
 // -- Tile work planning ------------------------------------------------------
@@ -324,6 +348,54 @@ fn view_projection(camera: &Camera, aspect: f32) -> [[f32; 4]; 4] {
     .to_cols_array_2d()
 }
 
+/// Run-time cloud switch. Three settings so a device capture can compare the
+/// same flight with clouds off, cheap and expensive; `Off` is the default, and
+/// with it the frame is the one this sample rendered before clouds existed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CloudChoice {
+    #[default]
+    Off,
+    Low,
+    High,
+}
+
+impl CloudChoice {
+    /// `--clouds` accepts either the names or 0/1/2, so a capture script can
+    /// pass whichever it already has.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" => Some(Self::Off),
+            "low" | "1" => Some(Self::Low),
+            "high" | "2" => Some(Self::High),
+            _ => None,
+        }
+    }
+
+    fn settings(self, time_s: f32) -> Clouds {
+        Clouds {
+            enabled: self != Self::Off,
+            quality: u8::from(self == Self::High),
+            time_s,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "OFF",
+            Self::Low => "LOW",
+            Self::High => "HIGH",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Low,
+            Self::Low => Self::High,
+            Self::High => Self::Off,
+        }
+    }
+}
+
 /// Counters the HUD shows and the smoke line prints. Every one of them is a
 /// count this sample actually performed, not a target.
 #[derive(Clone, Copy, Debug, Default)]
@@ -393,6 +465,12 @@ pub struct LandscapeSample {
     /// folds it into its animation period, so a long session cannot lose sine
     /// precision here.
     wind_time: f32,
+    /// Cloud animation clock in seconds, advanced by frame time like the wind
+    /// clock. The renderer folds it into its own period.
+    cloud_time: f32,
+    /// Which cloud setting this run is flying with. Switched by C at run time
+    /// and by `--clouds` before the first frame.
+    pub clouds: CloudChoice,
     /// Water meshes uploaded over the run, and this frame's derivation time.
     water_uploaded: u64,
     water_ms: f64,
@@ -464,6 +542,9 @@ impl LandscapeSample {
                 atmosphere: Atmosphere {
                     fog_density: FOG_DENSITY,
                     sky: SKY,
+                    // This sample is the one that looks at the sky: rings reach
+                    // six kilometres and the eye flies above the terrain.
+                    sky_gradient: true,
                 },
                 // Real wind and player values, not still air. The position is
                 // refreshed to the eye every frame; the constant bearing and
@@ -477,6 +558,9 @@ impl LandscapeSample {
                     position: [0.0; 3],
                     radius_m: PUSH_RADIUS_M,
                 },
+                // Off unless the run asks: the phone decides what this costs,
+                // and the default frame stays the one every capture compared.
+                clouds: Clouds::default(),
             },
             walking: false,
             plan: Vec::new(),
@@ -485,6 +569,8 @@ impl LandscapeSample {
             tiles: TileCounters::default(),
             flora: None,
             wind_time: 0.,
+            cloud_time: 0.,
+            clouds: CloudChoice::default(),
             water_uploaded: 0,
             water_ms: 0.,
             water_stamps: BTreeMap::new(),
@@ -704,7 +790,7 @@ impl LandscapeSample {
         let muted = [0.70, 0.79, 0.86, 1.];
         let accent = [0.62, 0.94, 0.76, 1.];
         let panel = [0.03, 0.06, 0.09, 0.80];
-        hud.rect([16., 16., 700., 150.], panel);
+        hud.rect([16., 16., 700., 168.], panel);
         hud.text(30., 28., "MATTERWEAVE / LANDSCAPE RINGS", 2., white);
         let (chunks_visible, chunks_resident, tiles, water) = match &self.renderer {
             Some(renderer) => (
@@ -788,9 +874,10 @@ impl LandscapeSample {
             1.,
             accent,
         );
+        hud.text(30., 129., &self.cloud_line(), 1., accent);
         hud.text(
             30.,
-            129.,
+            146.,
             &self.status.chars().take(72).collect::<String>(),
             1.,
             muted,
@@ -803,7 +890,7 @@ impl LandscapeSample {
         hud.text(
             240.,
             586.,
-            "WASD FLY | SPACE/SHIFT UP DOWN | RMB LOOK | G WALK OR FLY | ESC BACK",
+            "WASD FLY | SPACE/SHIFT UP DOWN | RMB LOOK | G WALK OR FLY | C CLOUDS | ESC BACK",
             1.,
             white,
         );
@@ -895,6 +982,11 @@ impl LandscapeSample {
             position: eye,
             radius_m: PUSH_RADIUS_M,
         };
+        // The cloud layer drifts on its own clock. Switching the setting off
+        // frees the offscreen target on the next frame; switching it back on
+        // resumes where the clock has moved to, not where it was left.
+        self.cloud_time += dt.clamp(0.0, 0.1);
+        self.lighting.clouds = self.clouds.settings(self.cloud_time);
         let hud = self.hud();
         let matrix = view_projection(&self.camera, size.width as f32 / size.height as f32);
         let outcome =
@@ -1010,6 +1102,7 @@ impl LandscapeSample {
                 self.tiles.total_generate_ms,
                 self.tiles.total_generate_ms / self.tiles.generated.max(1) as f64
             );
+            eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
             eprintln!(
                 "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
                  bytes {} | plan {:.2} ms (worst {:.2}, budget {:.1}, over {}) upload {:.2} ms \
@@ -1086,6 +1179,35 @@ impl LandscapeSample {
             x as f32 / size.width.max(1) as f32 * 1000.,
             y as f32 / size.height.max(1) as f32 * 600.,
         )
+    }
+
+    /// What the sky and cloud passes are actually doing: the setting, the
+    /// offscreen resolution the renderer allocated (none when clouds are off)
+    /// and the measured GPU cost of the cloud pass. The cost is absent unless
+    /// the device supports timestamps and a completed submission carried the
+    /// pass; it is never a zero standing in for an unavailable measurement.
+    fn cloud_line(&self) -> String {
+        let renderer = self.renderer.as_ref();
+        let target = match renderer.and_then(Renderer::cloud_target) {
+            Some(((width, height), quality)) => format!("{width}x{height} Q{quality}"),
+            None => "NONE".into(),
+        };
+        let cost = match renderer
+            .and_then(Renderer::gpu_timings)
+            .and_then(|timings| timings.cloud_ms)
+        {
+            Some(ms) => format!("{ms:.2} MS"),
+            None => "UNAVAILABLE".into(),
+        };
+        format!(
+            "SKY DOME ON | CLOUDS {} | TARGET {target} | CLOUD GPU {cost}",
+            self.clouds.label()
+        )
+    }
+
+    fn cycle_clouds(&mut self) {
+        self.clouds = self.clouds.next();
+        self.status = format!("Clouds {}", self.clouds.label().to_lowercase());
     }
 
     fn toggle_walk(&mut self) {
@@ -1208,6 +1330,7 @@ impl ApplicationHandler for LandscapeSample {
                         match code {
                             KeyCode::Escape => self.return_to_menu = true,
                             KeyCode::KeyG => self.toggle_walk(),
+                            KeyCode::KeyC => self.cycle_clouds(),
                             _ => {}
                         }
                     }
@@ -1298,7 +1421,7 @@ mod tests {
         assert!(!marker_present(&dir));
         std::fs::write(dir.join(MARKER_FILE), "").unwrap();
         assert!(marker_present(&dir), "an empty marker is still an opt-in");
-        // Content is reserved and ignored rather than parsed or rejected.
+        // Content beyond the reserved cloud word is ignored, not rejected.
         std::fs::write(dir.join(MARKER_FILE), "anything at all\n").unwrap();
         assert!(marker_present(&dir));
         // An oversized marker is ignored, not truncated and not fatal.
@@ -1309,6 +1432,45 @@ mod tests {
         .unwrap();
         assert!(!marker_present(&dir));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_marker_can_ask_a_device_run_for_clouds() {
+        let dir = temp_dir("marker-clouds");
+        // No marker, an empty marker and an unrelated marker all stay off, so
+        // every device run that already writes one is unchanged.
+        assert_eq!(marker_clouds(&dir), CloudChoice::Off);
+        for text in ["", "anything at all\n", "clouds\n", "clouds sideways"] {
+            std::fs::write(dir.join(MARKER_FILE), text).unwrap();
+            assert_eq!(marker_clouds(&dir), CloudChoice::Off, "{text:?}");
+        }
+        for (text, expected) in [
+            ("clouds low", CloudChoice::Low),
+            ("CLOUDS High\n", CloudChoice::High),
+            ("landscape\nclouds 2\n", CloudChoice::High),
+            ("clouds off", CloudChoice::Off),
+        ] {
+            std::fs::write(dir.join(MARKER_FILE), text).unwrap();
+            assert_eq!(marker_clouds(&dir), expected, "{text:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_cloud_switch_cycles_and_maps_to_renderer_settings() {
+        assert_eq!(CloudChoice::default(), CloudChoice::Off);
+        assert!(!CloudChoice::Off.settings(12.0).enabled);
+        let low = CloudChoice::Low.settings(12.0);
+        assert!(low.enabled && low.quality == 0 && low.time_s == 12.0);
+        let high = CloudChoice::High.settings(12.0);
+        assert!(high.enabled && high.quality == 1);
+        // C walks all three and returns to the setting it started from.
+        let mut choice = CloudChoice::Off;
+        for expected in [CloudChoice::Low, CloudChoice::High, CloudChoice::Off] {
+            choice = choice.next();
+            assert_eq!(choice, expected);
+        }
+        assert_eq!(CloudChoice::parse("nonsense"), None);
     }
 
     #[test]

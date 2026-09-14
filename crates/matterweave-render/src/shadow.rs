@@ -348,6 +348,7 @@ impl Shadow {
         bounds: &[[[f32; 3]; 2]],
     ) -> Result<()> {
         settings.atmosphere.validate()?;
+        settings.clouds.validate()?;
         settings.wind.validate()?;
         settings.player.validate()?;
         self.camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
