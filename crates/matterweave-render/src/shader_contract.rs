@@ -34,6 +34,10 @@ pub const WORLD_FRAGMENT_SPIRV: &[u8] =
 /// `world.wgsl` and reach only vertices whose per-instance wind record carries a
 /// nonzero scale; a zero strength and a zero radius leave even those
 /// undisplaced.
+/// `water` is (coarse-surface shading enabled, ripple time in seconds, depth in
+/// metres assumed for a coarse flooded cell, 0). A zero `water.x` leaves the
+/// opaque pass exactly as it was; the derived water pass shades as water
+/// regardless and reads only the time and its own per-vertex depth.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct LightingUniform {
@@ -48,9 +52,10 @@ pub struct LightingUniform {
     pub atmosphere: [f32; 4],
     pub wind: [f32; 4],
     pub player: [f32; 4],
+    pub water: [f32; 4],
 }
 
-pub const LIGHTING_UNIFORM_BYTES: usize = 224;
+pub const LIGHTING_UNIFORM_BYTES: usize = 240;
 
 #[cfg(test)]
 mod tests {
@@ -72,6 +77,7 @@ mod tests {
         assert_eq!(offset_of!(LightingUniform, atmosphere), 176);
         assert_eq!(offset_of!(LightingUniform, wind), 192);
         assert_eq!(offset_of!(LightingUniform, player), 208);
+        assert_eq!(offset_of!(LightingUniform, water), 224);
         // Every binding index is distinct and contiguous from zero.
         let bindings = [
             BINDING_LIGHTING,

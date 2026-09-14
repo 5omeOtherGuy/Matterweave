@@ -22,6 +22,9 @@ struct Lighting {
     wind: vec4<f32>,
     // (player x, y, z, push radius in metres); radius 0 disables the push
     player: vec4<f32>,
+    // (coarse-surface water shading enabled, ripple time in seconds, depth in
+    // metres assumed for a coarse flooded cell, unused)
+    water: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> lighting: Lighting;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
@@ -284,19 +287,203 @@ fn specular_reflection(world_pos: vec3<f32>, normal: vec3<f32>, eye: vec3<f32>) 
     }
     return out;
 }
-/// Alpha of a derived water surface. Translucent enough to read as water over a
-/// bed, opaque enough that the single-layer surface does not need sorting.
-const WATER_ALPHA = 0.82;
+// -- Water --------------------------------------------------------------------
+//
+// One surface model for both water surfaces a landscape frame can hold:
+//
+//   * the derived water pass (`fs_water`), whose vertices carry the depth of the
+//     bed under their own corner in `color.r` - see `matterweave_core::water`;
+//   * the flooded cells of a distance-ring tile, drawn by the opaque pass in the
+//     water colour with no bed of their own, shaded at `lighting.water.z` metres
+//     and only when `lighting.water.x` is set.
+//
+// Nothing here reads a texture, a depth image or a second pass. A water pixel is
+// six sines, one fresnel and two specular lobes, and it returns *before* the
+// nine-tap shadow lookup, the indirect cache read and the reflection probe the
+// opaque path would have run, so shading a pixel as water is cheaper than not.
+//
+// Deliberately absent: shadows on the water (a surface that reflects the sky is
+// not readably shadowed at this range), and any reflection of the scene, which
+// is the separate tier-B item.
 
-/// Shade one surface. `alpha` is 1.0 for opaque geometry and the water alpha for
-/// the derived water pass, which is otherwise the same shading.
-fn shade(v: Output, alpha: f32) -> vec4<f32> {
+/// Depth in metres a full vertex depth channel encodes. Must equal
+/// `matterweave_core::water::WATER_MAX_DEPTH_M`.
+const WATER_MAX_DEPTH_M = 32.0;
+/// Metres over which the body colour saturates from shallow to deep. Shallow
+/// water is most of what a shoreline shows, so the ramp is fast - and it is also
+/// what makes the surface relief of a ripple visible as a tint change over a
+/// fixed bed rather than a change too small to see.
+const WATER_TINT_DEPTH_M = 2.0;
+const WATER_SHALLOW = vec3(0.26, 0.45, 0.44);
+const WATER_DEEP = vec3(0.012, 0.042, 0.085);
+/// Alpha at no depth and at full depth. Shallow water shows its bed, which is
+/// what makes the beach meet the sea without a seam; deep water hides it.
+const WATER_ALPHA_SHALLOW = 0.45;
+const WATER_ALPHA_DEEP = 0.97;
+
+/// The sky in one direction, as the dome pass draws it.
+///
+/// Water is mostly a mirror at a distance, and a mirror that returns one flat
+/// colour is what made the old surface a sheet of paint: the near water reflects
+/// the zenith and the far water reflects the horizon, and the difference between
+/// them is most of what a grazing angle is supposed to show. The gradient is the
+/// one `sky.wgsl` builds from `atmosphere.sky`, repeated here rather than shared
+/// because the two passes are separate modules; the sun disc and glow are not
+/// repeated, because this surface has its own sun lobe.
+fn water_sky(direction: vec3<f32>) -> vec3<f32> {
+    let base = lighting.atmosphere.xyz;
+    return mix(base, base * vec3(0.52, 0.66, 1.0), smoothstep(0.0, 0.55, direction.y));
+}
+
+/// Vertical focal length in pixels the ripple level of detail is sized for: a
+/// 65-degree field of view over 768 rows. A phone renders 1440 rows and has
+/// nearly twice this, so a wave fades here slightly before the device would have
+/// had to drop it - the conservative end of the choice.
+const WATER_FOCAL_PX = 600.0;
+
+/// Metres the swell displaces the frame the chop is sampled in. Large enough
+/// that short crests bend visibly along the swell, small enough that they stay
+/// attached to it.
+const WATER_WARP_M = 9.0;
+
+/// One sample of the ripple field: the surface offset in metres, the slope, and
+/// the surface curvature in reciprocal metres, which is what focuses light on a
+/// shallow bed.
+struct Ripple {
+    height: f32,
+    slope: vec2<f32>,
+    curvature: f32,
+};
+
+/// Strength of the shallow-water caustic, per metre of depth per unit curvature.
+/// A crest focuses the light that passes through it onto the bed and a trough
+/// spreads it; the effect is proportional to how far the light travels after
+/// being bent, so it belongs to shallow water and disappears in deep water on
+/// its own.
+const WATER_CAUSTIC = 0.22;
+/// Depth in metres past which the caustic stops growing: light that far down has
+/// scattered too much to keep a focus.
+const WATER_CAUSTIC_DEPTH_M = 4.0;
+
+/// Sample the ripple field at one world point.
+///
+/// Six waves, spread in direction and at incommensurate wavelengths, so the
+/// pattern does not repeat over a session and no crest stands still. Each runs at
+/// its own deep-water speed `sqrt(g*k)`, which is why the short waves overtake
+/// the long ones instead of the whole field sliding as one image. Both the height
+/// and the slope come out of the same sine/cosine pair: the slope tilts the
+/// normal, and the height moves the surface up and down over a fixed bed, which
+/// is what makes shallow water breathe rather than sit at one tint.
+///
+/// Each wave is faded out once its wavelength no longer covers the pixel it is
+/// being sampled in. A water plane is seen at a grazing angle, so the footprint
+/// is set by the foreshortening, not by distance alone: at `view_distance` with
+/// the eye `eye_height` above the surface, one pixel covers about
+/// `view_distance^2 / (focal * eye_height)` metres along the view. Without this
+/// the far sea turns into a corduroy of aliased crests that crawls as the camera
+/// moves - measured M2 17.6 against the reference's 1.0 to 5.8.
+fn water_ripple(p: vec2<f32>, time: f32, view_distance: f32, eye_height: f32) -> Ripple {
+    let footprint = view_distance * view_distance
+        / (WATER_FOCAL_PX * max(eye_height, 0.5));
+    var dirs = array<vec2<f32>, 6>(
+        vec2(0.981, 0.196),
+        vec2(-0.422, 0.906),
+        vec2(0.570, -0.822),
+        vec2(0.110, 0.994),
+        vec2(-0.848, -0.530),
+        vec2(0.743, 0.669),
+    );
+    var wavelength = array<f32, 6>(12.0, 6.5, 3.0, 1.4, 0.65, 0.32);
+    var wavenumber = array<f32, 6>(0.524, 0.967, 2.094, 4.488, 9.666, 19.635);
+    // Amplitude times wavenumber: the peak slope each wave contributes.
+    var steepness = array<f32, 6>(0.038, 0.044, 0.068, 0.062, 0.058, 0.044);
+    // sqrt(g * k) for g = 9.81: deep-water dispersion, not an invented rate.
+    var speed = array<f32, 6>(2.27, 3.08, 4.53, 6.64, 9.74, 13.88);
+    var out: Ripple;
+    out.height = 0.0;
+    out.slope = vec2(0.0);
+    out.curvature = 0.0;
+    for (var i = 0; i < 6; i = i + 1) {
+        let weight = 1.0 - smoothstep(wavelength[i] * 0.10, wavelength[i] * 0.34, footprint);
+        if weight <= 0.0 { continue; }
+        // The two long waves are the swell; the four short ones are the chop
+        // riding on it, and they are sampled in the swell's own displaced frame.
+        // Without that warp every crest in the field stays parallel to every
+        // other and the middle distance reads as corduroy rather than water.
+        let q = select(p + out.slope * WATER_WARP_M, p, i < 2);
+        let phase = wavenumber[i] * dot(q, dirs[i]) + time * speed[i];
+        let amplitude = steepness[i] * weight / wavenumber[i];
+        let rise = sin(phase);
+        out.height = out.height + amplitude * rise;
+        out.slope = out.slope + dirs[i] * (steepness[i] * weight * cos(phase));
+        // Curvature is the first thing to alias, because it weights the
+        // shortest waves most: it is faded a good deal earlier than the slope
+        // that comes from the same wave.
+        out.curvature = out.curvature
+            - steepness[i] * weight * weight * weight * wavenumber[i] * rise;
+    }
+    return out;
+}
+
+/// Shade one water pixel. `depth_m` is the water column under it in metres;
+/// `opaque` is set for a surface with no bed drawn behind it to blend over.
+fn water_surface(world: vec3<f32>, depth_m: f32, opaque: bool) -> vec4<f32> {
+    let to_eye = camera.eye.xyz - world;
+    let view_distance = length(to_eye);
+    let view = to_eye / max(view_distance, 1.0e-4);
+    let ripple = water_ripple(world.xz, lighting.water.y, view_distance,
+        camera.eye.y - world.y);
+    let normal = normalize(vec3(-ripple.slope.x, 1.0, -ripple.slope.y));
+    // Body colour: the deeper the column, the less of the bed's light returns.
+    // The surface itself rises and falls over a fixed bed, so a crest carries
+    // more water than the trough beside it and tints deeper.
+    let depth_t = 1.0 - exp(-max(depth_m + ripple.height, 0.0) / WATER_TINT_DEPTH_M);
+    let sun = max(dot(normal, lighting.sun.xyz), 0.0);
+    let body = mix(WATER_SHALLOW, WATER_DEEP, depth_t) * (0.16 + 0.34 * sun * lighting.sun.w);
+    // Schlick fresnel about water's 0.02 normal reflectance: near vertical the
+    // eye sees the body, at grazing angles it sees the sky, continuously.
+    let facing = clamp(dot(normal, view), 0.0, 1.0);
+    let fresnel = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
+    var color = mix(body, water_sky(2.0 * facing * normal - view), fresnel);
+    // Two lobes, because one cannot do both jobs: the tight one is the glint a
+    // crest throws when it happens to face the sun, the broad one is the sheen
+    // that makes a near surface read as wet at all. The ripple normal is what
+    // breaks either of them into structure instead of one mirror disc.
+    let half_vector = normalize(view + lighting.sun.xyz);
+    let alignment = max(dot(normal, half_vector), 0.0);
+    let glint = pow(alignment, 320.0) * 3.2;
+    let sheen = pow(alignment, 36.0) * 0.30;
+    color = color
+        + vec3(1.0, 0.97, 0.88) * (glint + sheen) * lighting.sun.w * (0.25 + 0.75 * fresnel);
+    let fog = 1.0 - exp(-view_distance * lighting.atmosphere.w);
+    // Caustics reach the eye as a change in how much bed light comes through,
+    // so they are applied to the transmitted fraction rather than added as a
+    // colour. Deep water has almost none to modulate, which is why this fades
+    // out on its own without a second condition.
+    let caustic = clamp(
+        1.0 + min(depth_m, WATER_CAUSTIC_DEPTH_M) * ripple.curvature * WATER_CAUSTIC,
+        0.2,
+        2.2,
+    );
+    let body_alpha = mix(WATER_ALPHA_SHALLOW, WATER_ALPHA_DEEP, depth_t);
+    let alpha = select(
+        clamp(1.0 - (1.0 - body_alpha) * caustic, 0.04, 0.995),
+        1.0,
+        opaque,
+    );
+    return vec4(mix(color, sky_color(), fog), alpha);
+}
+
+/// Shade one opaque surface. The derived water pass has its own entry and its
+/// own model; what this function still owns is the *coarse* water of a distance
+/// ring, which arrives here as terrain because that is what it is.
+fn shade(v: Output) -> vec4<f32> {
     var normal = normalize(v.normal);
     var color = v.color;
     let enhanced = camera.eye.w < 0.0;
     // Palette ID13 water is the unique source color (0.16,0.34,0.42).
     // Geometry and liquid collision policy remain authoritative CPU voxel data.
-    let water = enhanced && distance(v.color, vec3(0.16,0.34,0.42)) < 0.001;
+    let water = distance(v.color, vec3(0.16,0.34,0.42)) < 0.001;
     let view = normalize(camera.eye.xyz-v.world);
     var highlight = vec3(0.0);
     if enhanced {
@@ -314,6 +501,12 @@ fn shade(v: Output, alpha: f32) -> vec4<f32> {
             highlight = vec3(0.84,0.81,0.62)*pow(max(dot(normal,half_vector),0.0),80.0)*0.55;
         }
     }
+    // Flooded coarse terrain: the far sea of a distance ring, drawn by this
+    // opaque pass in the water colour. It reads as a surface only where the
+    // sample asked for it, and never in the wetland's own enhanced path.
+    if water && !enhanced && normal.y > 0.5 && lighting.water.x > 0.5 {
+        return water_surface(v.world, lighting.water.z, true);
+    }
     let sunlight = max(dot(normal, lighting.sun.xyz), 0.0);
     let ambient = 0.28 + 0.12 * max(normal.y, 0.0);
     let visibility = shadow_visibility(v.world,v.normal);
@@ -329,11 +522,14 @@ fn shade(v: Output, alpha: f32) -> vec4<f32> {
         lit = mix(lit, sample.color, mirror);
     }
     let fog = 1.0 - exp(-path_length * lighting.atmosphere.w);
-    return vec4(mix(lit, sky_color(), fog), alpha);
+    return vec4(mix(lit, sky_color(), fog), 1.0);
 }
 @fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
-    return shade(v, 1.0);
+    return shade(v);
 }
+// Derived water surface. The vertex colour is the bed depth under this corner,
+// not a colour: `matterweave_core::water` owns that encoding and this entry owns
+// the palette.
 @fragment fn fs_water(v: Output) -> @location(0) vec4<f32> {
-    return shade(v, WATER_ALPHA);
+    return water_surface(v.world, v.color.r * WATER_MAX_DEPTH_M, false);
 }

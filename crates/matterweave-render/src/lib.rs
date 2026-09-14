@@ -27,7 +27,7 @@ use clouds::{SkyPass, SkyPush};
 use frustum::Frustum;
 pub use hud::Hud;
 pub use lighting::{
-    Atmosphere, LightingSettings, PlayerPush, Sun, Wind, DEFAULT_FOG_DENSITY, DEFAULT_SKY,
+    Atmosphere, LightingSettings, PlayerPush, Sun, Water, Wind, DEFAULT_FOG_DENSITY, DEFAULT_SKY,
 };
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -2355,6 +2355,12 @@ impl Renderer {
                 .count();
             if self.water_visible > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.water);
+                // The static-scene and flora batches above leave their own
+                // instance and wind records bound. A water quad is not an
+                // instance of anything: without this rebind it inherits the last
+                // batch's translation and scale, and the whole surface is drawn
+                // somewhere else at somebody else's size.
+                d.cmd_bind_vertex_buffers(cmd, 1, &[self.identity.raw, self.identity.raw], &[0, 0]);
                 let visible = self.water.values().filter(|mesh| {
                     self.world_visible && mesh.index_count > 0 && frustum.intersects(mesh.bounds)
                 });
