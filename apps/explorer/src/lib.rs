@@ -1804,6 +1804,9 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     // it while its own recorder is still paused in the menu.
     if landscape::marker_present(&directory) {
         let mut sample = landscape::LandscapeSample::new(directory.join("world.json"), None);
+        // The phone entry: this path, not the desktop flag above, is the one a
+        // device run takes, so the exercise marker has to be read here too.
+        sample.exercise = landscape::exercise_marker_present(&directory);
         if let Err(e) = event_loop.run_app(&mut sample) {
             log::error!("Landscape sample: {e}");
         }
