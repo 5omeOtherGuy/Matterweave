@@ -32,7 +32,7 @@ use matterweave_core::landscape::{
 use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
     Atmosphere, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun,
-    TerrainTileKey, Wind, MAX_TERRAIN_TILES,
+    TerrainTileKey, Water, Wind, MAX_TERRAIN_TILES,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -319,6 +319,39 @@ fn spawn_camera() -> Camera {
     }
 }
 
+/// Direction to the sun for this sample.
+///
+/// A fixed mid-morning sun, unless `MATTERWEAVE_LANDSCAPE_SUN` names another
+/// one as `x,y,z`. Several acceptance measurements - a sun specular on water, a
+/// flora cast shadow - are only defined for a sun elevation the sample does not
+/// otherwise have, and re-measuring them on the device has to be possible
+/// without a private build. A malformed or degenerate value is reported and the
+/// default is used: this must never be a reason the sample fails to start.
+fn sun_direction() -> [f32; 3] {
+    const DEFAULT: [f32; 3] = [0.35, 0.82, 0.45];
+    let Ok(text) = std::env::var("MATTERWEAVE_LANDSCAPE_SUN") else {
+        return DEFAULT;
+    };
+    let parsed: Vec<f32> = text
+        .split(',')
+        .filter_map(|part| part.trim().parse::<f32>().ok())
+        .collect();
+    let direction = match parsed[..] {
+        [x, y, z] => [x, y, z],
+        _ => {
+            log::warn!("MATTERWEAVE_LANDSCAPE_SUN={text:?} is not x,y,z; using the default sun");
+            return DEFAULT;
+        }
+    };
+    let length = direction.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if !length.is_finite() || length < 1.0e-3 {
+        log::warn!("MATTERWEAVE_LANDSCAPE_SUN={text:?} is degenerate; using the default sun");
+        return DEFAULT;
+    }
+    log::info!("Landscape sun from the environment: {direction:?}");
+    direction
+}
+
 /// Fly camera. The shared [`Camera::update`] is tuned for the 512 m sandbox
 /// (10 m/s, 70 m ceiling, a 240 m far plane); a six kilometre view needs its own
 /// speed, ceiling and projection, so only the yaw/pitch convention is shared.
@@ -534,7 +567,7 @@ impl LandscapeSample {
             controls: Controls::default(),
             lighting: LightingSettings {
                 sun: Sun {
-                    direction_to_sun: [0.35, 0.82, 0.45],
+                    direction_to_sun: sun_direction(),
                     intensity: 0.85,
                 },
                 shadows: true,
@@ -561,6 +594,14 @@ impl LandscapeSample {
                 // Off unless the run asks: the phone decides what this costs,
                 // and the default frame stays the one every capture compared.
                 clouds: Clouds::default(),
+                // The sea of this sample is two surfaces: the derived pass
+                // inside the streaming window, and the flooded cells of every
+                // ring beyond it. Both have to read as water or the window
+                // boundary becomes the shoreline.
+                water: Water {
+                    coarse_surfaces: true,
+                    time_s: 0.,
+                },
             },
             walking: false,
             plan: Vec::new(),
@@ -982,6 +1023,9 @@ impl LandscapeSample {
             position: eye,
             radius_m: PUSH_RADIUS_M,
         };
+        // Ripples run on the same clock as the wind: one scene time, folded by
+        // the renderer.
+        self.lighting.water.time_s = self.wind_time;
         // The cloud layer drifts on its own clock. Switching the setting off
         // frees the offscreen target on the next frame; switching it back on
         // resumes where the clock has moved to, not where it was left.
