@@ -3,13 +3,15 @@
 //! These cover exactly the parts that can be checked without a device: how a
 //! flora placement is packed into the second per-instance attribute, that a
 //! non-flora scene packs the zero record the shader early-outs on, that the
-//! budgets reject rather than truncate, and that the shader and the Rust
-//! uniform agree about what location 4 and the two new uniform fields are.
+//! budgets reject rather than truncate, that scaled instances grow their culling
+//! bounds, and that the shaders and the Rust uniform agree about what location 4
+//! and the two new uniform fields are.
 
 use crate::lighting::{PlayerPush, Wind};
 use crate::static_scene::{
     plan_flora_scene, plan_static_scene, FloraInstance, StaticInstance, MAX_FLORA_BYTES,
-    MAX_FLORA_HEIGHT_M, MAX_FLORA_INSTANCES, MAX_WIND_DISPLACEMENT_M, WIND_RECORD_SIZE, ZERO_WIND,
+    MAX_FLORA_HEIGHT_M, MAX_FLORA_INSTANCES, MAX_FLORA_SCALE, MAX_PLAYER_PUSH_M,
+    MAX_WIND_DISPLACEMENT_M, MAX_WIND_SWAY_M, WIND_RECORD_SIZE, ZERO_WIND,
 };
 use crate::LightingSettings;
 use matterweave_core::{Mesh, Vertex};
@@ -37,6 +39,7 @@ fn flora(prototype: usize, translation: [f32; 3], phase: f32, bend: f32) -> Flor
         phase,
         bend,
         height_m: 0.5,
+        scale: 1.0,
     }
 }
 
@@ -48,7 +51,7 @@ fn wind_records(bytes: &[u8]) -> Vec<[f32; 4]> {
 }
 
 #[test]
-fn the_wind_record_is_one_vec4_of_phase_bend_height_and_enable() {
+fn the_wind_record_is_one_vec4_of_phase_bend_height_and_scale() {
     assert_eq!(WIND_RECORD_SIZE, 16, "location 4 is one vec4<f32>");
     assert_eq!(ZERO_WIND.data, [0.0; 4]);
     let plan = plan_flora_scene(
@@ -56,6 +59,7 @@ fn the_wind_record_is_one_vec4_of_phase_bend_height_and_enable() {
         &[
             FloraInstance {
                 height_m: 1.25,
+                scale: 0.75,
                 ..flora(0, [3., 0., -4.], 0.25, 0.75)
             },
             flora(0, [0., 0., 0.], 1.0, 0.0),
@@ -69,8 +73,8 @@ fn the_wind_record_is_one_vec4_of_phase_bend_height_and_enable() {
     assert!(plan.wind_capable);
     assert_eq!(
         wind_records(&plan.wind_bytes),
-        vec![[0.25, 0.75, 1.25, 1.0], [1.0, 0.0, 0.5, 1.0]],
-        "declared order is (phase, bend, height_m, enabled)"
+        vec![[0.25, 0.75, 1.25, 0.75], [1.0, 0.0, 0.5, 1.0]],
+        "declared order is (phase, bend, height_m, scale)"
     );
 }
 
@@ -100,11 +104,25 @@ fn non_flora_uploads_leave_the_wind_attribute_zero() {
             "a static instance must pack the disabled wind record"
         );
     }
-    // `wind.w = 0` is what the shader early-outs on, so this is the guarantee
-    // that existing geometry is untouched.
+    // `wind.w == 0` is both the scale the shader reads as "not flora" and the
+    // early-out for the displacement, so this is the guarantee that existing
+    // geometry is drawn unscaled, exactly where it was.
     assert!(wind_records(&plan.wind_bytes)
         .iter()
-        .all(|record| record[3] < 0.5));
+        .all(|record| record[3] <= 0.0));
+    // The same draw path is used for every non-instanced mesh: the identity
+    // record binds to both bindings, and the shader's `select` turns the zero
+    // scale back into 1.0 for the local vertex position.
+    let world = include_str!("world.wgsl");
+    assert!(
+        world.contains("select(1.0, v.wind.w, v.wind.w > 0.0)"),
+        "world.wgsl must draw a zero-scale record unscaled"
+    );
+    let shadow = include_str!("shadow.wgsl");
+    assert!(
+        shadow.contains("select(1.0, wind.w, wind.w > 0.0)"),
+        "shadow.wgsl must draw a zero-scale record unscaled"
+    );
 }
 
 #[test]
@@ -126,6 +144,82 @@ fn flora_bounds_grow_by_the_wind_margin_and_static_bounds_do_not() {
     // Height is never inflated: displacement is horizontal.
     assert_eq!(flora_plan.bounds[0][1], static_plan.bounds[0][1]);
     assert_eq!(flora_plan.bounds[1][1], static_plan.bounds[1][1]);
+}
+
+#[test]
+fn the_batch_margin_covers_the_validated_wind_and_push_limits() {
+    // Recompute the shader's worst case from the *validated* maxima rather than
+    // from the sample's weather: the sine pair spans ±1.5, bend is in 0..=1,
+    // strength is capped at Wind::MAX_STRENGTH_M and the push peaks at half the
+    // capped radius. Both terms can point the same way, so the margin is their
+    // sum - 6.25 m where the old hand-tuned constant claimed 2.5 m.
+    let worst_sway = 1.5 * Wind::MAX_STRENGTH_M;
+    let worst_push = 0.5 * PlayerPush::MAX_RADIUS_M;
+    assert!((MAX_WIND_SWAY_M - worst_sway).abs() < 1.0e-6);
+    assert!((MAX_PLAYER_PUSH_M - worst_push).abs() < 1.0e-6);
+    assert!(
+        MAX_WIND_DISPLACEMENT_M >= worst_sway + worst_push,
+        "margin {} does not cover {} + {}",
+        MAX_WIND_DISPLACEMENT_M,
+        worst_sway,
+        worst_push
+    );
+    // The shader terms this derivation depends on, checked where they are written.
+    let world = include_str!("world.wgsl");
+    assert!(
+        world.contains("0.5 * sin(time * freq * 1.7 + phase * 3.1)"),
+        "the sway span the margin is derived from must still be sin + 0.5 sin"
+    );
+    assert!(
+        world.contains("* radius * 0.5 * h"),
+        "the push bullet the margin is derived from must still peak at radius / 2"
+    );
+    assert!(
+        world.contains("bend * scale * strength * pow(h, 1.5)"),
+        "the sway term must still be bounded by bend * strength * 1.5"
+    );
+    // A plant displaced by the whole worst case must stay inside the batch
+    // bounds its instance grew by. The prototype's far corner is (1, 0) at
+    // scale 1 and (scale, 0) after scaling; sway scales with the instance and
+    // the push does not.
+    for scale in [0.75f32, 1.0, 1.25, MAX_FLORA_SCALE] {
+        let plan = plan_flora_scene(
+            &[triangle()],
+            &[FloraInstance {
+                scale,
+                ..flora(0, [0., 0., 0.], 0., 1.)
+            }],
+        )
+        .unwrap();
+        let margin = worst_sway * scale + worst_push;
+        let displaced = [scale + margin, 0., margin];
+        for axis in [0usize, 2] {
+            assert!(
+                plan.bounds[1][axis] >= displaced[axis],
+                "scale {scale}: max bound {} is inside the displaced corner {}",
+                plan.bounds[1][axis],
+                displaced[axis]
+            );
+            assert!(
+                plan.bounds[0][axis] <= -margin,
+                "scale {scale}: min bound {} is inside the displaced corner {}",
+                plan.bounds[0][axis],
+                -margin
+            );
+        }
+    }
+    // A static instance is never grown: it carries the zero record, whose scale
+    // is 0, and its displacement is therefore zero as well.
+    let static_plan = plan_static_scene(
+        &[triangle()],
+        &[StaticInstance {
+            prototype: 0,
+            translation: [0., 0., 0.],
+            yaw_quarters: 0,
+        }],
+    )
+    .unwrap();
+    assert_eq!(static_plan.bounds, [[0., 0., 0.], [1., 2., 0.]]);
 }
 
 #[test]
@@ -183,8 +277,55 @@ fn invalid_wind_fields_are_rejected_before_anything_is_packed() {
             height_m: MAX_FLORA_HEIGHT_M,
             ..flora(0, [0.; 3], 0.5, 0.5)
         },
+        FloraInstance {
+            scale: MAX_FLORA_SCALE,
+            height_m: MAX_FLORA_HEIGHT_M / MAX_FLORA_SCALE,
+            ..flora(0, [0.; 3], 0.5, 0.5)
+        },
     ] {
         plan_flora_scene(&meshes, &[good]).unwrap();
+    }
+    // Scale is validated as strictly as the rest of the record, and the height
+    // cap applies to the height the shader actually sees (`height_m * scale`).
+    for (name, bad) in [
+        (
+            "zero scale",
+            FloraInstance {
+                scale: 0.0,
+                ..flora(0, [0.; 3], 0.5, 0.5)
+            },
+        ),
+        (
+            "negative scale",
+            FloraInstance {
+                scale: -1.0,
+                ..flora(0, [0.; 3], 0.5, 0.5)
+            },
+        ),
+        (
+            "scale not finite",
+            FloraInstance {
+                scale: f32::NAN,
+                ..flora(0, [0.; 3], 0.5, 0.5)
+            },
+        ),
+        (
+            "scale past the cap",
+            FloraInstance {
+                scale: MAX_FLORA_SCALE + 0.1,
+                ..flora(0, [0.; 3], 0.5, 0.5)
+            },
+        ),
+        (
+            "scaled height past the cap",
+            FloraInstance {
+                height_m: MAX_FLORA_HEIGHT_M,
+                scale: 1.5,
+                ..flora(0, [0.; 3], 0.5, 0.5)
+            },
+        ),
+    ] {
+        assert!(plan_flora_scene(&meshes, &[bad]).is_err(), "{name}");
     }
 }
 
@@ -222,18 +363,24 @@ fn the_shaders_and_the_pipeline_agree_about_the_wind_attribute() {
         "world.wgsl must declare the wind attribute at location 4"
     );
     assert!(
-        world.contains("if wind.w < 0.5 { return world_position; }"),
-        "world.wgsl must early-out on a disabled wind record"
+        world.contains("if wind.w <= 0.0 { return rest; }"),
+        "world.wgsl must early-out on a zero-scale wind record"
     );
     assert!(
         world.contains("wind: vec4<f32>") && world.contains("player: vec4<f32>"),
         "world.wgsl must read the wind and player uniform fields"
     );
-    // The shadow pass deliberately does not consume the attribute; casters use
-    // their rest pose. See `Shadow::record`.
+    // The shadow pass consumes the scale slot so a scaled caster casts a scaled
+    // shadow, and deliberately does not displace: casters use their rest pose.
+    // See `Shadow::record`.
+    let shadow = include_str!("shadow.wgsl");
     assert!(
-        !include_str!("shadow.wgsl").contains("@location(4)"),
-        "shadow.wgsl must not read the wind attribute"
+        shadow.contains("@location(4) wind: vec4<f32>"),
+        "shadow.wgsl must read the scale from the wind record"
+    );
+    assert!(
+        !shadow.contains("displace("),
+        "shadow.wgsl must not displace casters"
     );
     assert!(
         !include_str!("hud.wgsl").contains("@location(4)"),

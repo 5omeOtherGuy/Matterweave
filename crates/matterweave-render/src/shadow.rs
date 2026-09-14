@@ -548,10 +548,11 @@ impl Shadow {
     /// offscreen casters are retained; non-instanced meshes draw one identity
     /// instance through the shared record at `identity`.
     ///
-    /// `shadow.wgsl` does not read the wind attribute: flora casts from its
-    /// rest pose, so a swaying plant's shadow does not sway with it. That is a
-    /// stated limitation of this slice, not an oversight - the alternative is a
-    /// second copy of the displacement maths that must stay bit-identical to
+    /// `shadow.wgsl` reads the per-instance scale from the wind record and
+    /// nothing else from it: flora casts from its rest pose at its drawn size,
+    /// so a swaying plant's shadow does not sway with it. That is a stated
+    /// limitation of this slice, not an oversight - the alternative is a second
+    /// copy of the displacement maths that must stay bit-identical to
     /// `world.wgsl`'s, and grass shadows are centimetres wide.
     pub fn record<'a>(
         &mut self,

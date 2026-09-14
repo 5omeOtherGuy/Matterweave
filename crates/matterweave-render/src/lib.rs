@@ -35,7 +35,8 @@ use shadow::Shadow;
 use static_scene::StaticScene;
 pub use static_scene::{
     FloraInstance, StaticInstance, StaticSceneStats, MAX_FLORA_BYTES, MAX_FLORA_HEIGHT_M,
-    MAX_FLORA_INSTANCES, MAX_WIND_DISPLACEMENT_M,
+    MAX_FLORA_INSTANCES, MAX_FLORA_SCALE, MAX_PLAYER_PUSH_M, MAX_WIND_DISPLACEMENT_M,
+    MAX_WIND_SWAY_M,
 };
 use std::{collections::BTreeMap, ffi::CStr, sync::Arc, time::Instant};
 pub use timing::GpuTimings;
@@ -809,10 +810,10 @@ fn pipeline(
                 }];
                 // World and shadow pipelines read one packed instance record
                 // (translation xyz, quarter yaw) per instance at location 3 and
-                // one wind record (phase, bend, height, enabled) at location 4.
+                // one wind record (phase, bend, height, scale) at location 4.
                 // Legacy/chunk/dynamic draws bind a single identity record to
-                // both; the shader's `wind.w < 0.5` early-out then leaves their
-                // geometry exactly where it was.
+                // both; the shader's `wind.w <= 0.0` early-out then leaves their
+                // geometry exactly where it was, at its own scale.
                 if !hud {
                     for binding in [1, 2] {
                         bindings.push(vk::VertexInputBindingDescription {
