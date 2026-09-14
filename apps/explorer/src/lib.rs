@@ -1636,7 +1636,9 @@ pub fn run_desktop() {
     // equivalent and wins when both are present.
     if landscape_sample || landscape::marker_present(&directory) {
         let mut sample = landscape::LandscapeSample::new(save_path, smoke_frames);
-        sample.exercise = landscape_exercise;
+        // The flag wins on the desktop; the marker is how a device run selects
+        // the scripted path, since a phone has no command line.
+        sample.exercise = landscape_exercise || landscape::exercise_marker_present(&directory);
         event_loop
             .run_app(&mut sample)
             .expect("landscape event loop run");

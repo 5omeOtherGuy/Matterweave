@@ -104,6 +104,41 @@ const SKY: [f32; 3] = [0.60, 0.71, 0.82];
 /// the sample. A marker that cannot be read, or that exceeds the bound, is
 /// reported and treated as absent - a broken marker must not stop the app from
 /// starting, and this file is never a game save.
+/// Marker selecting the scripted exercise path (a 200 m circle flown at 60 m):
+/// the device entry for streaming and per-frame-budget evidence, because a
+/// phone run has no command line.
+pub const EXERCISE_MARKER_FILE: &str = "landscape-exercise.txt";
+
+/// True when the exercise marker is present and readable, with the same
+/// tolerance as [`marker_present`]: an unreadable marker is reported and
+/// treated as absent rather than failing the run.
+pub fn exercise_marker_present(directory: &Path) -> bool {
+    use std::io::Read;
+    let path = directory.join(EXERCISE_MARKER_FILE);
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(error) => {
+            log::warn!("Exercise marker {}: {error}", path.display());
+            return false;
+        }
+    };
+    let mut text = String::new();
+    if let Err(error) = file.take(MAX_MARKER_BYTES + 1).read_to_string(&mut text) {
+        log::warn!("Exercise marker {}: {error}", path.display());
+        return false;
+    }
+    if text.len() as u64 > MAX_MARKER_BYTES {
+        log::warn!(
+            "Exercise marker {}: larger than {MAX_MARKER_BYTES} bytes",
+            path.display()
+        );
+        return false;
+    }
+    let text = text.trim();
+    text.is_empty() || !text.eq_ignore_ascii_case("off")
+}
+
 pub fn marker_present(directory: &Path) -> bool {
     use std::io::Read;
     let path = directory.join(MARKER_FILE);
@@ -1308,6 +1343,34 @@ mod tests {
         )
         .unwrap();
         assert!(!marker_present(&dir));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_exercise_marker_is_a_separate_opt_in_with_an_off_switch() {
+        let dir = temp_dir("exercise-marker");
+        assert!(
+            !exercise_marker_present(&dir),
+            "a plain landscape run must not fly itself"
+        );
+        // The two markers are independent: selecting the sample does not
+        // select the scripted path.
+        std::fs::write(dir.join(MARKER_FILE), "").unwrap();
+        assert!(!exercise_marker_present(&dir));
+        std::fs::write(dir.join(EXERCISE_MARKER_FILE), "").unwrap();
+        assert!(exercise_marker_present(&dir), "an empty marker selects it");
+        std::fs::write(dir.join(EXERCISE_MARKER_FILE), "on\n").unwrap();
+        assert!(exercise_marker_present(&dir));
+        // `off` is the documented way to keep the file but stop the flight, so
+        // a captured run can be replayed without deleting the marker.
+        std::fs::write(dir.join(EXERCISE_MARKER_FILE), "OFF\n").unwrap();
+        assert!(!exercise_marker_present(&dir));
+        std::fs::write(
+            dir.join(EXERCISE_MARKER_FILE),
+            "x".repeat(MAX_MARKER_BYTES as usize + 1),
+        )
+        .unwrap();
+        assert!(!exercise_marker_present(&dir));
         std::fs::remove_dir_all(&dir).ok();
     }
 
