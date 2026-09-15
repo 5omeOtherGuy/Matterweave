@@ -155,10 +155,12 @@ impl Biome {
     /// Second, independent ground-cover pressure in `0..=64` per flora slot.
     ///
     /// One clump per metre column still leaves the ground showing between
-    /// clumps at the grazing angle a walking eye sees it from. This slot fills
-    /// those gaps with a second clump on its own hash, so two clumps can share a
-    /// metre column; it is 0 where ground cover is meant to be thin, so the
-    /// sparse biomes keep their single sparse layer.
+    /// clumps at the grazing angle a walking eye sees it from, because a clump
+    /// is a clump of thin blades and not a mat. This slot rolls its own hash, so
+    /// a second clump can stand in the same metre column: the pair is one denser
+    /// tuft rather than two clumps apart, which is what closes the gaps without
+    /// a prototype the size of the gap. It is 0 where ground cover is meant to
+    /// be thin, so the sparse biomes keep their single sparse layer.
     pub fn understory_density(self) -> u8 {
         match self {
             Biome::Ocean | Biome::Snow | Biome::Desert => 0,
@@ -734,9 +736,8 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
             push(kind, grass_roll >> 32);
         }
         // A second ground-cover slot on its own roll, so a metre column can
-        // carry two clumps and the gaps between the first layer's clumps are
-        // filled. It uses the understory pressure, which is zero where cover is
-        // meant to be thin.
+        // carry two clumps and the pair reads as one denser tuft. It uses the
+        // understory pressure, which is zero where cover is meant to be thin.
         let understory_roll = hash3(seed ^ SALT_FLORA ^ 0x2f11_9a3d, x, z);
         let understory = column.biome.understory_density() as i32;
         if understory > 0 && ((understory_roll & 0xFFFF) as i32) < understory * 1024 {

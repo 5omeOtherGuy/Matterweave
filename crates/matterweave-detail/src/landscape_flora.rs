@@ -2,17 +2,18 @@
 //!
 //! This is the geometry half of the dense-field work. It turns the placement
 //! vocabulary of [`matterweave_core::landscape`] ([`FloraKind`], [`FloraSite`])
-//! into buildable [`DetailVolume`] prototypes: grass tufts, three flower
-//! colours, ferns, shrubs, cacti, broadleaf and conifer trees. A later worker
-//! instances them in the landscape sample and animates them.
+//! into buildable [`DetailVolume`] prototypes: grass clumps, three flower
+//! colours, ferns, shrubs, cacti, broadleaf and conifer trees. The landscape
+//! sample pools these prototypes, instances them along the plan and animates
+//! them through the renderer's wind path.
 //!
 //! Conventions follow [`crate::flora`] exactly: integer construction,
 //! connected bodies (one six-connected solid, not floating cells), a compact
 //! ground-contact pad at local y = 0, deterministic id-independent geometry,
-//! and an explicit per-prototype scale. Everything here builds at 12.5 cm
-//! cells ([`LANDSCAPE_LEAF_SCALE_M`]), including trees: at that scale the
-//! large broadleaf is ~3.5 m tall, which fits the caps below with room to
-//! spare, so no 25 cm exception is needed.
+//! and an explicit per-prototype scale. Ground cover is built at 6.25 cm cells
+//! ([`LANDSCAPE_FINE_FLORA_SCALE_M`]) so a blade is one voxel across;
+//! everything woody builds at 12.5 cm ([`LANDSCAPE_LEAF_SCALE_M`]), where the
+//! large broadleaf is ~6.9 m tall and fits the caps below with room to spare.
 //!
 //! Every prototype is fully [`MaterialPolicy::Decorative`]: nothing here
 //! collides. Walking through a trunk is a documented choice for this version,
