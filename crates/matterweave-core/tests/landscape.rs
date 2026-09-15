@@ -328,9 +328,12 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // tile meshes are derived render output: this digest moves whenever the mesh
     // builder changes, so a value change is expected exactly when the builder
     // changed on purpose, and the old and new values belong in the change that
-    // made it.
+    // made it. This value moved with the per-voxel surface tone
+    // (`material::tone`), which reaches every tile as `TopRect::tone` /
+    // `WallRun::tone`: 0x63ec_1387_d1e7_09da before the tone, this after.
+    // Vertex positions, normals, counts and indices are unchanged by it.
     assert_eq!(
-        value, 0x63ec_1387_d1e7_09da,
+        value, 0xc8c5_258b_e67a_f422,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }
