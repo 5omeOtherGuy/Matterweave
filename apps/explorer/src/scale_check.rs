@@ -31,7 +31,7 @@ impl ImageDifference {
 /// are not equal or not a multiple of four: a mismatched pair is a bug in the
 /// gate, not a large difference.
 pub fn image_difference(a: &[u8], b: &[u8]) -> Option<ImageDifference> {
-    if a.len() != b.len() || a.len() % 4 != 0 || a.is_empty() {
+    if a.len() != b.len() || !a.len().is_multiple_of(4) || a.is_empty() {
         return None;
     }
     let mut over = 0usize;

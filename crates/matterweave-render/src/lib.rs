@@ -255,6 +255,22 @@ struct GpuMesh {
     index_count: u32,
     revision: u64,
     bounds: [[f32; 3]; 2],
+    /// Content identity, independent of the revision. Streaming re-publishes
+    /// whole windows under new revisions; equal bytes mean the drawn geometry
+    /// is unchanged, which is what the GPU and the shadow cache actually
+    /// depend on.
+    digest: u64,
+}
+
+/// Hash of the mesh bytes a draw consumes. Revisions distinguish publications;
+/// this distinguishes geometry, which is what a renderer must react to.
+fn mesh_digest(mesh: &Mesh) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let vertices: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+    vertices.hash(&mut hasher);
+    mesh.indices.hash(&mut hasher);
+    hasher.finish()
 }
 
 pub(crate) fn validate_mesh(mesh: &Mesh) -> Result<(u32, [[f32; 3]; 2])> {
@@ -322,7 +338,15 @@ impl GpuMesh {
             index_count,
             revision: mesh.revision,
             bounds,
+            digest: mesh_digest(mesh),
         })
+    }
+
+    /// Whether `mesh` draws exactly what this resident mesh draws. Equal content
+    /// under a newer revision is a re-publication of the same geometry: no
+    /// buffer write, no shadow-cache retirement.
+    fn same_content(&self, mesh: &Mesh) -> bool {
+        self.digest == mesh_digest(mesh)
     }
 
     fn allocated_bytes(&self) -> usize {
@@ -337,6 +361,7 @@ impl GpuMesh {
             self.index_count = 0;
             self.revision = mesh.revision;
             self.bounds = bounds;
+            self.digest = mesh_digest(mesh);
             return Ok(true);
         }
         let (Some(v), Some(i)) = (&self.vertices, &self.indices) else {
@@ -379,6 +404,7 @@ impl GpuMesh {
         self.index_count = count;
         self.revision = mesh.revision;
         self.bounds = bounds;
+        self.digest = mesh_digest(mesh);
         Ok(true)
     }
 }
@@ -1731,6 +1757,20 @@ impl Renderer {
         if self.mesh_revision.is_some_and(|r| r > mesh.revision) {
             return Ok(());
         }
+        if self.chunks.is_empty()
+            && self
+                .legacy
+                .as_ref()
+                .is_some_and(|resident| resident.same_content(mesh))
+        {
+            // Same geometry, newer revision, no resident chunk set: keep the
+            // buffers and the shadow map. A non-empty chunk set means this
+            // upload is switching the drawn path, which clears them below and
+            // therefore changes the caster set.
+            self.legacy.as_mut().expect("checked above").revision = mesh.revision;
+            self.mesh_revision = Some(mesh.revision);
+            return Ok(());
+        }
         let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
         self.upload_waits.record(wait);
@@ -1748,6 +1788,17 @@ impl Renderer {
     /// Older revisions are ignored. A successful upload switches off legacy mesh.
     pub fn upload_chunk(&mut self, key: [i32; 3], mesh: &Mesh) -> Result<()> {
         if superseded_revision(self.chunk_revision(key), mesh.revision) {
+            return Ok(());
+        }
+        // A streamed window is re-published whole under fresh revisions. When
+        // the bytes are the same the GPU already draws exactly this geometry,
+        // so the upload and the shadow-cache retirement are both spurious.
+        if self
+            .chunks
+            .get(&key)
+            .is_some_and(|resident| resident.same_content(mesh))
+        {
+            self.chunks.get_mut(&key).expect("checked above").revision = mesh.revision;
             return Ok(());
         }
         let wait = self.upload_waits.timed_begin();
@@ -1785,6 +1836,17 @@ impl Renderer {
                 "Terrain tile cache is bounded to {MAX_TERRAIN_TILES} tiles"
             ));
         }
+        if self
+            .terrain
+            .get(&(level, key))
+            .is_some_and(|resident| resident.same_content(mesh))
+        {
+            self.terrain
+                .get_mut(&(level, key))
+                .expect("checked above")
+                .revision = mesh.revision;
+            return Ok(());
+        }
         let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
         self.upload_waits.record(wait);
@@ -1816,6 +1878,14 @@ impl Renderer {
     /// key resident so a later edit can refill it without a rebuild decision.
     pub fn upload_water_chunk(&mut self, key: [i32; 3], mesh: &Mesh) -> Result<()> {
         if superseded_revision(self.water_revision(key), mesh.revision) {
+            return Ok(());
+        }
+        if self
+            .water
+            .get(&key)
+            .is_some_and(|resident| resident.same_content(mesh))
+        {
+            self.water.get_mut(&key).expect("checked above").revision = mesh.revision;
             return Ok(());
         }
         let wait = self.upload_waits.timed_begin();
@@ -1899,6 +1969,14 @@ impl Renderer {
     /// the frame fence; grows transactionally when geometry exceeds capacity.
     /// Revision is informational here: changing transforms may retain a revision.
     pub fn upload_dynamic(&mut self, mesh: &Mesh) -> Result<()> {
+        if self
+            .dynamic
+            .as_ref()
+            .is_some_and(|resident| resident.same_content(mesh))
+        {
+            self.dynamic.as_mut().expect("checked above").revision = mesh.revision;
+            return Ok(());
+        }
         let wait = self.upload_waits.timed_begin();
         self.commands.wait()?;
         self.upload_waits.record(wait);
@@ -3114,6 +3192,30 @@ mod tests {
         assert!(!super::tile_drawable(behind, 96, true, &frustum));
         assert!(!super::tile_drawable(tile, 0, true, &frustum));
         assert!(!super::tile_drawable(tile, 96, false, &frustum));
+    }
+
+    #[test]
+    fn a_mesh_digest_follows_geometry_not_the_revision() {
+        let vertex = |x: f32| matterweave_core::Vertex {
+            position: [x, 0.0, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 0.0, 0.0],
+        };
+        let mut mesh = matterweave_core::Mesh {
+            vertices: vec![vertex(0.0), vertex(1.0)],
+            indices: vec![0, 1],
+            revision: 3,
+        };
+        let digest = super::mesh_digest(&mesh);
+        // A newer publication of the same bytes is the same drawn geometry.
+        mesh.revision = 9;
+        assert_eq!(super::mesh_digest(&mesh), digest);
+        // Every byte a draw consumes is part of the identity.
+        mesh.vertices[1].position[0] = 1.5;
+        assert_ne!(super::mesh_digest(&mesh), digest);
+        mesh.vertices[1].position[0] = 1.0;
+        mesh.indices[1] = 0;
+        assert_ne!(super::mesh_digest(&mesh), digest);
     }
 
     #[test]

@@ -1482,26 +1482,39 @@ impl LandscapeSample {
             Ok(frame) => frame,
             Err(error) => return self.scale_check_failed(event_loop, &error),
         };
+        let native_render = self
+            .renderer
+            .as_ref()
+            .map_or((0, 0), Renderer::render_extent);
         let scaled = match self.capture_at(scaled_scale, matrix, eye, hud, &lighting) {
             Ok(frame) => frame,
             Err(error) => return self.scale_check_failed(event_loop, &error),
         };
+        let scaled_render = self
+            .renderer
+            .as_ref()
+            .map_or((0, 0), Renderer::render_extent);
         let Some(world_difference) = scale_check::image_difference(&native.rgba, &scaled.rgba)
         else {
             return self.scale_check_failed(event_loop, "captured world images are not comparable");
         };
-        let native_fragments = u64::from(native.width) * u64::from(native.height);
-        let scaled_fragments = u64::from(scaled.width) * u64::from(scaled.height);
+        // Both captures are presented frames, always at the swapchain extent.
+        // What the scale changes is the world extent the renderer allocated, so
+        // the fragment counts have to come from that, not from the capture.
+        let native_fragments = u64::from(native_render.0) * u64::from(native_render.1);
+        let scaled_fragments = u64::from(scaled_render.0) * u64::from(scaled_render.1);
         let reduction = 100.0 * (1.0 - scaled_fragments as f64 / native_fragments as f64);
         eprintln!(
-            "SCALE CHECK WORLD: native {}x{} ({} fragments) vs {scaled_scale:.2} {}x{} ({} fragments, -{reduction:.1}%) \
-             | over 4/255 {:.4}% | mean |delta| {:.3}/255 | identical {}/{}",
+            "SCALE CHECK WORLD: native world {}x{} ({} fragments) vs {scaled_scale:.2} world {}x{} ({} fragments, -{reduction:.1}%) \
+             | present {}x{} | over 4/255 {:.4}% | mean |delta| {:.3}/255 | identical {}/{}",
+            native_render.0,
+            native_render.1,
+            native_fragments,
+            scaled_render.0,
+            scaled_render.1,
+            scaled_fragments,
             native.width,
             native.height,
-            native_fragments,
-            scaled.width,
-            scaled.height,
-            scaled_fragments,
             world_difference.over_4_255 * 100.0,
             world_difference.mean_absolute,
             world_difference.identical,
