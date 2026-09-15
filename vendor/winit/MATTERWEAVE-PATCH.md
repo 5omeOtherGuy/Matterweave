@@ -31,6 +31,17 @@ crates.io package, excluding Cargo's local `.cargo-ok` marker, plus this note,
    it. The global acquisition remains atomic and rejects a second live loop;
    acquisition uses AcqRel and release uses Release. Other platforms retain their
    previous recreation policy.
+3. Android `MainEvent::Pause` and `MainEvent::Resume` now forward the activity
+   state as `WindowEvent::Occluded(true/false)`, an event this backend otherwise
+   never emits. Upstream only flips an internal `running` flag that suppresses
+   redraw dispatch: the application is never told the activity paused, so it
+   could not park workers and its frame-pacing timer stayed armed on a stale
+   deadline. When no redraw is dispatched, that deadline is already in the past,
+   so every iteration re-armed a zero-length timeout and the main thread spun at
+   full CPU with no frames presented. `Occluded` is used instead of synthesizing
+   `Resumed`/`Suspended` because those carry window creation/destruction
+   semantics that android-activity reports separately through
+   `InitWindow`/`TerminateWindow`; a paused activity can still own a live window.
 
 NativeActivity's Java main thread waits for the old Rust main thread to finish
 before completing destruction. android-activity releases `ndk_context` before

@@ -32,6 +32,7 @@ use crate::landscape_flora::{LandscapeFlora, PUSH_RADIUS_M, WIND_DIRECTION_XZ, W
 use crate::landscape_tiles::{TileStream, MAX_TILE_MS, MAX_TILE_UPLOADS};
 use crate::landscape_water::WaterStream;
 use crate::metrics;
+use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
@@ -472,7 +473,9 @@ pub struct LandscapeSample {
     frame_limit: Option<u64>,
     last_frame: Instant,
     frame_ms: f64,
-    focused: bool,
+    /// Platform lifecycle state: window, focus and activity pause. The one gate
+    /// for frames, streaming and both background workers.
+    lifecycle: PlatformLifecycle,
     /// Deterministic camera path for smoke runs. Off by default: it exists to
     /// exercise streaming, eviction and the per-frame budget without input.
     pub exercise: bool,
@@ -589,7 +592,7 @@ impl LandscapeSample {
             frame_limit,
             last_frame: Instant::now(),
             frame_ms: 0.,
-            focused: true,
+            lifecycle: PlatformLifecycle::default(),
             exercise: false,
             return_to_menu: false,
             failed: false,
@@ -618,7 +621,32 @@ impl LandscapeSample {
     }
 
     fn wants_frames(&self) -> bool {
-        self.focused || self.frame_limit.is_some()
+        self.lifecycle.work_allowed()
+            || (self.frame_limit.is_some() && self.lifecycle.present_allowed())
+    }
+    /// Apply one platform lifecycle transition.
+    ///
+    /// Called from the winit callbacks and directly by the headless lifecycle
+    /// test. Takes no winit or GPU types, and must run even when this sample has
+    /// no window: a resume can arrive after `TERM_WINDOW`, before the new
+    /// surface exists. A pause parks both background workers and rebases the
+    /// frame clock, so the pause is never integrated into wind, clouds or water.
+    pub(crate) fn apply_platform(&mut self, event: PlatformEvent) {
+        self.lifecycle.apply(event);
+        match event {
+            PlatformEvent::WindowCreated | PlatformEvent::Resumed => {
+                self.last_frame = Instant::now();
+                self.preparation.resume();
+                self.tiles.resume();
+            }
+            PlatformEvent::Paused | PlatformEvent::WindowDestroyed => {
+                self.preparation.pause();
+                self.tiles.pause();
+                self.controls.clear();
+            }
+            PlatformEvent::LostFocus => self.controls.clear(),
+            PlatformEvent::GainedFocus => self.last_frame = Instant::now(),
+        }
     }
 
     /// Stream the authoritative window and publish its chunk meshes, exactly as
@@ -855,7 +883,9 @@ impl LandscapeSample {
             return;
         }
         let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32();
+        // The gap since the previous frame is clamped and the clock is rebased
+        // on resume: a pause never advances wind, clouds or water in one step.
+        let dt = clamped_frame_delta(self.last_frame, now);
         self.last_frame = now;
         self.frame_ms = if self.frames == 0 {
             0.
@@ -1278,13 +1308,12 @@ impl LandscapeSample {
 
 impl ApplicationHandler for LandscapeSample {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.apply_platform(PlatformEvent::WindowCreated);
         if self.renderer.is_some() {
             return;
         }
         log::info!("Landscape lifecycle resumed");
         self.controls.clear();
-        self.last_frame = Instant::now();
-        self.focused = true;
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("Matterweave | Landscape")
@@ -1353,8 +1382,7 @@ impl ApplicationHandler for LandscapeSample {
         // The water cache holds CPU meshes only; the renderer's surfaces die
         // with it, so only the residency bookkeeping is cleared.
         self.water.forgot_renderer();
-        self.controls.clear();
-        self.focused = false;
+        self.apply_platform(PlatformEvent::WindowDestroyed);
         if let Some(profile) = &mut self.profile {
             if let Err(error) = profile.flush() {
                 log::warn!("Landscape capture flush failed: {error}");
@@ -1380,11 +1408,18 @@ impl ApplicationHandler for LandscapeSample {
                 }
             }
             WindowEvent::Focused(focused) => {
-                self.focused = focused;
-                self.last_frame = Instant::now();
-                if !focused {
-                    self.controls.clear();
-                }
+                self.apply_platform(if focused {
+                    PlatformEvent::GainedFocus
+                } else {
+                    PlatformEvent::LostFocus
+                });
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.apply_platform(if occluded {
+                    PlatformEvent::Paused
+                } else {
+                    PlatformEvent::Resumed
+                });
             }
             WindowEvent::RedrawRequested => self.draw(event_loop),
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1557,6 +1592,59 @@ mod tests {
             assert_eq!(choice, expected);
         }
         assert_eq!(CloudChoice::parse("nonsense"), None);
+    }
+
+    #[test]
+    fn pause_and_resume_gate_frames_and_both_workers() {
+        let dir = temp_dir("lifecycle");
+        let save = dir.join("world.json");
+        let mut sample = LandscapeSample::new(save, None);
+        assert!(!sample.wants_frames(), "no window yet");
+
+        sample.apply_platform(PlatformEvent::WindowCreated);
+        assert!(sample.wants_frames());
+        assert!(!sample.tiles.paused());
+        assert!(!sample.preparation.paused());
+
+        sample.apply_platform(PlatformEvent::Paused);
+        assert!(!sample.wants_frames());
+        assert!(sample.tiles.paused(), "the tile worker must park");
+        assert!(
+            sample.preparation.paused(),
+            "the preparation worker must park"
+        );
+        assert!(
+            sample
+                .lifecycle
+                .frame_timeout(true, sample.last_frame)
+                .is_none(),
+            "a paused sample must block, not arm a timer"
+        );
+        // The quiescence proof at the sample's own surface: no bounded tile
+        // unit completes during a paused interval.
+        let completed = sample.tiles.completed();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(
+            sample.tiles.completed(),
+            completed,
+            "a paused tile worker completed a tile"
+        );
+
+        sample.apply_platform(PlatformEvent::Resumed);
+        sample.apply_platform(PlatformEvent::GainedFocus);
+        assert!(sample.wants_frames());
+        assert!(!sample.tiles.paused(), "the tile worker must re-arm");
+        assert!(
+            !sample.preparation.paused(),
+            "the preparation worker must re-arm"
+        );
+
+        // TERM_WINDOW shuts the gate; INIT_WINDOW opens it again.
+        sample.apply_platform(PlatformEvent::WindowDestroyed);
+        assert!(!sample.wants_frames());
+        sample.apply_platform(PlatformEvent::WindowCreated);
+        assert!(sample.wants_frames());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

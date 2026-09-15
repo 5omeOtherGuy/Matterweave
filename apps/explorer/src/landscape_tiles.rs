@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
-        Arc, Mutex, PoisonError,
+        Arc, Condvar, Mutex, MutexGuard, PoisonError,
     },
     thread::JoinHandle,
     time::Instant,
@@ -167,6 +167,25 @@ struct WorkerState {
     /// Bytes of completed meshes waiting to be collected.
     result_bytes: usize,
     shutdown: bool,
+    /// Set by [`TileMeshWorker::pause`]; cleared by `resume`. The worker takes
+    /// no job while it is set.
+    paused: bool,
+    /// Tiles generated since construction, whether collected or dropped. The
+    /// quiescence proof reads this counter: it must not move while paused.
+    completed: u64,
+}
+
+/// The worker state plus the condition variable that parks it while paused.
+struct WorkerShared {
+    state: Mutex<WorkerState>,
+    wake: Condvar,
+}
+
+impl WorkerShared {
+    fn lock(&self) -> MutexGuard<'_, WorkerState> {
+        // A panicking job must not disable the remaining synchronous engine.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// One bounded background worker that generates tile meshes off the main
@@ -176,7 +195,7 @@ struct WorkerState {
 pub struct TileMeshWorker {
     jobs: Option<SyncSender<TileMeshKey>>,
     results: Option<Receiver<(TileMeshKey, Mesh)>>,
-    state: Arc<Mutex<WorkerState>>,
+    state: Arc<WorkerShared>,
     worker: Option<JoinHandle<()>>,
     seed: u64,
 }
@@ -186,7 +205,10 @@ impl TileMeshWorker {
     pub fn landscape(seed: u64) -> Self {
         let (job_tx, job_rx) = sync_channel(MAX_TILE_JOBS);
         let (result_tx, result_rx) = sync_channel(MAX_TILE_RESULTS);
-        let state = Arc::new(Mutex::new(WorkerState::default()));
+        let state = Arc::new(WorkerShared {
+            state: Mutex::new(WorkerState::default()),
+            wake: Condvar::new(),
+        });
         let worker = std::thread::Builder::new()
             .name("matterweave-tiles".into())
             .spawn({
@@ -195,10 +217,7 @@ impl TileMeshWorker {
             })
             .ok();
         if worker.is_none() {
-            state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .shutdown = true;
+            state.lock().shutdown = true;
         }
         Self {
             jobs: Some(job_tx),
@@ -211,24 +230,46 @@ impl TileMeshWorker {
 
     /// False after worker startup failure or an unexpected worker exit.
     pub fn available(&self) -> bool {
-        !self
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .shutdown
+        !self.state.lock().shutdown
             && self
                 .worker
                 .as_ref()
                 .is_some_and(|worker| !worker.is_finished())
     }
 
+    /// Parks the worker after its current bounded tile finishes. Queued jobs
+    /// and collected results are retained: a pause is a power decision, not an
+    /// invalidation. Idempotent.
+    pub fn pause(&self) {
+        self.state.lock().paused = true;
+    }
+
+    /// Re-arms the worker. A job dequeued before or during the pause runs, and
+    /// queued jobs resume; the wait is a condition variable, never a poll.
+    pub fn resume(&self) {
+        let mut state = self.state.lock();
+        state.paused = false;
+        drop(state);
+        self.state.wake.notify_all();
+    }
+
+    /// Whether the worker is currently parked on the pause gate. Test evidence
+    /// for the quiescence proof; the pause itself is production behavior.
+    #[cfg(test)]
+    pub fn paused(&self) -> bool {
+        self.state.lock().paused
+    }
+
+    /// Tiles this worker generated since construction. Test evidence: the count
+    /// must not move while paused.
+    #[cfg(test)]
+    pub fn completed(&self) -> u64 {
+        self.state.lock().completed
+    }
+
     /// Keys queued or generating, for the log.
     pub fn pending(&self) -> usize {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .active
-            .len()
+        self.state.lock().active.len()
     }
 
     /// Queue one tile. Refused for a key this worker does not generate, a
@@ -244,7 +285,7 @@ impl TileMeshWorker {
         let Some(jobs) = &self.jobs else {
             return false;
         };
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state.lock();
         if state.shutdown || state.active.contains(&key) {
             return false;
         }
@@ -261,7 +302,7 @@ impl TileMeshWorker {
     /// already dropped by the worker's bounds; the key always names the mesh.
     pub fn poll(&mut self) -> Option<(TileMeshKey, Mesh)> {
         let (key, mesh) = self.results.as_ref()?.try_recv().ok()?;
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state.lock();
         state.active.remove(&key);
         state.result_bytes = state.result_bytes.saturating_sub(mesh_bytes(&mesh));
         Some((key, mesh))
@@ -270,36 +311,63 @@ impl TileMeshWorker {
 
 impl Drop for TileMeshWorker {
     fn drop(&mut self) {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .shutdown = true;
-        // Closing the job channel wakes an idle worker; a generating worker
-        // observes the flag after its one bounded job.
+        self.state.lock().shutdown = true;
         self.jobs.take();
+        // Closing the job channel wakes an idle worker; a parked or generating
+        // worker observes the flag on its next pass. Notify so a worker parked
+        // on the pause gate cannot miss the shutdown.
+        self.state.wake.notify_all();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
     }
 }
 
+/// Parks on the pause gate while it is set. Returns false once the worker must
+/// shut down. The wait is a condition variable with no deadline; a paused
+/// worker never polls its queue on a timer.
+fn park_while_paused(shared: &WorkerShared) -> bool {
+    let mut state = shared.lock();
+    while state.paused && !state.shutdown {
+        state = shared
+            .wake
+            .wait(state)
+            .unwrap_or_else(PoisonError::into_inner);
+    }
+    !state.shutdown
+}
+
 fn run_worker(
     jobs: Receiver<TileMeshKey>,
     results: SyncSender<(TileMeshKey, Mesh)>,
-    state: Arc<Mutex<WorkerState>>,
+    shared: Arc<WorkerShared>,
 ) {
-    while let Ok(key) = jobs.recv() {
+    loop {
+        if !park_while_paused(&shared) {
+            return;
+        }
+        let Ok(key) = jobs.recv() else {
+            return;
+        };
+        // A pause that arrived after the dequeue parks this bounded unit until
+        // resume instead of generating it now.
+        if !park_while_paused(&shared) {
+            shared.lock().active.remove(&key);
+            return;
+        }
         let mesh = landscape::lod_tile_mesh(key.seed, key.level, key.key, key.filter);
         let bytes = mesh_bytes(&mesh);
-        let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = shared.lock();
         if state.shutdown {
             state.active.remove(&key);
+            state.completed = state.completed.saturating_add(1);
             return;
         }
         if state.result_bytes + bytes > MAX_TILE_RESULT_BYTES {
             // The collector is behind; drop this result and let the caller ask
             // again rather than buffering without bound.
             state.active.remove(&key);
+            state.completed = state.completed.saturating_add(1);
             continue;
         }
         match results.try_send((key, mesh)) {
@@ -308,6 +376,7 @@ fn run_worker(
                 state.active.remove(&key);
             }
         }
+        state.completed = state.completed.saturating_add(1);
     }
 }
 
@@ -542,6 +611,32 @@ impl TileStream {
     pub fn forgot_renderer(&mut self) {
         self.residency.forgot_renderer();
         self.counters.outstanding = 0;
+    }
+
+    /// Park the generation worker after its current bounded tile. Queued work
+    /// and the CPU cache are retained, so a paused stay on the phone costs no
+    /// meshing time and a resume re-uploads instead of regenerating.
+    pub fn pause(&self) {
+        self.worker.pause();
+    }
+
+    /// Re-arm the generation worker; queued tiles run again.
+    pub fn resume(&self) {
+        self.worker.resume();
+    }
+
+    /// Whether the generation worker is parked on the pause gate. Test evidence
+    /// for the quiescence proof.
+    #[cfg(test)]
+    pub fn paused(&self) -> bool {
+        self.worker.paused()
+    }
+
+    /// Tiles the generation worker completed. The quiescence proof reads this:
+    /// it must not move while paused.
+    #[cfg(test)]
+    pub fn completed(&self) -> u64 {
+        self.worker.completed()
     }
 
     fn key(&self, tile: &RingTile) -> TileMeshKey {
@@ -1128,5 +1223,47 @@ mod tests {
         assert_eq!(mesh.vertices.len(), direct.vertices.len());
         // Collected work frees the key for a later request.
         assert!(worker.request(key));
+    }
+
+    #[test]
+    fn a_paused_worker_generates_nothing_until_resume() {
+        let first = cache_key(1, [0, 0]);
+        let second = cache_key(1, [1, 0]);
+        let mut worker = TileMeshWorker::landscape(SEED);
+
+        // Park before requesting: the queue accepts the requests but the worker
+        // must not generate any of them while paused.
+        worker.pause();
+        assert!(worker.paused());
+        let before = worker.completed();
+        assert!(worker.request(first));
+        assert!(worker.request(second));
+        assert_eq!(worker.pending(), 2, "paused requests stay queued");
+
+        // The quiescence proof: 200 ms paused, no tile completed.
+        let end = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.completed(),
+            before,
+            "a paused worker generated a tile"
+        );
+
+        // Resume drains exactly the queued tiles.
+        worker.resume();
+        assert!(!worker.paused());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut generated = BTreeSet::new();
+        while generated.len() < 2 {
+            if let Some((key, _)) = worker.poll() {
+                generated.insert(key);
+            }
+            assert!(Instant::now() < deadline, "worker produced no tile");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(generated.contains(&first) && generated.contains(&second));
+        assert!(worker.completed() >= before + 2);
     }
 }

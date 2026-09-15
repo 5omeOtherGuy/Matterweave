@@ -154,6 +154,24 @@ impl DetailCollisionCadence {
         }
     }
 
+    /// Parks the preparation worker after its current bounded preparation.
+    /// Queued and staged work is retained; a pause is a power decision, not an
+    /// invalidation, so the scene on resume is the scene on pause. Idempotent.
+    pub fn pause(&mut self) {
+        self.controller.pause();
+    }
+
+    /// Re-arms the preparation worker; queued work runs again.
+    pub fn resume(&mut self) {
+        self.controller.resume();
+    }
+
+    /// Preparations the worker executed. The quiescence proof reads this: it
+    /// must not move while paused.
+    pub fn completed_units(&self) -> u64 {
+        self.controller.completed_units()
+    }
+
     /// Queues preparation of `scene` after an authoritative edit.
     ///
     /// `added` names the world-space `(min, max)` boxes where this edit added

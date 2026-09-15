@@ -9,20 +9,20 @@
              return Err(EventLoopError::RecreationAttempt);
          }
  
-@@ -130,6 +130,13 @@
-     #[cfg(web_platform)]
+@@ -131,6 +131,13 @@
      pub(crate) fn allow_event_loop_recreation() {
          EVENT_LOOP_CREATED.store(false, Ordering::Relaxed);
-+    }
+     }
 +
 +    // Android can destroy and recreate its Activity without restarting the process.
 +    // Called only by the platform loop's last field after its other fields drop.
 +    #[cfg(android_platform)]
 +    pub(crate) fn release_android_event_loop() {
 +        EVENT_LOOP_CREATED.store(false, Ordering::Release);
-     }
++    }
  }
  
+ impl<T> fmt::Debug for EventLoop<T> {
 --- a/src/platform_impl/android/mod.rs
 +++ b/src/platform_impl/android/mod.rs
 @@ -143,6 +143,17 @@
@@ -51,7 +51,40 @@
          })
      }
  
-@@ -287,9 +299,12 @@
+@@ -272,6 +284,19 @@
+                 MainEvent::Resume { .. } => {
+                     debug!("App Resumed - is running");
+                     self.running = true;
++                    // Android pauses and resumes the activity without destroying
++                    // the window, and without a focus event. Forward the pause
++                    // state as occlusion (a standard winit event this backend
++                    // otherwise never emits) so the application can park its
++                    // workers and stop arming frame timers instead of spinning
++                    // on a stale deadline while redraw dispatch is suppressed.
++                    callback(
++                        event::Event::WindowEvent {
++                            window_id: window::WindowId(WindowId),
++                            event: event::WindowEvent::Occluded(false),
++                        },
++                        self.window_target(),
++                    );
+                 },
+                 MainEvent::SaveState { .. } => {
+                     // XXX: how to forward this state to applications?
+@@ -281,15 +306,25 @@
+                 MainEvent::Pause => {
+                     debug!("App Paused - stopped running");
+                     self.running = false;
++                    callback(
++                        event::Event::WindowEvent {
++                            window_id: window::WindowId(WindowId),
++                            event: event::WindowEvent::Occluded(true),
++                        },
++                        self.window_target(),
++                    );
+                 },
+                 MainEvent::Stop => {
+                     // XXX: how to forward this state to applications?
                      warn!("TODO: forward onStop notification to application");
                  },
                  MainEvent::Destroy => {
