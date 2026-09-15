@@ -1,8 +1,17 @@
 use matterweave_core::{Mesh, World, WORLD_LIMIT};
 use std::collections::BTreeSet;
 
-type Surface = ([i32; 3], [i32; 3], [u32; 3]);
-fn surfaces(mesh: &Mesh) -> BTreeSet<Surface> {
+type Surface = ([i32; 3], [i32; 3], u8);
+/// Unit faces covered by each quad, with an outward winding check.
+///
+/// The third element is the material of the cell the quad starts on, taken from
+/// the world rather than from the mesh colour: a merged quad now carries the
+/// mean tone of its cells, so its vertices are no longer one material colour
+/// lookup. Inserting every covered cell under that material is what proves a
+/// quad never grows across a material boundary - the reference mesh tags each
+/// cell with its own material, and the two sets only match if the greedy mesher
+/// used the same one.
+fn surfaces(world: &World, mesh: &Mesh) -> BTreeSet<Surface> {
     let mut result = BTreeSet::new();
     for quad in mesh.vertices.chunks_exact(4) {
         let normal = quad[0].normal.map(|v| v as i32);
@@ -13,15 +22,13 @@ fn surfaces(mesh: &Mesh) -> BTreeSet<Surface> {
             std::array::from_fn(|i| quad.iter().map(|p| p.position[i] as i32).min().unwrap());
         let max: [i32; 3] =
             std::array::from_fn(|i| quad.iter().map(|p| p.position[i] as i32).max().unwrap());
+        let material = world.get(min);
         for a in min[u]..max[u] {
             for b in min[v]..max[v] {
                 let mut cell = min;
                 cell[u] = a;
                 cell[v] = b;
-                assert!(
-                    result.insert((cell, normal, quad[0].color.map(f32::to_bits))),
-                    "duplicate face"
-                );
+                assert!(result.insert((cell, normal, material)), "duplicate face");
             }
         }
     }
@@ -49,14 +56,14 @@ fn greedy_surfaces_exactly_match_reference_materials_boundaries_and_winding() {
     world.set([15, 0, 15], 0);
     world.set([16, 0, 15], 7);
     let reference = world.mesh();
-    let expected = surfaces(&reference);
+    let expected = surfaces(&world, &reference);
     let mut actual = BTreeSet::new();
     let mut count = 0;
     for key in world.chunk_keys() {
         let mesh = world.mesh_chunk(key);
         assert_eq!(Some(mesh.revision), world.chunk_revision(key));
         count += mesh.indices.len();
-        for face in surfaces(&mesh) {
+        for face in surfaces(&world, &mesh) {
             assert!(actual.insert(face));
         }
     }

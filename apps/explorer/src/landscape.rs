@@ -264,6 +264,33 @@ fn spawn_camera() -> Camera {
     }
 }
 
+/// Whether the status panel and touch zones are drawn, from
+/// `MATTERWEAVE_LANDSCAPE_HUD=off`. Developer furniture, not scene content: an
+/// acceptance capture of a surface must not measure its colours through the
+/// 0.52-alpha touch panel, and the desktop panel sits over the near ground.
+/// Anything else, including an absent variable, keeps the HUD every run has.
+fn hud_shown() -> bool {
+    match std::env::var("MATTERWEAVE_LANDSCAPE_HUD") {
+        Ok(text) => !matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "off" | "0" | "no" | "false"
+        ),
+        Err(_) => true,
+    }
+}
+
+/// Wind strength for this sample, from `MATTERWEAVE_LANDSCAPE_WIND=0`. The
+/// flora sways on a frame-time clock, so two captures of the same near ground
+/// never stand at the same phase; an acceptance capture of a surface fixes the
+/// air to compare its own colours. A malformed value keeps the sample's own
+/// weather, and zero is the only override that changes anything.
+fn wind_strength() -> f32 {
+    match std::env::var("MATTERWEAVE_LANDSCAPE_WIND") {
+        Ok(text) => text.trim().parse().unwrap_or(WIND_STRENGTH_M),
+        Err(_) => WIND_STRENGTH_M,
+    }
+}
+
 /// Direction to the sun for this sample.
 ///
 /// A fixed mid-morning sun, unless `MATTERWEAVE_LANDSCAPE_SUN` names another
@@ -483,6 +510,12 @@ pub struct LandscapeSample {
     /// Deterministic camera path for smoke runs. Off by default: it exists to
     /// exercise streaming, eviction and the per-frame budget without input.
     pub exercise: bool,
+    /// Whether [`Self::hud`] draws the status panel. False only when a capture
+    /// run asked for a clean frame; the scene path is identical either way.
+    hud: bool,
+    /// Wind strength this run flies with: the sample's own weather unless a
+    /// capture run fixed the air (see [`wind_strength`]).
+    wind_strength: f32,
     /// Requested by BACK; the owning experience switches menus.
     pub return_to_menu: bool,
     pub failed: bool,
@@ -551,7 +584,7 @@ impl LandscapeSample {
                 // strength are the sample's own weather.
                 wind: Wind {
                     direction_xz: WIND_DIRECTION_XZ,
-                    strength_m: WIND_STRENGTH_M,
+                    strength_m: wind_strength(),
                     time_s: 0.0,
                 },
                 player: PlayerPush {
@@ -603,6 +636,8 @@ impl LandscapeSample {
             frame_ms: 0.,
             lifecycle: PlatformLifecycle::default(),
             exercise: false,
+            hud: hud_shown(),
+            wind_strength: wind_strength(),
             return_to_menu: false,
             failed: false,
         }
@@ -765,6 +800,9 @@ impl LandscapeSample {
 
     fn hud(&self) -> Hud {
         let mut hud = Hud::new(1000., 600.);
+        if !self.hud {
+            return hud;
+        }
         let white = [0.95, 0.97, 0.99, 1.];
         let muted = [0.70, 0.79, 0.86, 1.];
         let accent = [0.62, 0.94, 0.76, 1.];
@@ -961,7 +999,7 @@ impl LandscapeSample {
         self.wind_time += dt.clamp(0.0, 0.1);
         self.lighting.wind = Wind {
             direction_xz: WIND_DIRECTION_XZ,
-            strength_m: WIND_STRENGTH_M,
+            strength_m: self.wind_strength,
             time_s: self.wind_time,
         };
         self.lighting.player = PlayerPush {
