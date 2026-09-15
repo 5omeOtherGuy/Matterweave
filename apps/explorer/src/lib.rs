@@ -16,6 +16,7 @@ mod mesh_cache;
 mod mesh_lighting_check;
 mod metrics;
 mod pacing_check;
+mod platform;
 mod reflection_check;
 mod settings;
 mod terrain_lab;
@@ -28,8 +29,9 @@ mod wetland_state;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
 use matterweave_core::{AsyncWorld, World};
-use matterweave_physics::{DynamicMeshCache, Physics, PhysicsSnapshot};
+use matterweave_physics::{BodyActivity, DynamicMeshCache, Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
+use platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -119,6 +121,16 @@ struct StageCapture {
     dynamic_mesh_build_ms: Option<f64>,
     dynamic_upload_ms: Option<f64>,
 }
+/// The simulation contribution of one frame to the draw diagnostics. The GPU
+/// phase stays in `draw`.
+struct SimFrame {
+    dt: f32,
+    stream_ms: f64,
+    physics_ms: Option<f64>,
+    body_activity: Option<BodyActivity>,
+    fixed_steps: usize,
+}
+
 struct Explorer {
     // Renderer must be dropped before the Android suspend callback returns.
     renderer: Option<Renderer>,
@@ -155,9 +167,15 @@ struct Explorer {
     saves: SaveAccounting,
     profile: Option<metrics::FrameLog>,
     frames: u64,
+    /// Completed simulation frames. Incremented only where a frame body actually
+    /// runs, so the headless lifecycle test can prove that a pause produces no
+    /// ticks at all.
+    ticks: u64,
     smoke_frames: Option<u64>,
     failed: bool,
-    focused: bool,
+    /// Platform lifecycle state: window, focus and activity pause. The one gate
+    /// for frames, simulation and the background preparation worker.
+    lifecycle: PlatformLifecycle,
 }
 impl Explorer {
     fn flush_profile(&mut self) {
@@ -343,9 +361,10 @@ impl Explorer {
             saves: SaveAccounting::default(),
             profile,
             frames: 0,
+            ticks: 0,
             smoke_frames,
             failed: false,
-            focused: true,
+            lifecycle: PlatformLifecycle::default(),
         }
     }
     /// Reads and clears the save accounting; one recorded row consumes it.
@@ -989,35 +1008,22 @@ impl Explorer {
         self.world
             .stream_contains_position([position.x, 0., position.z], 2.)
     }
-    fn wants_frames(&self) -> bool {
-        self.focused || self.smoke_frames.is_some()
-    }
-    fn draw(&mut self, event_loop: &ActiveEventLoop) {
+    /// Simulation phase of one frame: clock, camera, streaming, physics and
+    /// autosave. No GPU work, so the headless lifecycle test drives this entry
+    /// point directly and reads `ticks` to prove a pause produced none.
+    ///
+    /// Returns `None` while the platform does not allow work. `draw` runs its
+    /// own gate first and then this one; both read the same lifecycle, so a
+    /// pause that arrives between them cannot leak a simulated frame.
+    fn simulate_frame(&mut self, now: Instant, capturing: bool) -> Option<SimFrame> {
         if !self.wants_frames() {
-            return;
+            return None;
         }
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
-        let size = window.inner_size();
-        if size.width == 0 || size.height == 0 || self.renderer.is_none() {
-            return;
-        }
-        // Every attempt that reaches the renderer gets one identity, including
-        // retries. Attempts skipped above (no window, zero size, unfocused) are
-        // not draw attempts and are not recorded.
-        self.draw_attempts += 1;
-        let capturing = self.profile.is_some();
-        // Wall clock starts first, then the CPU clock: the busy interval stays
-        // inside the wall interval. The two readings are adjacent, not
-        // simultaneous. `dt` still measures frame start to frame start.
-        let now = Instant::now();
-        let cpu_busy = metrics::CpuBusySpan::begin(capturing);
-        // Upload fence waits belong to this frame only; reset before mesh sync.
-        if let Some(renderer) = &mut self.renderer {
-            renderer.begin_frame_diagnostics();
-        }
-        let dt = (now - self.last_frame).as_secs_f32();
+        self.ticks += 1;
+        // The gap since the previous frame is clamped: a pause, a suspended
+        // process or a stalled frame must not be integrated in one step, and
+        // the clock is rebased on resume so the clamp is a bound, not a fixup.
+        let dt = clamped_frame_delta(self.last_frame, now);
         self.last_frame = now;
         self.frame_ms = if self.frames == 0 {
             0.
@@ -1093,11 +1099,91 @@ impl Explorer {
         }
         self.jump_held = jumping;
         self.dirty = true;
-        self.autosave_elapsed += dt.min(0.1);
+        // `dt` is already clamped by `clamped_frame_delta`.
+        self.autosave_elapsed += dt;
         if self.autosave_elapsed >= 15. {
             self.save();
             self.autosave_elapsed = 0.;
         }
+        Some(SimFrame {
+            dt,
+            stream_ms,
+            physics_ms,
+            body_activity,
+            fixed_steps,
+        })
+    }
+    fn wants_frames(&self) -> bool {
+        self.lifecycle.work_allowed()
+            || (self.smoke_frames.is_some() && self.lifecycle.present_allowed())
+    }
+    /// Apply one platform lifecycle transition.
+    ///
+    /// Called from the winit callbacks and directly by the headless lifecycle
+    /// test. It takes no winit or GPU types and must run even when this sample
+    /// has no window: a resume can arrive after `TERM_WINDOW`, before the new
+    /// surface exists. Pausing parks the preparation worker; resuming re-arms
+    /// it and rebases the frame clock so the pause is never integrated.
+    pub(crate) fn apply_platform(&mut self, event: PlatformEvent) {
+        self.lifecycle.apply(event);
+        match event {
+            PlatformEvent::WindowCreated | PlatformEvent::Resumed => {
+                self.last_frame = Instant::now();
+                self.preparation.resume();
+            }
+            PlatformEvent::Paused | PlatformEvent::WindowDestroyed => {
+                // Quiesce the worker: it finishes its current bounded unit and
+                // waits. Nothing queued is cancelled, so a resume continues
+                // from the same authoritative world instead of regenerating.
+                self.preparation.pause();
+                self.release_input();
+            }
+            PlatformEvent::LostFocus => self.release_input(),
+            PlatformEvent::GainedFocus => self.last_frame = Instant::now(),
+        }
+    }
+    /// Held-object and input teardown shared by focus loss and pause.
+    fn release_input(&mut self) {
+        self.physics.release();
+        self.jump_held = false;
+        self.controls.clear();
+        if self.dirty {
+            self.save();
+        }
+    }
+    fn draw(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.wants_frames() {
+            return;
+        }
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 || self.renderer.is_none() {
+            return;
+        }
+        // Every attempt that reaches the renderer gets one identity, including
+        // retries. Attempts skipped above (no window, zero size, unfocused) are
+        // not draw attempts and are not recorded.
+        self.draw_attempts += 1;
+        let capturing = self.profile.is_some();
+        // Wall clock starts first, then the CPU clock: the busy interval stays
+        // inside the wall interval. The two readings are adjacent, not
+        // simultaneous. `dt` still measures frame start to frame start.
+        let now = Instant::now();
+        let cpu_busy = metrics::CpuBusySpan::begin(capturing);
+        // Upload fence waits belong to this frame only; reset before mesh sync.
+        if let Some(renderer) = &mut self.renderer {
+            renderer.begin_frame_diagnostics();
+        }
+        let Some(sim) = self.simulate_frame(now, capturing) else {
+            return;
+        };
+        let dt = sim.dt;
+        let stream_ms = sim.stream_ms;
+        let physics_ms = sim.physics_ms;
+        let body_activity = sim.body_activity;
+        let fixed_steps = sim.fixed_steps;
         let mesh_begin = Instant::now();
         if let Err(error) = self.sync_render_meshes(capturing) {
             log::error!("Mesh upload failed: {error}");
@@ -1251,14 +1337,13 @@ impl Explorer {
 }
 impl ApplicationHandler for Explorer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.apply_platform(PlatformEvent::WindowCreated);
         if self.renderer.is_some() {
             return;
         }
         log::info!("Lifecycle resumed");
         self.controls.clear();
         self.jump_held = false;
-        self.last_frame = Instant::now();
-        self.focused = true;
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("Matterweave | Native Voxel Explorer")
@@ -1294,13 +1379,7 @@ impl ApplicationHandler for Explorer {
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
         log::info!("Lifecycle suspended");
-        self.physics.release();
-        self.jump_held = false;
-        self.controls.clear();
-        self.focused = false;
-        if self.dirty {
-            self.save();
-        }
+        self.apply_platform(PlatformEvent::WindowDestroyed);
         self.flush_profile();
         self.renderer = None;
         self.window = None;
@@ -1338,16 +1417,18 @@ impl ApplicationHandler for Explorer {
                 if self.smoke_frames.is_some() {
                     eprintln!("SMOKE: window focus {focused}; explicit smoke keeps rendering");
                 }
-                self.focused = focused;
-                self.last_frame = Instant::now();
-                if !focused {
-                    self.physics.release();
-                    self.jump_held = false;
-                    self.controls.clear();
-                    if self.dirty {
-                        self.save();
-                    }
-                }
+                self.apply_platform(if focused {
+                    PlatformEvent::GainedFocus
+                } else {
+                    PlatformEvent::LostFocus
+                });
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.apply_platform(if occluded {
+                    PlatformEvent::Paused
+                } else {
+                    PlatformEvent::Resumed
+                });
             }
             WindowEvent::RedrawRequested => {
                 self.draw(event_loop);
@@ -1982,13 +2063,103 @@ mod tests {
     #[test]
     fn unfocused_smoke_requests_frames_but_ordinary_app_pauses() {
         let mut app = fixture();
-        app.focused = false;
+        app.apply_platform(PlatformEvent::WindowCreated);
+        app.apply_platform(PlatformEvent::LostFocus);
         assert!(!app.wants_frames());
         app.smoke_frames = Some(30);
         assert!(app.wants_frames());
         app.smoke_frames = None;
-        app.focused = true;
+        app.apply_platform(PlatformEvent::GainedFocus);
         assert!(app.wants_frames());
+    }
+    /// The Android transition sequence (init window, gained focus, lost focus,
+    /// paused, resumed, term window, init window again) with no window and no
+    /// GPU, driven through the same entry points the event loop calls.
+    #[test]
+    fn paused_lifecycle_produces_no_frames_and_no_ticks_until_resumed() {
+        let mut app = fixture();
+        let now = Instant::now();
+
+        // INIT_WINDOW then focus: work is allowed and one real frame simulates.
+        app.apply_platform(PlatformEvent::WindowCreated);
+        app.apply_platform(PlatformEvent::GainedFocus);
+        assert!(app.wants_frames());
+        assert!(app.simulate_frame(now, false).is_some());
+        let ticks = app.ticks;
+        let frames = app.frames;
+        let revision = app.world.revision();
+
+        // LOST_FOCUS then PAUSE: frames stop and the preparation worker parks.
+        app.apply_platform(PlatformEvent::LostFocus);
+        assert!(!app.wants_frames());
+        app.apply_platform(PlatformEvent::Paused);
+        assert!(!app.wants_frames());
+        assert!(app.preparation.paused(), "the preparation worker must park");
+        assert!(
+            app.lifecycle.frame_timeout(true, now).is_none(),
+            "a paused app must block, not arm a timer"
+        );
+
+        // A paused interval: every frame attempt is refused and nothing ticks.
+        let pause_end = now + std::time::Duration::from_millis(250);
+        for attempt in 0..50 {
+            let when = now + std::time::Duration::from_millis(5 * attempt);
+            assert!(when < pause_end);
+            assert!(app.simulate_frame(when, false).is_none());
+        }
+        assert_eq!(app.ticks, ticks, "a paused app simulated a frame");
+        assert_eq!(app.frames, frames, "a paused app presented a frame");
+        assert_eq!(app.draw_attempts, 0, "a paused app reached the renderer");
+
+        // APP_CMD_RESUME plus focus: work restarts on the same world state.
+        app.apply_platform(PlatformEvent::Resumed);
+        assert!(
+            !app.wants_frames(),
+            "resume alone does not re-focus the window"
+        );
+        app.apply_platform(PlatformEvent::GainedFocus);
+        assert!(app.wants_frames());
+        assert!(!app.preparation.paused(), "the worker must re-arm");
+        assert!(app.simulate_frame(Instant::now(), false).is_some());
+        assert_eq!(app.ticks, ticks + 1, "simulation did not resume");
+        assert_eq!(
+            app.world.revision(),
+            revision,
+            "the pause changed the world"
+        );
+        assert_eq!(app.world.get([0, 0, 0]), 3);
+
+        // TERM_WINDOW shuts the gate; INIT_WINDOW opens it again.
+        app.apply_platform(PlatformEvent::WindowDestroyed);
+        assert!(!app.wants_frames());
+        assert!(app.simulate_frame(Instant::now(), false).is_none());
+        app.apply_platform(PlatformEvent::WindowCreated);
+        assert!(app.wants_frames());
+    }
+    #[test]
+    fn a_long_pause_is_not_integrated_in_one_step() {
+        let mut app = fixture();
+        app.apply_platform(PlatformEvent::WindowCreated);
+
+        // A gap that reaches the clock (a stalled frame, or a resume whose
+        // rebase did not happen) is clamped to one bounded step.
+        let now = Instant::now();
+        app.last_frame = now
+            .checked_sub(std::time::Duration::from_secs(600))
+            .expect("a monotonic clock can step back ten minutes");
+        let sim = app.simulate_frame(now, false).expect("frame allowed");
+        assert_eq!(sim.dt, crate::platform::MAX_FRAME_DELTA_S);
+
+        // The pause/resume path rebases the clock, so the first frame after ten
+        // minutes starts a fresh interval instead of integrating the pause.
+        app.apply_platform(PlatformEvent::Paused);
+        app.apply_platform(PlatformEvent::Resumed);
+        app.apply_platform(PlatformEvent::GainedFocus);
+        let sim = app
+            .simulate_frame(Instant::now(), false)
+            .expect("frame allowed after resume");
+        assert!(sim.dt < 0.05, "resume integrated the pause: {} s", sim.dt);
+        assert_eq!(app.world.get([0, 0, 0]), 3);
     }
     #[test]
     fn physics_actions_and_combined_session_survive_restart() {

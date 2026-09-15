@@ -43,6 +43,13 @@ pub struct AsyncDetailStats {
     pub discarded: u64,
     /// Advances on every [`AsyncDetailCollision::reset`].
     pub generation: u64,
+    /// Bounded preparations the worker has executed since construction,
+    /// buffered or discarded. The quiescence proof reads this counter: it must
+    /// not move while the worker is paused.
+    pub completed_units: u64,
+    /// Whether the worker is parked on the pause gate. Requests are still
+    /// accepted while paused and run on resume; no job is taken while paused.
+    pub paused: bool,
 }
 
 /// One queued source snapshot to prepare.
@@ -79,6 +86,11 @@ struct Queue {
     shutdown: bool,
     generation: u64,
     discarded: u64,
+    /// Set by [`AsyncDetailCollision::pause`]; cleared by `resume`. The worker
+    /// takes no job while it is set.
+    paused: bool,
+    /// Executed preparations, incremented by the worker after every job.
+    completed: u64,
 }
 
 impl Queue {
@@ -336,6 +348,33 @@ impl AsyncDetailCollision {
         queue.cancel();
     }
 
+    /// Parks the worker after its current bounded preparation finishes. Queued
+    /// and buffered work is retained, not cancelled: resuming continues from
+    /// the same authoritative scene instead of rebuilding it. Idempotent.
+    pub fn pause(&mut self) {
+        self.shared.lock().paused = true;
+    }
+
+    /// Re-arms the worker. A request queued before or during the pause runs;
+    /// the wait is a condition variable, never a poll interval.
+    pub fn resume(&mut self) {
+        let mut queue = self.shared.lock();
+        queue.paused = false;
+        drop(queue);
+        self.shared.wake.notify_all();
+    }
+
+    /// Whether the worker is currently parked on the pause gate.
+    pub fn paused(&self) -> bool {
+        self.shared.lock().paused
+    }
+
+    /// Preparations this worker executed since construction. Test and log
+    /// evidence: the count must not move while paused.
+    pub fn completed_units(&self) -> u64 {
+        self.shared.lock().completed
+    }
+
     /// False after worker startup failure or an unexpected worker exit.
     pub fn available(&self) -> bool {
         self.worker
@@ -351,6 +390,8 @@ impl AsyncDetailCollision {
             results: usize::from(queue.result.is_some()),
             discarded: queue.discarded,
             generation: queue.generation,
+            completed_units: queue.completed,
+            paused: queue.paused,
         }
     }
 }
@@ -373,7 +414,10 @@ impl Drop for AsyncDetailCollision {
 fn run(shared: &Shared) {
     loop {
         let mut queue = shared.lock();
-        while !queue.shutdown && queue.pending.is_none() {
+        // Pausing is observed between jobs; each job is one bounded preparation.
+        // While paused the worker waits on the same condition variable even with
+        // a pending job; the wait is unbounded, never a poll.
+        while !queue.shutdown && (queue.paused || queue.pending.is_none()) {
             queue = shared
                 .wake
                 .wait(queue)
@@ -391,6 +435,7 @@ fn run(shared: &Shared) {
 
         let mut queue = shared.lock();
         queue.finish_job(job, outcome);
+        queue.completed = queue.completed.saturating_add(1);
     }
 }
 

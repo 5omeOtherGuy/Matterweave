@@ -11,6 +11,7 @@ use crate::audio_service::{EventQueue, GameplayEvent};
 use crate::controls::{
     draw_settings_panel, relay_layout, settings_panel_click, SettingsPanelClick,
 };
+use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use crate::settings::SharedSettings;
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::{InputService, VirtualKey, World};
@@ -157,7 +158,9 @@ pub struct VoxelRelayApp {
     pub frame_limit: Option<u64>,
     pub failed: bool,
     pub return_to_menu: bool,
-    pub focused: bool,
+    /// Platform lifecycle state: window, focus and activity pause. The one gate
+    /// for frames and simulation.
+    lifecycle: PlatformLifecycle,
     pub last_frame: Instant,
     pub recreate_renderer: bool,
     /// Shared preferences this sample renders and edits. The owner
@@ -175,6 +178,29 @@ pub struct VoxelRelayApp {
 }
 
 impl VoxelRelayApp {
+    /// Whether a frame may run. A bounded headless smoke run presents without
+    /// focus; it never overrides a pause or a destroyed window.
+    fn wants_frames(&self) -> bool {
+        self.lifecycle.work_allowed()
+            || (self.frame_limit.is_some() && self.lifecycle.present_allowed())
+    }
+    /// Apply one platform lifecycle transition. Takes no winit or GPU types, so
+    /// the platform owner and the headless lifecycle test drive the same entry
+    /// point. This sample owns no worker; the gate is the whole effect, and the
+    /// clock is rebased so a pause is never integrated in one step.
+    pub(crate) fn apply_platform(&mut self, event: PlatformEvent) {
+        self.lifecycle.apply(event);
+        match event {
+            PlatformEvent::WindowCreated | PlatformEvent::Resumed | PlatformEvent::GainedFocus => {
+                self.last_frame = Instant::now()
+            }
+            PlatformEvent::Paused | PlatformEvent::WindowDestroyed => {
+                self.input.clear();
+                self.physics.release();
+            }
+            PlatformEvent::LostFocus => self.input.clear(),
+        }
+    }
     /// Normal chooser entry uses a sample-specific file. Older chooser builds
     /// shared the sandbox path: import a compatible Relay session only when no
     /// dedicated file exists, and never write back to that legacy path.
@@ -211,7 +237,7 @@ impl VoxelRelayApp {
             frame_limit,
             failed: false,
             return_to_menu: false,
-            focused: true,
+            lifecycle: PlatformLifecycle::default(),
             last_frame: Instant::now(),
             recreate_renderer: true,
             settings: SharedSettings::default(),
@@ -648,11 +674,11 @@ impl VoxelRelayApp {
     }
 
     fn draw(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.wants_frames() {
+            return;
+        }
         let now = Instant::now();
-        let dt = now
-            .duration_since(self.last_frame)
-            .as_secs_f32()
-            .clamp(0.001, 0.05);
+        let dt = clamped_frame_delta(self.last_frame, now).clamp(0.001, 0.05);
         self.last_frame = now;
 
         self.update(dt);
@@ -708,12 +734,11 @@ impl VoxelRelayApp {
 
 impl ApplicationHandler for VoxelRelayApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.apply_platform(PlatformEvent::WindowCreated);
         if self.renderer.is_some() {
             return;
         }
         self.input.clear();
-        self.last_frame = Instant::now();
-        self.focused = true;
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("Matterweave | Voxel Relay Puzzle")
@@ -743,9 +768,9 @@ impl ApplicationHandler for VoxelRelayApp {
     }
 
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.apply_platform(PlatformEvent::WindowDestroyed);
         self.physics.release();
         self.input.clear();
-        self.focused = false;
         self.renderer = None;
         self.window = None;
     }
@@ -764,7 +789,11 @@ impl ApplicationHandler for VoxelRelayApp {
                 event_loop.exit();
             }
             WindowEvent::Focused(f) => {
-                self.focused = f;
+                self.apply_platform(if f {
+                    PlatformEvent::GainedFocus
+                } else {
+                    PlatformEvent::LostFocus
+                });
                 if !f {
                     self.input.clear();
                 }
@@ -862,8 +891,10 @@ impl ApplicationHandler for VoxelRelayApp {
     }
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        if let Some(w) = &self.window {
-            w.request_redraw();
+        if self.wants_frames() {
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
         }
     }
 

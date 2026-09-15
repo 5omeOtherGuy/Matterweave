@@ -1,5 +1,6 @@
 //! Player-facing wetland experience; source, collision, derived graphics and saves
 //! remain separate. Legacy sandbox files are never used by this mode.
+use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use crate::{
     audio_service::{EventQueue, GameplayEvent},
     controls::{
@@ -951,7 +952,9 @@ pub struct WetlandApp {
     /// Engine frame-loop scheduling. Decides the present cadence from measured
     /// frame production cost; the app owns the clock and the waiting.
     pacer: Pacer,
-    focused: bool,
+    /// Platform lifecycle state: window, focus and activity pause. The one gate
+    /// for frames, simulation and the detail-collision worker.
+    lifecycle: PlatformLifecycle,
     frames: u64,
     frame_limit: Option<u64>,
     auto_start: bool,
@@ -995,7 +998,7 @@ impl WetlandApp {
                 PacingConfig::fixed(FALLBACK_REFRESH_PERIOD_NS, MENU_INTERVAL_NS)
                     .expect("constant fallback pacing configuration is valid"),
             ),
-            focused: true,
+            lifecycle: PlatformLifecycle::default(),
             frames: 0,
             frame_limit,
             auto_start,
@@ -1377,7 +1380,7 @@ impl WetlandApp {
         h
     }
     fn draw(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.focused && self.frame_limit.is_none() {
+        if !self.wants_frames() {
             return;
         }
         self.recheck_pacing();
@@ -1423,18 +1426,14 @@ impl WetlandApp {
         }
         let now = Instant::now();
         let frame_dt = (now - self.last).as_secs_f32();
-        let dt = frame_dt.min(0.1);
+        let dt = clamped_frame_delta(self.last, now);
         row.draw_interval_wall_ms = Some((now - self.last).as_secs_f64() * 1000.);
         self.last = now;
         let physics_start = Instant::now();
         // Explicit bounded headless smoke runs already render without X11 focus.
         // Apply the same allowance to replay startup; normal phone runs still
         // require focus and every subsequent focus-loss event cancels the run.
-        if !self.menu
-            && !self.options
-            && (self.focused || self.frame_limit.is_some())
-            && !self.replay_checked
-        {
+        if !self.menu && !self.options && (self.wants_frames()) && !self.replay_checked {
             if let Some(r) = &self.runtime {
                 self.replay_checked = true;
                 match Replay::requested(
@@ -1774,14 +1773,63 @@ impl WetlandApp {
         let s = self.window.as_ref().unwrap().inner_size();
         crate::controls::virtual_point(x, y, s.width, s.height)
     }
+    /// Whether a frame may run. A bounded headless smoke run presents without
+    /// focus; it never overrides a pause or a destroyed window.
+    fn wants_frames(&self) -> bool {
+        self.lifecycle.work_allowed()
+            || (self.frame_limit.is_some() && self.lifecycle.present_allowed())
+    }
+    /// Apply one platform lifecycle transition.
+    ///
+    /// Called from the winit callbacks and directly by the headless lifecycle
+    /// test. Takes no winit or GPU types. A pause parks the detail-collision
+    /// worker and rebases the frame clock; resuming re-arms both and re-arms
+    /// pacing, because timestamps from before the pause say nothing about the
+    /// frames after it.
+    pub(crate) fn apply_platform(&mut self, event: PlatformEvent) {
+        let was_focused = self.lifecycle.focused();
+        self.lifecycle.apply(event);
+        match event {
+            PlatformEvent::WindowCreated | PlatformEvent::Resumed => {
+                self.last = Instant::now();
+                self.next_frame = self.last;
+                self.pacer.reset();
+                if let Some(runtime) = &mut self.runtime {
+                    runtime.collision.resume();
+                }
+            }
+            PlatformEvent::Paused | PlatformEvent::WindowDestroyed => {
+                self.cancel_replay("lifecycle paused");
+                if let Some(runtime) = &mut self.runtime {
+                    runtime.collision.pause();
+                }
+                self.controls.clear();
+                self.save();
+            }
+            PlatformEvent::LostFocus => {
+                self.cancel_replay("focus lost");
+                self.controls.clear();
+                self.save();
+            }
+            PlatformEvent::GainedFocus => {
+                self.last = Instant::now();
+                // The loop stops drawing while unfocused only when no frame limit
+                // bounds the run; a bounded headless run keeps presenting without
+                // focus, so only a run whose loop really stops has a gap that is
+                // not a frame interval.
+                if !was_focused && self.frame_limit.is_none() {
+                    self.pacer.reset();
+                }
+            }
+        }
+    }
 }
 impl ApplicationHandler for WetlandApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.apply_platform(PlatformEvent::WindowCreated);
         if self.renderer.is_some() {
             return;
         }
-        self.focused = true;
-        self.last = Instant::now();
         self.controls.clear();
         let window = match event_loop.create_window(
             Window::default_attributes()
@@ -1820,13 +1868,8 @@ impl ApplicationHandler for WetlandApp {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
-        self.cancel_replay("lifecycle suspended");
         self.capture.flush();
-        self.save();
-        self.focused = false;
-        self.controls.clear();
-        // Timestamps taken before a suspension say nothing about the frames after it.
-        self.pacer.reset();
+        self.apply_platform(PlatformEvent::WindowDestroyed);
         self.renderer = None;
         self.window = None;
     }
@@ -1858,21 +1901,18 @@ impl ApplicationHandler for WetlandApp {
                 }
             }
             WindowEvent::Focused(f) => {
-                let was_focused = self.focused;
-                self.focused = f;
-                self.last = Instant::now();
-                // The loop stops drawing while unfocused only when no frame limit bounds
-                // the run (`draw` returns early only for `!focused && frame_limit.is_none()`).
-                // A bounded headless run keeps presenting without focus, so a stray focus
-                // event must not wipe the rings and adaptive state mid-flight; only a run
-                // whose loop really stops has a gap that is not a frame interval.
-                if was_focused != f && self.frame_limit.is_none() {
-                    self.pacer.reset();
-                }
-                if !f {
-                    self.controls.clear();
-                    self.save();
-                }
+                self.apply_platform(if f {
+                    PlatformEvent::GainedFocus
+                } else {
+                    PlatformEvent::LostFocus
+                });
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.apply_platform(if occluded {
+                    PlatformEvent::Paused
+                } else {
+                    PlatformEvent::Resumed
+                });
             }
             WindowEvent::RedrawRequested => self.draw(event_loop),
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1952,12 +1992,20 @@ impl ApplicationHandler for WetlandApp {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.focused && self.frame_limit.is_none() {
+        // While the platform does not allow work, block on the event queue with
+        // no deadline. Arming `WaitUntil(next_frame)` while paused was a
+        // full-CPU spin: redraws are not dispatched, `draw` never advances
+        // `next_frame`, and the stale deadline re-armed a zero-length timeout
+        // on every iteration with no frame presented.
+        let Some(deadline) = self
+            .lifecycle
+            .frame_timeout(self.wants_frames(), self.next_frame)
+        else {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
-        }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
-        if Instant::now() >= self.next_frame {
+        };
+        event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        if Instant::now() >= deadline {
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -3134,6 +3182,28 @@ mod shared_settings_ui_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+
+    /// The pause path the Android entry drives: frames stop, no deadline is
+    /// armed, and a resume re-arms frames without touching the world.
+    #[test]
+    fn a_paused_wetland_stops_frames_and_arms_no_deadline() {
+        let mut app = app();
+        app.apply_platform(PlatformEvent::WindowCreated);
+        assert!(app.wants_frames());
+
+        app.apply_platform(PlatformEvent::LostFocus);
+        app.apply_platform(PlatformEvent::Paused);
+        assert!(!app.wants_frames(), "a paused activity must not frame");
+        assert!(
+            app.lifecycle.frame_timeout(true, app.next_frame).is_none(),
+            "a paused app must block, not poll a stale pacing deadline"
+        );
+
+        app.apply_platform(PlatformEvent::Resumed);
+        assert!(!app.wants_frames(), "resume alone does not re-focus");
+        app.apply_platform(PlatformEvent::GainedFocus);
+        assert!(app.wants_frames());
+    }
 
     fn app() -> WetlandApp {
         let directory = std::env::temp_dir().join(format!(

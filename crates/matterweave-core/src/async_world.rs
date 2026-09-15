@@ -77,6 +77,13 @@ pub struct AsyncStats {
     /// bounded synchronous fallback ([`AsyncWorld::STALE_STREAM_FALLBACK_AFTER`]).
     pub consecutive_stale_streams: u32,
     pub generation: u64,
+    /// Bounded units the background worker has executed since construction,
+    /// published or discarded. The quiescence proof reads this counter: it must
+    /// not move while the worker is paused.
+    pub completed_units: u64,
+    /// Whether the worker is parked on the pause gate. Requests are still
+    /// accepted while paused and run on resume; no unit is taken while paused.
+    pub paused: bool,
 }
 
 impl AsyncStats {
@@ -170,6 +177,11 @@ struct Queue {
     shutdown: bool,
     generation: u64,
     discarded: u64,
+    /// Pause gate for the worker. Set by [`AsyncWorld::pause`], cleared by
+    /// [`AsyncWorld::resume`]; the worker takes no unit while it is set.
+    paused: bool,
+    /// Executed units, incremented by the worker after every bounded job.
+    completed: u64,
 }
 
 impl Queue {
@@ -532,6 +544,29 @@ impl AsyncWorld {
         }
     }
 
+    /// Parks the background worker after its current bounded unit finishes.
+    ///
+    /// Queued and completed work is retained, not cancelled: a pause is a
+    /// power decision, not an invalidation, so the world state on resume is the
+    /// state on pause and nothing is regenerated or re-uploaded. Idempotent.
+    pub fn pause(&mut self) {
+        self.shared.lock().paused = true;
+    }
+
+    /// Re-arms the worker. Any unit queued before or during the pause runs
+    /// again; the wait is a condition variable, never a poll interval.
+    pub fn resume(&mut self) {
+        let mut queue = self.shared.lock();
+        queue.paused = false;
+        drop(queue);
+        self.shared.wake.notify_all();
+    }
+
+    /// Whether the worker is currently parked on the pause gate.
+    pub fn paused(&self) -> bool {
+        self.shared.lock().paused
+    }
+
     /// False after worker startup failure or an unexpected worker exit.
     pub fn available(&self) -> bool {
         !self.shared.lock().shutdown
@@ -553,6 +588,8 @@ impl AsyncWorld {
             discarded: queue.discarded,
             consecutive_stale_streams: queue.stale_streams,
             generation: queue.generation,
+            completed_units: queue.completed,
+            paused: queue.paused,
         }
     }
 }
@@ -581,9 +618,13 @@ enum Job {
 fn run(shared: &Shared) {
     loop {
         let mut queue = shared.lock();
-        // Cancellation is observed between jobs; each job is one bounded unit,
-        // a single window (at most 147 generated chunks) or a single 18³ mesh.
-        while !queue.shutdown && queue.stream.is_none() && queue.meshes.is_empty() {
+        // Cancellation and pausing are observed between jobs; each job is one
+        // bounded unit, a single window (at most 147 generated chunks) or a
+        // single 18³ mesh. While paused the worker waits on the same condition
+        // variable even with work queued; the wait is unbounded, never a poll.
+        while !queue.shutdown
+            && (queue.paused || (queue.stream.is_none() && queue.meshes.is_empty()))
+        {
             queue = shared
                 .wake
                 .wait(queue)
@@ -595,6 +636,8 @@ fn run(shared: &Shared) {
         let job = take_job(&mut queue);
         drop(queue);
         run_job(shared, job);
+        let mut queue = shared.lock();
+        queue.completed = queue.completed.saturating_add(1);
     }
 }
 
