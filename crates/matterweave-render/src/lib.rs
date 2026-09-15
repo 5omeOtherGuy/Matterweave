@@ -22,7 +22,7 @@ mod timing;
 mod wind_tests;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
-pub use clouds::Clouds;
+pub use clouds::{Clouds, CostCounters};
 use clouds::{SkyPass, SkyPush};
 use frustum::Frustum;
 pub use hud::Hud;
@@ -213,6 +213,35 @@ impl Buffer {
                 )
                 .map_err(err)?;
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
+            self.device.raw.unmap_memory(self.memory);
+        }
+        Ok(())
+    }
+
+    /// Copy `bytes.len()` bytes out of the buffer. Only valid once the fence of
+    /// the submission that last wrote it has been signalled; host-coherent
+    /// memory needs no explicit invalidation.
+    fn read(&self, bytes: &mut [u8]) -> Result<()> {
+        if bytes.len() > self.size {
+            return Err("Buffer read exceeds allocation".into());
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        // SAFETY: the caller waited the frame fence; the mapped coherent range
+        // covers the requested bytes and is released again before submission.
+        unsafe {
+            let src = self
+                .device
+                .raw
+                .map_memory(
+                    self.memory,
+                    0,
+                    bytes.len() as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .map_err(err)?;
+            std::ptr::copy_nonoverlapping(src.cast::<u8>(), bytes.as_mut_ptr(), bytes.len());
             self.device.raw.unmap_memory(self.memory);
         }
         Ok(())
@@ -612,16 +641,23 @@ impl Swapchain {
                     None,
                 )
                 .map_err(err)?;
+            // The cloud march reads this depth buffer back to skip covered
+            // cloud pixels, so the format must be sampleable as well as
+            // attachable. D32_SFLOAT is required to support both; the D16
+            // fallback is only taken when it does too.
             let depth_format = [vk::Format::D32_SFLOAT, vk::Format::D16_UNORM]
                 .into_iter()
                 .find(|f| {
                     i.raw
                         .get_physical_device_format_properties(d.physical, *f)
                         .optimal_tiling_features
-                        .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+                        .contains(
+                            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
+                                | vk::FormatFeatureFlags::SAMPLED_IMAGE,
+                        )
                 })
-                .ok_or("No depth attachment format")?;
-            out.depth = Some(Depth::new(d.clone(), out.size, depth_format, false)?);
+                .ok_or("No sampleable depth attachment format")?;
+            out.depth = Some(Depth::new(d.clone(), out.size, depth_format, true)?);
             let attachments = [
                 vk::AttachmentDescription::default()
                     .format(format.format)
@@ -634,9 +670,13 @@ impl Swapchain {
                     .format(depth_format)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    // Stored because the cloud march samples it after the pass
+                    // to mask covered rays. The next frame clears it again from
+                    // UNDEFINED, so the stored contents are never read across
+                    // frames.
+                    .store_op(vk::AttachmentStoreOp::STORE)
                     .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+                    .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
             ];
             let color = [vk::AttachmentReference {
                 attachment: 0,
@@ -653,12 +693,17 @@ impl Swapchain {
             let stages = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
                 | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
                 | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
+            // The source side also covers the cloud march, which samples this
+            // depth buffer after the pass: its read must finish before the next
+            // frame clears and rewrites the attachment.
             let dependencies = [vk::SubpassDependency::default()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
-                .src_stage_mask(stages)
+                .src_stage_mask(stages | vk::PipelineStageFlags::FRAGMENT_SHADER)
                 .dst_stage_mask(stages)
-                .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                .src_access_mask(
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE | vk::AccessFlags::SHADER_READ,
+                )
                 .dst_access_mask(
                     vk::AccessFlags::COLOR_ATTACHMENT_WRITE
                         | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
@@ -1193,6 +1238,16 @@ pub struct Renderer {
     shadow_map_updated: bool,
     timestamps: Option<TimestampQueries>,
     diagnostics_enabled: bool,
+    /// Shader cost counters are requested for the frames drawn while this is
+    /// true. Off by default: counting costs one uniform branch plus one atomic
+    /// per counted pixel, which is not worth paying in normal operation.
+    cost_counters_enabled: bool,
+    /// View-projection and interleaved phase of the last *full* cloud target
+    /// update. A camera that has moved past the amortisation budget since then
+    /// forces the next update to be full again, and a target rebuilt by a
+    /// resize or a quality change starts with none.
+    cloud_full_view_proj: Option<[[f32; 4]; 4]>,
+    cloud_subgrid: u32,
     diagnostics: DrawDiagnostics,
     upload_waits: WaitTally,
     submissions: u64,
@@ -1423,6 +1478,9 @@ impl Renderer {
             shadow_map_updated: false,
             timestamps,
             diagnostics_enabled: false,
+            cost_counters_enabled: false,
+            cloud_full_view_proj: None,
+            cloud_subgrid: 0,
             diagnostics: DrawDiagnostics::default(),
             upload_waits: WaitTally::default(),
             submissions: 0,
@@ -1999,6 +2057,27 @@ impl Renderer {
         self.timestamps.is_some()
     }
 
+    /// Turn the shader cost counters on or off for subsequent frames. Disabled
+    /// by default; while enabled each frame's sky and cloud passes accumulate
+    /// counter values that [`Renderer::cost_counters`] reads back.
+    pub fn set_cost_counters_enabled(&mut self, enabled: bool) {
+        self.cost_counters_enabled = enabled;
+    }
+
+    /// Counters from the most recently submitted frame, or `None` while the
+    /// counters are disabled or no sky pass exists. Waits for that frame's
+    /// fence: this is a diagnostic read, not a per-frame call.
+    pub fn cost_counters(&mut self) -> Result<Option<CostCounters>> {
+        if !self.cost_counters_enabled {
+            return Ok(None);
+        }
+        self.commands.wait()?;
+        match self.sky.as_ref() {
+            Some(sky) => sky.counters_snapshot().map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Enables per-frame CPU wait diagnostics. Off by default: normal operation
     /// adds no clock readings beyond the pre-existing ones.
     pub fn set_diagnostics_enabled(&mut self, enabled: bool) {
@@ -2126,31 +2205,85 @@ impl Renderer {
         // Sky and clouds follow this frame's settings and extent. Nothing is
         // allocated for a frame that asks for neither, and the previous frame's
         // fence is already waited above, so a replaced target is idle.
-        let (frame_pass, frame_extent) = {
+        let (frame_pass, frame_extent, depth_view) = {
             let s = self.swapchain.as_ref().expect("swapchain created");
-            (s.pass, s.size)
+            (
+                s.pass,
+                s.size,
+                s.depth.as_ref().expect("depth created").view,
+            )
         };
-        SkyPass::ensure(
+        let target_rebuilt = SkyPass::ensure(
             &mut self.sky,
-            &self.device,
-            self.shadow.set_layout,
-            frame_pass,
-            frame_extent,
+            clouds::SkyFrame {
+                device: self.device.clone(),
+                lighting_set_layout: self.shadow.set_layout,
+                frame_pass,
+                extent: frame_extent,
+                depth_view,
+            },
             &lighting.atmosphere,
             &lighting.clouds,
         )?;
+        if self.cost_counters_enabled {
+            if let Some(sky) = &self.sky {
+                sky.reset_counters()?;
+            }
+        }
         // Both sky entries reconstruct a world ray by unprojecting the frame's
         // own matrix; a matrix that cannot be inverted skips them for this frame
         // rather than marching NaN directions.
         let inverse = glam::Mat4::from_cols_array_2d(&view_proj).inverse();
-        let sky_push = inverse.is_finite().then(|| SkyPush {
-            inv_view_proj: inverse.to_cols_array_2d(),
+        let inverse = inverse.is_finite().then(|| inverse.to_cols_array_2d());
+        let counter_flags = if self.cost_counters_enabled {
+            clouds::COUNTERS_ENABLED
+        } else {
+            0
+        };
+        // What the cloud target should do this frame. The march masks against
+        // the previous frame's depth and runs before the frame pass whenever
+        // the target already exists, so the composite reads this frame's
+        // clouds; a target that was just (re)built has nothing to show and has
+        // to wait for this frame's depth, so its march runs after the pass.
+        let target_exists = self.sky.as_ref().and_then(SkyPass::cloud_plan).is_some();
+        let mut full = target_rebuilt;
+        if !full && target_exists {
+            match (inverse, self.cloud_full_view_proj) {
+                (Some(inverse), Some(reference)) => {
+                    let reprojection = clouds::cloud_reprojection(reference, inverse);
+                    let target = self
+                        .sky
+                        .as_ref()
+                        .and_then(SkyPass::cloud_extent)
+                        .unwrap_or((1, 1));
+                    full = clouds::reprojection_displacement_px(&reprojection, target)
+                        > clouds::AMORTISATION_BUDGET_PX;
+                }
+                // No usable reference: rebuild everything rather than reuse
+                // pixels whose camera we cannot name.
+                _ => full = true,
+            }
+        }
+        let phase = if full {
+            0
+        } else {
+            (self.cloud_subgrid + 1) & clouds::SUBGRID_MASK
+        };
+        let cloud_flags = counter_flags | phase | if full { clouds::FULL_UPDATE } else { 0 };
+        let sky_push = inverse.map(|inverse| SkyPush {
+            inv_view_proj: inverse,
             eye: [eye[0], eye[1], eye[2], lighting.clouds.time()],
             params: [
                 lighting.clouds.march_steps() as f32,
                 lighting.clouds.light_steps() as f32,
                 1.0 / frame_extent.width.max(1) as f32,
                 1.0 / frame_extent.height.max(1) as f32,
+            ],
+            control: [
+                frame_extent.width,
+                frame_extent.height,
+                lighting.clouds.divisor(),
+                cloud_flags,
             ],
         });
         let s = self.swapchain.as_ref().expect("swapchain created");
@@ -2203,14 +2336,24 @@ impl Renderer {
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 1);
             }
-            // Volumetric clouds march into their own reduced-resolution target,
-            // outside this frame's render pass. The composite below reads it.
-            let clouds_recorded = match (&self.sky, sky_push) {
-                (Some(sky), Some(push)) => sky.record_clouds(cmd, self.shadow.set, push),
-                _ => false,
-            };
-            if let Some(timestamps) = &self.timestamps {
-                timestamps.mark(cmd, 2);
+            // The volumetric march runs before the frame pass whenever the
+            // target already exists. Its depth mask is then the previous
+            // frame's, which is exact while the camera holds still and costs at
+            // most one frame of lag at a moving silhouette; the composite below
+            // reads clouds marched with this frame's own camera.
+            let march_before = target_exists && !target_rebuilt;
+            let mut clouds_recorded = false;
+            if march_before {
+                if let Some(timestamps) = &self.timestamps {
+                    timestamps.mark(cmd, 2);
+                }
+                clouds_recorded = match (&self.sky, sky_push) {
+                    (Some(sky), Some(push)) => sky.record_clouds(cmd, self.shadow.set, push, false),
+                    _ => false,
+                };
+                if let Some(timestamps) = &self.timestamps {
+                    timestamps.mark(cmd, 3);
+                }
             }
             // The background is the same colour distance fades to, so the
             // horizon and the end of the world are indistinguishable.
@@ -2254,16 +2397,6 @@ impl Renderer {
                 }],
             );
             d.cmd_set_scissor(cmd, 0, &[area]);
-            // Sky first: no depth test, no depth write, no blending, so every
-            // opaque surface below still covers it exactly as it covered the
-            // cleared colour. The cloud composite follows immediately, before
-            // any geometry, and the water and HUD passes keep their order.
-            if let (Some(sky), Some(push)) = (&self.sky, sky_push) {
-                if lighting.atmosphere.sky_gradient {
-                    sky.record_dome(cmd, self.shadow.set, push);
-                }
-                sky.record_composite(cmd);
-            }
             d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
             d.cmd_bind_descriptor_sets(
                 cmd,
@@ -2276,20 +2409,21 @@ impl Renderer {
             // Identity instance and wind records for the non-instanced draws
             // below: zero translation, zero yaw, and wind.w = 0.
             d.cmd_bind_vertex_buffers(cmd, 1, &[self.identity.raw, self.identity.raw], &[0, 0]);
+            let camera = Camera {
+                view_proj,
+                eye: [
+                    eye[0],
+                    eye[1],
+                    eye[2],
+                    self.material_time.map_or(1.0, |t| -1.0 - t),
+                ],
+            };
             d.cmd_push_constants(
                 cmd,
                 s.layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
-                bytemuck::bytes_of(&Camera {
-                    view_proj,
-                    eye: [
-                        eye[0],
-                        eye[1],
-                        eye[2],
-                        self.material_time.map_or(1.0, |t| -1.0 - t),
-                    ],
-                }),
+                bytemuck::bytes_of(&camera),
             );
             let frustum = Frustum::new(view_proj);
             self.visible_chunks = self
@@ -2344,6 +2478,31 @@ impl Renderer {
                     scene.record_batches(d, cmd, Some(&frustum));
                 }
             }
+            // Background after the opaque surfaces, before the translucent and
+            // HUD passes: the dome and the cloud composite test depth EQUAL, so
+            // they shade exactly the pixels the cleared depth buffer still
+            // holds and every covered pixel stays unshaded. This is the same
+            // image the old "sky first, then geometry over it" order produced,
+            // with the covered fragments never running. Water and HUD keep
+            // their existing order, so the composite still blends under both.
+            if let (Some(sky), Some(push)) = (&self.sky, sky_push) {
+                if lighting.atmosphere.sky_gradient {
+                    sky.record_dome(cmd, self.shadow.set, push);
+                }
+                if !target_rebuilt {
+                    sky.record_composite(cmd);
+                }
+                // Binding the sky and composite pipelines (their own layouts and
+                // push constant ranges) leaves the water pipeline's camera
+                // push undefined, so put it back for the passes that follow.
+                d.cmd_push_constants(
+                    cmd,
+                    s.layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    bytemuck::bytes_of(&camera),
+                );
+            }
             // Derived water: translucent, drawn after every opaque surface so the
             // bed is already in the depth buffer, never writing depth itself.
             self.water_visible = self
@@ -2355,6 +2514,16 @@ impl Renderer {
                 .count();
             if self.water_visible > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.water);
+                // The composite above bound its own descriptor set 0 (the cloud
+                // target); the water pipeline expects the lighting set there.
+                d.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    s.layout,
+                    0,
+                    &[self.shadow.set],
+                    &[],
+                );
                 // The static-scene and flora batches above leave their own
                 // instance and wind records bound. A water quad is not an
                 // instance of anything: without this rebind it inherits the last
@@ -2383,8 +2552,37 @@ impl Renderer {
                 d.cmd_draw(cmd, hud_count, 1, 0, 0);
             }
             d.cmd_end_render_pass(cmd);
+            if !march_before {
+                if let Some(timestamps) = &self.timestamps {
+                    timestamps.mark(cmd, 2);
+                }
+                // A freshly (re)built target has no depth of its own to mask
+                // against yet, so its first march follows this frame's pass,
+                // which just wrote the depth buffer. The pass is still outside
+                // the frame's render pass.
+                clouds_recorded = match (&self.sky, sky_push) {
+                    (Some(sky), Some(push)) => {
+                        sky.record_clouds(cmd, self.shadow.set, push, target_rebuilt)
+                    }
+                    _ => false,
+                };
+                if let Some(timestamps) = &self.timestamps {
+                    timestamps.mark(cmd, 3);
+                }
+            }
+            if clouds_recorded {
+                self.cloud_subgrid = phase;
+                if full {
+                    self.cloud_full_view_proj = Some(view_proj);
+                }
+            } else {
+                // Nothing marched: the next target is a new one, and the first
+                // frame it exists must update every pixel.
+                self.cloud_full_view_proj = None;
+                self.cloud_subgrid = 0;
+            }
             if let Some(timestamps) = &self.timestamps {
-                timestamps.mark(cmd, 3);
+                timestamps.mark(cmd, 4);
             }
             d.end_command_buffer(cmd).map_err(err)?;
             let waits = [self.commands.available];

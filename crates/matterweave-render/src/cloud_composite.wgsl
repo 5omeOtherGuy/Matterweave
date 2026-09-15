@@ -1,8 +1,13 @@
-// Upsample of the reduced-resolution cloud target into the frame, drawn right
-// after the sky dome and before any opaque geometry. The target holds
-// premultiplied scattered light with `1 - transmittance` in alpha, so the
-// pipeline blends it with ONE / ONE_MINUS_SRC_ALPHA and four bilinear taps at
-// half-texel offsets soften the reduced resolution without a second pass.
+// Upsample of the reduced-resolution cloud target into the frame, drawn after
+// the sky dome with a depth test that keeps it on background pixels only. The
+// target holds premultiplied scattered light with `1 - transmittance` in alpha,
+// so the pipeline blends it with ONE / ONE_MINUS_SRC_ALPHA and four bilinear
+// taps at half-texel offsets soften the reduced resolution without a second
+// pass.
+//
+// The target was marched earlier in this same command buffer, with this frame's
+// camera, so no reprojection is involved: the composite is a straight upsample
+// and the cloud layer cannot lag the camera.
 struct Composite {
     // (inverse frame width, inverse frame height, cloud texel width, cloud texel height)
     texel: vec4<f32>,
