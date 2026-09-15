@@ -152,6 +152,26 @@ impl Biome {
         }
     }
 
+    /// Second, independent ground-cover pressure in `0..=64` per flora slot.
+    ///
+    /// One clump per metre column still leaves the ground showing between
+    /// clumps at the grazing angle a walking eye sees it from. This slot fills
+    /// those gaps with a second clump on its own hash, so two clumps can share a
+    /// metre column; it is 0 where ground cover is meant to be thin, so the
+    /// sparse biomes keep their single sparse layer.
+    pub fn understory_density(self) -> u8 {
+        match self {
+            Biome::Ocean | Biome::Snow | Biome::Desert => 0,
+            Biome::Beach => 4,
+            Biome::Mountain => 6,
+            Biome::Tundra => 8,
+            Biome::Swamp => 40,
+            Biome::Hills => 48,
+            Biome::Forest => 56,
+            Biome::Plains => 64,
+        }
+    }
+
     /// Flower pressure in `0..=64` per flora slot.
     ///
     /// The flower layer stays a minority of the field - a meadow with a flower
@@ -713,6 +733,20 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
             };
             push(kind, grass_roll >> 32);
         }
+        // A second ground-cover slot on its own roll, so a metre column can
+        // carry two clumps and the gaps between the first layer's clumps are
+        // filled. It uses the understory pressure, which is zero where cover is
+        // meant to be thin.
+        let understory_roll = hash3(seed ^ SALT_FLORA ^ 0x2f11_9a3d, x, z);
+        let understory = column.biome.understory_density() as i32;
+        if understory > 0 && ((understory_roll & 0xFFFF) as i32) < understory * 1024 {
+            let kind = match (understory_roll >> 26) & 0x3F {
+                0..=2 if column.biome.grassy() => FloraKind::Fern,
+                3 if column.biome == Biome::Swamp => FloraKind::Reed,
+                _ => FloraKind::GrassTuft,
+            };
+            push(kind, understory_roll >> 40);
+        }
         // Flowers use an independent roll so a tuft and a flower can share a
         // column instead of displacing each other.
         let flower_roll = hash3(seed ^ SALT_FLORA ^ 0x51ed_2701, x, z);
@@ -779,7 +813,7 @@ pub struct FloraTier {
     pub keep_every: u32,
 }
 
-/// The shipped density falloff: full density to 28 m, then half density to
+/// The shipped density falloff: full density to 28 m, then quarter density to
 /// 48 m, and no ground cover beyond that.
 ///
 /// The outer radius is the blade LOD crossover, not a budget compromise. A
@@ -787,8 +821,10 @@ pub struct FloraTier {
 /// resolves about 1.6 mrad per pixel (65 degrees over 720 rows), so a blade is
 /// sub-pixel beyond ~40 m and a clump is a handful of pixels; beyond 48 m the
 /// field is drawn as ground colour rather than as thousands of instances nobody
-/// can resolve. Radii ascend and each is a whole number of [`FLORA_CELL_M`]
-/// cells, which is what makes the band predicate exact.
+/// can resolve. The second band is quarter density rather than half because the
+/// instances it does not draw are instances the near band spends on clumps the
+/// eye can actually resolve. Radii ascend and each is a whole number of
+/// [`FLORA_CELL_M`] cells, which is what makes the band predicate exact.
 pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     FloraTier {
         radius_m: 28,
@@ -796,7 +832,7 @@ pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     },
     FloraTier {
         radius_m: 48,
-        keep_every: 2,
+        keep_every: 4,
     },
 ];
 

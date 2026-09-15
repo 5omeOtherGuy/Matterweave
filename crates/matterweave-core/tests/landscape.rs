@@ -330,7 +330,7 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // changed on purpose, and the old and new values belong in the change that
     // made it.
     assert_eq!(
-        value, 0x774b_0b7d_3a38_15b1,
+        value, 0x3799_a3d7_6126_6b0f,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }

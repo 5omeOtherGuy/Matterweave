@@ -69,7 +69,13 @@ use crate::detail_runtime::{DetailRuntime, RESIDENT_LODS};
 /// Ground-cover placements one plan may carry. Together with
 /// [`MAX_PLANNED_TREES`] this stays inside the renderer's
 /// [`MAX_FLORA_INSTANCES`] budget with room for the caps to be raised.
-pub const MAX_PLANNED_SITES: usize = 9_000;
+///
+/// The full-density band is 57x57 metres and holds up to 3.4 clumps per metre
+/// column once the understory slot is counted, so a lush inland eye can plan
+/// over ten thousand ground-cover placements; the cap is what keeps a plan
+/// bounded on the phone and the planner's `dropped` counter reports any refusal
+/// instead of truncating silently.
+pub const MAX_PLANNED_SITES: usize = 12_000;
 /// Tree placements one plan may carry.
 pub const MAX_PLANNED_TREES: usize = 700;
 /// Eye movement, in metres, that names a rebuild cell. The committed field is

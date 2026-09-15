@@ -67,10 +67,11 @@ pub const TREE_TRI_CAP: usize = 6000;
 
 /// Structural per-16-m-square placement budget: one 16 m square holds 8x8
 /// [`matterweave_core::landscape::FLORA_CELL_M`] flora cells with at most 8
-/// sites each (4 metre-columns x grass-slot + flower-slot) plus 2x2
+/// sites each (4 metre-columns x grass slot + understory slot + flower slot,
+/// the cell's [`matterweave_core::landscape::MAX_FLORA_PER_CELL`]) plus 2x2
 /// [`matterweave_core::landscape::TREE_CELL_M`] tree cells with at most one
-/// tree each: 64 * 8 + 4 = 516.
-pub const MAX_SITES_PER_16M_SQUARE: usize = 516;
+/// tree each: 64 * 12 + 4 = 772.
+pub const MAX_SITES_PER_16M_SQUARE: usize = 772;
 
 /// Every new prototype id built by this module.
 pub const LANDSCAPE_FLORA_SPECIES: &[&str] = &[
@@ -191,8 +192,8 @@ struct GrassTier {
 /// Small clump: five blades on the corners and centre of a 3x3 foot, 8..=12
 /// cells. The bases are two cells apart so no two blades touch at the root.
 const GRASS_BASES_S: [[i32; 2]; 5] = [[0, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]];
-const GRASS_HEIGHTS_S: [i32; 5] = [11, 9, 12, 8, 10];
-const GRASS_LEANS_S: [i32; 5] = [3, 2, 4, 2, 3];
+const GRASS_HEIGHTS_S: [i32; 5] = [13, 10, 12, 8, 11];
+const GRASS_LEANS_S: [i32; 5] = [4, 2, 4, 2, 3];
 /// Medium clump: nine blades on an even 5x5 lattice, 10..=16 cells.
 const GRASS_BASES_M: [[i32; 2]; 9] = [
     [0, 0],
@@ -205,8 +206,8 @@ const GRASS_BASES_M: [[i32; 2]; 9] = [
     [2, -2],
     [-2, 2],
 ];
-const GRASS_HEIGHTS_M: [i32; 9] = [16, 12, 14, 11, 15, 13, 10, 13, 12];
-const GRASS_LEANS_M: [i32; 9] = [5, 2, 3, 2, 4, 3, 2, 3, 4];
+const GRASS_HEIGHTS_M: [i32; 9] = [17, 13, 15, 12, 16, 14, 11, 14, 13];
+const GRASS_LEANS_M: [i32; 9] = [5, 2, 4, 2, 4, 3, 2, 4, 3];
 /// Large clump: twelve blades on an even 7x7 lattice (its four corners are
 /// dropped to keep the meshed cost down), 13..=20 cells - the tall, wide clump a
 /// dense field needs.
@@ -224,8 +225,8 @@ const GRASS_BASES_L: [[i32; 2]; 12] = [
     [-3, 1],
     [-3, -1],
 ];
-const GRASS_HEIGHTS_L: [i32; 12] = [20, 15, 17, 14, 19, 16, 13, 16, 18, 15, 17, 14];
-const GRASS_LEANS_L: [i32; 12] = [6, 3, 4, 3, 5, 4, 2, 4, 5, 3, 6, 5];
+const GRASS_HEIGHTS_L: [i32; 12] = [20, 16, 18, 15, 20, 17, 14, 17, 19, 16, 18, 15];
+const GRASS_LEANS_L: [i32; 12] = [7, 4, 5, 3, 6, 4, 2, 5, 6, 4, 7, 5];
 
 const GRASS_TIERS: [GrassTier; 3] = [
     GrassTier {

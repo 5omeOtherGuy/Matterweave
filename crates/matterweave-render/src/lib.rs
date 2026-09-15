@@ -1265,6 +1265,10 @@ pub struct Renderer {
     /// Wind-capable prototype instancing, drawn after the static scene through
     /// the same pipeline. Kept apart so the static path cannot change shape.
     flora_scene: Option<StaticScene>,
+    /// Whether the main pass records the flora batches. The shadow pass always
+    /// records them when the scene is present: a measurement run turns this off
+    /// to capture the flora's shadow contribution without its pixels.
+    flora_visible: bool,
     // One zeroed instance record: identity transform for non-instanced draws.
     // The same zeroed bytes are bound to the wind attribute, where w = 0 is the
     // shader's early-out, so every non-instanced draw is undisplaced.
@@ -1494,6 +1498,7 @@ impl Renderer {
             dynamic: None,
             static_scene: None,
             flora_scene: None,
+            flora_visible: true,
             identity,
             hud: None,
             requested: vk::Extent2D {
@@ -1828,6 +1833,16 @@ impl Renderer {
     /// Honest accounting of the currently resident flora scene, if any.
     pub fn flora_scene_stats(&self) -> Option<StaticSceneStats> {
         self.flora_scene.as_ref().map(|scene| scene.stats())
+    }
+
+    /// Whether the main pass draws the resident flora scene.
+    ///
+    /// The shadow pass is deliberately unaffected: with the flora present and
+    /// this off, the frame is the terrain lit through the flora's own shadows
+    /// with no flora pixels. That is the reference a coverage measurement needs,
+    /// and it is the only reason this exists - the shipping sample leaves it on.
+    pub fn set_flora_visible(&mut self, visible: bool) {
+        self.flora_visible = visible;
     }
 
     /// Drop every derived water surface: a whole-world upload or a world change
@@ -2473,9 +2488,14 @@ impl Renderer {
                     scene.record_batches(d, cmd, Some(&frustum));
                 }
                 // Flora shares the pipeline and the same batch culling; only
-                // its bound wind records differ from the static scene's.
-                if let Some(scene) = &self.flora_scene {
-                    scene.record_batches(d, cmd, Some(&frustum));
+                // its bound wind records differ from the static scene's. A run
+                // that asked for the flora shadow reference keeps the field in
+                // the shadow pass above and skips it here, so a capture can
+                // separate vegetation pixels from the shadows they cast.
+                if self.flora_visible {
+                    if let Some(scene) = &self.flora_scene {
+                        scene.record_batches(d, cmd, Some(&frustum));
+                    }
                 }
             }
             // Background after the opaque surfaces, before the translucent and

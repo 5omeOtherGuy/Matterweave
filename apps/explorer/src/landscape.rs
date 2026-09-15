@@ -327,17 +327,37 @@ fn eye_override(directory: &Path) -> Option<Camera> {
 /// Environment variable naming a fixed landscape camera, see [`eye_override`].
 pub const EYE_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_EYE";
 
-/// Environment variable that disables the flora field entirely (`off`), leaving
-/// terrain, water and sky. It exists so a capture can isolate what the
-/// vegetation layer covers: the share of a crop that changes when flora is
-/// drawn is the ground the flora covers, and measuring that against a
-/// colour classifier instead would be guessing. It is not a quality setting and
-/// is off by default.
+/// Environment variable that selects how the flora layer is drawn:
+/// `off` leaves terrain, water and sky with no flora at all, `shadow` builds
+/// and uploads the field and lets it cast shadows but does not draw it, and any
+/// other value is the shipping behaviour.
+///
+/// It exists so a capture can isolate what the vegetation layer covers: a pixel
+/// that differs from the `shadow` frame is vegetation, and a pixel that differs
+/// from the `off` frame is vegetation or the shadow it casts. Measuring that
+/// against a colour classifier instead would be guessing, because a blade's
+/// shaded side and the terrain's step faces are nearly the same colour. It is a
+/// measurement mode, not a quality setting, and it is off by default.
 pub const FLORA_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_FLORA";
 
-/// Whether the run asked for the ground reference with no flora at all.
-pub fn flora_disabled() -> bool {
-    std::env::var(FLORA_ENV_VAR).is_ok_and(|value| value.eq_ignore_ascii_case("off"))
+/// How the run asked the flora layer to be drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloraMode {
+    /// Build, upload, draw and shadow the field (the shipping behaviour).
+    Draw,
+    /// Build, upload and shadow the field, but do not draw it.
+    ShadowOnly,
+    /// Do not build the field at all.
+    Off,
+}
+
+/// The flora mode `MATTERWEAVE_LANDSCAPE_FLORA` asks for.
+pub fn flora_mode() -> FloraMode {
+    match std::env::var(FLORA_ENV_VAR) {
+        Ok(value) if value.eq_ignore_ascii_case("off") => FloraMode::Off,
+        Ok(value) if value.eq_ignore_ascii_case("shadow") => FloraMode::ShadowOnly,
+        _ => FloraMode::Draw,
+    }
 }
 
 /// Direction to the sun for this sample.
@@ -1023,10 +1043,11 @@ impl LandscapeSample {
         // what keeps a moving camera from re-running the planner every frame.
         let eye = self.camera.position.to_array();
         if let Some(flora) = self.flora.as_mut() {
-            // The ground-reference run draws terrain, water and sky with no
-            // flora at all; see [`FLORA_ENV_VAR`]. A flora field that has not
-            // been installed yet simply stays uninstalled.
-            if !flora_disabled() {
+            // A measurement run may leave the field out entirely; a
+            // shadow-only run keeps it in the shadow pass and takes it out of
+            // the main pass. A field that has not been installed yet simply
+            // stays uninstalled.
+            if flora_mode() != FloraMode::Off {
                 let renderer = self.renderer.as_mut().unwrap();
                 if let Err(error) = flora.sync(renderer, eye) {
                     log::error!("Landscape flora failed: {error}");
@@ -1035,6 +1056,7 @@ impl LandscapeSample {
                     event_loop.exit();
                     return;
                 }
+                renderer.set_flora_visible(flora_mode() == FloraMode::Draw);
             }
         }
         // The wind clock advances every frame even when the field does not, so

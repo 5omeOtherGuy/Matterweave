@@ -192,6 +192,24 @@ fn main() {
     for row in in_cone.iter().take(10) {
         println!("  len {:.0} cos {:.2} ({},{}) y {}", row.0, row.1, row.2, row.3, row.4);
     }
+    // Time a cold plan (the first plan a run makes) and a warm one.
+    {
+        use matterweave_core::landscape::{plan_flora, LANDSCAPE_FLORA_TIERS};
+        let t0 = std::time::Instant::now();
+        let plan = plan_flora(SEED, eye, &LANDSCAPE_FLORA_TIERS, 12_000, 700);
+        let cold = t0.elapsed().as_secs_f64() * 1000.0;
+        let t1 = std::time::Instant::now();
+        let _ = plan_flora(SEED, eye, &LANDSCAPE_FLORA_TIERS, 12_000, 700);
+        let warm = t1.elapsed().as_secs_f64() * 1000.0;
+        println!(
+            "cold plan {:.2} ms ({} sites, {} trees, {} dropped), warm {:.2} ms",
+            cold,
+            plan.sites.len(),
+            plan.trees.len(),
+            plan.dropped,
+            warm
+        );
+    }
     // Ground cover in the 16 m square at the eye.
     let mut s16 = 0usize;
     let mut s32 = 0usize;
