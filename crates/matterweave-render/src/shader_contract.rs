@@ -26,9 +26,12 @@ pub const WORLD_FRAGMENT_SPIRV: &[u8] =
 /// `indirect_dimensions.w` and `reflection_dimensions.w` are enable flags: a zero
 /// disables the corresponding effect without touching the other bindings.
 /// `reflection_params` is (trace step bound, surface offset, 0, 0).
-/// `atmosphere` is (sky rgb, fog density per metre): the colour distance fades
-/// to, which is also the colour a reflected ray terminates against and the
-/// colour the frame is cleared to.
+/// `atmosphere` is (sky rgb, fog density per metre): the sky at the horizon,
+/// which is also the colour a reflected ray terminates against and the colour
+/// the frame is cleared to. `aerial` is (aerial-perspective strength, 0, 0, 0):
+/// zero makes distance fade to `atmosphere.sky` alone, and a nonzero strength
+/// blends in the two-term in-scatter, distance face split and per-voxel tone
+/// variation of `world.wgsl`.
 /// `wind` is (direction x, direction z, strength in metres, time in seconds)
 /// and `player` is (x, y, z, push radius in metres). Both drive `displace` in
 /// `world.wgsl` and reach only vertices whose per-instance wind record carries a
@@ -53,9 +56,10 @@ pub struct LightingUniform {
     pub wind: [f32; 4],
     pub player: [f32; 4],
     pub water: [f32; 4],
+    pub aerial: [f32; 4],
 }
 
-pub const LIGHTING_UNIFORM_BYTES: usize = 240;
+pub const LIGHTING_UNIFORM_BYTES: usize = 256;
 
 #[cfg(test)]
 mod tests {
@@ -78,6 +82,7 @@ mod tests {
         assert_eq!(offset_of!(LightingUniform, wind), 192);
         assert_eq!(offset_of!(LightingUniform, player), 208);
         assert_eq!(offset_of!(LightingUniform, water), 224);
+        assert_eq!(offset_of!(LightingUniform, aerial), 240);
         // Every binding index is distinct and contiguous from zero.
         let bindings = [
             BINDING_LIGHTING,

@@ -18,15 +18,21 @@ impl Default for Sun {
     }
 }
 
-/// Aerial perspective the world pass converges to. The fog factor is
-/// `1 - exp(-path_length * fog_density)` toward [`Atmosphere::sky`], and the
-/// colour buffer is cleared to the same sky, so the horizon and the background
-/// are one colour and a distance ring's outer edge has nothing to stand against.
+/// Aerial perspective the world pass converges to. The two-term model in
+/// `world.wgsl` is `surface * exp(-path_length * fog_density)` plus
+/// `in_scatter * (1 - exp(-path_length * fog_density))`: what the surface sends
+/// through the air, plus what the air scatters toward the eye in its place.
+/// With [`Atmosphere::aerial_perspective`] zero the in-scatter is [`Atmosphere::sky`]
+/// itself - the constant-colour fade every sample drew before - and with it set
+/// the in-scatter follows the sky's scattering colour in the view direction and
+/// its brightness follows the sun angle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Atmosphere {
     /// Extinction per metre. Zero renders without fog.
     pub fog_density: f32,
-    /// Linear rgb the fog and the cleared background converge to.
+    /// Linear rgb of the sky at the horizon; the colour the cleared background
+    /// and a reflected ray use, and the in-scatter colour when
+    /// [`Atmosphere::aerial_perspective`] is zero.
     pub sky: [f32; 3],
     /// Draw the procedural dome - gradient, sun disc, ground-side floor -
     /// before opaque geometry instead of leaving the flat cleared colour.
@@ -34,6 +40,13 @@ pub struct Atmosphere {
     /// value at the horizon is exactly that colour. Default false: a sample
     /// that does not ask for it keeps the background it always had.
     pub sky_gradient: bool,
+    /// Strength of the aerial-perspective distance model, in `0..=1`. Zero
+    /// keeps the constant-colour fade and the near-field face shading every
+    /// sample drew before; one shades distance with the two-term model, the
+    /// distance face split and the per-voxel tone variation, which is what
+    /// keeps a surface facing away from the sun dark at kilometres instead of
+    /// lifting it to the sky colour.
+    pub aerial_perspective: f32,
 }
 
 /// The look every sample rendered before atmosphere became a setting.
@@ -46,6 +59,7 @@ impl Default for Atmosphere {
             fog_density: DEFAULT_FOG_DENSITY,
             sky: DEFAULT_SKY,
             sky_gradient: false,
+            aerial_perspective: 0.0,
         }
     }
 }
@@ -70,6 +84,9 @@ impl Atmosphere {
             .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
         {
             return Err("Sky colour components must be finite in 0..=1".into());
+        }
+        if !self.aerial_perspective.is_finite() || !(0.0..=1.0).contains(&self.aerial_perspective) {
+            return Err("Aerial perspective strength must be finite in 0..=1".into());
         }
         Ok(())
     }
@@ -398,6 +415,10 @@ mod tests {
         // Changing a default changes every existing sample's image.
         assert_eq!(settings.atmosphere.fog_density, 0.013);
         assert_eq!(settings.atmosphere.sky, [0.16, 0.24, 0.29]);
+        // The aerial-perspective distance model is opt-in: a sample that does
+        // not ask for it keeps the constant-colour fade, which is what the
+        // shader's zero strength selects.
+        assert_eq!(settings.atmosphere.aerial_perspective, 0.0);
         assert_eq!(Atmosphere::default(), Atmosphere::default());
         // The sky dome and the cloud layer are additions, not new defaults: a
         // sample that sets neither draws the flat cleared background it always
@@ -432,6 +453,18 @@ mod tests {
                 sky: [0.0, 1.5, 0.0],
                 ..Atmosphere::default()
             },
+            Atmosphere {
+                aerial_perspective: -0.001,
+                ..Atmosphere::default()
+            },
+            Atmosphere {
+                aerial_perspective: 1.001,
+                ..Atmosphere::default()
+            },
+            Atmosphere {
+                aerial_perspective: f32::NAN,
+                ..Atmosphere::default()
+            },
         ] {
             assert!(atmosphere.validate().is_err(), "{atmosphere:?}");
         }
@@ -440,6 +473,7 @@ mod tests {
             fog_density: 0.0,
             sky: [0.0; 3],
             sky_gradient: true,
+            aerial_perspective: 1.0,
         }
         .validate()
         .unwrap();
