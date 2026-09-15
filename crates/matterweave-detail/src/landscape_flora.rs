@@ -260,12 +260,7 @@ fn blade_tip_cells(height: i32) -> i32 {
 /// blade stays one cell wide: a diagonal step would need a corner cell through
 /// [`set_path`] and thicken the blade to two cells, which is the cube look this
 /// pass removes. The centre blade of a clump never leans.
-fn grass_blade(
-    volume: &mut DetailVolume,
-    base: [i32; 2],
-    height: i32,
-    lean_at: i32,
-) -> Result<()> {
+fn grass_blade(volume: &mut DetailVolume, base: [i32; 2], height: i32, lean_at: i32) -> Result<()> {
     let lean = if base[0].abs() >= base[1].abs() {
         [base[0].signum(), 0]
     } else {
@@ -298,7 +293,12 @@ fn grass_tuft_with(id: &str, tier: &GrassTier) -> Result<DetailVolume> {
     // each base joins them into one body without filling the foot in. At
     // 6.25 cm cells the runner is a thin root on the surface, not a plate.
     for base in tier.bases {
-        set_path(&mut volume, [0, 0, 0], [base[0], 0, base[1]], material::GRASS_BLADE)?;
+        set_path(
+            &mut volume,
+            [0, 0, 0],
+            [base[0], 0, base[1]],
+            material::GRASS_BLADE,
+        )?;
     }
     // `set_path` fills the cells it steps to, not the one it starts from: the
     // crown cell is the junction every runner meets at, so it is set explicitly.
@@ -346,7 +346,12 @@ fn flower_with(id: &str, petal: u8, tier: &FlowerTier) -> Result<DetailVolume> {
     // Runner pad under the bases, exactly as a grass clump roots: the stems are
     // two cells apart so no two share a column or touch at the root.
     for base in tier.bases {
-        set_path(&mut volume, [0, 0, 0], [base[0], 0, base[1]], material::GRASS_BLADE)?;
+        set_path(
+            &mut volume,
+            [0, 0, 0],
+            [base[0], 0, base[1]],
+            material::GRASS_BLADE,
+        )?;
     }
     volume.set([0, 0, 0], material::GRASS_BLADE)?;
     for (index, base) in tier.bases.iter().enumerate() {
@@ -404,11 +409,7 @@ const FLOWER_YELLOW_BASES_S: [[i32; 2]; 4] = [[0, 0], [2, 0], [0, 2], [2, -2]];
 const FLOWER_YELLOW_BASES_M: [[i32; 2]; 5] = [[0, 0], [2, 0], [0, 2], [-2, 0], [0, -2]];
 const FLOWER_YELLOW_BASES_L: [[i32; 2]; 5] = [[0, 0], [2, 0], [-2, 0], [0, 2], [2, -2]];
 
-fn flower_tier(
-    bases: &'static [[i32; 2]],
-    heights: &'static [i32],
-    arms: u8,
-) -> FlowerTier {
+fn flower_tier(bases: &'static [[i32; 2]], heights: &'static [i32], arms: u8) -> FlowerTier {
     FlowerTier {
         bases,
         heights,
@@ -738,7 +739,12 @@ fn leaf_frond(
 /// between them are open, so the tree reads as a trunk carrying a leaf mass
 /// rather than as a ball on a stick. Occupancy inside the crown's bounding box
 /// is far below a solid's - the prototype test pins the bound.
-fn broadleaf_with(id: &str, trunk_h: i32, limbs: &[[i32; 4]], frond_scale: i32) -> Result<DetailVolume> {
+fn broadleaf_with(
+    id: &str,
+    trunk_h: i32,
+    limbs: &[[i32; 4]],
+    frond_scale: i32,
+) -> Result<DetailVolume> {
     let scale = Scale::new(LANDSCAPE_LEAF_SCALE_M)?;
     let mut volume = DetailVolume::new(id, scale);
     for x in -1..=1 {

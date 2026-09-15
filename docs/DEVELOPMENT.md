@@ -210,6 +210,21 @@ specular and flora cast shadows are only defined for a sun elevation the sample 
 not otherwise have, and both have to stay measurable without a private build. A
 malformed or degenerate value is logged and ignored.
 
+`MATTERWEAVE_LANDSCAPE_EYE=x,y,z,yaw[,pitch]`, or an `eye x,y,z,yaw[,pitch]` word
+sequence in `landscape.txt` on a device, starts the landscape sample at a named
+camera instead of its spawn view. Acceptance measurements crop the same scene at
+several framings - a near-field ground crop and a 20-200 m tree crop are not the
+same camera - and a framing that cannot be reproduced without a private build is not
+evidence. Out-of-range values are logged and ignored, as are malformed ones.
+
+`MATTERWEAVE_LANDSCAPE_FLORA=off|shadow` is a measurement mode, not a quality
+setting. `off` runs terrain, water, sky and HUD with no flora at all; `shadow` builds
+and uploads the field and lets it cast shadows, but does not draw it. A capture
+pixel that differs from the `shadow` frame is vegetation; one that differs from the
+`off` frame is vegetation or the shadow it casts. That distinction is what a
+coverage measurement needs, because a blade's shaded side and the terrain's step
+faces are nearly the same colour. The sample draws the field normally by default.
+
 ### Bounded reflection gate
 
 The headless host validator compiles the shipping `world.wgsl` through the renderer's

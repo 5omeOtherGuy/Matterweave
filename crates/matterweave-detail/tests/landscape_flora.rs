@@ -458,16 +458,20 @@ fn grass_and_tree_shapes_match_their_spec() {
             "{id} blooms at {}, outside the 8..=20 stem range",
             max[1]
         );
-        assert!(flower_shapes.insert(v.snapshot().runs), "{id} duplicates a shape");
+        assert!(
+            flower_shapes.insert(v.snapshot().runs),
+            "{id} duplicates a shape"
+        );
         // Every stem is one cell wide where it is green: the count of green
         // cells equals the sum of the stem lengths, with no thick posts.
         let green = v
             .iter_cells()
-            .filter(|(_, m)| {
-                *m == material::GRASS_BLADE || *m == material::GRASS_TIP
-            })
+            .filter(|(_, m)| *m == material::GRASS_BLADE || *m == material::GRASS_TIP)
             .count();
-        assert!(green >= 2 * GRASS_MIN_HEIGHT_CELLS as usize, "{id} carries {green} stem cells");
+        assert!(
+            green >= 2 * GRASS_MIN_HEIGHT_CELLS as usize,
+            "{id} carries {green} stem cells"
+        );
         let hearts = v
             .iter_cells()
             .filter(|(_, m)| *m == material::FLOWER_HEART)

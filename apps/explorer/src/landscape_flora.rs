@@ -529,6 +529,7 @@ impl AsSite for PlacedFlora {
 mod tests {
     use super::*;
     use matterweave_core::landscape::{self, LANDSCAPE_TREE_RADIUS_M};
+    use matterweave_render::MAX_WIND_DISPLACEMENT_M;
 
     #[test]
     fn every_prototype_the_catalogue_can_place_is_pooled_with_a_height() {
@@ -645,7 +646,12 @@ mod tests {
         assert!(grass.len() > 32, "a plains eye holds a real field");
         let scales: std::collections::BTreeSet<u32> = grass
             .iter()
-            .map(|placed| (instance_for(&flora.resident, placed, [0.0, 40.0, 0.0]).unwrap().scale * 1000.0) as u32)
+            .map(|placed| {
+                (instance_for(&flora.resident, placed, [0.0, 40.0, 0.0])
+                    .unwrap()
+                    .scale
+                    * 1000.0) as u32
+            })
             .collect();
         assert!(
             scales.len() >= 40,
@@ -654,7 +660,12 @@ mod tests {
         );
         let bends: std::collections::BTreeSet<u32> = grass
             .iter()
-            .map(|placed| (instance_for(&flora.resident, placed, [0.0, 40.0, 0.0]).unwrap().bend * 1000.0) as u32)
+            .map(|placed| {
+                (instance_for(&flora.resident, placed, [0.0, 40.0, 0.0])
+                    .unwrap()
+                    .bend
+                    * 1000.0) as u32
+            })
             .collect();
         assert!(
             bends.len() >= 8,
@@ -665,11 +676,18 @@ mod tests {
         // plains eye plans, the share matching on *both* size and sway is the
         // birthday rate for a 51x51 field, far under one percent. An earlier
         // version of this mapping clamped grass compliance at 1.0 for every
-        // site and measured 17 twin pairs here, so the check has teeth.
+        // site and measured 17 twin pairs here, so the check has teeth. Two
+        // clumps in the *same* metre column are the understory slot stacked on
+        // the first: they are one visual clump, so only pairs in different
+        // columns count as neighbours.
         let mut adjacent = 0usize;
         let mut matching = 0usize;
         for window in grass.windows(2) {
-            if (window[0].x - window[1].x).abs() > 1 || (window[0].z - window[1].z).abs() > 1 {
+            let same_column = window[0].x == window[1].x && window[0].z == window[1].z;
+            if same_column
+                || (window[0].x - window[1].x).abs() > 1
+                || (window[0].z - window[1].z).abs() > 1
+            {
                 continue;
             }
             adjacent += 1;
@@ -684,6 +702,105 @@ mod tests {
             matching * 100 < adjacent,
             "{matching} of {adjacent} adjacent tufts share size and sway"
         );
+    }
+
+    #[test]
+    fn tall_blades_bend_from_a_planted_base() {
+        // A mirror of `world.wgsl`'s `displace` for one instance, at the worst
+        // sine the shader can produce (the pair spans +-1.5):
+        //
+        //   h = clamp(local_y / (height_m * scale), 0, 1)
+        //   offset = bend * scale * strength * h^1.5
+        //
+        // The property that matters for the blade redesign is that the offset
+        // is weighted by height above the ground contact: a blade's base cell
+        // is planted and its tip moves most, which is bending. A uniform
+        // offset would slide the whole blade, which is shearing - and would
+        // also move the ground contact out of the cell it is rooted in.
+        fn displacement(local_y: f32, height_m: f32, scale: f32, bend: f32, strength: f32) -> f32 {
+            let h = (local_y / (height_m * scale)).clamp(0.0, 1.0);
+            bend * scale * strength * 1.5 * h.powf(1.5)
+        }
+
+        let flora = LandscapeFlora::new().expect("prototypes must build");
+        let mut plan = FloraPlan::default();
+        landscape::plan_flora_into(
+            crate::landscape::SEED,
+            [0.0f32, 40.0, 0.0],
+            &LANDSCAPE_FLORA_TIERS,
+            MAX_PLANNED_SITES,
+            MAX_PLANNED_TREES,
+            &mut plan,
+        );
+        // The tallest ground-cover instance the sample draws, which is the one
+        // the wind margins are sized for.
+        let placed = plan
+            .sites
+            .iter()
+            .filter(|placed| placed.kind == FloraKind::GrassTuft)
+            .max_by_key(|placed| placed.height_percent)
+            .expect("a plains eye plans grass");
+        let instance = instance_for(&flora.resident, placed, [0.0, 40.0, 0.0]).unwrap();
+        let mesh = &flora.runtime.meshes()[instance.prototype];
+        let strength = matterweave_render::Wind::MAX_STRENGTH_M;
+        let mut base_max = 0.0f32;
+        let mut top = (0.0f32, 0.0f32); // (local y, displacement)
+        for vertex in &mesh.vertices {
+            let y = vertex.position[1];
+            let d = displacement(
+                y,
+                instance.height_m,
+                instance.scale,
+                instance.bend,
+                strength,
+            );
+            assert!(
+                d <= MAX_WIND_DISPLACEMENT_M,
+                "vertex at {y} m displaces {d} m, over the {MAX_WIND_DISPLACEMENT_M} m bound"
+            );
+            if y < 0.01 {
+                base_max = base_max.max(d);
+            }
+            if y > top.0 {
+                top = (y, d);
+            }
+        }
+        assert!(
+            base_max == 0.0,
+            "a blade base moved {base_max} m: that is a shear, not a bend"
+        );
+        assert!(top.1 > 0.1, "the blade tip barely moves: {} m", top.1);
+        assert!(
+            top.1 > base_max,
+            "the tip must move more than the base: {} vs {base_max}",
+            top.1
+        );
+        // Bending is monotone in height: a cell higher up never moves less than
+        // one below it on the same blade. The prototype's tallest vertex is its
+        // blade tip, so the displacement must strictly grow with height.
+        let mut previous = 0.0f32;
+        let mut heights: Vec<f32> = mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position[1])
+            .filter(|y| y.is_finite())
+            .collect();
+        heights.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        heights.dedup_by(|a, b| (*a - *b).abs() < 1.0e-4);
+        for y in heights {
+            let d = displacement(
+                y,
+                instance.height_m,
+                instance.scale,
+                instance.bend,
+                strength,
+            );
+            assert!(
+                d >= previous - 1.0e-6,
+                "displacement fell from {previous} to {d} at height {y}"
+            );
+            previous = d;
+        }
     }
 
     #[test]
@@ -733,7 +850,10 @@ mod tests {
         const { assert!(MAX_PLANNED_SITES + MAX_PLANNED_TREES <= MAX_FLORA_INSTANCES) };
         // The tree radius must reach past the outermost ground-cover band, or a
         // forest would stop being a forest at the edge of the field.
-        assert!(LANDSCAPE_TREE_RADIUS_M > LANDSCAPE_FLORA_TIERS[LANDSCAPE_FLORA_TIERS.len() - 1].radius_m);
+        assert!(
+            LANDSCAPE_TREE_RADIUS_M
+                > LANDSCAPE_FLORA_TIERS[LANDSCAPE_FLORA_TIERS.len() - 1].radius_m
+        );
     }
 
     #[test]

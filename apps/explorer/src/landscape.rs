@@ -312,7 +312,9 @@ fn eye_override(directory: &Path) -> Option<Camera> {
         || camera.position.z.abs() > MAX_EYE_XZ
         || !(MIN_EYE_Y..=MAX_EYE_Y).contains(&camera.position.y)
     {
-        log::warn!("Landscape eye override is outside the renderable range; using the spawn camera");
+        log::warn!(
+            "Landscape eye override is outside the renderable range; using the spawn camera"
+        );
         return None;
     }
     log::info!(
