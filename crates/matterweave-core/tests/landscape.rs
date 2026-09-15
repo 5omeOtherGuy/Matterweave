@@ -34,7 +34,7 @@ fn fingerprint(seed: u64, edge: i32) -> u64 {
 
 #[test]
 fn generation_is_deterministic_and_seed_dependent() {
-    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 1);
+    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 2);
     for (x, z) in [(0, 0), (1, -1), (1000, -2000), (-9999, 30000)] {
         assert_eq!(
             landscape::column(SEED, x, z),
@@ -330,7 +330,7 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // changed on purpose, and the old and new values belong in the change that
     // made it.
     assert_eq!(
-        value, 0x63ec_1387_d1e7_09da,
+        value, 0x774b_0b7d_3a38_15b1,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }

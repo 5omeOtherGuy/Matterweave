@@ -144,14 +144,34 @@ fn bend_factor(bend_percent: u8) -> f32 {
     0.75 + 0.25 * (offset / span).min(1.0)
 }
 
-/// Detail level for a placement's distance band. The nearest band draws the
-/// authoritative source geometry; the far bands draw the coarser derived levels
-/// the detail engine already builds, which is where the triangle count goes.
+/// Detail level for a ground-cover placement's density band. The near band
+/// draws the authoritative source clump; the far band draws the derived half
+/// level, which is a low mat of merged blades at 12.5 cm cells - the right read
+/// for ground cover between 28 and 48 m and strictly cheaper than the source.
+/// Beyond the last band there is no ground cover at all: see
+/// [`matterweave_core::landscape::LANDSCAPE_FLORA_TIERS`] for the crossover.
 fn lod_for_tier(tier: u8) -> Lod {
     match tier {
         0 => Lod::Source,
-        1 => Lod::Half,
-        _ => Lod::Quarter,
+        _ => Lod::Half,
+    }
+}
+
+/// Detail level for a tree at `distance_m` metres from the eye.
+///
+/// Trees are landmarks rather than ground cover: they are planned to
+/// [`matterweave_core::landscape::LANDSCAPE_TREE_RADIUS_M`], far past the
+/// outermost ground band, so their bands are their own. The first band keeps the
+/// source crown (fronds and gaps) where it can be resolved, the middle band the
+/// half crown and the outer band the quarter, which is still a trunk with a
+/// crown at 100 m and beyond.
+fn tree_lod(distance_m: i32) -> Lod {
+    if distance_m <= 32 {
+        Lod::Source
+    } else if distance_m <= 96 {
+        Lod::Half
+    } else {
+        Lod::Quarter
     }
 }
 
@@ -340,7 +360,7 @@ impl LandscapeFlora {
         let rebuilt = self.field.generation() != generation_before;
         let (planned_sites, planned_trees, dropped, refused) = {
             let plan = self.field.plan();
-            let refused = fill_instances(&self.resident, plan, &mut self.instances);
+            let refused = fill_instances(&self.resident, plan, eye, &mut self.instances);
             (plan.sites.len(), plan.trees.len(), plan.dropped, refused)
         };
         let upload_begin = Instant::now();
@@ -409,6 +429,7 @@ fn anchor_covers(anchor: [i32; 2], eye: [f32; 3]) -> bool {
 fn fill_instances(
     resident: &Resident,
     plan: &FloraPlan,
+    eye: [f32; 3],
     instances: &mut Vec<FloraInstance>,
 ) -> usize {
     let mut refused = 0;
@@ -420,7 +441,7 @@ fn fill_instances(
             refused += 1;
             continue;
         }
-        match instance_for(resident, placed) {
+        match instance_for(resident, placed, eye) {
             Some(instance) => instances.push(instance),
             None => refused += 1,
         }
@@ -437,9 +458,16 @@ fn fill_instances(
 /// instance scale (0.75x to 1.25x, so neighbours differ in size without a
 /// prototype per size) and `bend_percent` scales the kind's compliance down
 /// through [`bend_factor`].
-fn instance_for(resident: &Resident, placed: &PlacedFlora) -> Option<FloraInstance> {
+fn instance_for(resident: &Resident, placed: &PlacedFlora, eye: [f32; 3]) -> Option<FloraInstance> {
     let id = prototype_for(&placed.as_site());
-    let lod = lod_for_tier(placed.tier);
+    let lod = match placed.kind {
+        FloraKind::TreeBroadleaf | FloraKind::TreeConifer => tree_lod(
+            (placed.x - eye[0] as i32)
+                .abs()
+                .max((placed.z - eye[2] as i32).abs()),
+        ),
+        _ => lod_for_tier(placed.tier),
+    };
     let &(prototype, height_m) = resident
         .get(&(id, lod))
         .or_else(|| resident.get(&(id, Lod::Source)))?;
@@ -527,7 +555,7 @@ mod tests {
                 &mut plan,
             );
             for placed in plan.sites.iter().chain(&plan.trees) {
-                let instance = instance_for(&flora.resident, placed)
+                let instance = instance_for(&flora.resident, placed, eye)
                     .unwrap_or_else(|| panic!("{placed:?} produced no instance"));
                 assert!((0.0..=1.0).contains(&instance.phase));
                 assert!((0.0..=1.0).contains(&instance.bend));
@@ -558,7 +586,7 @@ mod tests {
         let planned = plan.sites.len() + plan.trees.len();
         assert!(planned > 1_000, "a plains eye plans a field, got {planned}");
         let mut instances = Vec::new();
-        let refused = fill_instances(&flora.resident, &plan, &mut instances);
+        let refused = fill_instances(&flora.resident, &plan, [0.0, 40.0, 0.0], &mut instances);
         // The catalogue has geometry for every id at every level, so nothing is
         // refused here and the two counts still agree.
         assert_eq!(refused, 0, "the full catalogue must draw every placement");
@@ -572,7 +600,7 @@ mod tests {
             flora.resident.remove(&(victim, lod));
         }
         let mut instances = Vec::new();
-        let refused = fill_instances(&flora.resident, &plan, &mut instances);
+        let refused = fill_instances(&flora.resident, &plan, [0.0, 40.0, 0.0], &mut instances);
         let expected = plan
             .sites
             .iter()
@@ -611,7 +639,7 @@ mod tests {
         assert!(grass.len() > 32, "a plains eye holds a real field");
         let scales: std::collections::BTreeSet<u32> = grass
             .iter()
-            .map(|placed| (instance_for(&flora.resident, placed).unwrap().scale * 1000.0) as u32)
+            .map(|placed| (instance_for(&flora.resident, placed, [0.0, 40.0, 0.0]).unwrap().scale * 1000.0) as u32)
             .collect();
         assert!(
             scales.len() >= 40,
@@ -620,7 +648,7 @@ mod tests {
         );
         let bends: std::collections::BTreeSet<u32> = grass
             .iter()
-            .map(|placed| (instance_for(&flora.resident, placed).unwrap().bend * 1000.0) as u32)
+            .map(|placed| (instance_for(&flora.resident, placed, [0.0, 40.0, 0.0]).unwrap().bend * 1000.0) as u32)
             .collect();
         assert!(
             bends.len() >= 8,
@@ -639,8 +667,8 @@ mod tests {
                 continue;
             }
             adjacent += 1;
-            let a = instance_for(&flora.resident, window[0]).unwrap();
-            let b = instance_for(&flora.resident, window[1]).unwrap();
+            let a = instance_for(&flora.resident, window[0], [0.0, 40.0, 0.0]).unwrap();
+            let b = instance_for(&flora.resident, window[1], [0.0, 40.0, 0.0]).unwrap();
             if a.scale == b.scale && a.bend == b.bend {
                 matching += 1;
             }
@@ -654,10 +682,21 @@ mod tests {
 
     #[test]
     fn distance_bands_select_coarser_geometry() {
+        // Ground cover: the near band draws the source clump, the far band its
+        // half level. There is no third band - beyond 48 m the field is ground
+        // colour, because a 6.25 cm blade is sub-pixel there.
         assert_eq!(lod_for_tier(0), Lod::Source);
         assert_eq!(lod_for_tier(1), Lod::Half);
-        assert_eq!(lod_for_tier(2), Lod::Quarter);
-        assert_eq!(lod_for_tier(3), Lod::Quarter);
+        for beyond in 2..8 {
+            assert_eq!(lod_for_tier(beyond), Lod::Half);
+        }
+        // Trees carry their own bands out to the tree radius.
+        assert_eq!(tree_lod(0), Lod::Source);
+        assert_eq!(tree_lod(32), Lod::Source);
+        assert_eq!(tree_lod(33), Lod::Half);
+        assert_eq!(tree_lod(96), Lod::Half);
+        assert_eq!(tree_lod(97), Lod::Quarter);
+        assert_eq!(tree_lod(160), Lod::Quarter);
         let flora = LandscapeFlora::new().expect("prototypes must build");
         // The pooled indices really are different meshes, so a band change is
         // a geometry change rather than a relabelling.
@@ -671,6 +710,16 @@ mod tests {
             meshes[far].indices.len() / 3,
             meshes[near].indices.len() / 3
         );
+        // A blade clump must coarsen into something far cheaper, or the far
+        // band would not be worth drawing at all.
+        let clump = flora.resident[&("grass_tuft_m", Lod::Source)].0;
+        let clump_half = flora.resident[&("grass_tuft_m", Lod::Half)].0;
+        assert!(
+            meshes[clump_half].indices.len() < meshes[clump].indices.len(),
+            "the half clump must cost fewer triangles: {} vs {}",
+            meshes[clump_half].indices.len() / 3,
+            meshes[clump].indices.len() / 3
+        );
     }
 
     #[test]
@@ -678,7 +727,7 @@ mod tests {
         const { assert!(MAX_PLANNED_SITES + MAX_PLANNED_TREES <= MAX_FLORA_INSTANCES) };
         // The tree radius must reach past the outermost ground-cover band, or a
         // forest would stop being a forest at the edge of the field.
-        assert!(LANDSCAPE_TREE_RADIUS_M > LANDSCAPE_FLORA_TIERS[3].radius_m);
+        assert!(LANDSCAPE_TREE_RADIUS_M > LANDSCAPE_FLORA_TIERS[LANDSCAPE_FLORA_TIERS.len() - 1].radius_m);
     }
 
     #[test]

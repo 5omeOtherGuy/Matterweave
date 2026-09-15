@@ -55,7 +55,12 @@ use std::collections::HashMap;
 
 /// Identity of this generator's output. Bump for any change to the columns,
 /// materials or flora population it produces.
-pub const LANDSCAPE_GENERATOR_VERSION: u32 = 1;
+///
+/// Version 2: ground cover and flowers are placed at the pressures and bands the
+/// vegetation pass ships (denser grass, sparse dune grass, coastal palms), so
+/// the flora population is not the one version 1 produced. Columns, materials
+/// and tile meshes are unchanged.
+pub const LANDSCAPE_GENERATOR_VERSION: u32 = 2;
 
 /// Sea surface height in metres. Columns strictly below this are flooded.
 pub const SEA_LEVEL: i32 = 0;
@@ -126,40 +131,59 @@ impl Biome {
     }
 
     /// Grass tuft pressure in `0..=64` per flora slot; 64 fills every slot.
+    ///
+    /// Ground cover is the layer a close capture judges the landscape by, so the
+    /// grassy biomes sit near the top of the range: the slot is one clump per
+    /// metre column, and one clump is a clump of thin blades, not a mat. Beach
+    /// and desert keep a sparse dune-grass cover rather than none, which is what
+    /// the reference shore shows.
     pub fn grass_density(self) -> u8 {
         match self {
             Biome::Ocean => 0,
-            Biome::Beach | Biome::Desert | Biome::Snow => 2,
-            Biome::Mountain | Biome::Tundra => 10,
-            Biome::Hills => 40,
-            Biome::Plains => 52,
-            Biome::Forest => 44,
-            Biome::Swamp => 34,
+            Biome::Snow => 2,
+            Biome::Desert => 3,
+            Biome::Beach => 8,
+            Biome::Mountain => 14,
+            Biome::Tundra => 16,
+            Biome::Swamp => 48,
+            Biome::Hills => 56,
+            Biome::Forest => 62,
+            Biome::Plains => 64,
         }
     }
 
     /// Flower pressure in `0..=64` per flora slot.
+    ///
+    /// The flower layer stays a minority of the field - a meadow with a flower
+    /// on every column would be a flower bed - but it is a distinct layer rather
+    /// than a garnish, and it is densest where the reference meadow is.
     pub fn flower_density(self) -> u8 {
         match self {
             Biome::Ocean | Biome::Snow => 0,
             Biome::Desert => 4,
-            Biome::Beach => 3,
-            Biome::Mountain | Biome::Tundra => 8,
-            Biome::Hills => 14,
-            Biome::Plains => 22,
-            Biome::Forest => 12,
-            Biome::Swamp => 10,
+            Biome::Beach => 5,
+            Biome::Mountain => 8,
+            Biome::Tundra => 10,
+            Biome::Swamp => 12,
+            Biome::Hills => 16,
+            Biome::Forest => 16,
+            Biome::Plains => 26,
         }
     }
 
     /// Tree pressure in `0..=64` per 8 m cell.
+    ///
+    /// Beach carries a sparse palm layer (the reference's sand is treed, not
+    /// bare), and the coastal margin is where a spawn camera looks first, so the
+    /// shoreline is not an empty strip between the water and the forest.
     pub fn tree_density(self) -> u8 {
         match self {
             Biome::Forest => 44,
             Biome::Swamp => 22,
             Biome::Plains | Biome::Hills => 6,
+            Biome::Beach => 3,
             Biome::Tundra => 3,
-            Biome::Beach | Biome::Desert | Biome::Mountain | Biome::Snow | Biome::Ocean => 0,
+            Biome::Desert | Biome::Mountain | Biome::Snow | Biome::Ocean => 0,
         }
     }
 
@@ -755,25 +779,24 @@ pub struct FloraTier {
     pub keep_every: u32,
 }
 
-/// The shipped density falloff: full density to 16 m, then half, quarter and
-/// eighth out to 96 m. Radii ascend and each is a whole number of
-/// [`FLORA_CELL_M`] cells, which is what makes the band predicate exact.
-pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 4] = [
+/// The shipped density falloff: full density to 28 m, then half density to
+/// 48 m, and no ground cover beyond that.
+///
+/// The outer radius is the blade LOD crossover, not a budget compromise. A
+/// blade is one fine voxel - 6.25 cm - across, and the landscape render target
+/// resolves about 1.6 mrad per pixel (65 degrees over 720 rows), so a blade is
+/// sub-pixel beyond ~40 m and a clump is a handful of pixels; beyond 48 m the
+/// field is drawn as ground colour rather than as thousands of instances nobody
+/// can resolve. Radii ascend and each is a whole number of [`FLORA_CELL_M`]
+/// cells, which is what makes the band predicate exact.
+pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     FloraTier {
-        radius_m: 16,
+        radius_m: 28,
         keep_every: 1,
     },
     FloraTier {
-        radius_m: 32,
+        radius_m: 48,
         keep_every: 2,
-    },
-    FloraTier {
-        radius_m: 64,
-        keep_every: 4,
-    },
-    FloraTier {
-        radius_m: 96,
-        keep_every: 8,
     },
 ];
 
