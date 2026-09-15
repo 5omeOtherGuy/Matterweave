@@ -641,16 +641,23 @@ impl Swapchain {
                     None,
                 )
                 .map_err(err)?;
+            // The cloud march reads this depth buffer back to skip covered
+            // cloud pixels, so the format must be sampleable as well as
+            // attachable. D32_SFLOAT is required to support both; the D16
+            // fallback is only taken when it does too.
             let depth_format = [vk::Format::D32_SFLOAT, vk::Format::D16_UNORM]
                 .into_iter()
                 .find(|f| {
                     i.raw
                         .get_physical_device_format_properties(d.physical, *f)
                         .optimal_tiling_features
-                        .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+                        .contains(
+                            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
+                                | vk::FormatFeatureFlags::SAMPLED_IMAGE,
+                        )
                 })
-                .ok_or("No depth attachment format")?;
-            out.depth = Some(Depth::new(d.clone(), out.size, depth_format, false)?);
+                .ok_or("No sampleable depth attachment format")?;
+            out.depth = Some(Depth::new(d.clone(), out.size, depth_format, true)?);
             let attachments = [
                 vk::AttachmentDescription::default()
                     .format(format.format)
@@ -663,9 +670,13 @@ impl Swapchain {
                     .format(depth_format)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    // Stored because the cloud march samples it after the pass
+                    // to mask covered rays. The next frame clears it again from
+                    // UNDEFINED, so the stored contents are never read across
+                    // frames.
+                    .store_op(vk::AttachmentStoreOp::STORE)
                     .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+                    .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
             ];
             let color = [vk::AttachmentReference {
                 attachment: 0,
@@ -2325,16 +2336,6 @@ impl Renderer {
                 }],
             );
             d.cmd_set_scissor(cmd, 0, &[area]);
-            // Sky first: no depth test, no depth write, no blending, so every
-            // opaque surface below still covers it exactly as it covered the
-            // cleared colour. The cloud composite follows immediately, before
-            // any geometry, and the water and HUD passes keep their order.
-            if let (Some(sky), Some(push)) = (&self.sky, sky_push) {
-                if lighting.atmosphere.sky_gradient {
-                    sky.record_dome(cmd, self.shadow.set, push);
-                }
-                sky.record_composite(cmd);
-            }
             d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
             d.cmd_bind_descriptor_sets(
                 cmd,
@@ -2414,6 +2415,19 @@ impl Renderer {
                 if let Some(scene) = &self.flora_scene {
                     scene.record_batches(d, cmd, Some(&frustum));
                 }
+            }
+            // Background after the opaque surfaces, before the translucent and
+            // HUD passes: the dome and the cloud composite test depth EQUAL, so
+            // they shade exactly the pixels the cleared depth buffer still
+            // holds and every covered pixel stays unshaded. This is the same
+            // image the old "sky first, then geometry over it" order produced,
+            // with the covered fragments never running. Water and HUD keep
+            // their existing order, so the composite still blends under both.
+            if let (Some(sky), Some(push)) = (&self.sky, sky_push) {
+                if lighting.atmosphere.sky_gradient {
+                    sky.record_dome(cmd, self.shadow.set, push);
+                }
+                sky.record_composite(cmd);
             }
             // Derived water: translucent, drawn after every opaque surface so the
             // bed is already in the depth buffer, never writing depth itself.

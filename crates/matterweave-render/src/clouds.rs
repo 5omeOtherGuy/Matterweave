@@ -1,11 +1,13 @@
 //! Sky dome and volumetric clouds.
 //!
-//! Two draws, both full-screen triangles with no vertex buffer and no depth:
+//! Two draws, both full-screen triangles with no vertex buffer:
 //!
-//!  * the sky dome, drawn into the frame before any opaque geometry, so the
-//!    terrain, the water and the HUD all cover it in the existing order;
+//!  * the sky dome, drawn into the frame after opaque geometry with a depth
+//!    test that passes only where the scene left the far value, so covered
+//!    pixels are never shaded;
 //!  * a volumetric cloud march into a reduced-resolution offscreen target,
-//!    recorded outside the frame's render pass and composited over the dome.
+//!    recorded outside the frame's render pass, whose upsample is composited
+//!    after the dome with the same depth test.
 //!
 //! Both read the group-0 lighting uniform the world pass already binds, so the
 //! sun and sky colour here are the same ones the terrain is lit and fogged
@@ -184,6 +186,7 @@ fn full_screen_pipeline(
     fragment_spirv: &[u8],
     fragment_entry: &std::ffi::CStr,
     premultiplied_blend: bool,
+    depth_equal: bool,
 ) -> Result<vk::Pipeline> {
     let mut modules = Vec::new();
     // SAFETY: build-time Naga validates every module; the modules outlive pipeline
@@ -228,11 +231,20 @@ fn full_screen_pipeline(
                 .line_width(1.0);
             let multisample = vk::PipelineMultisampleStateCreateInfo::default()
                 .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-            // Neither draw tests nor writes depth: both are background, drawn
-            // before any opaque surface exists in the depth buffer.
+            // Neither draw writes depth. The dome and the composite do test it,
+            // against the far value a cleared depth buffer still holds where no
+            // opaque surface was drawn: EQUAL passes exactly on the pixels the
+            // scene left empty, and the early fragment test keeps the shader from
+            // running on the covered ones. The march has no depth attachment at
+            // all, so it tests nothing.
             let depth = vk::PipelineDepthStencilStateCreateInfo::default()
-                .depth_test_enable(false)
-                .depth_write_enable(false);
+                .depth_test_enable(depth_equal)
+                .depth_write_enable(false)
+                .depth_compare_op(if depth_equal {
+                    vk::CompareOp::EQUAL
+                } else {
+                    vk::CompareOp::LESS
+                });
             // The cloud target holds premultiplied light with 1 - transmittance
             // in alpha, so the composite is ONE / ONE_MINUS_SRC_ALPHA. The dome
             // itself is opaque background and does not blend.
@@ -496,6 +508,7 @@ impl CloudTarget {
                 include_bytes!(concat!(env!("OUT_DIR"), "/sky.fs_clouds.spv")),
                 c"fs_clouds",
                 false,
+                false,
             )?;
             // Composite set: the cloud target and its sampler, as separate
             // bindings, matching what Naga emits for `cloud_composite.wgsl`.
@@ -583,6 +596,7 @@ impl CloudTarget {
                 include_bytes!(concat!(env!("OUT_DIR"), "/cloud_composite.vs_main.spv")),
                 include_bytes!(concat!(env!("OUT_DIR"), "/cloud_composite.fs_main.spv")),
                 c"fs_main",
+                true,
                 true,
             )?;
         }
@@ -763,6 +777,7 @@ impl SkyPass {
             include_bytes!(concat!(env!("OUT_DIR"), "/sky.fs_main.spv")),
             c"fs_main",
             false,
+            true,
         )?;
         Ok(out)
     }
@@ -879,8 +894,9 @@ impl SkyPass {
         true
     }
 
-    /// The dome, recorded inside the frame's render pass before opaque
-    /// geometry. `push.params.zw` must already be the frame's inverse size.
+    /// The dome, recorded inside the frame's render pass after opaque geometry
+    /// and before the cloud composite. `push.params.zw` must already be the
+    /// frame's inverse size.
     pub(crate) fn record_dome(
         &self,
         cmd: vk::CommandBuffer,
@@ -919,8 +935,8 @@ impl SkyPass {
         }
     }
 
-    /// The upsample, recorded immediately after the dome and before opaque
-    /// geometry. Does nothing when no cloud target exists.
+    /// The upsample, recorded immediately after the dome and before the water
+    /// and HUD passes. Does nothing when no cloud target exists.
     pub(crate) fn record_composite(&self, cmd: vk::CommandBuffer) {
         let Some(target) = &self.clouds else {
             return;

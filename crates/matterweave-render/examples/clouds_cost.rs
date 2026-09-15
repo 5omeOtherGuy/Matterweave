@@ -132,11 +132,13 @@ fn shore_scene() -> Mesh {
         [-e, 0.0, -e],
         [0.0, 1.0, 0.0],
     );
-    // Headland: a box whose near face is 600 m away, 600 m tall and 2400 m
-    // wide, standing left of the camera's forward line.
-    let (near, far) = (-600.0, -1200.0);
-    let (left, right) = (-1800.0, 600.0);
-    let top = 620.0;
+    // Headland: a box whose near face is 800 m away and 560 m tall, standing
+    // left of the camera's forward line. It covers roughly two thirds of the
+    // sky region the cloud march considers, so the depth mask has something
+    // real to skip, while leaving the right of the frame open for clouds.
+    let (near, far) = (-800.0, -1600.0);
+    let (left, right) = (-1700.0, 400.0);
+    let top = 560.0;
     // Camera-facing face.
     quad(
         [left, 0.0, near],
