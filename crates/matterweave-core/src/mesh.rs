@@ -32,20 +32,18 @@ fn color(material: u8) -> [f32; 3] {
     crate::material::color(material)
 }
 
-/// Colour of a face of one integer world cell: the material's base colour plus
-/// the deterministic per-voxel tone of that cell. The baseline mesher emits one
-/// face per cell, so the cell is its own aggregate.
-fn cell_color(material: u8, cell: [i32; 3]) -> [f32; 3] {
-    crate::material::tint(
-        color(material),
-        crate::material::tone(material, cell[0], cell[1], cell[2]),
-    )
-}
-
 impl World {
     /// Synchronous whole-world exposed-face baseline, including cross-chunk occlusion.
     /// Stable iteration order makes equal worlds produce equal mesh bytes.
     /// Call after edits, not each frame. This is not greedy meshing, LOD or streaming.
+    ///
+    /// Its vertex colour stays the palette colour. This path is the compatibility
+    /// and comparison baseline: `renderer_comparison` requires it to agree
+    /// pixel-for-pixel with the ray reference, which shades from the same palette
+    /// by material, and the per-voxel tone of [`crate::material::tone`] cannot be
+    /// reproduced by a per-material palette. The streamed mesher
+    /// ([`Self::mesh_chunk`]) and [`crate::landscape::lod_tile_mesh`] carry the
+    /// tone; they are the paths the landscape sample draws.
     pub fn mesh(&self) -> Mesh {
         let mut mesh = Mesh {
             revision: self.revision(),
@@ -78,7 +76,7 @@ impl World {
                                     + (origin[axis] + du * u[axis] + dv * v[axis]) as f32
                             }),
                             normal: normal.map(|value| value as f32),
-                            color: cell_color(material, cell),
+                            color: color(material),
                         });
                     }
                     mesh.indices.extend_from_slice(&[
@@ -325,8 +323,10 @@ mod tests {
             bytes
         };
         assert_eq!(dump(&first), dump(&second));
-        // The reference mesher applies the same per-cell tone to its own faces,
-        // so both paths agree on a single-cell world.
+        // The whole-world baseline keeps the palette colour: it is the
+        // comparison mesh the ray reference must match by material, so the tone
+        // exists only in the streamed and tile meshers. A lone cell proves the
+        // two paths differ exactly by the cell's tone.
         let mut single = World::new(7);
         single.set([3, 0, 5], material::GRAVEL);
         let reference = single.mesh();
@@ -337,6 +337,13 @@ mod tests {
             .find(|vertex| vertex.normal == [0.0, 1.0, 0.0])
             .expect("top face")
             .color;
-        assert_eq!(top_colour(&greedy), reference_colour);
+        assert_eq!(reference_colour, material::color(material::GRAVEL));
+        assert_eq!(
+            top_colour(&greedy),
+            material::tint(
+                material::color(material::GRAVEL),
+                material::tone(material::GRAVEL, 3, 0, 5)
+            )
+        );
     }
 }
