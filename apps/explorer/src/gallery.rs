@@ -21,6 +21,7 @@ use std::{
 use crate::{
     controls::{Camera, Controls},
     metrics,
+    platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle},
 };
 use glam::{Vec2, Vec3};
 use matterweave_core::{Mesh, Vertex};
@@ -491,7 +492,9 @@ pub struct GalleryApp {
     frame_ms: f64,
     cpu_ms: f64,
     status: String,
-    focused: bool,
+    /// Platform lifecycle state: window, focus and activity pause. The one gate
+    /// for frames and simulation.
+    lifecycle: PlatformLifecycle,
     failed: bool,
 }
 
@@ -538,7 +541,7 @@ impl GalleryApp {
             frame_ms: 0.,
             cpu_ms: 0.,
             status,
-            focused: true,
+            lifecycle: PlatformLifecycle::default(),
             failed: false,
         }
     }
@@ -548,7 +551,24 @@ impl GalleryApp {
     }
 
     fn wants_frames(&self) -> bool {
-        self.focused || self.frame_limit.is_some()
+        self.lifecycle.work_allowed()
+            || (self.frame_limit.is_some() && self.lifecycle.present_allowed())
+    }
+    /// Apply one platform lifecycle transition. Takes no winit or GPU types, so
+    /// the platform owner and the headless lifecycle test drive the same entry
+    /// point. This viewer owns no worker; the gate is the whole effect, and the
+    /// clock is rebased so a pause is never integrated in one step.
+    pub(crate) fn apply_platform(&mut self, event: PlatformEvent) {
+        self.lifecycle.apply(event);
+        match event {
+            PlatformEvent::WindowCreated | PlatformEvent::Resumed | PlatformEvent::GainedFocus => {
+                self.last_frame = Instant::now()
+            }
+            PlatformEvent::Paused | PlatformEvent::WindowDestroyed => {
+                self.controls.clear();
+            }
+            PlatformEvent::LostFocus => self.controls.clear(),
+        }
     }
 
     fn flush_profile(&mut self) {
@@ -716,7 +736,7 @@ impl GalleryApp {
         if let Some(renderer) = &mut self.renderer {
             renderer.begin_frame_diagnostics();
         }
-        let dt = (now - self.last_frame).as_secs_f32();
+        let dt = clamped_frame_delta(self.last_frame, now);
         self.last_frame = now;
         self.frame_ms = if self.frames == 0 {
             0.
@@ -936,13 +956,12 @@ impl GalleryApp {
 
 impl ApplicationHandler for GalleryApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.apply_platform(PlatformEvent::WindowCreated);
         if self.renderer.is_some() {
             return;
         }
         log::info!("Gallery lifecycle resumed");
         self.controls.clear();
-        self.last_frame = Instant::now();
-        self.focused = true;
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("Matterweave | Detail Gallery (viewer)")
@@ -984,8 +1003,7 @@ impl ApplicationHandler for GalleryApp {
 
     fn suspended(&mut self, _: &ActiveEventLoop) {
         log::info!("Gallery lifecycle suspended");
-        self.controls.clear();
-        self.focused = false;
+        self.apply_platform(PlatformEvent::WindowDestroyed);
         // No world, session or save exists to write here, by construction.
         self.flush_profile();
         self.renderer = None;
@@ -1018,11 +1036,18 @@ impl ApplicationHandler for GalleryApp {
                 }
             }
             WindowEvent::Focused(focused) => {
-                self.focused = focused;
-                self.last_frame = Instant::now();
-                if !focused {
-                    self.controls.clear();
-                }
+                self.apply_platform(if focused {
+                    PlatformEvent::GainedFocus
+                } else {
+                    PlatformEvent::LostFocus
+                });
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.apply_platform(if occluded {
+                    PlatformEvent::Paused
+                } else {
+                    PlatformEvent::Resumed
+                });
             }
             WindowEvent::RedrawRequested => self.draw(event_loop),
             WindowEvent::KeyboardInput { event, .. } => {
