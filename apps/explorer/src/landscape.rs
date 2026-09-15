@@ -83,12 +83,16 @@ const FAR_PLANE: f32 = 9500.0;
 
 /// Aerial perspective for this sample.
 ///
-/// `1 - exp(-d * 0.0006)` leaves about 9% of a surface's own colour at 4 km, so
-/// ridge and valley are still told apart there, and about 2.5% at the 6144 m
-/// outer edge, where the ring ends against a background cleared to the same
-/// sky. Host judgement on llvmpipe at 1280x768, not a device measurement, and
-/// the one number to turn if the horizon reads wrong on the phone.
-const FOG_DENSITY: f32 = 0.0006;
+/// The old 0.0006 left a surface at 4 km with 9% of its own colour and the
+/// rest of it the fog colour, so a distant mountain's shadowed walls and lit
+/// tops both arrived near-white and the voxel stepping the rings carry was
+/// invisible. At 0.00008 transmittance is 0.73 at 4 km and 0.53 at the 8 km
+/// outer ring: the far ridge still takes on the sky's blue, while a face
+/// turned away from the sun keeps most of its own darkness. Host judgement on
+/// llvmpipe at the spawn camera, not a device measurement, and the one number
+/// to turn if the horizon reads wrong on the phone; the in-scatter shape is
+/// `AERIAL_FLOOR` in `world.wgsl`.
+const FOG_DENSITY: f32 = 0.00008;
 const SKY: [f32; 3] = [0.60, 0.71, 0.82];
 
 /// The opt-in marker's contents, or `None` when there is no usable marker.
@@ -536,6 +540,11 @@ impl LandscapeSample {
                     // This sample is the one that looks at the sky: rings reach
                     // six kilometres and the eye flies above the terrain.
                     sky_gradient: true,
+                    // Distance shades with the two-term aerial-perspective
+                    // model: sun-dependent in-scatter, a distance face split
+                    // and per-voxel tone variation instead of a fade to one
+                    // colour.
+                    aerial_perspective: 1.0,
                 },
                 // Real wind and player values, not still air. The position is
                 // refreshed to the eye every frame; the constant bearing and
