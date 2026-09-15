@@ -473,6 +473,15 @@ pub struct LandscapeSample {
     frame_limit: Option<u64>,
     last_frame: Instant,
     frame_ms: f64,
+    /// Shadow depth passes the renderer actually submitted, counted per
+    /// presented frame from its per-attempt flag. The cache contract is a rate,
+    /// not a boolean: a standing camera under a static sun must approach zero,
+    /// and a moving one must stay far below one per frame.
+    shadow_renders: u64,
+    /// Renders and presented frames accumulated since the last 300-frame
+    /// report, so the device lead reads a rate rather than a total.
+    shadow_window_renders: u64,
+    shadow_window_frames: u64,
     /// Platform lifecycle state: window, focus and activity pause. The one gate
     /// for frames, streaming and both background workers.
     lifecycle: PlatformLifecycle,
@@ -592,6 +601,9 @@ impl LandscapeSample {
             frame_limit,
             last_frame: Instant::now(),
             frame_ms: 0.,
+            shadow_renders: 0,
+            shadow_window_renders: 0,
+            shadow_window_frames: 0,
             lifecycle: PlatformLifecycle::default(),
             exercise: false,
             return_to_menu: false,
@@ -984,6 +996,28 @@ impl LandscapeSample {
         match outcome {
             FrameResult::Presented => {
                 self.frames += 1;
+                // Counted per presented frame, from the attempt that actually
+                // presented: a retry must not inherit the previous shadow pass.
+                if self
+                    .renderer
+                    .as_ref()
+                    .is_some_and(Renderer::shadow_map_updated)
+                {
+                    self.shadow_renders += 1;
+                    self.shadow_window_renders += 1;
+                }
+                self.shadow_window_frames += 1;
+                if self.shadow_window_frames >= 300 {
+                    let message = format!(
+                        "LANDSCAPE SHADOW: {} renders / {} frames ({} total)",
+                        self.shadow_window_renders, self.shadow_window_frames, self.shadow_renders
+                    );
+                    log::info!("{message}");
+                    #[cfg(not(target_os = "android"))]
+                    eprintln!("{message}");
+                    self.shadow_window_renders = 0;
+                    self.shadow_window_frames = 0;
+                }
                 if self.frames.is_multiple_of(30) {
                     let tiles = self.renderer.as_ref().unwrap().terrain_tile_stats();
                     let water = self.renderer.as_ref().unwrap().water_stats();
@@ -1150,6 +1184,12 @@ impl LandscapeSample {
                 tile_work.total_generate_ms
             );
             eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
+            eprintln!(
+                "LANDSCAPE SHADOW TOTAL: {} depth passes over {} presented frames ({:.3} per frame)",
+                self.shadow_renders,
+                self.frames,
+                self.shadow_renders as f64 / self.frames.max(1) as f64
+            );
             eprintln!(
                 "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
                  bytes {} | plan {:.2} ms (worst {:.2}, budget {:.1}, over {}, pending {}) \
