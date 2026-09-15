@@ -271,8 +271,9 @@ fn sky_dome(dir: vec3<f32>) -> vec3<f32> {
         }
         discard;
     }
-    // The frame was drawn before this pass, so the depth buffer already knows
-    // which rays the scene covers. Skip those blocks without marching them.
+    // The depth buffer still holds the frame the mask is taken from: this
+    // frame's when the target was just built, the previous frame's otherwise.
+    // Skip the blocks whose whole footprint it covers.
     let footprint = vec2<i32>(i32(frag.x), i32(frag.y)) * i32(sky.control.z);
     if block_covered(footprint) {
         if counters_on {

@@ -159,20 +159,21 @@ pub(crate) struct CompositePush {
 pub(crate) const COMPOSITE_PUSH_BYTES: u32 = 16;
 
 /// How far the camera may move, in target pixels, before the amortised cloud
-/// target is recomputed in full instead of one sub-grid at a time. The reused
-/// pixels are stale by up to a few frames, so this bounds their screen-space
-/// error; 1.5 target pixels is under two full-resolution pixels at the cheap
-/// quality level and stays below the cloud field's own detail scale.
+/// target is recomputed in full instead of one sub-grid at a time. A reused
+/// pixel is stale by up to three frames, and the target is not reprojected, so
+/// this is the bound on how far it can be misplaced: 1.5 target pixels, six
+/// full-resolution pixels at the cheap quality level and three at the quality
+/// level, well inside the cloud field's own detail scale.
 pub(crate) const AMORTISATION_BUDGET_PX: f32 = 1.5;
 
 /// Column-major 3x3 homography mapping a UV in the `current` view-projection
-/// back to the UV the same far-plane direction had under `previous`.
+/// back to the UV the same far-plane direction had under `previous`. The cloud
+/// target is not reprojected with this; the amortisation only uses it to
+/// measure, in target pixels, how far the camera has moved since the target was
+/// last updated in full.
 ///
 /// Computed in f64: it composes an inverse projection with a projection, and
 /// f32 loses too much of the far-plane direction for a distant cloud layer.
-/// A cloud layer is not a plane, so this is exact only for rotation; the
-/// residual translation parallax between the layer and the far plane is under
-/// a pixel per frame at walking speed.
 pub(crate) fn cloud_reprojection(
     previous: [[f32; 4]; 4],
     current_inverse: [[f32; 4]; 4],
@@ -207,7 +208,8 @@ pub(crate) fn cloud_reprojection(
 /// Largest screen-space movement, in target pixels, that `homography` (current
 /// UV -> reference UV) implies over a grid covering the target. This is the
 /// error the amortised reuse would carry, so it decides when to recompute the
-/// whole target instead of one sub-grid.
+/// whole target instead of one sub-grid, and it is the number quoted as the
+/// amortisation budget.
 pub(crate) fn reprojection_displacement_px(homography: &[[f32; 4]; 3], target: (u32, u32)) -> f32 {
     // A 5x5 grid: the mapping is projective, so the corners carry most of the
     // motion, and the centre catches a pure zoom.
