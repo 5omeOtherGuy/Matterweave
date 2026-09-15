@@ -269,6 +269,104 @@ fn spawn_camera() -> Camera {
     }
 }
 
+/// A fixed camera for capture evidence, from `MATTERWEAVE_LANDSCAPE_EYE` as
+/// `x,y,z,yaw[,pitch]` or from an `eye` word sequence in the sample marker
+/// (`eye -192,11,1472,-1.5708,-0.05`), since a phone has no command line.
+///
+/// Acceptance measurements name a camera - a near-field crop and a 20-200 m
+/// tree framing are different framings of the same scene - and a capture that
+/// cannot be reproduced on the device without a private build is not evidence.
+/// Absent or malformed stays the shipped [`spawn_camera`], and a non-finite or
+/// out-of-range value is reported and ignored rather than moving the eye
+/// somewhere it cannot render from.
+fn eye_override(directory: &Path) -> Option<Camera> {
+    let text = match std::env::var(EYE_ENV_VAR) {
+        Ok(text) => Some(text),
+        Err(_) => marker_text(directory),
+    }?;
+    // The `eye` keyword starts the list in a marker that also carries other
+    // words (`clouds low`); an environment value is the list itself.
+    let mut parts: Vec<&str> = Vec::new();
+    let mut collecting = false;
+    for token in text.split([' ', '\n', '\r', '\t']) {
+        if token.eq_ignore_ascii_case("eye") {
+            collecting = true;
+            continue;
+        }
+        if collecting || token.parse::<f32>().is_ok() || token.contains(',') {
+            parts.push(token);
+        }
+    }
+    let numbers: Vec<f32> = parts
+        .join(" ")
+        .split([',', ' ', '\t'])
+        .filter_map(|part| part.trim().parse::<f32>().ok())
+        .collect();
+    if numbers.len() < 4 {
+        return None;
+    }
+    let camera = Camera {
+        position: Vec3::new(numbers[0], numbers[1], numbers[2]),
+        yaw: numbers[3],
+        pitch: numbers.get(4).copied().unwrap_or(-0.05),
+    };
+    if !camera.position.is_finite()
+        || !camera.yaw.is_finite()
+        || !camera.pitch.is_finite()
+        || camera.position.x.abs() > MAX_EYE_XZ
+        || camera.position.z.abs() > MAX_EYE_XZ
+        || !(MIN_EYE_Y..=MAX_EYE_Y).contains(&camera.position.y)
+    {
+        log::warn!(
+            "Landscape eye override is outside the renderable range; using the spawn camera"
+        );
+        return None;
+    }
+    log::info!(
+        "Landscape eye from {EYE_ENV_VAR} or the marker: {:?} yaw {} pitch {}",
+        camera.position,
+        camera.yaw,
+        camera.pitch
+    );
+    Some(camera)
+}
+
+/// Environment variable naming a fixed landscape camera, see [`eye_override`].
+pub const EYE_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_EYE";
+
+/// Environment variable that selects how the flora layer is drawn:
+/// `off` leaves terrain, water and sky with no flora at all, `shadow` builds
+/// and uploads the field and lets it cast shadows but does not draw it, and any
+/// other value is the shipping behaviour.
+///
+/// It exists so a capture can isolate what the vegetation layer covers: a pixel
+/// that differs from the `shadow` frame is vegetation, and a pixel that differs
+/// from the `off` frame is vegetation or the shadow it casts. Measuring that
+/// against a colour classifier instead would be guessing, because a blade's
+/// shaded side and the terrain's step faces are nearly the same colour. It is a
+/// measurement mode, not a quality setting, and it is off by default.
+pub const FLORA_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_FLORA";
+
+/// How the run asked the flora layer to be drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloraMode {
+    /// Build, upload, draw and shadow the field (the shipping behaviour).
+    Draw,
+    /// Build, upload and shadow the field, but do not draw it.
+    ShadowOnly,
+    /// Do not build the field at all.
+    Off,
+}
+
+/// The flora mode `MATTERWEAVE_LANDSCAPE_FLORA` asks for.
+pub fn flora_mode() -> FloraMode {
+    match std::env::var(FLORA_ENV_VAR) {
+        Ok(value) if value.eq_ignore_ascii_case("off") => FloraMode::Off,
+        Ok(value) if value.eq_ignore_ascii_case("shadow") => FloraMode::ShadowOnly,
+        _ => FloraMode::Draw,
+    }
+}
+
 /// Direction to the sun for this sample.
 ///
 /// A fixed mid-morning sun, unless `MATTERWEAVE_LANDSCAPE_SUN` names another
@@ -580,7 +678,7 @@ impl LandscapeSample {
         };
         let mut world = World::landscape(SEED);
         let terrain_source = world.terrain_source();
-        let mut camera = spawn_camera();
+        let mut camera = eye_override(&directory).unwrap_or_else(spawn_camera);
         clamp_camera(&mut camera);
         world.stream_around(camera.position.to_array());
         log::info!(
@@ -1022,13 +1120,20 @@ impl LandscapeSample {
         // what keeps a moving camera from re-running the planner every frame.
         let eye = self.camera.position.to_array();
         if let Some(flora) = self.flora.as_mut() {
-            let renderer = self.renderer.as_mut().unwrap();
-            if let Err(error) = flora.sync(renderer, eye) {
-                log::error!("Landscape flora failed: {error}");
-                eprintln!("Landscape flora failed: {error}");
-                self.failed = true;
-                event_loop.exit();
-                return;
+            // A measurement run may leave the field out entirely; a
+            // shadow-only run keeps it in the shadow pass and takes it out of
+            // the main pass. A field that has not been installed yet simply
+            // stays uninstalled.
+            if flora_mode() != FloraMode::Off {
+                let renderer = self.renderer.as_mut().unwrap();
+                if let Err(error) = flora.sync(renderer, eye) {
+                    log::error!("Landscape flora failed: {error}");
+                    eprintln!("Landscape flora failed: {error}");
+                    self.failed = true;
+                    event_loop.exit();
+                    return;
+                }
+                renderer.set_flora_visible(flora_mode() == FloraMode::Draw);
             }
         }
         // The wind clock advances every frame even when the field does not, so

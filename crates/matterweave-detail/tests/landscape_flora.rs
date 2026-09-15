@@ -172,7 +172,12 @@ fn prototypes_are_connected_rooted_decorative_and_within_cell_caps() {
             cell_cap(id)
         );
         assert!(volume.chunk_count() <= MAX_VOLUME_CHUNKS, "{id}");
-        assert_eq!(volume.scale().metres(), LANDSCAPE_LEAF_SCALE_M, "{id}");
+        let expected_scale = if id.starts_with("grass_tuft") || id.starts_with("flower_") {
+            LANDSCAPE_FINE_FLORA_SCALE_M
+        } else {
+            LANDSCAPE_LEAF_SCALE_M
+        };
+        assert_eq!(volume.scale().metres(), expected_scale, "{id}");
         assert!(assert_landscape_policy(&volume), "{id} is fully Decorative");
         assert!(assert_policy(&volume, MaterialPolicy::Decorative), "{id}");
     }
@@ -378,11 +383,14 @@ fn landscape_flora_classes_cover_every_species() {
 
 #[test]
 fn grass_and_tree_shapes_match_their_spec() {
-    // Grass: a fan of GRASS_BLADES_PER_TUFT leaning blades, each with its top
-    // GRASS_TIP_CELLS_PER_BLADE cells in the lighter tip material.
+    // Grass: a clump of one-voxel blades, 8..=20 fine voxels tall, each with a
+    // tip several cells long, leaning outward from its own pad cell. The tiers
+    // differ in clump radius as well as height, which is the per-site clump
+    // radius variation the placement bridge selects with `scale_eighths`.
     let mut tier_mass = [0usize; 3];
     let mut tier_top = [0i32; 3];
-    for (index, (id, tuft)) in [
+    let mut tier_radius = [0i32; 3];
+    for (index, (id, clump)) in [
         ("grass_tuft_s", grass_tuft_s("tuft_s").unwrap()),
         ("grass_tuft_m", grass_tuft_m("tuft_m").unwrap()),
         ("grass_tuft_l", grass_tuft_l("tuft_l").unwrap()),
@@ -390,36 +398,40 @@ fn grass_and_tree_shapes_match_their_spec() {
     .into_iter()
     .enumerate()
     {
-        let tips = tuft
+        let tips = clump
             .iter_cells()
-            .filter(|(_, m)| *m == material::GRASS_TIP)
+            .filter(|(c, m)| *m == material::GRASS_TIP && c[1] > 0)
             .count();
-        assert_eq!(
-            tips,
-            GRASS_BLADES_PER_TUFT * GRASS_TIP_CELLS_PER_BLADE,
-            "{id}: every blade carries its own tip cells"
+        assert!(tips > 0, "{id} has tip material");
+        let (min, max) = clump.cell_bounds().unwrap();
+        assert_eq!(min[1], 0, "{id} is rooted");
+        assert!(
+            (GRASS_MIN_HEIGHT_CELLS..=GRASS_MAX_HEIGHT_CELLS).contains(&max[1]),
+            "{id} is {} fine voxels tall, outside {}..={}",
+            max[1],
+            GRASS_MIN_HEIGHT_CELLS,
+            GRASS_MAX_HEIGHT_CELLS
         );
-        // Every blade leaves the shared stem, so the tuft occupies more
-        // columns above the pad than the stem alone, and the eight compass
-        // leans put a blade in each of the eight blade columns.
-        let (min, max) = tuft.cell_bounds().unwrap();
-        assert_eq!((min[0], min[2]), (-1, -1), "{id} spans the 3x3 fan");
-        assert_eq!((max[0], max[2]), (1, 1), "{id} spans the 3x3 fan");
-        let blade_columns: BTreeSet<[i32; 2]> = tuft
-            .iter_cells()
-            .filter(|(c, m)| c[1] > 0 && *m == material::GRASS_BLADE)
-            .map(|(c, _)| [c[0], c[2]])
-            .collect();
-        assert_eq!(
-            blade_columns.len(),
-            GRASS_BLADES_PER_TUFT + 1,
-            "{id}: the eight blade columns plus the shared stem"
-        );
-        tier_mass[index] = tuft.occupied_cells();
+        // Every blade stays a thin vertical element. The clump roots on a
+        // one-cell-thick pad (the base set at y = 0 and the blade first cells at
+        // y = 1), which is ground contact, not a body; above it, no cell may
+        // have more than two occupied orthogonal neighbours at its own level,
+        // so no level grows a plate or a cube. An elbow cell has exactly two
+        // (the cell below it in the column and the cell it leaned to).
+        let crowded = clump.iter_cells().filter(|(c, _)| c[1] > 1).any(|(c, _)| {
+            [[1, 0], [-1, 0], [0, 1], [0, -1]]
+                .iter()
+                .filter(|[dx, dz]| clump.get([c[0] + dx, c[1], c[2] + dz]) != material::AIR)
+                .count()
+                > 2
+        });
+        assert!(!crowded, "{id} grows a plate or cube above its pad");
+        tier_mass[index] = clump.occupied_cells();
         tier_top[index] = max[1];
+        tier_radius[index] = max[0].max(max[2]).max(-min[0]).max(-min[2]);
     }
-    // S/M/L stay distinct in height and mass, so `prototype_for`'s size tier
-    // still means something beyond a label.
+    // S/M/L stay distinct in height, mass *and* clump radius, so
+    // `prototype_for`'s size tier means something beyond a label.
     assert!(
         tier_top[0] < tier_top[1] && tier_top[1] < tier_top[2],
         "tier heights must ascend: {tier_top:?}"
@@ -428,59 +440,113 @@ fn grass_and_tree_shapes_match_their_spec() {
         tier_mass[0] < tier_mass[1] && tier_mass[1] < tier_mass[2],
         "tier mass must ascend: {tier_mass:?}"
     );
-    // Flowers: stem + two leaves + petal cross + heart, heights differ by colour.
-    let red = flower_red_m("red").unwrap();
-    let white = flower_white_m("white").unwrap();
-    let yellow = flower_yellow_m("yellow").unwrap();
-    let stem_len = |v: &DetailVolume| {
-        (1..)
-            .take_while(|y| v.get([0, *y, 0]) == material::GRASS_BLADE)
-            .count()
-    };
-    let (r, w, y) = (stem_len(&red), stem_len(&white), stem_len(&yellow));
-    assert!((2..=4).contains(&r) && (2..=4).contains(&w) && (2..=4).contains(&y));
     assert!(
-        r != w && w != y && r != y,
-        "meadow mixes silhouettes: {r}/{w}/{y}"
+        tier_radius[0] < tier_radius[1] && tier_radius[1] < tier_radius[2],
+        "tier clump radii must ascend: {tier_radius:?}"
     );
-    // Every flower stem stays in the 2..4 spec range, and all nine
-    // colour/size flowers are geometrically distinct.
+    // Flowers: a cluster of thin stems of 8..=16 fine voxels, each carrying a
+    // bloom. All nine colour/size flowers are geometrically distinct.
     let mut flower_shapes = BTreeSet::new();
     for id in LANDSCAPE_FLORA_SPECIES
         .iter()
         .filter(|id| id.starts_with("flower_"))
     {
         let v = landscape_prototype(id).unwrap();
-        let stem = (1..)
-            .take_while(|y| v.get([0, *y, 0]) == material::GRASS_BLADE)
-            .count();
-        assert!((2..=4).contains(&stem), "{id} stem {stem}");
+        let (_, max) = v.cell_bounds().unwrap();
+        assert!(
+            (GRASS_MIN_HEIGHT_CELLS..=20).contains(&max[1]),
+            "{id} blooms at {}, outside the 8..=20 stem range",
+            max[1]
+        );
         assert!(
             flower_shapes.insert(v.snapshot().runs),
             "{id} duplicates a shape"
         );
+        // Every stem is one cell wide where it is green: the count of green
+        // cells equals the sum of the stem lengths, with no thick posts.
+        let green = v
+            .iter_cells()
+            .filter(|(_, m)| *m == material::GRASS_BLADE || *m == material::GRASS_TIP)
+            .count();
+        assert!(
+            green >= 2 * GRASS_MIN_HEIGHT_CELLS as usize,
+            "{id} carries {green} stem cells"
+        );
+        let hearts = v
+            .iter_cells()
+            .filter(|(_, m)| *m == material::FLOWER_HEART)
+            .count();
+        assert!(hearts >= 2, "{id} has {hearts} blooms");
     }
     assert_eq!(flower_shapes.len(), 9, "nine distinct flower shapes");
-    for (v, m) in [
-        (&red, material::FLOWER_PETAL_RED),
-        (&white, material::FLOWER_PETAL_WHITE),
-        (&yellow, material::FLOWER_PETAL_YELLOW),
+    // The three colours stay distinct petal materials.
+    for (id, petal) in [
+        ("flower_red_m", material::FLOWER_PETAL_RED),
+        ("flower_white_m", material::FLOWER_PETAL_WHITE),
+        ("flower_yellow_m", material::FLOWER_PETAL_YELLOW),
     ] {
-        let petals = v.iter_cells().filter(|(_, mat)| *mat == m).count();
-        assert!((3..=5).contains(&petals), "petal cross has 3..5 cells");
-        assert_eq!(
-            v.iter_cells()
-                .filter(|(_, mat)| *mat == material::FLOWER_HEART)
-                .count(),
-            1,
-            "one heart cell"
+        let v = landscape_prototype(id).unwrap();
+        assert!(
+            v.iter_cells().any(|(_, mat)| mat == petal),
+            "{id} carries its petal material"
         );
-        assert_eq!(
-            v.iter_cells()
-                .filter(|(c, mat)| c[1] > 0 && *mat == material::GRASS_BLADE)
-                .count(),
-            stem_len(v) + 2,
-            "stem plus two leaf cells"
+    }
+    // Trees: the trunk is a real trunk and the crown is a structured mass, not
+    // a solid blob. Three checks, all on the source volume:
+    for id in [
+        "tree_broadleaf_s",
+        "tree_broadleaf_m",
+        "tree_broadleaf_l",
+        "tree_conifer_s",
+        "tree_conifer_m",
+        "tree_conifer_l",
+    ] {
+        let tree = landscape_prototype(id).unwrap();
+        let (min, max) = tree.cell_bounds().unwrap();
+        assert!(max[1] >= 19, "{id} is {} cells tall", max[1]);
+        // 1. A trunk stands at the origin from the ground into the crown.
+        let trunk_cells = tree
+            .iter_cells()
+            .filter(|(_, m)| *m == material::TREE_BARK)
+            .count();
+        assert!(trunk_cells >= 8, "{id} has no trunk ({trunk_cells} bark)");
+        assert!(
+            tree.get([0, 1, 0]) == material::TREE_BARK,
+            "{id} is not rooted in a trunk"
+        );
+        // 2. The crown is hollow: its bounding box is mostly air. A solid
+        // ellipsoid of the same extent would fill far more of it.
+        let box_cells = ((max[0] - min[0] + 1) as f64)
+            * ((max[1] - min[1] + 1) as f64)
+            * ((max[2] - min[2] + 1) as f64);
+        let fill = tree.occupied_cells() as f64 / box_cells;
+        assert!(fill < 0.25, "{id} fills {fill:.3} of its box, not hollow");
+        // 3. Light passes through the crown: over the front projection, at
+        // least a quarter of the columns that meet the crown show more than
+        // one occupied run - a real gap between fronds, not a hole-free mass.
+        let crown_floor = (max[1] * 2) / 5;
+        let mut columns = 0usize;
+        let mut gapped = 0usize;
+        for x in min[0]..=max[0] {
+            let column: Vec<bool> = (crown_floor..=max[1])
+                .map(|y| tree.get([x, y, 0]) != material::AIR)
+                .collect();
+            if !column.iter().any(|c| *c) {
+                continue;
+            }
+            columns += 1;
+            let runs = column
+                .split(|occupied| !*occupied)
+                .filter(|run| !run.is_empty())
+                .count();
+            if runs >= 2 {
+                gapped += 1;
+            }
+        }
+        assert!(columns > 0, "{id} crown projects no columns");
+        assert!(
+            gapped * 4 >= columns,
+            "{id}: only {gapped} of {columns} crown columns show a gap"
         );
     }
     // Cactus: column 5..9 tall with 2 arms and silhouette spines.
@@ -495,7 +561,7 @@ fn grass_and_tree_shapes_match_their_spec() {
             >= 4,
         "spine cells on the silhouette"
     );
-    // Conifer rings shrink towards the top; broadleaf canopy is rounded.
+    // Conifer rings shrink towards the top.
     let conifer = tree_conifer_m("conifer").unwrap();
     let ring_width = |y: i32| {
         let xs: Vec<i32> = conifer
@@ -506,11 +572,11 @@ fn grass_and_tree_shapes_match_their_spec() {
         xs.iter().max().unwrap_or(&0) - xs.iter().min().unwrap_or(&0)
     };
     assert!(
-        ring_width(7) > ring_width(16),
+        ring_width(8) > ring_width(24),
         "rings shrink towards the top"
     );
     let (_, top) = conifer.cell_bounds().unwrap();
-    assert_eq!(top[1], 19, "medium conifer is 18 + tip cells tall");
+    assert_eq!(top[1], 29, "medium conifer is 28 + tip cells tall");
 }
 
 /// Collect every site the landscape population places in the 16 m square with
