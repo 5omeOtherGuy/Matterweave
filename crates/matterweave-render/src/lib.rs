@@ -33,6 +33,7 @@ pub use lighting::{
 use matterweave_core::Mesh;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use shadow::Shadow;
+pub use shadow::{ShadowCacheCounters, ShadowPassKind};
 use static_scene::StaticScene;
 pub use static_scene::{
     FloraInstance, StaticInstance, StaticSceneStats, MAX_FLORA_BYTES, MAX_FLORA_HEIGHT_M,
@@ -2411,6 +2412,13 @@ impl Renderer {
     /// clear with shadows disabled). False on reuse or before submission.
     pub fn shadow_map_updated(&self) -> bool {
         self.shadow_map_updated
+    }
+
+    /// Cumulative shadow-cache counters: why the fit moved and why each depth
+    /// pass ran. Measured, so the sample can report causes rather than infer
+    /// them from a flag.
+    pub fn shadow_cache_counters(&self) -> ShadowCacheCounters {
+        self.shadow.cache_counters()
     }
 
     /// Nonempty mesh draws recorded for this attempt, independent of camera culling.

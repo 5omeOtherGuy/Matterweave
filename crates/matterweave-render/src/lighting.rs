@@ -292,6 +292,11 @@ pub(crate) struct ShadowCamera {
     pub view_proj: [[f32; 4]; 4],
     pub depth_span: f32,
     pub direction: [f32; 3],
+    /// World-space grid point the fit is anchored to. Exposed so the cache can
+    /// name the anchor as the cause when the fitted matrix moves.
+    pub anchor: [f32; 3],
+    /// Quantized light-space depth range included by the fit.
+    pub depth_range: [f32; 2],
 }
 
 impl ShadowCamera {
@@ -375,6 +380,8 @@ impl ShadowCamera {
             view_proj: matrix.to_cols_array_2d(),
             depth_span: max_z - min_z,
             direction: direction.to_array(),
+            anchor: anchor.to_array(),
+            depth_range: [min_z, max_z],
         })
     }
 }

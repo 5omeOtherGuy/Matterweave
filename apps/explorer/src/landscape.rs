@@ -41,7 +41,7 @@ use matterweave_core::landscape::{
 use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
     Atmosphere, CapturedFrame, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer,
-    Sun, Water, Wind,
+    ShadowCacheCounters, Sun, Water, Wind,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -379,12 +379,15 @@ impl CloudChoice {
     }
 }
 
-/// Default world render scale for this sample. Chosen from the measured image
-/// difference against native rather than taste: 0.8 linear is 2534x1152 on the
-/// 3168x1440 panel, 36.0% fewer world fragments, and the acceptance run
-/// reports the fraction of pixels over 4/255 and the mean difference at this
-/// value. 1.0 is the untouched native path.
-pub const DEFAULT_RENDER_SCALE: f32 = 0.8;
+/// Default world render scale for this sample. Native, because the reduced
+/// path is an open trade: 0.8 is 2534x1152 on the 3168x1440 panel and 36.0%
+/// fewer world fragments, but it adds an offscreen colour write and read per
+/// frame (see the renderer's bandwidth note). Whether that wins on power is a
+/// phone measurement, so the mechanism ships enabled and the default does not:
+/// `--render-scale 0.8` or a `render-scale 0.8` word in `landscape.txt` selects
+/// it for an A/B. The acceptance run reports the image difference at whatever
+/// value is selected.
+pub const DEFAULT_RENDER_SCALE: f32 = 1.0;
 
 /// Parse one render-scale value. The desktop flag and the device marker share
 /// this function, so both paths accept exactly the same text; `1` and `1.0`
@@ -538,6 +541,9 @@ pub struct LandscapeSample {
     /// shows the window's own count while it fills.
     shadow_window_renders: u64,
     shadow_window_frames: u64,
+    /// Counter snapshot at the previous 300-frame report, so each line names the
+    /// causes inside its own window instead of a cumulative total.
+    shadow_window_start: ShadowCacheCounters,
     /// Platform lifecycle state: window, focus and activity pause. The one gate
     /// for frames, streaming and both background workers.
     lifecycle: PlatformLifecycle,
@@ -668,6 +674,7 @@ impl LandscapeSample {
             shadow_renders: 0,
             shadow_window_renders: 0,
             shadow_window_frames: 0,
+            shadow_window_start: ShadowCacheCounters::default(),
             lifecycle: PlatformLifecycle::default(),
             exercise: false,
             return_to_menu: false,
@@ -1077,6 +1084,12 @@ impl LandscapeSample {
                 }
                 self.shadow_window_frames += 1;
                 if self.shadow_window_frames >= 300 {
+                    let counters = self
+                        .renderer
+                        .as_ref()
+                        .map(Renderer::shadow_cache_counters)
+                        .unwrap_or_default()
+                        .since(self.shadow_window_start);
                     let message = format!(
                         "LANDSCAPE SHADOW: {} renders / {} frames ({} total)",
                         self.shadow_window_renders, self.shadow_window_frames, self.shadow_renders
@@ -1084,6 +1097,24 @@ impl LandscapeSample {
                     log::info!("{message}");
                     #[cfg(not(target_os = "android"))]
                     eprintln!("{message}");
+                    let cause = format!(
+                        "LANDSCAPE SHADOW CAUSE: matrix {} = anchor {} + depth {} + sun {} | first {} caster {} frustum {}",
+                        counters.matrix_changes,
+                        counters.anchor_changes,
+                        counters.depth_changes,
+                        counters.sun_changes,
+                        counters.passes_first,
+                        counters.passes_caster_set,
+                        counters.passes_frustum,
+                    );
+                    log::info!("{cause}");
+                    #[cfg(not(target_os = "android"))]
+                    eprintln!("{cause}");
+                    self.shadow_window_start = self
+                        .renderer
+                        .as_ref()
+                        .map(Renderer::shadow_cache_counters)
+                        .unwrap_or_default();
                     self.shadow_window_renders = 0;
                     self.shadow_window_frames = 0;
                 }
@@ -1274,11 +1305,24 @@ impl LandscapeSample {
                 present.height,
                 100.0 * render_fragments as f64 / present_fragments.max(1) as f64,
             );
+            let shadow = self
+                .renderer
+                .as_ref()
+                .map(Renderer::shadow_cache_counters)
+                .unwrap_or_default();
             eprintln!(
-                "LANDSCAPE SHADOW TOTAL: {} depth passes over {} presented frames ({:.3} per frame)",
+                "LANDSCAPE SHADOW TOTAL: {} depth passes over {} presented frames ({:.3} per frame) \
+                 | matrix {} = anchor {} + depth {} + sun {} | first {} caster {} frustum {}",
                 self.shadow_renders,
                 self.frames,
-                self.shadow_renders as f64 / self.frames.max(1) as f64
+                self.shadow_renders as f64 / self.frames.max(1) as f64,
+                shadow.matrix_changes,
+                shadow.anchor_changes,
+                shadow.depth_changes,
+                shadow.sun_changes,
+                shadow.passes_first,
+                shadow.passes_caster_set,
+                shadow.passes_frustum,
             );
             eprintln!(
                 "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
@@ -1908,7 +1952,10 @@ mod tests {
         assert_eq!(resolve_render_scale(Some(0.9), Some(0.6)), 0.9);
         assert_eq!(resolve_render_scale(None, Some(0.6)), 0.6);
         assert_eq!(resolve_render_scale(None, None), DEFAULT_RENDER_SCALE);
-        assert!((0.4..1.0).contains(&DEFAULT_RENDER_SCALE));
+        assert_eq!(
+            DEFAULT_RENDER_SCALE, 1.0,
+            "the default is native until a device measurement justifies the reduced path"
+        );
     }
 
     #[test]
