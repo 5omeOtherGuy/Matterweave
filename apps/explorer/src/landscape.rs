@@ -16,7 +16,8 @@
 //!
 //! # Budgets
 //!
-//! Tile meshes are cheap (33x33 = 1089 column samples each) but not free.
+//! Tile meshes are cheap (34x34 = 1156 cell samples each, one per coarse cell
+//! plus a halo) but not free.
 //! Generation runs on one bounded background worker; a frame uploads at most
 //! [`MAX_TILE_UPLOADS`] meshes and stops as soon as [`MAX_TILE_MS`] of
 //! main-thread time has gone into collecting and uploading them, whichever comes

@@ -37,11 +37,15 @@
 //!
 //! [`column`] samples one metre. [`lod_tile_mesh`] builds a derived surface tile
 //! from the same generator at `1 << level` metre cells, for the renderer's nested
-//! distance rings. Tile vertices sample the generator exactly at their own
-//! coordinate, so a tile's edge matches the finer level's edge at the same metre
-//! coordinate and no crack can open at a level boundary. Relief narrower than a
-//! coarse cell is not represented at that level; [`lod_sample`] provides the
-//! conservative maximum for tools and silhouette checks.
+//! distance rings. Each coarse cell is flat at its own [`lod_step_m`]-quantised
+//! height sampled at the cell centre, and each difference to a neighbouring cell
+//! is a vertical wall spanning the full step, so a tile reads as voxel blocks
+//! rather than as a smoothed heightfield. Planes of equal height are
+//! greedy-merged, and a face between two cells belongs to the higher one, so two
+//! tiles meeting at a border agree on the wall between them instead of drawing it
+//! twice. Relief narrower than a coarse cell is not represented at that level;
+//! [`lod_sample`] provides the conservative maximum for tools and silhouette
+//! checks.
 
 use crate::hash;
 use crate::material;
@@ -1258,11 +1262,10 @@ pub fn lod_cell_m(level: u32) -> i32 {
 
 /// Surface sample at one coarse grid vertex, at its exact metre coordinate.
 ///
-/// Exact sampling (rather than a cell maximum) is what keeps a tile's edge
-/// identical to the finer level's edge at the same coordinate, so no crack and no
-/// lip can open at a level boundary. Relief narrower than the level's cell is not
-/// represented at that level; [`lod_sample`] provides the conservative maximum for
-/// silhouette checks.
+/// Exact sampling (rather than a cell maximum) keeps the sample a pure function
+/// of the coordinate, so [`lod_sample`] and the tile mesher can never disagree
+/// about what the generator says at a point. Relief narrower than the level's
+/// cell is not represented at that level.
 pub fn lod_vertex(seed: u64, x: i32, z: i32) -> LodSample {
     let column = column(seed, x, z);
     if column.flooded() {
@@ -1318,14 +1321,28 @@ pub fn lod_sample(seed: u64, level: u32, cell_x: i32, cell_z: i32) -> LodSample 
 
 /// Build the derived surface tile for one `LOD_TILE_CELLS` block of coarse cells.
 ///
-/// Vertices are world-space metres at `1 << level` metre spacing. Cells whose
-/// centre lies in `filter.hole`, or outside `filter.bound`, are omitted and every
-/// boundary the mesh stops at gets a skirt, so a nested distance ring cannot
-/// show daylight and cannot overlap the level beneath it.
+/// Every drawn cell is one flat quad at its own [`lod_step_m`]-quantised height,
+/// and every difference to a neighbouring cell is a vertical wall spanning the
+/// full step: the surface reads as stacked voxel blocks instead of as a smoothed
+/// heightfield. Top and wall vertices carry the face's own normal and colour, so
+/// the light/dark break between a top and the wall under it is a real shading
+/// break rather than a gradient.
+///
+/// Coplanar cells are greedy-merged into as few quads as possible. A face
+/// between two drawn cells belongs to the higher of them, which is what keeps a
+/// tile border crack-free without doubling the wall: two tiles sharing a border
+/// sample the same two cell heights across it and reach the same decision, so
+/// exactly one of them emits the face.
+///
+/// Cells whose centre lies in `filter.hole`, or outside `filter.bound`, are
+/// omitted, and every face against an omitted cell hangs at least
+/// [`FILTER_WALL_CELLS`] cells below its own top. Those walls replace the skirts
+/// an earlier version added along the same boundaries: a finer ring in a hole,
+/// or a coarser ring beyond a bound, cannot show daylight through the seam.
 pub fn lod_tile_mesh(seed: u64, level: u32, key: [i32; 2], filter: TileFilter) -> Mesh {
     let level = level.min(MAX_LOD_LEVEL);
     let cell_m = lod_cell_m(level);
-    let edge = LOD_TILE_CELLS + 1;
+    let step = lod_step_m(level);
     debug_assert!(
         (key[0] as i64 * LOD_TILE_CELLS as i64 + LOD_TILE_CELLS as i64) * cell_m as i64
             <= i32::MAX as i64
@@ -1333,175 +1350,413 @@ pub fn lod_tile_mesh(seed: u64, level: u32, key: [i32; 2], filter: TileFilter) -
                 >= i32::MIN as i64,
         "tile key {key:?} leaves the representable metre range at level {level}"
     );
-    let mut mesh = Mesh::default();
-    let mut included = [[false; LOD_TILE_CELLS as usize]; LOD_TILE_CELLS as usize];
-    let mut any = false;
-    for cz in 0..LOD_TILE_CELLS {
-        for cx in 0..LOD_TILE_CELLS {
-            let centre = [
-                (key[0] * LOD_TILE_CELLS + cx) * cell_m + cell_m / 2,
-                (key[1] * LOD_TILE_CELLS + cz) * cell_m + cell_m / 2,
-            ];
-            let in_hole = filter.hole.is_some_and(|hole| hole.contains_centre(centre));
-            let in_bound = filter
-                .bound
-                .is_none_or(|bound| bound.contains_centre(centre));
-            included[cz as usize][cx as usize] = !in_hole && in_bound;
-            any |= included[cz as usize][cx as usize];
+    // One terrain sample per coarse cell centre, cached so a wall and the two
+    // cells it separates all read the same number. The grid carries a one-cell
+    // halo: a wall on a tile border is decided from the neighbour's own cell
+    // centre across it, which is the same sample the neighbouring tile takes.
+    let mut surface = Surface::default();
+    for cz in -1..=LOD_TILE_CELLS {
+        for cx in -1..=LOD_TILE_CELLS {
+            let drawn = cell_drawn(&filter, key, cell_m, cx, cz);
+            surface.drawn[(cz + 1) as usize][(cx + 1) as usize] = drawn;
+            // Undrawn cells are sampled too: a wall on a hole or bound edge
+            // needs the ground across it to know how far down to reach.
+            let x = (key[0] * LOD_TILE_CELLS + cx) * cell_m + cell_m / 2;
+            let z = (key[1] * LOD_TILE_CELLS + cz) * cell_m + cell_m / 2;
+            // The column is sampled directly rather than through
+            // [`lod_vertex`] so the wall's sub-surface material comes from the
+            // same sample as the top, at no extra cost.
+            let sample = column(seed, x, z);
+            let (height, top_material) = if sample.flooded() {
+                (SEA_LEVEL, material::WATER)
+            } else {
+                (sample.height, sample.surface)
+            };
+            surface.sample[(cz + 1) as usize][(cx + 1) as usize] = CellSample {
+                // Floor to the level's step: a cell top is never raised above
+                // the ground it stands for, so a ring never occludes the finer
+                // mesh inside it, and a cell that is entirely above sea level
+                // and below one step still merges with the water it borders.
+                height: quantise_height(height, step),
+                colour: material::color(top_material),
+                sub_colour: material::color(sample.sub_surface),
+                sub_depth: sample.sub_depth,
+            };
         }
     }
-    if !any {
+    if !any_cell(&surface) {
         // No cells: an empty mesh is the correct representation, not a failure.
-        return mesh;
+        return Mesh::default();
     }
 
-    // One height sample per grid vertex, cached so a shared corner is sampled once.
-    let mut heights = [[0i32; LOD_TILE_CELLS as usize + 1]; LOD_TILE_CELLS as usize + 1];
-    let mut colours = [[[0.0f32; 3]; LOD_TILE_CELLS as usize + 1]; LOD_TILE_CELLS as usize + 1];
-    let mut wet = [[false; LOD_TILE_CELLS as usize + 1]; LOD_TILE_CELLS as usize + 1];
-    for gz in 0..edge {
-        for gx in 0..edge {
-            let x = (key[0] * LOD_TILE_CELLS + gx) * cell_m;
-            let z = (key[1] * LOD_TILE_CELLS + gz) * cell_m;
-            let sample = lod_vertex(seed, x, z);
-            heights[gz as usize][gx as usize] = sample.height;
-            colours[gz as usize][gx as usize] = material::color(sample.surface);
-            wet[gz as usize][gx as usize] = sample.flooded;
-        }
+    let mut mesh = Mesh::default();
+    let mut tops = Vec::new();
+    merge_tops(&surface, &mut tops);
+    for rect in tops {
+        emit_top(&mut mesh, rect, key, cell_m);
     }
-
-    let height_at = |gx: i32, gz: i32| -> i32 {
-        heights[gz.clamp(0, LOD_TILE_CELLS) as usize][gx.clamp(0, LOD_TILE_CELLS) as usize]
-    };
-    let normal_at = |gx: i32, gz: i32| -> [f32; 3] {
-        // Central difference over the (clamped) grid, so interior vertices shade
-        // smoothly and edge vertices do not spike.
-        let dx = (height_at(gx + 1, gz) - height_at(gx - 1, gz)) as f32;
-        let dz = (height_at(gx, gz + 1) - height_at(gx, gz - 1)) as f32;
-        let scale = 2.0 * cell_m as f32;
-        normalize_normal([-dx / scale, 1.0, -dz / scale])
-    };
-
-    for cz in 0..LOD_TILE_CELLS {
-        for cx in 0..LOD_TILE_CELLS {
-            if !included[cz as usize][cx as usize] {
-                continue;
-            }
-            let x0 = (key[0] * LOD_TILE_CELLS + cx) * cell_m;
-            let z0 = (key[1] * LOD_TILE_CELLS + cz) * cell_m;
-            let x1 = x0 + cell_m;
-            let z1 = z0 + cell_m;
-            let base = mesh.vertices.len() as u32;
-            // Winding follows the core mesher: cross(U, V) points outward (+Y),
-            // with U = +x and V = -z. Each corner's height comes from the grid row
-            // its own z coordinate names: row `cz` is z0, row `cz + 1` is z1.
-            let corners = [
-                (
-                    [x0, heights[cz as usize + 1][cx as usize], z1],
-                    (cx, cz + 1),
-                ),
-                (
-                    [x1, heights[cz as usize + 1][cx as usize + 1], z1],
-                    (cx + 1, cz + 1),
-                ),
-                (
-                    [x1, heights[cz as usize][cx as usize + 1], z0],
-                    (cx + 1, cz),
-                ),
-                ([x0, heights[cz as usize][cx as usize], z0], (cx, cz)),
-            ];
-            for (position, (gx, gz)) in corners {
-                mesh.vertices.push(Vertex {
-                    position: [position[0] as f32, position[1] as f32, position[2] as f32],
-                    normal: normal_at(gx, gz),
-                    // Flooded cells use the water colour even when the surface
-                    // sample belongs to the shore beneath them.
-                    color: if wet[gz as usize][gx as usize] {
-                        material::color(material::WATER)
-                    } else {
-                        colours[gz as usize][gx as usize]
-                    },
-                });
-            }
-            mesh.indices
-                .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        }
+    let mut walls = Vec::new();
+    merge_walls(&surface, cell_m, &mut walls);
+    for run in walls {
+        emit_wall(&mut mesh, run, key, cell_m);
     }
-
-    add_skirts(&mut mesh, &heights, &included, key, cell_m);
     mesh
 }
 
-fn normalize_normal(v: [f32; 3]) -> [f32; 3] {
-    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if length <= f32::EPSILON || !length.is_finite() {
-        [0.0, 1.0, 0.0]
-    } else {
-        [v[0] / length, v[1] / length, v[2] / length]
+/// Extra halo cells either side of the tile's own grid.
+const TILE_HALO: i32 = 1;
+/// Cell index extent of one tile's sampled grid, halo included.
+const TILE_GRID: usize = (LOD_TILE_CELLS + 2 * TILE_HALO) as usize;
+
+/// Cells a wall reaches below its own top when the cell across the face is not
+/// drawn at this level: the depth the previous version's boundary skirts used.
+const FILTER_WALL_CELLS: i32 = 2;
+
+/// The quantised surface of one coarse cell.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CellSample {
+    /// Top height in metres; the whole cell is flat at this height.
+    height: i32,
+    /// Top-face colour.
+    colour: [f32; 3],
+    /// Colour of the sub-surface layer, which is what a wall shows.
+    sub_colour: [f32; 3],
+    /// Depth of that sub-surface layer in metres.
+    sub_depth: i32,
+}
+
+impl CellSample {
+    /// Colour of a wall hanging from this cell's top down to `foot`.
+    ///
+    /// A step that stays inside the sub-surface layer shows that layer - soil
+    /// under grass, stone under snow - and anything deeper is bare rock. This is
+    /// the same material [`material_in_column`] reports for the voxels the wall
+    /// stands for, and it is what makes a wall read as a break rather than as a
+    /// darker copy of the top above it.
+    fn wall_colour(&self, foot: i32) -> [f32; 3] {
+        if self.height - foot <= self.sub_depth {
+            self.sub_colour
+        } else {
+            material::color(material::STONE)
+        }
     }
 }
 
-/// Drop a vertical wall wherever the included cells stop, so a coarser
-/// neighbour, a ring bound or a clip boundary cannot expose a gap.
-fn add_skirts(
-    mesh: &mut Mesh,
-    heights: &[[i32; LOD_TILE_CELLS as usize + 1]],
-    included: &[[bool; LOD_TILE_CELLS as usize]],
-    key: [i32; 2],
-    cell_m: i32,
-) {
-    let depth = (cell_m * 2).max(4);
-    let colour = material::color(material::STONE);
+/// One tile's sampled cells: heights and colours at cell centres over the tile
+/// plus [`TILE_HALO`], and which of those cells this level draws.
+struct Surface {
+    sample: [[CellSample; TILE_GRID]; TILE_GRID],
+    drawn: [[bool; TILE_GRID]; TILE_GRID],
+}
+
+impl Default for Surface {
+    fn default() -> Self {
+        Self {
+            sample: [[CellSample::default(); TILE_GRID]; TILE_GRID],
+            drawn: [[false; TILE_GRID]; TILE_GRID],
+        }
+    }
+}
+
+impl Surface {
+    /// The cell at halo-relative index `(cx, cz)`, which must lie in
+    /// `-TILE_HALO..=LOD_TILE_CELLS + TILE_HALO`.
+    fn sample_at(&self, cx: i32, cz: i32) -> CellSample {
+        self.sample[(cz + TILE_HALO) as usize][(cx + TILE_HALO) as usize]
+    }
+
+    fn drawn(&self, cx: i32, cz: i32) -> bool {
+        self.drawn[(cz + TILE_HALO) as usize][(cx + TILE_HALO) as usize]
+    }
+}
+
+/// Whether this level draws the cell at halo-relative index `(cx, cz)`.
+///
+/// Inside the tile the answer is the filter's: a cell whose centre lies in the
+/// hole, or outside the bound, is not drawn. Outside the tile the answer is
+/// always yes, and deliberately not the filter's. A halo cell belongs to a
+/// neighbouring tile of the same ring, and the sample normalises a tile's clip
+/// to the tile before caching a mesh (`normalized_filter`), so letting the
+/// filter decide a halo cell would make two filters that produce the same
+/// geometry produce different meshes. The neighbouring tile draws the cell
+/// whenever this ring's square covers it, which is exactly when the face between
+/// the two cells is a real step at this level.
+fn cell_drawn(filter: &TileFilter, key: [i32; 2], cell_m: i32, cx: i32, cz: i32) -> bool {
+    if cx < 0 || cz < 0 || cx >= LOD_TILE_CELLS || cz >= LOD_TILE_CELLS {
+        return true;
+    }
+    let centre = [
+        (key[0] * LOD_TILE_CELLS + cx) * cell_m + cell_m / 2,
+        (key[1] * LOD_TILE_CELLS + cz) * cell_m + cell_m / 2,
+    ];
+    let in_hole = filter.hole.is_some_and(|hole| hole.contains_centre(centre));
+    let in_bound = filter
+        .bound
+        .is_none_or(|bound| bound.contains_centre(centre));
+    !in_hole && in_bound
+}
+
+fn any_cell(surface: &Surface) -> bool {
+    (0..LOD_TILE_CELLS).any(|cz| (0..LOD_TILE_CELLS).any(|cx| surface.drawn(cx, cz)))
+}
+
+/// Floor a height to a multiple of `step`. Integer division rounds toward
+/// negative infinity, so this is exact for the negative heights a column can
+/// report below sea level as well.
+fn quantise_height(height: i32, step: i32) -> i32 {
+    let step = step.max(1);
+    height.div_euclid(step) * step
+}
+
+/// One greedy-merged top rectangle, in cell indices inside the tile.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TopRect {
+    origin: [i32; 2],
+    extent: [i32; 2],
+    height: i32,
+    colour: [f32; 3],
+}
+
+/// Greedy-merge the drawn cells into as few flat rectangles as possible.
+///
+/// Scan order is row-major: the rectangle grows as far as it can along +x and
+/// then along +z while every cell in the row stays equal in height and top
+/// colour. Cells that differ in either, and cells the filter cut out, end the
+/// run; what a cell's walls look like does not, which is the point of merging
+/// tops by their own two fields. A flat region therefore costs one quad however
+/// many cells it holds, and equal input always produces the same rectangles.
+fn merge_tops(surface: &Surface, rects: &mut Vec<TopRect>) {
+    let mut taken = [[false; LOD_TILE_CELLS as usize]; LOD_TILE_CELLS as usize];
+    let free = |taken: &[[bool; LOD_TILE_CELLS as usize]],
+                cx: i32,
+                cz: i32,
+                top: i32,
+                colour: [f32; 3]| {
+        let slot = (cz as usize, cx as usize);
+        if !surface.drawn(cx, cz) || taken[slot.0][slot.1] {
+            return false;
+        }
+        let cell = surface.sample_at(cx, cz);
+        cell.height == top && cell.colour == colour
+    };
     for cz in 0..LOD_TILE_CELLS {
         for cx in 0..LOD_TILE_CELLS {
-            if !included[cz as usize][cx as usize] {
+            if !surface.drawn(cx, cz) || taken[cz as usize][cx as usize] {
                 continue;
             }
-            let x0 = (key[0] * LOD_TILE_CELLS + cx) * cell_m;
-            let z0 = (key[1] * LOD_TILE_CELLS + cz) * cell_m;
-            let x1 = x0 + cell_m;
-            let z1 = z0 + cell_m;
-            let h00 = heights[cz as usize][cx as usize];
-            let h10 = heights[cz as usize][cx as usize + 1];
-            let h01 = heights[cz as usize + 1][cx as usize];
-            let h11 = heights[cz as usize + 1][cx as usize + 1];
-            // North, east, south, west edges in outward order.
-            let edges = [
-                ((cx, cz - 1), ([x0, h00, z0], [x1, h10, z0])),
-                ((cx + 1, cz), ([x1, h10, z0], [x1, h11, z1])),
-                ((cx, cz + 1), ([x1, h11, z1], [x0, h01, z1])),
-                ((cx - 1, cz), ([x0, h01, z1], [x0, h00, z0])),
-            ];
-            for ((nx, nz), (a, b)) in edges {
-                let open = nx < 0
-                    || nz < 0
-                    || nx >= LOD_TILE_CELLS
-                    || nz >= LOD_TILE_CELLS
-                    || !included[nz as usize][nx as usize];
-                if !open {
+            let cell = surface.sample_at(cx, cz);
+            let mut width = 1;
+            while cx + width < LOD_TILE_CELLS
+                && free(&taken, cx + width, cz, cell.height, cell.colour)
+            {
+                width += 1;
+            }
+            let mut depth = 1;
+            'grow: while cz + depth < LOD_TILE_CELLS {
+                for step in 0..width {
+                    if !free(&taken, cx + step, cz + depth, cell.height, cell.colour) {
+                        break 'grow;
+                    }
+                }
+                depth += 1;
+            }
+            for z in cz..cz + depth {
+                for x in cx..cx + width {
+                    taken[z as usize][x as usize] = true;
+                }
+            }
+            rects.push(TopRect {
+                origin: [cx, cz],
+                extent: [width, depth],
+                height: cell.height,
+                colour: cell.colour,
+            });
+        }
+    }
+}
+
+/// One greedy-merged wall: a run of cell faces in one plane sharing top, foot
+/// and colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WallRun {
+    /// Outward normal of the wall in cell axes: one of `-x`, `+x`, `-z`, `+z`.
+    normal: [i32; 3],
+    /// Cell index of the plane the wall lies in, along the normal's axis.
+    plane: i32,
+    /// First cell index and cell count along the face's own axis: z for an
+    /// x-normal wall, x for a z-normal wall.
+    start: i32,
+    len: i32,
+    /// Wall top and foot in metres, `top > foot`.
+    top: i32,
+    foot: i32,
+    colour: [f32; 3],
+}
+
+/// The wall one cell face needs, as `(top, foot, colour)`, or `None` for a face
+/// that needs no wall.
+///
+/// Between two drawn cells of this level the higher cell owns the face, so
+/// exactly one of the two tiles that can see the pair emits it and the wall
+/// spans the step exactly. Against a cell this level does not draw - inside a
+/// hole, beyond a bound - there is no same-level neighbour to meet, so the wall
+/// hangs at least [`FILTER_WALL_CELLS`] cells below its own top, and reaches
+/// further down when the neighbour across the edge stands lower than that.
+fn wall_spec(
+    surface: &Surface,
+    cell_m: i32,
+    cx: i32,
+    cz: i32,
+    offset: [i32; 2],
+) -> Option<(i32, i32, [f32; 3])> {
+    if !surface.drawn(cx, cz) {
+        return None;
+    }
+    let own = surface.sample_at(cx, cz);
+    let (nx, nz) = (cx + offset[0], cz + offset[1]);
+    let neighbour = surface.sample_at(nx, nz);
+    let (foot, top) = if surface.drawn(nx, nz) {
+        if own.height <= neighbour.height {
+            return None;
+        }
+        (neighbour.height, own.height)
+    } else {
+        let fallback = own.height - FILTER_WALL_CELLS * cell_m;
+        (neighbour.height.min(fallback), own.height)
+    };
+    Some((top, foot, own.wall_colour(foot)))
+}
+
+/// Greedy-merge the walls of every drawn cell into runs.
+///
+/// An x-normal wall runs along z and a z-normal wall along x, so each family is
+/// a grid of (plane, run) faces that merge while top, foot and colour all stay
+/// equal. The plane is the cell index the face sits on: the cell's own index for
+/// a `-x`/`-z` face, and the next one for a `+x`/`+z` face.
+fn merge_walls(surface: &Surface, cell_m: i32, runs: &mut Vec<WallRun>) {
+    for (normal, offset) in [
+        ([-1, 0, 0], [-1, 0]),
+        ([1, 0, 0], [1, 0]),
+        ([0, 0, -1], [0, -1]),
+        ([0, 0, 1], [0, 1]),
+    ] {
+        // Faces of this family run along x when their normal is on z.
+        let along_x = normal[2] != 0;
+        let plane_step = if along_x {
+            normal[2].max(0)
+        } else {
+            normal[0].max(0)
+        };
+        for plane in 0..LOD_TILE_CELLS {
+            let at = |run: i32| {
+                if along_x {
+                    (run, plane)
+                } else {
+                    (plane, run)
+                }
+            };
+            let mut run = 0;
+            while run < LOD_TILE_CELLS {
+                let (cx, cz) = at(run);
+                let Some(spec) = wall_spec(surface, cell_m, cx, cz, offset) else {
+                    run += 1;
                     continue;
+                };
+                let mut len = 1;
+                while run + len < LOD_TILE_CELLS {
+                    let (nx, nz) = at(run + len);
+                    if wall_spec(surface, cell_m, nx, nz, offset) != Some(spec) {
+                        break;
+                    }
+                    len += 1;
                 }
-                let base = mesh.vertices.len() as u32;
-                // cross(b - a, down) points away from the covered cell for every
-                // edge in this outward-ordered traversal.
-                for position in [a, b, [b[0], b[1] - depth, b[2]], [a[0], a[1] - depth, a[2]]] {
-                    mesh.vertices.push(Vertex {
-                        position: position.map(|v| v as f32),
-                        normal: [0.0, 1.0, 0.0],
-                        color: colour,
-                    });
-                }
-                mesh.indices.extend_from_slice(&[
-                    base,
-                    base + 1,
-                    base + 2,
-                    base,
-                    base + 2,
-                    base + 3,
-                ]);
+                runs.push(WallRun {
+                    normal,
+                    plane: plane + plane_step,
+                    start: run,
+                    len,
+                    top: spec.0,
+                    foot: spec.1,
+                    colour: spec.2,
+                });
+                run += len;
             }
         }
     }
+}
+
+/// Push one merged top rectangle as two flat-shaded triangles. Winding follows
+/// the core mesher: `cross(U, V)` with `U = +x`, `V = -z` points at `+Y`.
+fn emit_top(mesh: &mut Mesh, rect: TopRect, key: [i32; 2], cell_m: i32) {
+    let x0 = (key[0] * LOD_TILE_CELLS + rect.origin[0]) * cell_m;
+    let z0 = (key[1] * LOD_TILE_CELLS + rect.origin[1]) * cell_m;
+    let x1 = x0 + rect.extent[0] * cell_m;
+    let z1 = z0 + rect.extent[1] * cell_m;
+    let base = mesh.vertices.len() as u32;
+    for position in [
+        [x0, rect.height, z1],
+        [x1, rect.height, z1],
+        [x1, rect.height, z0],
+        [x0, rect.height, z0],
+    ] {
+        mesh.vertices.push(Vertex {
+            position: position.map(|v| v as f32),
+            normal: [0.0, 1.0, 0.0],
+            color: rect.colour,
+        });
+    }
+    mesh.indices
+        .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Push one merged wall as two flat-shaded triangles. Corner order is chosen so
+/// `cross(p1 - p0, p2 - p0)` points along the wall's outward normal, which is
+/// what the main pass's back-face culling reads.
+fn emit_wall(mesh: &mut Mesh, run: WallRun, key: [i32; 2], cell_m: i32) {
+    let x_at = |cell: i32| ((key[0] * LOD_TILE_CELLS + cell) * cell_m) as f32;
+    let z_at = |cell: i32| ((key[1] * LOD_TILE_CELLS + cell) * cell_m) as f32;
+    let low = run.foot as f32;
+    let high = run.top as f32;
+    let corners = match run.normal {
+        // West: outward -x, running +z.
+        [-1, 0, 0] => [
+            [x_at(run.plane), low, z_at(run.start)],
+            [x_at(run.plane), low, z_at(run.start + run.len)],
+            [x_at(run.plane), high, z_at(run.start + run.len)],
+            [x_at(run.plane), high, z_at(run.start)],
+        ],
+        // East: outward +x, running -z.
+        [1, 0, 0] => [
+            [x_at(run.plane), low, z_at(run.start + run.len)],
+            [x_at(run.plane), low, z_at(run.start)],
+            [x_at(run.plane), high, z_at(run.start)],
+            [x_at(run.plane), high, z_at(run.start + run.len)],
+        ],
+        // North: outward -z, running -x.
+        [0, 0, -1] => [
+            [x_at(run.start + run.len), low, z_at(run.plane)],
+            [x_at(run.start), low, z_at(run.plane)],
+            [x_at(run.start), high, z_at(run.plane)],
+            [x_at(run.start + run.len), high, z_at(run.plane)],
+        ],
+        // South: outward +z, running +x.
+        _ => [
+            [x_at(run.start), low, z_at(run.plane)],
+            [x_at(run.start + run.len), low, z_at(run.plane)],
+            [x_at(run.start + run.len), high, z_at(run.plane)],
+            [x_at(run.start), high, z_at(run.plane)],
+        ],
+    };
+    let base = mesh.vertices.len() as u32;
+    for position in corners {
+        mesh.vertices.push(Vertex {
+            position,
+            normal: run.normal.map(|v| v as f32),
+            color: run.colour,
+        });
+    }
+    mesh.indices
+        .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
 // -- Distance rings ----------------------------------------------------------
@@ -1556,6 +1811,37 @@ pub const LANDSCAPE_RINGS: [RingConfig; 6] = [
         half_extent: 8192,
     },
 ];
+
+/// Height quantisation step in metres for a level: the smallest step that still
+/// reads as a step at the distance that level covers.
+///
+/// The derivation, per ring, from [`LANDSCAPE_RINGS`]: a step `s` at distance `d`
+/// subtends `s/d`; the landscape projection is 65 degrees over a 1440 pixel
+/// tall viewport (the reference device in landscape), so one pixel is
+/// `1.134/1440 = 7.9e-4` rad and a step is visible at `s >= 2*7.9e-4*d`. Taking
+/// the ring's *outer* half-extent as the distance, because that is where its
+/// steps are smallest on screen, and rounding to the nearest power of two (never
+/// below the world's 1 m voxel, which is as fine as a step can be):
+///
+/// | level | cell | outer half-extent | 2 px needs | step |
+/// | --- | --- | --- | --- | --- |
+/// | 1 | 2 m | 256 m | 0.40 m | 1 m |
+/// | 2 | 4 m | 512 m | 0.81 m | 1 m |
+/// | 3 | 8 m | 1024 m | 1.6 m | 2 m |
+/// | 4 | 16 m | 2048 m | 3.2 m | 4 m |
+/// | 5 | 32 m | 4096 m | 6.5 m | 8 m |
+/// | 6 | 64 m | 8192 m | 12.9 m | 16 m |
+///
+/// Level 0 (1 m cells) is not used by a ring and is exact at 1 m. Fog, not the
+/// step, is what limits contrast in the outer two rings - aerial perspective
+/// leaves about 9% of a surface's own colour at 4 km - so the step there is
+/// sized to keep the silhouette blocky rather than to make every face read.
+pub const LOD_STEP_M: [i32; MAX_LOD_LEVEL as usize + 1] = [1, 1, 1, 2, 4, 8, 16];
+
+/// Height quantisation step of a distance level, in metres. See [`LOD_STEP_M`].
+pub fn lod_step_m(level: u32) -> i32 {
+    LOD_STEP_M[level.min(MAX_LOD_LEVEL) as usize]
+}
 
 /// One tile the renderer should have resident this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1677,6 +1963,269 @@ pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tile-sized surface whose every cell, halo included, sits at `height`:
+    /// an interior tile of a ring over flat ground. The sub-surface layer is the
+    /// same colour and deep enough that every wall shows it.
+    fn flat_surface(height: i32) -> Surface {
+        let mut surface = Surface::default();
+        for cz in -TILE_HALO..=LOD_TILE_CELLS {
+            for cx in -TILE_HALO..=LOD_TILE_CELLS {
+                let slot = ((cz + TILE_HALO) as usize, (cx + TILE_HALO) as usize);
+                surface.drawn[slot.0][slot.1] = true;
+                surface.sample[slot.0][slot.1] = CellSample {
+                    height,
+                    colour: [0.1, 0.2, 0.3],
+                    sub_colour: [0.1, 0.2, 0.3],
+                    sub_depth: 1_000,
+                };
+            }
+        }
+        surface
+    }
+
+    fn set(surface: &mut Surface, cx: i32, cz: i32, cell: CellSample) {
+        let slot = ((cz + TILE_HALO) as usize, (cx + TILE_HALO) as usize);
+        surface.sample[slot.0][slot.1] = cell;
+        surface.drawn[slot.0][slot.1] = true;
+    }
+
+    fn cell(height: i32, colour: [f32; 3]) -> CellSample {
+        CellSample {
+            height,
+            colour,
+            sub_colour: colour,
+            sub_depth: 1_000,
+        }
+    }
+
+    /// Every drawn cell must be covered exactly once, by a rectangle that agrees
+    /// with it in height and colour.
+    fn assert_tops_cover(surface: &Surface, rects: &[TopRect]) {
+        let mut cover: Vec<Vec<Option<TopRect>>> =
+            vec![vec![None; LOD_TILE_CELLS as usize]; LOD_TILE_CELLS as usize];
+        for rect in rects {
+            for z in rect.origin[1]..rect.origin[1] + rect.extent[1] {
+                for x in rect.origin[0]..rect.origin[0] + rect.extent[0] {
+                    assert!(surface.drawn(x, z), "rectangle covers an undrawn cell");
+                    assert_eq!(
+                        surface.sample_at(x, z),
+                        cell(rect.height, rect.colour),
+                        "rectangle disagrees with cell ({x}, {z})"
+                    );
+                    assert!(
+                        cover[z as usize][x as usize].is_none(),
+                        "cell ({x}, {z}) covered twice"
+                    );
+                    cover[z as usize][x as usize] = Some(*rect);
+                }
+            }
+        }
+        for cz in 0..LOD_TILE_CELLS {
+            for cx in 0..LOD_TILE_CELLS {
+                assert_eq!(
+                    cover[cz as usize][cx as usize].is_some(),
+                    surface.drawn(cx, cz),
+                    "cell ({cx}, {cz}) coverage"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_flat_cell_grid_merges_into_one_top_rectangle() {
+        let mut rects = Vec::new();
+        merge_tops(&flat_surface(12), &mut rects);
+        assert_eq!(
+            rects,
+            vec![TopRect {
+                origin: [0, 0],
+                extent: [LOD_TILE_CELLS, LOD_TILE_CELLS],
+                height: 12,
+                colour: [0.1, 0.2, 0.3],
+            }],
+            "a flat tile is one quad whatever its cell count"
+        );
+    }
+
+    #[test]
+    fn tops_merge_runs_but_not_across_a_height_or_colour_change() {
+        let mut surface = flat_surface(4);
+        set(&mut surface, 5, 0, cell(9, [0.1, 0.2, 0.3]));
+        set(&mut surface, 9, 0, cell(4, [0.9, 0.9, 0.9]));
+        let mut rects = Vec::new();
+        merge_tops(&surface, &mut rects);
+        assert_tops_cover(&surface, &rects);
+        // Two single cells and the runs they cut row 0 into stay separate; the
+        // rest of the tile merges column-wise, so 1024 cells cost seven quads
+        // rather than 1024.
+        assert_eq!(rects.len(), 7, "{rects:?}");
+        assert!(rects.iter().any(|r| r.extent == [5, 32]));
+    }
+
+    #[test]
+    fn equal_wall_runs_merge_and_unequal_ones_break() {
+        let cell_m = 8;
+        let mut surface = flat_surface(0);
+        // A block five cells wide at height 3 in row 2, a gap, then three more.
+        for cx in 0..5 {
+            set(&mut surface, cx, 2, cell(3, [0.1, 0.2, 0.3]));
+        }
+        for cx in 6..9 {
+            set(&mut surface, cx, 2, cell(3, [0.1, 0.2, 0.3]));
+        }
+        let mut runs = Vec::new();
+        merge_walls(&surface, cell_m, &mut runs);
+        let north: Vec<_> = runs
+            .iter()
+            .filter(|run| run.normal == [0, 0, -1] && run.plane == 2 && run.start < 9)
+            .collect();
+        assert_eq!(
+            north,
+            vec![
+                &WallRun {
+                    normal: [0, 0, -1],
+                    plane: 2,
+                    start: 0,
+                    len: 5,
+                    top: 3,
+                    foot: 0,
+                    colour: [0.1, 0.2, 0.3],
+                },
+                &WallRun {
+                    normal: [0, 0, -1],
+                    plane: 2,
+                    start: 6,
+                    len: 3,
+                    top: 3,
+                    foot: 0,
+                    colour: [0.1, 0.2, 0.3],
+                },
+            ],
+            "two runs, split where the block is interrupted: {runs:?}"
+        );
+        // The same block faces water on its east side: one run along z.
+        let east: Vec<_> = runs
+            .iter()
+            .filter(|run| run.normal == [1, 0, 0] && run.plane == 5)
+            .collect();
+        assert_eq!(east.len(), 1, "{runs:?}");
+        assert_eq!(
+            (east[0].start, east[0].len, east[0].top, east[0].foot),
+            (2, 1, 3, 0)
+        );
+        assert_eq!((east[0].plane, east[0].normal), (5, [1, 0, 0]));
+    }
+
+    #[test]
+    fn a_wall_over_a_filtered_edge_hangs_below_its_own_top() {
+        let cell_m = 2;
+        const EAST_HALO: usize = (LOD_TILE_CELLS + 2 * TILE_HALO - 1) as usize;
+
+        // An undrawn neighbour across the east face of cell (31, 0), lower.
+        let mut surface = flat_surface(10);
+        surface.drawn[TILE_HALO as usize][EAST_HALO] = false;
+        surface.sample[TILE_HALO as usize][EAST_HALO] = cell(0, [0.0, 0.0, 0.0]);
+        let spec = wall_spec(&surface, cell_m, 31, 0, [1, 0]).expect("a filtered edge still walls");
+        assert_eq!(spec.0, 10, "the wall starts at the cell's own top");
+        assert_eq!(
+            spec.1, 0,
+            "and reaches the neighbour's ground when that is lower"
+        );
+
+        // A filtered neighbour that stands higher: the wall still hangs the
+        // skirt depth below the cell top, so the seam cannot open.
+        let mut surface = flat_surface(10);
+        surface.drawn[TILE_HALO as usize][EAST_HALO] = false;
+        surface.sample[TILE_HALO as usize][EAST_HALO] = cell(40, [0.0, 0.0, 0.0]);
+        let spec = wall_spec(&surface, cell_m, 31, 0, [1, 0]).unwrap();
+        assert_eq!(
+            (spec.0, spec.1),
+            (10, 10 - FILTER_WALL_CELLS * cell_m),
+            "a higher neighbour is covered by the skirt depth"
+        );
+
+        // The wall wears the higher cell's own sub-surface layer, and bare rock
+        // when the step is deeper than that layer.
+        let mut deep = flat_surface(10);
+        set(
+            &mut deep,
+            3,
+            3,
+            CellSample {
+                height: 10,
+                colour: [0.1, 0.2, 0.3],
+                sub_colour: [0.4, 0.3, 0.2],
+                sub_depth: 4,
+            },
+        );
+        set(&mut deep, 4, 3, cell(8, [0.1, 0.2, 0.3]));
+        assert_eq!(
+            wall_spec(&deep, cell_m, 3, 3, [1, 0]),
+            Some((10, 8, [0.4, 0.3, 0.2])),
+            "a step inside the sub-surface layer shows that layer"
+        );
+        set(&mut deep, 4, 3, cell(2, [0.1, 0.2, 0.3]));
+        assert_eq!(
+            wall_spec(&deep, cell_m, 3, 3, [1, 0]),
+            Some((10, 2, material::color(material::STONE))),
+            "a step deeper than the sub-surface layer is bare rock"
+        );
+
+        // Two drawn cells never double a wall: only the higher one emits it.
+        let mut low = flat_surface(10);
+        set(&mut low, 4, 3, cell(2, [0.1, 0.2, 0.3]));
+        assert_eq!(
+            wall_spec(&low, cell_m, 3, 3, [1, 0]),
+            Some((10, 2, [0.1, 0.2, 0.3])),
+            "the higher cell owns the face"
+        );
+        assert_eq!(
+            wall_spec(&low, cell_m, 4, 3, [-1, 0]),
+            None,
+            "the lower cell draws nothing there"
+        );
+        assert_eq!(
+            wall_spec(&flat_surface(10), cell_m, 3, 3, [1, 0]),
+            None,
+            "equal neighbours need no wall"
+        );
+    }
+
+    #[test]
+    fn quantisation_floors_toward_the_ground() {
+        assert_eq!(quantise_height(7, 4), 4);
+        assert_eq!(quantise_height(4, 4), 4);
+        assert_eq!(quantise_height(0, 8), 0);
+        assert_eq!(quantise_height(-1, 4), -4);
+        assert_eq!(quantise_height(3, 1), 3);
+    }
+
+    #[test]
+    fn the_step_table_follows_the_ring_derivation() {
+        // The same integer arithmetic the table's doc comment describes: 2 px at
+        // 65 degrees over a 1440 px viewport is 1.576 mm per metre of distance,
+        // rounded to the nearest power of two metres and never below 1 m.
+        fn derived_step_m(half_extent_m: i32) -> i32 {
+            let needed_mm = (half_extent_m as i64 * 1576 / 1000).max(1000);
+            let mut step = 1000i64;
+            while (2 * step - needed_mm).abs() < (step - needed_mm).abs() {
+                step *= 2;
+            }
+            (step / 1000) as i32
+        }
+        assert_eq!(LOD_STEP_M, [1, 1, 1, 2, 4, 8, 16]);
+        for config in LANDSCAPE_RINGS {
+            assert_eq!(
+                lod_step_m(config.level),
+                derived_step_m(config.half_extent),
+                "level {} over {} m",
+                config.level,
+                config.half_extent
+            );
+        }
+        assert_eq!(lod_step_m(0), 1, "the finest level is exact");
+    }
 
     #[test]
     fn ring_squares_nest_and_align_to_the_next_cell() {
@@ -2140,11 +2689,90 @@ mod tests {
     }
 
     #[test]
-    fn tile_normals_are_unit_or_up() {
-        let normal = normalize_normal([0.0, 0.0, 0.0]);
-        assert_eq!(normal, [0.0, 1.0, 0.0]);
-        let normal = normalize_normal([1.0, 1.0, 1.0]);
-        let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
-        assert!((length - 1.0).abs() < 1.0e-5);
+    fn emitted_faces_are_flat_and_wound_toward_their_normal() {
+        let colour = [0.1, 0.2, 0.3];
+        let mut mesh = Mesh::default();
+        emit_top(
+            &mut mesh,
+            TopRect {
+                origin: [1, 2],
+                extent: [3, 4],
+                height: 7,
+                colour,
+            },
+            [0, 0],
+            4,
+        );
+        for normal in [[-1, 0, 0], [1, 0, 0], [0, 0, -1], [0, 0, 1]] {
+            emit_wall(
+                &mut mesh,
+                WallRun {
+                    normal,
+                    plane: 2,
+                    start: 1,
+                    len: 3,
+                    top: 7,
+                    foot: 3,
+                    colour,
+                },
+                [0, 0],
+                4,
+            );
+        }
+        assert_eq!(
+            mesh.vertices.len(),
+            5 * 4,
+            "one quad per face, four vertices"
+        );
+        for (index, quad) in mesh.indices.chunks(6).enumerate() {
+            let vertices: Vec<Vertex> = quad.iter().map(|&i| mesh.vertices[i as usize]).collect();
+            let expected = vertices[0].normal;
+            for vertex in &vertices {
+                assert_eq!(vertex.normal, expected);
+                assert_eq!(vertex.color, colour);
+            }
+            let low = vertices
+                .iter()
+                .map(|v| v.position[1])
+                .fold(f32::INFINITY, f32::min);
+            let high = vertices
+                .iter()
+                .map(|v| v.position[1])
+                .fold(f32::NEG_INFINITY, f32::max);
+            if index == 0 {
+                assert_eq!((low, high), (7.0, 7.0), "the top rectangle is flat");
+            } else {
+                assert_eq!((low, high), (3.0, 7.0), "the wall spans its own step");
+            }
+            let cross = cross_product(&vertices);
+            assert_eq!(
+                cross, expected,
+                "winding must point along the face normal: {vertices:?}"
+            );
+        }
+    }
+
+    /// `cross(p1 - p0, p2 - p0)` of a quad's first three corners, as signs: the
+    /// renderer culls back faces, so this is the direction the face is visible
+    /// from.
+    fn cross_product(vertices: &[Vertex]) -> [f32; 3] {
+        let u = [
+            vertices[1].position[0] - vertices[0].position[0],
+            vertices[1].position[1] - vertices[0].position[1],
+            vertices[1].position[2] - vertices[0].position[2],
+        ];
+        let v = [
+            vertices[2].position[0] - vertices[0].position[0],
+            vertices[2].position[1] - vertices[0].position[1],
+            vertices[2].position[2] - vertices[0].position[2],
+        ];
+        let cross = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let length = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+        assert!(length > 0.0, "a degenerate face has no facing");
+        cross.map(|value| value / length)
     }
 }
