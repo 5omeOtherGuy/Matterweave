@@ -351,6 +351,7 @@ impl Shadow {
         settings.clouds.validate()?;
         settings.wind.validate()?;
         settings.player.validate()?;
+        settings.water.validate()?;
         self.camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
         let sun = self.camera.direction;
         if self.indirect_sun != Some(crate::indirect::light_key(settings.sun)?) {
@@ -376,6 +377,7 @@ impl Shadow {
                 ],
                 wind: settings.wind.packed(),
                 player: settings.player.packed(),
+                water: settings.water.packed(),
                 sun: [sun[0], sun[1], sun[2], settings.sun.intensity],
                 // World-space bias preserves its scale when the fitted depth span changes.
                 params: [

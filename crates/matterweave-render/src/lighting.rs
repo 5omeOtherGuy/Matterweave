@@ -183,6 +183,48 @@ impl PlayerPush {
     }
 }
 
+/// Water surface shading.
+///
+/// Two surfaces can be water in one frame: the derived water pass, which always
+/// shades as water and carries a real bed depth per vertex, and coarse terrain
+/// whose cells are flooded, which is drawn by the opaque pass in the water
+/// colour and has no depth of its own. [`Water::coarse_surfaces`] is what lets
+/// the second read as water too, and it is off by default so a sample that never
+/// asks for it renders exactly the frame it always did.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Water {
+    /// Shade flooded coarse terrain cells - the far sea of a distance ring - as
+    /// a water surface rather than as a flat blue face.
+    pub coarse_surfaces: bool,
+    /// Ripple animation time in seconds. Folded by the renderer like the wind
+    /// clock, so a long session cannot lose sine precision.
+    pub time_s: f32,
+}
+
+impl Water {
+    /// Depth in metres assumed for a flooded coarse cell. A distance ring's LOD
+    /// sample keeps only the surface, so the far sea has no bed to measure; it
+    /// is drawn at the depth its tint has already saturated at.
+    pub(crate) const COARSE_DEPTH_M: f32 = 24.0;
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.time_s.is_finite() {
+            return Err("Water time must be finite".into());
+        }
+        Ok(())
+    }
+
+    /// `(coarse surfaces enabled, time, coarse depth in metres, 0)`.
+    pub(crate) fn packed(&self) -> [f32; 4] {
+        [
+            if self.coarse_surfaces { 1.0 } else { 0.0 },
+            self.time_s.rem_euclid(Wind::TIME_PERIOD_S),
+            Self::COARSE_DEPTH_M,
+            0.0,
+        ]
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LightingSettings {
     pub sun: Sun,
@@ -199,6 +241,8 @@ pub struct LightingSettings {
     /// Volumetric clouds. The default is disabled, which allocates no
     /// offscreen target and leaves the frame exactly as it was.
     pub clouds: Clouds,
+    /// Water surface shading. The default leaves coarse flooded cells flat.
+    pub water: Water,
 }
 
 impl Default for LightingSettings {
@@ -211,6 +255,7 @@ impl Default for LightingSettings {
             wind: Wind::default(),
             player: PlayerPush::default(),
             clouds: Clouds::default(),
+            water: Water::default(),
         }
     }
 }
@@ -398,6 +443,29 @@ mod tests {
         }
         .validate()
         .unwrap();
+    }
+
+    #[test]
+    fn water_defaults_leave_the_opaque_pass_alone_and_the_clock_folds() {
+        // A sample that never mentions water must not change one pixel of the
+        // opaque pass: the enable flag is the first component and it is zero.
+        assert_eq!(Water::default().packed()[0], 0.0);
+        assert!(!LightingSettings::default().water.coarse_surfaces);
+        let water = Water {
+            coarse_surfaces: true,
+            time_s: Wind::TIME_PERIOD_S * 3.0 + 12.5,
+        };
+        let packed = water.packed();
+        assert_eq!(packed[0], 1.0);
+        assert!((packed[1] - 12.5).abs() < 1.0e-3, "{packed:?}");
+        assert_eq!(packed[2], Water::COARSE_DEPTH_M);
+        water.validate().unwrap();
+        assert!(Water {
+            coarse_surfaces: true,
+            time_s: f32::NAN,
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

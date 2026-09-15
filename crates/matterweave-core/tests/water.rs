@@ -89,7 +89,13 @@ fn water_covers_exactly_the_flooded_columns_at_sea_level() {
     for vertex in &mesh.vertices {
         assert_eq!(vertex.position[1], SEA_LEVEL as f32);
         assert_eq!(vertex.normal, [0.0, 1.0, 0.0]);
-        assert_eq!(vertex.color, material::color(material::WATER));
+        // The colour attribute of a water vertex is the bed depth under that
+        // corner, normalized; the water fragment entry owns the palette.
+        assert!(
+            vertex.color[0] > 0.0 && vertex.color[0] <= 1.0,
+            "every flooded column has at least one metre of water: {vertex:?}"
+        );
+        assert_eq!([vertex.color[1], vertex.color[2]], [0.0, 0.0]);
     }
     for index in &mesh.indices {
         assert!((*index as usize) < mesh.vertices.len());
@@ -111,6 +117,52 @@ fn water_covers_exactly_the_flooded_columns_at_sea_level() {
     let again = world.water_mesh_chunk(key);
     assert_eq!(mesh.vertices.len(), again.vertices.len());
     assert_eq!(mesh.indices, again.indices);
+}
+
+#[test]
+fn every_vertex_carries_the_bed_depth_under_its_own_corner() {
+    use matterweave_core::water::{WATER_MAX_DEPTH_M, WATER_QUAD_MAX_M};
+    let (world, key) = landscape_window();
+    let mesh = world.water_mesh_chunk(key);
+    assert!(!mesh.vertices.is_empty());
+    let (min_y, _) = world.stream_y_range();
+    let mut deepest = 0.0f32;
+    for quad in mesh.vertices.chunks(4) {
+        let x0 = quad[0].position[0];
+        let x1 = quad[1].position[0];
+        let z0 = quad[2].position[2];
+        let z1 = quad[0].position[2];
+        assert!(
+            (x1 - x0).abs() <= WATER_QUAD_MAX_M as f32
+                && (z1 - z0).abs() <= WATER_QUAD_MAX_M as f32,
+            "a quad may not outrun its four depth samples: {quad:?}"
+        );
+        // Each corner names the flooded column it touches, which is the last
+        // column inside the run on each axis.
+        for (vertex, column) in [
+            (&quad[0], [x0, z1 - 1.0]),
+            (&quad[1], [x1 - 1.0, z1 - 1.0]),
+            (&quad[2], [x1 - 1.0, z0]),
+            (&quad[3], [x0, z0]),
+        ] {
+            let (x, z) = (column[0] as i32, column[1] as i32);
+            let bed = (min_y..SEA_LEVEL)
+                .rev()
+                .find(|&y| material::is_solid(world.get([x, y, z])))
+                .expect("a flooded column stands on a bed");
+            let metres = vertex.color[0] * WATER_MAX_DEPTH_M;
+            deepest = deepest.max(metres);
+            assert_eq!(
+                metres,
+                ((SEA_LEVEL - bed) as f32).min(WATER_MAX_DEPTH_M),
+                "vertex {vertex:?} over column {x},{z} with bed {bed}"
+            );
+        }
+    }
+    assert!(
+        deepest > 1.0,
+        "a shore window must carry more than one depth, deepest was {deepest} m"
+    );
 }
 
 #[test]

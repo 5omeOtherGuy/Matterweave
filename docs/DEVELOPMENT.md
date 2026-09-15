@@ -204,6 +204,12 @@ cycles it at run time, and a `clouds low` word inside `landscape.txt` selects on
 device, where there is no command line. Cloud cost on llvmpipe says nothing about the
 phone.
 
+`MATTERWEAVE_LANDSCAPE_SUN=x,y,z` points the landscape sample's sun somewhere other
+than its fixed mid-morning direction, on the desktop and on a device alike. Water
+specular and flora cast shadows are only defined for a sun elevation the sample does
+not otherwise have, and both have to stay measurable without a private build. A
+malformed or degenerate value is logged and ignored.
+
 ### Bounded reflection gate
 
 The headless host validator compiles the shipping `world.wgsl` through the renderer's

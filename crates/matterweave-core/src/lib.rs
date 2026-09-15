@@ -42,7 +42,18 @@ pub const GENERATOR_VERSION: u32 = 1;
 /// restored with it, and the vertical simulation band follows from it. A world
 /// serialized before this field existed restores as [`TerrainSource::LegacyIsland`],
 /// which is exactly the generator such a save was written with.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TerrainSource {
     /// Original integer island fixture: low hills, a basin and hand-placed landmarks.
