@@ -813,17 +813,18 @@ pub struct FloraTier {
     pub keep_every: u32,
 }
 
-/// The shipped density falloff: full density to 28 m, then quarter density to
-/// 48 m, and no ground cover beyond that.
+/// The shipped density falloff: full density to 28 m, then a sparse eighth to
+/// 40 m, and no ground cover beyond that.
 ///
 /// The outer radius is the blade LOD crossover, not a budget compromise. A
 /// blade is one fine voxel - 6.25 cm - across, and the landscape render target
 /// resolves about 1.6 mrad per pixel (65 degrees over 720 rows), so a blade is
-/// sub-pixel beyond ~40 m and a clump is a handful of pixels; beyond 48 m the
-/// field is drawn as ground colour rather than as thousands of instances nobody
-/// can resolve. The second band is quarter density rather than half because the
-/// instances it does not draw are instances the near band spends on clumps the
-/// eye can actually resolve. Radii ascend and each is a whole number of
+/// sub-pixel beyond ~40 m and a clump is a handful of pixels; the last band
+/// ends exactly there, and beyond it the field is drawn as ground colour rather
+/// than as thousands of instances nobody can resolve. The second band is a
+/// sparse eighth rather than half because the instances it does not draw are
+/// instances the near band spends on clumps the eye can actually resolve. Radii
+/// ascend and each is a whole number of
 /// [`FLORA_CELL_M`] cells, which is what makes the band predicate exact.
 pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     FloraTier {
@@ -831,8 +832,8 @@ pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
         keep_every: 1,
     },
     FloraTier {
-        radius_m: 48,
-        keep_every: 4,
+        radius_m: 40,
+        keep_every: 8,
     },
 ];
 
