@@ -216,6 +216,7 @@ fn prototypes_are_deterministic_with_stable_mesh_bytes() {
 fn meshed_triangle_caps_hold_through_the_scene_path() {
     for id in LANDSCAPE_FLORA_SPECIES {
         let tris = mesh_tris(id);
+        println!("PROTOTYPE {id}: cells {} tris {}", landscape_prototype(id).unwrap().occupied_cells(), tris);
         assert!(
             tris <= tri_cap(id),
             "{id} triangles {tris} over cap {}",

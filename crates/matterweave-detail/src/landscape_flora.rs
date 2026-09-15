@@ -285,24 +285,33 @@ fn grass_blade(volume: &mut DetailVolume, base: [i32; 2], height: i32, lean_at: 
     Ok(())
 }
 
+/// Fill the one-cell-thick pad under a clump over the rectangle from the origin
+/// to `base`. The bases sit on a lattice two cells apart, so this is the
+/// footprint of that lattice: the greedy mesher merges it into a single plate
+/// of quads rather than the many small faces of a runner path.
+fn fill_pad(volume: &mut DetailVolume, base: [i32; 2]) -> Result<()> {
+    for x in 0..=base[0].abs() {
+        for z in 0..=base[1].abs() {
+            volume.set(
+                [x * base[0].signum(), 0, z * base[1].signum()],
+                material::GRASS_BLADE,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn grass_tuft_with(id: &str, tier: &GrassTier) -> Result<DetailVolume> {
     let scale = Scale::new(LANDSCAPE_FINE_FLORA_SCALE_M)?;
     let mut volume = DetailVolume::new(id, scale);
-    // The pad is a runner under each base: the base set is spread on an even
-    // lattice so two blades never touch, and a 1-cell path from the origin to
-    // each base joins them into one body without filling the foot in. At
-    // 6.25 cm cells the runner is a thin root on the surface, not a plate.
+    // The pad is the footprint of the base lattice, one cell thick. Every blade
+    // rises from its own base cell on it, so the clump is one rooted body, and
+    // the greedy mesher merges the plate into a handful of quads. A runner
+    // under each base instead cost four times the triangles for the same
+    // silhouette, and the vertex stage is what a dense field pays for.
     for base in tier.bases {
-        set_path(
-            &mut volume,
-            [0, 0, 0],
-            [base[0], 0, base[1]],
-            material::GRASS_BLADE,
-        )?;
+        fill_pad(&mut volume, *base)?;
     }
-    // `set_path` fills the cells it steps to, not the one it starts from: the
-    // crown cell is the junction every runner meets at, so it is set explicitly.
-    volume.set([0, 0, 0], material::GRASS_BLADE)?;
     for (index, base) in tier.bases.iter().enumerate() {
         grass_blade(&mut volume, *base, tier.heights[index], tier.leans[index])?;
     }
@@ -343,17 +352,10 @@ const FLOWER_ARMS: [[i32; 2]; 4] = [[1, 0], [0, 1], [0, -1], [-1, 0]];
 fn flower_with(id: &str, petal: u8, tier: &FlowerTier) -> Result<DetailVolume> {
     let scale = Scale::new(LANDSCAPE_FINE_FLORA_SCALE_M)?;
     let mut volume = DetailVolume::new(id, scale);
-    // Runner pad under the bases, exactly as a grass clump roots: the stems are
-    // two cells apart so no two share a column or touch at the root.
+    // The same one-cell-thick pad a grass clump roots on.
     for base in tier.bases {
-        set_path(
-            &mut volume,
-            [0, 0, 0],
-            [base[0], 0, base[1]],
-            material::GRASS_BLADE,
-        )?;
+        fill_pad(&mut volume, *base)?;
     }
-    volume.set([0, 0, 0], material::GRASS_BLADE)?;
     for (index, base) in tier.bases.iter().enumerate() {
         let height = tier.heights[index];
         let tip = blade_tip_cells(height);
