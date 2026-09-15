@@ -170,6 +170,34 @@ fn shore_scene() -> Mesh {
     }
 }
 
+/// A translucent water quad over the ground, drawn after the cloud composite.
+/// It exists to keep the composite-to-water descriptor ordering on the tested
+/// path: the composite leaves its own set 0 bound and the water pipeline needs
+/// the lighting set there.
+fn shore_water() -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut quad = |a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3]| {
+        let base = vertices.len() as u32;
+        for position in [a, b, c, d] {
+            vertices.push(vertex(position, [0.0, 1.0, 0.0], [0.1, 0.3, 0.5]));
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+    };
+    quad(
+        [-3000.0, 2.0, 200.0],
+        [3000.0, 2.0, 200.0],
+        [3000.0, 2.0, -3000.0],
+        [-3000.0, 2.0, -3000.0],
+    );
+    Mesh {
+        vertices,
+        indices,
+        revision: 1,
+    }
+}
+
 fn view_projection(aspect: f32, yaw_deg: f32, eye: Vec3) -> [[f32; 4]; 4] {
     let yaw = yaw_deg.to_radians();
     let forward = Vec3::new(yaw.sin(), 0.0, -yaw.cos());
@@ -226,6 +254,9 @@ impl ApplicationHandler for App {
         let mut renderer = result.unwrap();
         println!("{}", renderer.capabilities);
         renderer.upload_chunk([0, 0, 0], &shore_scene()).unwrap();
+        renderer
+            .upload_water_chunk([0, 0, 0], &shore_water())
+            .unwrap();
         renderer.set_cost_counters_enabled(true);
         self.renderer = Some(renderer);
         self.window = Some(window);

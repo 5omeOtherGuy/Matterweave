@@ -2496,6 +2496,16 @@ impl Renderer {
                 .count();
             if self.water_visible > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.water);
+                // The composite above bound its own descriptor set 0 (the cloud
+                // target); the water pipeline expects the lighting set there.
+                d.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    s.layout,
+                    0,
+                    &[self.shadow.set],
+                    &[],
+                );
                 // The static-scene and flora batches above leave their own
                 // instance and wind records bound. A water quad is not an
                 // instance of anything: without this rebind it inherits the last
