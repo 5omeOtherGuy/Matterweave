@@ -22,7 +22,7 @@ mod timing;
 mod wind_tests;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
-pub use clouds::Clouds;
+pub use clouds::{Clouds, CostCounters};
 use clouds::{SkyPass, SkyPush};
 use frustum::Frustum;
 pub use hud::Hud;
@@ -213,6 +213,35 @@ impl Buffer {
                 )
                 .map_err(err)?;
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
+            self.device.raw.unmap_memory(self.memory);
+        }
+        Ok(())
+    }
+
+    /// Copy `bytes.len()` bytes out of the buffer. Only valid once the fence of
+    /// the submission that last wrote it has been signalled; host-coherent
+    /// memory needs no explicit invalidation.
+    fn read(&self, bytes: &mut [u8]) -> Result<()> {
+        if bytes.len() > self.size {
+            return Err("Buffer read exceeds allocation".into());
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        // SAFETY: the caller waited the frame fence; the mapped coherent range
+        // covers the requested bytes and is released again before submission.
+        unsafe {
+            let src = self
+                .device
+                .raw
+                .map_memory(
+                    self.memory,
+                    0,
+                    bytes.len() as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .map_err(err)?;
+            std::ptr::copy_nonoverlapping(src.cast::<u8>(), bytes.as_mut_ptr(), bytes.len());
             self.device.raw.unmap_memory(self.memory);
         }
         Ok(())
@@ -1193,6 +1222,10 @@ pub struct Renderer {
     shadow_map_updated: bool,
     timestamps: Option<TimestampQueries>,
     diagnostics_enabled: bool,
+    /// Shader cost counters are requested for the frames drawn while this is
+    /// true. Off by default: counting costs one uniform branch plus one atomic
+    /// per counted pixel, which is not worth paying in normal operation.
+    cost_counters_enabled: bool,
     diagnostics: DrawDiagnostics,
     upload_waits: WaitTally,
     submissions: u64,
@@ -1423,6 +1456,7 @@ impl Renderer {
             shadow_map_updated: false,
             timestamps,
             diagnostics_enabled: false,
+            cost_counters_enabled: false,
             diagnostics: DrawDiagnostics::default(),
             upload_waits: WaitTally::default(),
             submissions: 0,
@@ -1999,6 +2033,27 @@ impl Renderer {
         self.timestamps.is_some()
     }
 
+    /// Turn the shader cost counters on or off for subsequent frames. Disabled
+    /// by default; while enabled each frame's sky and cloud passes accumulate
+    /// counter values that [`Renderer::cost_counters`] reads back.
+    pub fn set_cost_counters_enabled(&mut self, enabled: bool) {
+        self.cost_counters_enabled = enabled;
+    }
+
+    /// Counters from the most recently submitted frame, or `None` while the
+    /// counters are disabled or no sky pass exists. Waits for that frame's
+    /// fence: this is a diagnostic read, not a per-frame call.
+    pub fn cost_counters(&mut self) -> Result<Option<CostCounters>> {
+        if !self.cost_counters_enabled {
+            return Ok(None);
+        }
+        self.commands.wait()?;
+        match self.sky.as_ref() {
+            Some(sky) => sky.counters_snapshot().map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Enables per-frame CPU wait diagnostics. Off by default: normal operation
     /// adds no clock readings beyond the pre-existing ones.
     pub fn set_diagnostics_enabled(&mut self, enabled: bool) {
@@ -2139,10 +2194,20 @@ impl Renderer {
             &lighting.atmosphere,
             &lighting.clouds,
         )?;
+        if self.cost_counters_enabled {
+            if let Some(sky) = &self.sky {
+                sky.reset_counters()?;
+            }
+        }
         // Both sky entries reconstruct a world ray by unprojecting the frame's
         // own matrix; a matrix that cannot be inverted skips them for this frame
         // rather than marching NaN directions.
         let inverse = glam::Mat4::from_cols_array_2d(&view_proj).inverse();
+        let counter_flags = if self.cost_counters_enabled {
+            clouds::COUNTERS_ENABLED
+        } else {
+            0
+        };
         let sky_push = inverse.is_finite().then(|| SkyPush {
             inv_view_proj: inverse.to_cols_array_2d(),
             eye: [eye[0], eye[1], eye[2], lighting.clouds.time()],
@@ -2151,6 +2216,12 @@ impl Renderer {
                 lighting.clouds.light_steps() as f32,
                 1.0 / frame_extent.width.max(1) as f32,
                 1.0 / frame_extent.height.max(1) as f32,
+            ],
+            control: [
+                frame_extent.width,
+                frame_extent.height,
+                lighting.clouds.divisor(),
+                counter_flags,
             ],
         });
         let s = self.swapchain.as_ref().expect("swapchain created");

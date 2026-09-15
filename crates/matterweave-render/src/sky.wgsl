@@ -13,8 +13,30 @@ struct Sky {
     eye: vec4<f32>,
     // (march steps, light steps, inverse target width, inverse target height)
     params: vec4<f32>,
+    // (frame width, frame height, target divisor, flags) as integers. Bit 3 of
+    // flags turns the shader cost counters on; the low bits steer the cloud
+    // amortisation and are read only by `fs_clouds`.
+    control: vec4<u32>,
 };
 var<push_constant> sky: Sky;
+
+// Per-frame shader cost counters. Every atomic below sits behind
+// `sky.control.w & COUNTERS_ENABLED`, so a normal frame pays one uniform branch
+// and no counter memory traffic. One atomic counts one whole pixel or ray; the
+// step total is accumulated once per marched ray, never per step.
+struct Counters {
+    candidates: atomic<u32>,
+    marched: atomic<u32>,
+    steps: atomic<u32>,
+    masked: atomic<u32>,
+    reused: atomic<u32>,
+    sky: atomic<u32>,
+};
+@group(1) @binding(0) var<storage, read_write> counters: Counters;
+// The frame's depth buffer, read by texel fetch in `fs_clouds`. Declared here
+// so both entries share one module; `fs_main` never touches it.
+@group(1) @binding(1) var frame_depth: texture_depth_2d;
+const COUNTERS_ENABLED: u32 = 8u;
 // Layout is defined once in Rust: crates/matterweave-render/src/shader_contract.rs.
 struct Lighting {
     view_proj: mat4x4<f32>,
@@ -181,6 +203,9 @@ fn sky_dome(dir: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    if (sky.control.w & COUNTERS_ENABLED) != 0u {
+        atomicAdd(&counters.sky, 1u);
+    }
     return vec4(sky_dome(view_ray(frag.xy)), 1.0);
 }
 
@@ -203,6 +228,11 @@ fn sky_dome(dir: vec3<f32>) -> vec3<f32> {
     // two, which is the difference between a soft layer and a crisp one.
     let octaves = select(2, 3, steps > 32);
     let dt = span / f32(steps);
+    let counters_on = (sky.control.w & COUNTERS_ENABLED) != 0u;
+    if counters_on {
+        atomicAdd(&counters.candidates, 1u);
+        atomicAdd(&counters.marched, 1u);
+    }
     // Hash dither on the first step. There is no history buffer in this
     // renderer, so this is a static per-pixel offset: it trades visible step
     // banding for a fixed fine-grained noise that does not crawl between
@@ -213,7 +243,9 @@ fn sky_dome(dir: vec3<f32>) -> vec3<f32> {
     let ambient = mix(lighting.atmosphere.xyz, lighting.atmosphere.xyz * vec3(0.6, 0.7, 1.0), 0.5);
     var transmittance = 1.0;
     var scattered = vec3(0.0);
+    var taken = 0u;
     for (var i = 0; i < steps; i = i + 1) {
+        taken = u32(i) + 1u;
         let t = enter + (f32(i) + jitter) * dt;
         let position = eye + dir * t;
         let density = cloud_density(position, octaves);
@@ -230,6 +262,9 @@ fn sky_dome(dir: vec3<f32>) -> vec3<f32> {
                 break;
             }
         }
+    }
+    if counters_on {
+        atomicAdd(&counters.steps, taken);
     }
     // Converge to the sky at the horizon and with distance.
     let fade = smoothstep(0.015, 0.12, dir.y) * (1.0 - smoothstep(FADE_START_M, FADE_END_M, enter));

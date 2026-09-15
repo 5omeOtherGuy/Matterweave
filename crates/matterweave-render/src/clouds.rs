@@ -11,7 +11,7 @@
 //! sun and sky colour here are the same ones the terrain is lit and fogged
 //! with. The offscreen target exists only while clouds are enabled: disabling
 //! them frees it, and every sample that never enables them allocates nothing.
-use super::{err, Device, Result};
+use super::{err, Buffer, Device, Result};
 use crate::lighting::Atmosphere;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
@@ -121,7 +121,7 @@ impl CloudPlan {
     }
 }
 
-/// Push constants for both sky entries. 96 bytes, inside the 128 every Vulkan
+/// Push constants for both sky entries. 112 bytes, inside the 128 every Vulkan
 /// implementation guarantees.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -131,9 +131,44 @@ pub(crate) struct SkyPush {
     pub eye: [f32; 4],
     /// (march steps, light steps, inverse target width, inverse target height)
     pub params: [f32; 4],
+    /// (frame width, frame height, cloud divisor, flags). Flags bit 3 is the
+    /// shader cost counters; the low bits are the amortisation phase.
+    pub control: [u32; 4],
 }
 
-pub(crate) const SKY_PUSH_BYTES: u32 = 96;
+pub(crate) const SKY_PUSH_BYTES: u32 = 112;
+/// Flag bit in `SkyPush::control[3]` that turns the shader cost counters on.
+pub(crate) const COUNTERS_ENABLED: u32 = 8;
+/// Flag bits in `SkyPush::control[3]` that select the amortised cloud sub-grid.
+pub(crate) const SUBGRID_MASK: u32 = 0b11;
+/// Flag bit that forces a full cloud target update this frame.
+pub(crate) const FULL_UPDATE: u32 = 4;
+/// Byte size of the counter storage buffer: six `u32` atomics.
+pub(crate) const COUNTER_BYTES: usize = 24;
+
+/// Per-frame counts from the sky dome and the cloud march. Every field is zero
+/// unless the counters were enabled for the frame that produced it; the whole
+/// value is absent when they were not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CostCounters {
+    /// Cloud-target rays that cleared the slab and horizon early-outs, which is
+    /// exactly what the pre-mask shader marched on those pixels.
+    pub cloud_candidates: u32,
+    /// Candidates the depth mask and the amortised sub-grid let through to the
+    /// view march.
+    pub cloud_marched_pixels: u32,
+    /// View march steps those rays actually executed, including the early exit
+    /// once the ray is opaque.
+    pub cloud_march_steps: u32,
+    /// Candidates skipped because opaque scene geometry covers every
+    /// full-resolution texel of their footprint.
+    pub cloud_masked_pixels: u32,
+    /// Candidates skipped by the interleaved amortisation and kept from the
+    /// previous frame's target.
+    pub cloud_reused_pixels: u32,
+    /// Sky dome fragments that reached the shading path.
+    pub sky_shaded_pixels: u32,
+}
 /// Push constants for the composite: frame and cloud-texel sizes.
 const COMPOSITE_PUSH_BYTES: u32 = 16;
 /// Colour format of the offscreen target. Vulkan requires optimal-tiling
@@ -565,6 +600,10 @@ pub(crate) struct SkyPass {
     layout: vk::PipelineLayout,
     dome: vk::Pipeline,
     clouds: Option<CloudTarget>,
+    counters: Buffer,
+    counter_layout: vk::DescriptorSetLayout,
+    counter_pool: vk::DescriptorPool,
+    counter_set: vk::DescriptorSet,
 }
 
 impl Drop for SkyPass {
@@ -574,6 +613,12 @@ impl Drop for SkyPass {
             self.clouds.take();
             self.device.raw.destroy_pipeline(self.dome, None);
             self.device.raw.destroy_pipeline_layout(self.layout, None);
+            self.device
+                .raw
+                .destroy_descriptor_pool(self.counter_pool, None);
+            self.device
+                .raw
+                .destroy_descriptor_set_layout(self.counter_layout, None);
         }
     }
 }
@@ -632,6 +677,11 @@ impl SkyPass {
         frame_pass: vk::RenderPass,
         frame: vk::Extent2D,
     ) -> Result<Self> {
+        let counters = Buffer::new(
+            device.clone(),
+            &[0_u8; COUNTER_BYTES],
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+        )?;
         let mut out = Self {
             device,
             frame_pass,
@@ -639,16 +689,62 @@ impl SkyPass {
             layout: vk::PipelineLayout::null(),
             dome: vk::Pipeline::null(),
             clouds: None,
+            counters,
+            counter_layout: vk::DescriptorSetLayout::null(),
+            counter_pool: vk::DescriptorPool::null(),
+            counter_set: vk::DescriptorSet::null(),
         };
-        // SAFETY: both handles are stored as they are created; the set layout
-        // outlives this pass, which the renderer owns alongside it.
+        // SAFETY: every handle is stored in this partial-construction guard as
+        // it is created. The lighting set layout outlives this pass; the counter
+        // buffer is owned here and referenced by exactly one set.
         unsafe {
+            let d = &out.device.raw;
+            let binding = vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+            out.counter_layout = d
+                .create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[binding]),
+                    None,
+                )
+                .map_err(err)?;
+            out.counter_pool = d
+                .create_descriptor_pool(
+                    &vk::DescriptorPoolCreateInfo::default()
+                        .max_sets(1)
+                        .pool_sizes(&[vk::DescriptorPoolSize {
+                            ty: vk::DescriptorType::STORAGE_BUFFER,
+                            descriptor_count: 1,
+                        }]),
+                    None,
+                )
+                .map_err(err)?;
+            out.counter_set = d
+                .allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default()
+                        .descriptor_pool(out.counter_pool)
+                        .set_layouts(&[out.counter_layout]),
+                )
+                .map_err(err)?[0];
+            let info = [vk::DescriptorBufferInfo::default()
+                .buffer(out.counters.raw)
+                .range(COUNTER_BYTES as u64)];
+            d.update_descriptor_sets(
+                &[vk::WriteDescriptorSet::default()
+                    .dst_set(out.counter_set)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&info)],
+                &[],
+            );
             out.layout = out
                 .device
                 .raw
                 .create_pipeline_layout(
                     &vk::PipelineLayoutCreateInfo::default()
-                        .set_layouts(&[lighting_set_layout])
+                        .set_layouts(&[lighting_set_layout, out.counter_layout])
                         .push_constant_ranges(&[vk::PushConstantRange::default()
                             .stage_flags(
                                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
@@ -678,6 +774,27 @@ impl SkyPass {
 
     pub(crate) fn cloud_quality(&self) -> Option<u8> {
         self.clouds.as_ref().map(|t| t.plan.quality)
+    }
+
+    /// Zero this frame's counters. Safe from the CPU only while the previous
+    /// frame fence is waited, which the renderer does before every recording.
+    pub(crate) fn reset_counters(&self) -> Result<()> {
+        self.counters.write(&[0_u8; COUNTER_BYTES])
+    }
+
+    /// The counters written by the most recently completed submission.
+    pub(crate) fn counters_snapshot(&self) -> Result<CostCounters> {
+        let mut bytes = [0_u8; COUNTER_BYTES];
+        self.counters.read(&mut bytes)?;
+        let word = |i: usize| u32::from_ne_bytes(bytes[i..i + 4].try_into().expect("4 bytes"));
+        Ok(CostCounters {
+            cloud_candidates: word(0),
+            cloud_marched_pixels: word(4),
+            cloud_march_steps: word(8),
+            cloud_masked_pixels: word(12),
+            cloud_reused_pixels: word(16),
+            sky_shaded_pixels: word(20),
+        })
     }
 
     /// The volumetric march, recorded outside the frame's render pass. Returns
@@ -741,6 +858,14 @@ impl SkyPass {
                 &[lighting_set],
                 &[],
             );
+            d.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.layout,
+                1,
+                &[self.counter_set],
+                &[],
+            );
             d.cmd_push_constants(
                 cmd,
                 self.layout,
@@ -773,6 +898,14 @@ impl SkyPass {
                 self.layout,
                 0,
                 &[lighting_set],
+                &[],
+            );
+            d.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.layout,
+                1,
+                &[self.counter_set],
                 &[],
             );
             d.cmd_push_constants(
