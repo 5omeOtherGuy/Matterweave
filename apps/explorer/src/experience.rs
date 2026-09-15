@@ -7,6 +7,7 @@
 use crate::{
     audio_service::{AudioAdapter, AudioScope},
     landscape::LandscapeSample,
+    platform::PlatformEvent,
     settings::{SharedSettings, SETTINGS_FILE_NAME},
     terrain_lab::TerrainLab,
     voxel_relay::VoxelRelayApp,
@@ -44,6 +45,11 @@ pub struct Experience {
     /// pauses a backgrounded app without a focus event, so this is tracked
     /// separately from window focus.
     resumed: bool,
+    /// True while the Android activity is paused (`APP_CMD_PAUSE`). Set from the
+    /// pause transition the Android backend forwards, and part of the same
+    /// policy as focus: a paused app plays nothing and its active sample parks
+    /// its workers.
+    paused: bool,
     /// Failure counters already reported, so a persistent failure is logged once
     /// per change instead of once per frame. `(device, registration)`.
     audio_failures_seen: (u64, u64),
@@ -74,6 +80,7 @@ impl Experience {
             // event then takes it away.
             focused: true,
             resumed: false,
+            paused: false,
             audio_failures_seen: (0, 0),
         }
     }
@@ -115,7 +122,7 @@ impl Experience {
     }
     /// True while both the lifecycle and the window allow playback.
     fn audio_active(&self) -> bool {
-        self.resumed && self.focused
+        self.resumed && self.focused && !self.paused
     }
     /// Focus loss silences playback immediately: queued events are dropped and
     /// sounding voices are stopped and suspended, not frozen to resume later.
@@ -125,12 +132,61 @@ impl Experience {
         self.audio.stop_all();
         self.audio.suspend();
     }
-    /// Focus gain restores audio only when the lifecycle is also resumed. It must
-    /// never undo a lifecycle suspension that arrived while unfocused.
+    /// Focus gain restores audio only when the lifecycle is also resumed and the
+    /// activity is not paused. It must never undo a lifecycle suspension that
+    /// arrived while unfocused.
     fn on_focus_gained(&mut self) {
         self.focused = true;
-        if self.resumed {
+        if self.audio_active() {
             self.audio.resume();
+        }
+    }
+    /// Apply one platform lifecycle transition to the shared owner policy and
+    /// the active sample.
+    ///
+    /// The owner uses it for audio; the sample uses it for frames, streaming
+    /// and its workers. Focus and occlusion arrive here as typed transitions,
+    /// so the Android entry can apply a pause even while the sample's window is
+    /// gone (a resume before `INIT_WINDOW`).
+    fn apply_platform(&mut self, event: PlatformEvent) {
+        match event {
+            PlatformEvent::WindowCreated => self.resumed = true,
+            PlatformEvent::WindowDestroyed => self.resumed = false,
+            PlatformEvent::GainedFocus => self.on_focus_gained(),
+            PlatformEvent::LostFocus => self.on_focus_lost(),
+            PlatformEvent::Paused => {
+                if !self.paused {
+                    self.paused = true;
+                    self.clear_sample_events();
+                    self.audio.stop_all();
+                    self.audio.suspend();
+                }
+            }
+            PlatformEvent::Resumed => {
+                if self.paused {
+                    self.paused = false;
+                    if self.audio_active() {
+                        self.audio.resume();
+                    }
+                }
+            }
+        }
+        self.forward_platform(event);
+    }
+    /// Forward one platform transition to whichever sample is active. A sample
+    /// applies it regardless of window id, so a resume that arrives after
+    /// `TERM_WINDOW` still re-arms its workers and clock.
+    fn forward_platform(&mut self, event: PlatformEvent) {
+        if let Some(w) = &mut self.wetland {
+            w.apply_platform(event);
+        } else if let Some(s) = &mut self.sandbox {
+            s.apply_platform(event);
+        } else if let Some(r) = &mut self.voxel_relay {
+            r.apply_platform(event);
+        } else if let Some(t) = &mut self.terrain_lab {
+            t.apply_platform(event);
+        } else if let Some(l) = &mut self.landscape {
+            l.apply_platform(event);
         }
     }
     /// Per-frame audio pump: recover a lost device, then play whatever the active
@@ -303,7 +359,8 @@ impl ApplicationHandler for Experience {
         // focused too. A failed open leaves the app running silently and retries
         // here on the next resume.
         self.resumed = true;
-        if self.focused {
+        self.paused = false;
+        if self.audio_active() {
             self.audio.resume();
         }
         // Re-assert the persisted policy after every resume; the adapter itself
@@ -350,10 +407,30 @@ impl ApplicationHandler for Experience {
         self.clear_sample_events();
     }
     fn window_event(&mut self, e: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let focus = match event {
-            WindowEvent::Focused(focused) => Some(focused),
-            _ => None,
-        };
+        // Focus and occlusion are consumed as typed platform transitions and
+        // applied to the owner policy and the active sample. Every other event
+        // keeps its existing per-sample path.
+        match event {
+            WindowEvent::Focused(focused) => {
+                self.apply_platform(if focused {
+                    PlatformEvent::GainedFocus
+                } else {
+                    PlatformEvent::LostFocus
+                });
+                self.switch_if_requested(e);
+                return;
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.apply_platform(if occluded {
+                    PlatformEvent::Paused
+                } else {
+                    PlatformEvent::Resumed
+                });
+                self.switch_if_requested(e);
+                return;
+            }
+            _ => {}
+        }
         if let Some(w) = &mut self.wetland {
             w.window_event(e, id, event);
         } else if let Some(s) = &mut self.sandbox {
@@ -364,11 +441,6 @@ impl ApplicationHandler for Experience {
             t.window_event(e, id, event);
         } else if let Some(l) = &mut self.landscape {
             l.window_event(e, id, event);
-        }
-        match focus {
-            Some(false) => self.on_focus_lost(),
-            Some(true) => self.on_focus_gained(),
-            None => {}
         }
         self.switch_if_requested(e);
     }
@@ -444,6 +516,7 @@ mod tests {
             settings_path: temp_path("matterweave-settings.json"),
             focused: true,
             resumed: true,
+            paused: false,
             audio_failures_seen: (0, 0),
         }
     }
@@ -581,6 +654,48 @@ mod tests {
         assert_eq!(restored.counters.started, 2);
         assert_eq!(restored.tracked_voices, 1);
         assert_eq!(restored.counters.device_failures, 0);
+    }
+
+    #[test]
+    fn a_paused_activity_silences_audio_and_drops_events_until_resumed() {
+        let mut experience = experience();
+        experience.audio.resume();
+        experience.audio.switch_to(AudioScope::VoxelRelay);
+        experience.voxel_relay = Some(relay_with_queued_edit());
+        experience.pump_audio();
+        assert_eq!(experience.audio.status().tracked_voices, 1);
+
+        // APP_CMD_PAUSE: the activity stops sounding voices, drops queued
+        // events and refuses new playback, exactly like a focus loss.
+        experience.apply_platform(PlatformEvent::Paused);
+        assert!(experience.paused);
+        assert!(experience.audio.is_suspended());
+        assert_eq!(experience.audio.status().tracked_voices, 0);
+        experience.voxel_relay = Some(relay_with_queued_edit());
+        experience.pump_audio();
+        assert_eq!(
+            experience.audio.status().counters.triggered,
+            1,
+            "a paused pump must trigger nothing"
+        );
+        assert!(
+            experience
+                .voxel_relay
+                .as_mut()
+                .unwrap()
+                .pop_event()
+                .is_none(),
+            "paused events must be dropped, not queued"
+        );
+
+        // APP_CMD_RESUME while focused restores playback on the same adapter.
+        experience.apply_platform(PlatformEvent::Resumed);
+        assert!(!experience.paused);
+        assert!(experience.audio.is_available());
+        experience.voxel_relay = Some(relay_with_queued_edit());
+        experience.pump_audio();
+        assert_eq!(experience.audio.status().counters.triggered, 2);
+        assert_eq!(experience.audio.status().counters.device_failures, 0);
     }
 
     #[test]

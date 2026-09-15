@@ -575,3 +575,45 @@ fn reset_cancels_queued_and_in_flight_work_and_returns_to_the_baseline() {
     assert_eq!(world.chunk_revision(key), Some(mesh.revision));
     assert_eq!(dump(&mesh), dump(&world.mesh_chunk(key)));
 }
+
+#[test]
+fn pause_parks_the_worker_and_resume_executes_queued_work() {
+    let mut world = streamed(20260915, [0.0; 3]);
+    let key = world.chunk_keys()[0];
+    let mut jobs = AsyncWorld::new();
+
+    // Park before any unit is taken. Requests made while paused queue, they do
+    // not execute, and they are not cancelled.
+    jobs.pause();
+    assert!(jobs.paused());
+    let before = jobs.stats();
+    assert!(jobs.request_mesh(&world, key));
+    assert!(jobs.request_stream(&world, [120.0, 4.0, 0.0]));
+    let queued = jobs.stats();
+    assert_eq!(queued.queued_meshes, 1);
+    assert_eq!(queued.queued_streams, 1);
+    assert_eq!(queued.inflight, 0);
+    assert_eq!(queued.discarded, before.discarded, "pause cancels nothing");
+
+    // The quiescence proof: a 200 ms pause advances no bounded unit.
+    let parked = jobs.stats().completed_units;
+    let end = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        jobs.stats().completed_units,
+        parked,
+        "a paused worker executed a queued unit"
+    );
+
+    // Resume runs exactly the work queued before the pause; it is still correct
+    // against the unchanged authoritative world.
+    jobs.resume();
+    assert!(!jobs.paused());
+    let (completed_key, mesh) = next_mesh(&mut jobs, &world);
+    assert_eq!(completed_key, key);
+    assert_eq!(dump(&mesh), dump(&world.mesh_chunk(key)));
+    publish(&mut jobs, &mut world);
+    assert!(jobs.stats().completed_units > parked);
+}

@@ -325,3 +325,35 @@ fn stats_stay_bounded_and_shutdown_is_clean() {
     }
     // Reaching here means shutdown joined the worker cleanly.
 }
+
+#[test]
+fn pause_parks_the_worker_and_resume_completes_a_queued_preparation() {
+    let scene = scene_with_floor();
+    let mut ctrl = AsyncDetailCollision::new();
+
+    // Park before requesting: the request queues, it does not prepare.
+    ctrl.pause();
+    assert!(ctrl.paused());
+    let before = ctrl.completed_units();
+    assert!(ctrl.request(&scene));
+    assert_eq!(ctrl.stats().queued, 1, "paused requests stay queued");
+
+    // The quiescence proof: 200 ms paused, no preparation completed.
+    let end = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        ctrl.completed_units(),
+        before,
+        "a paused worker prepared a source"
+    );
+    assert_eq!(ctrl.stats().results, 0);
+
+    // Resume runs exactly the queued preparation, still current for the scene.
+    ctrl.resume();
+    assert!(!ctrl.paused());
+    let prepared = wait_poll(&mut ctrl, &scene).expect("valid preparation after resume");
+    assert_eq!(prepared.stats().static_colliders, 1);
+    assert!(ctrl.completed_units() > before);
+}

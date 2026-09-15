@@ -284,6 +284,19 @@ impl<T: 'static> EventLoop<T> {
                 MainEvent::Resume { .. } => {
                     debug!("App Resumed - is running");
                     self.running = true;
+                    // Android pauses and resumes the activity without destroying
+                    // the window, and without a focus event. Forward the pause
+                    // state as occlusion (a standard winit event this backend
+                    // otherwise never emits) so the application can park its
+                    // workers and stop arming frame timers instead of spinning
+                    // on a stale deadline while redraw dispatch is suppressed.
+                    callback(
+                        event::Event::WindowEvent {
+                            window_id: window::WindowId(WindowId),
+                            event: event::WindowEvent::Occluded(false),
+                        },
+                        self.window_target(),
+                    );
                 },
                 MainEvent::SaveState { .. } => {
                     // XXX: how to forward this state to applications?
@@ -293,6 +306,13 @@ impl<T: 'static> EventLoop<T> {
                 MainEvent::Pause => {
                     debug!("App Paused - stopped running");
                     self.running = false;
+                    callback(
+                        event::Event::WindowEvent {
+                            window_id: window::WindowId(WindowId),
+                            event: event::WindowEvent::Occluded(true),
+                        },
+                        self.window_target(),
+                    );
                 },
                 MainEvent::Stop => {
                     // XXX: how to forward this state to applications?
