@@ -53,6 +53,9 @@ struct App {
     frame: u32,
     prepared: Option<u32>,
     previous: Option<(bool, bool)>,
+    /// Presented frames and depth passes in the fixed-caster translation phase.
+    translation_frames: u32,
+    translation_updates: u32,
 }
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -147,7 +150,13 @@ impl ApplicationHandler for App {
         if self.frame >= 17 {
             lighting.sun.direction_to_sun = [0., 1., 0.];
         }
-        let eye = if self.frame >= 18 {
+        let eye = if self.frame >= 30 {
+            // Translation phase: 1 m per frame along +X with a fixed caster set.
+            // The only fit change a texel-snapped anchored frustum may make is
+            // when the eye leaves its 16 m anchor cell, so 65 frames of motion
+            // must refit about four times, not sixty-five.
+            [(self.frame - 21) as f32, 0., 0.]
+        } else if self.frame >= 18 {
             [8., 0., 0.]
         } else {
             [0.; 3]
@@ -156,10 +165,15 @@ impl ApplicationHandler for App {
         if self.frame >= 4 {
             view[0][0] = -1.;
         } // view orientation alone does not change depth
-        let expected_update = matches!(
-            self.frame,
-            0 | 1 | 5 | 6 | 7 | 9 | 11 | 12 | 13 | 15 | 16 | 17 | 18 | 19 | 22 | 27 | 28
-        );
+        let expected_update = if self.frame >= 30 {
+            // Anchor cells change when the eye crosses 24, 40, 56 and 72 m.
+            matches!(self.frame, 45 | 61 | 77 | 93)
+        } else {
+            matches!(
+                self.frame,
+                0 | 1 | 5 | 6 | 7 | 9 | 11 | 12 | 13 | 15 | 16 | 17 | 18 | 19 | 22 | 27 | 28
+            )
+        };
         let size = self.window.as_ref().unwrap().inner_size();
         match r.render_with_lighting(
             view,
@@ -174,6 +188,12 @@ impl ApplicationHandler for App {
                     "frame {}",
                     self.frame
                 );
+                if self.frame >= 30 {
+                    self.translation_frames += 1;
+                    if r.shadow_map_updated() {
+                        self.translation_updates += 1;
+                    }
+                }
                 if !expected_update || !lighting.shadows {
                     assert_eq!(r.shadow_caster_meshes(), 0);
                 }
@@ -200,10 +220,19 @@ impl ApplicationHandler for App {
             FrameResult::Retry => return,
             other => panic!("unexpected result: {other:?}"),
         }
-        if self.frame == 30 {
+        if self.frame == 95 {
             self.renderer = None;
             self.window = None;
-            println!("shadow_cache_smoke: PASS 30 frames, reuse and all geometry/light/lifecycle invalidations; no device performance claim");
+            assert_eq!(self.translation_frames, 65);
+            assert_eq!(
+                self.translation_updates, 4,
+                "a 1 m/frame translation must refit once per 16 m anchor cell, not per frame"
+            );
+            println!(
+                "shadow_cache_smoke: PASS 95 frames, reuse and all geometry/light/lifecycle invalidations, \
+                 translation {} refits / {} frames; no device performance claim",
+                self.translation_updates, self.translation_frames
+            );
             event_loop.exit();
         }
     }

@@ -16,23 +16,90 @@ use ash::vk;
 use bytemuck::Zeroable;
 use std::sync::Arc;
 
+/// Why a submitted shadow map could not be reused. A miss names the cause the
+/// next pass must react to, so the sample's counter can separate a cache that
+/// follows the camera from a cache that follows the world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShadowPassKind {
+    /// No depth map has been submitted yet, including the first shadows-off clear.
+    First,
+    /// The caster set changed: an upload, removal or scene replacement.
+    CasterSet,
+    /// Only the fitted frustum changed (sun, eye anchor or caster depth range).
+    Frustum,
+}
+
+/// Cumulative shadow-cache counter output for the sample's periodic report.
+/// Every number is measured, never inferred from a flag.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShadowCacheCounters {
+    /// Frames whose fitted matrix differed from the previous frame's, whether or
+    /// not the map was re-rendered. This is the part the texel-snapped anchor is
+    /// meant to keep near zero while the camera moves.
+    pub matrix_changes: u64,
+    /// Fit changes caused by the eye leaving its anchor cell.
+    pub anchor_changes: u64,
+    /// Fit changes caused only by the caster bounds' light-space depth range.
+    pub depth_changes: u64,
+    /// Fit changes caused by the sun.
+    pub sun_changes: u64,
+    /// Passes with no submitted predecessor.
+    pub passes_first: u64,
+    /// Passes forced by a caster-set change.
+    pub passes_caster_set: u64,
+    /// Passes forced only by a frustum change.
+    pub passes_frustum: u64,
+}
+
+impl ShadowCacheCounters {
+    /// The number of events between an earlier snapshot and this one.
+    pub fn since(self, earlier: Self) -> Self {
+        let delta = |now: u64, then: u64| now.saturating_sub(then);
+        Self {
+            matrix_changes: delta(self.matrix_changes, earlier.matrix_changes),
+            anchor_changes: delta(self.anchor_changes, earlier.anchor_changes),
+            depth_changes: delta(self.depth_changes, earlier.depth_changes),
+            sun_changes: delta(self.sun_changes, earlier.sun_changes),
+            passes_first: delta(self.passes_first, earlier.passes_first),
+            passes_caster_set: delta(self.passes_caster_set, earlier.passes_caster_set),
+            passes_frustum: delta(self.passes_frustum, earlier.passes_frustum),
+        }
+    }
+}
+
 /// Validity follows submitted depth contents, never a recording attempt. Geometry
 /// invalidation is explicit because moving vertices can retain their source revision.
 #[derive(Default)]
 struct ShadowReuse {
     initialized: bool,
     rendered_camera: Option<[[f32; 4]; 4]>,
+    /// An `invalidate` ran since the last submitted pass. When both a caster
+    /// change and a frustum change happened, the caster set is the cause the
+    /// pass is attributed to: it forces the re-render regardless.
+    invalidated: bool,
 }
 impl ShadowReuse {
-    fn needs_pass(&self, enabled: bool, camera: [[f32; 4]; 4]) -> bool {
-        !self.initialized || (enabled && self.rendered_camera != Some(camera))
+    fn miss_reason(&self, enabled: bool, camera: [[f32; 4]; 4]) -> Option<ShadowPassKind> {
+        if !self.initialized {
+            return Some(ShadowPassKind::First);
+        }
+        if !enabled || self.rendered_camera == Some(camera) {
+            return None;
+        }
+        Some(if self.invalidated {
+            ShadowPassKind::CasterSet
+        } else {
+            ShadowPassKind::Frustum
+        })
     }
     fn invalidate(&mut self) {
         self.rendered_camera = None;
+        self.invalidated = true;
     }
     fn submitted(&mut self, enabled: bool, camera: [[f32; 4]; 4]) {
         self.initialized = true;
         self.rendered_camera = enabled.then_some(camera);
+        self.invalidated = false;
     }
 }
 
@@ -60,6 +127,10 @@ pub(crate) struct Shadow {
     sampler: vk::Sampler,
     pub size: u32,
     reuse: ShadowReuse,
+    counters: ShadowCacheCounters,
+    /// Whether `update` has produced a matrix this run. The first update starts
+    /// from `Shadow::new`'s empty-scene fit, which is not a change to report.
+    camera_seen: bool,
     pub caster_meshes: usize,
     camera: ShadowCamera,
 }
@@ -90,6 +161,8 @@ impl Shadow {
             sampler: vk::Sampler::null(),
             size,
             reuse: ShadowReuse::default(),
+            counters: ShadowCacheCounters::default(),
+            camera_seen: false,
             caster_meshes: 0,
             camera,
         };
@@ -352,7 +425,19 @@ impl Shadow {
         settings.wind.validate()?;
         settings.player.validate()?;
         settings.water.validate()?;
-        self.camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
+        let camera = ShadowCamera::new(eye, settings.sun, bounds, self.size)?;
+        if self.camera_seen && self.camera.view_proj != camera.view_proj {
+            self.counters.matrix_changes += 1;
+            if self.camera.direction != camera.direction {
+                self.counters.sun_changes += 1;
+            } else if self.camera.anchor != camera.anchor {
+                self.counters.anchor_changes += 1;
+            } else if self.camera.depth_range != camera.depth_range {
+                self.counters.depth_changes += 1;
+            }
+        }
+        self.camera_seen = true;
+        self.camera = camera;
         let sun = self.camera.direction;
         if self.indirect_sun != Some(crate::indirect::light_key(settings.sun)?) {
             self.indirect_sun = None;
@@ -545,6 +630,11 @@ impl Shadow {
         self.reuse.submitted(enabled, self.camera.view_proj);
     }
 
+    /// Cumulative counter output: why the fit moved and why each pass ran.
+    pub fn cache_counters(&self) -> ShadowCacheCounters {
+        self.counters
+    }
+
     /// Record a clear even on the first shadows-off frame: descriptor layout and
     /// depth contents must be valid before the world pipeline can reference them.
     /// Static instanced batches are recorded without frustum culling so
@@ -567,11 +657,16 @@ impl Shadow {
         identity: vk::Buffer,
     ) -> bool {
         self.caster_meshes = 0;
-        if !self.reuse.needs_pass(enabled, self.camera.view_proj) {
+        let Some(kind) = self.reuse.miss_reason(enabled, self.camera.view_proj) else {
             // The stored depth stays in READ_ONLY_OPTIMAL. Its last pass made
             // depth writes visible to fragment sampling through the external
             // dependency; reuse introduces no writes or layout transitions.
             return false;
+        };
+        match kind {
+            ShadowPassKind::First => self.counters.passes_first += 1,
+            ShadowPassKind::CasterSet => self.counters.passes_caster_set += 1,
+            ShadowPassKind::Frustum => self.counters.passes_frustum += 1,
         }
         // SAFETY: caller records into an idle command buffer; all referenced meshes,
         // descriptors and framebuffer resources survive until its submit fence.
@@ -664,37 +759,78 @@ impl Drop for Shadow {
 mod reuse_tests {
     use super::*;
 
+    /// Boolean form of the miss query, so the existing phase assertions read
+    /// the same as before while the production path uses `miss_reason`.
+    fn needs_pass(cache: &ShadowReuse, enabled: bool, camera: [[f32; 4]; 4]) -> bool {
+        cache.miss_reason(enabled, camera).is_some()
+    }
+
     fn camera(eye: [f32; 3], sun: crate::Sun) -> [[f32; 4]; 4] {
         ShadowCamera::new(eye, sun, &[], 1024).unwrap().view_proj
+    }
+
+    #[test]
+    fn a_miss_names_the_caster_set_or_the_frustum() {
+        let mut cache = ShadowReuse::default();
+        let matrix = camera([0.; 3], Default::default());
+        assert_eq!(cache.miss_reason(true, matrix), Some(ShadowPassKind::First));
+        cache.submitted(true, matrix);
+        assert_eq!(cache.miss_reason(true, matrix), None);
+        // The fitted matrix moved: no caster changed, so this is the frustum.
+        let moved = camera([9., 0., 0.], Default::default());
+        assert_eq!(
+            cache.miss_reason(true, moved),
+            Some(ShadowPassKind::Frustum)
+        );
+        // An upload retires the map; the miss is the caster set, even when the
+        // matrix moved in the same frame.
+        cache.invalidate();
+        assert_eq!(
+            cache.miss_reason(true, moved),
+            Some(ShadowPassKind::CasterSet)
+        );
+        // Submitting clears the attribution, not just the matrix.
+        cache.submitted(true, moved);
+        assert_eq!(cache.miss_reason(true, moved), None);
+        cache.invalidate();
+        assert_eq!(
+            cache.miss_reason(false, moved),
+            None,
+            "shadows off reuse the disabled map; they do not force a pass"
+        );
+        assert_eq!(
+            cache.miss_reason(true, moved),
+            Some(ShadowPassKind::CasterSet)
+        );
     }
 
     #[test]
     fn only_successful_submission_makes_depth_reusable() {
         let mut cache = ShadowReuse::default();
         let matrix = camera([0.; 3], Default::default());
-        assert!(cache.needs_pass(true, matrix));
+        assert!(needs_pass(&cache, true, matrix));
         // Recording/acquire failure cannot make an unsubmitted image valid.
-        assert!(cache.needs_pass(true, matrix));
+        assert!(needs_pass(&cache, true, matrix));
         cache.submitted(true, matrix);
-        assert!(!cache.needs_pass(true, matrix));
+        assert!(!needs_pass(&cache, true, matrix));
         cache.invalidate();
-        assert!(cache.needs_pass(true, matrix));
+        assert!(needs_pass(&cache, true, matrix));
     }
 
     #[test]
     fn disabled_first_frame_initializes_but_does_not_cache_casters() {
         let mut cache = ShadowReuse::default();
         let matrix = camera([0.; 3], Default::default());
-        assert!(cache.needs_pass(false, matrix));
+        assert!(needs_pass(&cache, false, matrix));
         cache.submitted(false, matrix);
-        assert!(!cache.needs_pass(false, matrix));
-        assert!(cache.needs_pass(true, matrix));
+        assert!(!needs_pass(&cache, false, matrix));
+        assert!(needs_pass(&cache, true, matrix));
         cache.submitted(true, matrix);
-        assert!(!cache.needs_pass(false, matrix));
-        assert!(!cache.needs_pass(true, matrix));
+        assert!(!needs_pass(&cache, false, matrix));
+        assert!(!needs_pass(&cache, true, matrix));
         cache.invalidate();
-        assert!(!cache.needs_pass(false, matrix));
-        assert!(cache.needs_pass(true, matrix));
+        assert!(!needs_pass(&cache, false, matrix));
+        assert!(needs_pass(&cache, true, matrix));
     }
 
     #[test]
@@ -705,8 +841,12 @@ mod reuse_tests {
             intensity: 0.8,
         };
         cache.submitted(true, camera([0.; 3], sun));
-        assert!(!cache.needs_pass(true, camera([0.001, 0., 0.001], sun)));
-        assert!(!cache.needs_pass(
+        assert!(!needs_pass(&cache, true, camera([0.001, 0., 0.001], sun)));
+        // A metre of motion stays inside the fit's anchor cell, so the stored
+        // depth still matches the matrix the cache would hand the shader.
+        assert!(!needs_pass(&cache, true, camera([1., 0., 0.], sun)));
+        assert!(!needs_pass(
+            &cache,
             true,
             camera(
                 [0.; 3],
@@ -716,11 +856,16 @@ mod reuse_tests {
                 }
             )
         ));
-        assert!(cache.needs_pass(true, camera([1., 0., 0.], sun)));
-        assert!(cache.needs_pass(true, camera([0.; 3], Default::default())));
+        // Crossing the anchor cell changes the fitted matrix.
+        assert!(needs_pass(&cache, true, camera([9., 0., 0.], sun)));
+        assert!(needs_pass(
+            &cache,
+            true,
+            camera([0.; 3], Default::default())
+        ));
         let expanded =
             ShadowCamera::new([0.; 3], sun, &[[[-1., -1000., -1.], [1., 1000., 1.]]], 1024)
                 .unwrap();
-        assert!(cache.needs_pass(true, expanded.view_proj));
+        assert!(needs_pass(&cache, true, expanded.view_proj));
     }
 }

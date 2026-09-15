@@ -262,18 +262,20 @@ pub struct CostCounters {
 const TARGET_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 
 /// One full-screen pipeline request: both stages, the fragment entry, and the
-/// two state choices that differ between the three full-screen draws.
-struct FullScreenPipeline {
-    vertex_spirv: &'static [u8],
-    fragment_spirv: &'static [u8],
-    fragment_entry: &'static std::ffi::CStr,
+/// two state choices that differ between the full-screen draws. `pub(crate)`
+/// so the render-scale upscale can share the exact covering-triangle and
+/// pipeline state the sky and cloud composite already use.
+pub(crate) struct FullScreenPipeline {
+    pub vertex_spirv: &'static [u8],
+    pub fragment_spirv: &'static [u8],
+    pub fragment_entry: &'static std::ffi::CStr,
     /// Premultiplied cloud light (blend on) or an opaque background (off).
-    premultiplied_blend: bool,
+    pub premultiplied_blend: bool,
     /// Depth compare EQUAL against the cleared far value, with the early test.
-    depth_equal: bool,
+    pub depth_equal: bool,
 }
 
-fn full_screen_pipeline(
+pub(crate) fn full_screen_pipeline(
     device: &Device,
     layout: vk::PipelineLayout,
     pass: vk::RenderPass,

@@ -51,13 +51,14 @@ fn main() {
     // (name, fragment entry points). A shader with two fragment entries shares
     // one vertex stage between two pipelines: water with the world pass, the
     // cloud march with the sky dome.
-    let shaders: [(&str, &[&str]); 8] = [
+    let shaders: [(&str, &[&str]); 9] = [
         ("world", &["fs_main", "fs_water"]),
         // The sky dome and the volumetric cloud march share a full-screen
         // vertex stage and the group-0 lighting uniform. Both are drawn with a
         // depth EQUAL test after opaque geometry, so both need the early test.
         ("sky", &["fs_main", "fs_clouds"]),
         ("cloud_composite", &["fs_main"]),
+        ("upscale", &["fs_main"]),
         ("hud", &["fs_main"]),
         ("shadow", &[]),
         ("ray_reference", &["fs_main"]),
