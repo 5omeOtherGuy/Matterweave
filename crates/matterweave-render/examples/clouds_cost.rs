@@ -196,7 +196,7 @@ struct App {
     frame: u32,
     yaw: f32,
     full_update: Option<FrameCounters>,
-    amortised_steps: Vec<u32>,
+    amortised: Vec<FrameCounters>,
 }
 
 impl ApplicationHandler for App {
@@ -288,8 +288,8 @@ impl ApplicationHandler for App {
         );
         if self.frame == 0 {
             self.full_update = Some(frame);
-        } else if self.frame > 0 {
-            self.amortised_steps.push(frame.steps);
+        } else {
+            self.amortised.push(frame);
         }
         self.yaw += options.turn_deg_per_frame;
         self.frame += 1;
@@ -323,11 +323,14 @@ impl App {
         let frame_pixels = self.options.width * self.options.height;
         let marched_fraction = full.marched as f64 / full.candidates.max(1) as f64;
         let masked_fraction = full.masked as f64 / full.candidates.max(1) as f64;
-        let amortised_mean = if self.amortised_steps.is_empty() {
-            f64::NAN
-        } else {
-            self.amortised_steps.iter().sum::<u32>() as f64 / self.amortised_steps.len() as f64
+        let mean = |field: fn(&FrameCounters) -> u32| {
+            if self.amortised.is_empty() {
+                f64::NAN
+            } else {
+                self.amortised.iter().map(field).sum::<u32>() as f64 / self.amortised.len() as f64
+            }
         };
+        let amortised_mean = mean(|frame| frame.steps);
         let steps_fraction = amortised_mean / full.steps.max(1) as f64;
         let sky_fraction = full.sky as f64 / frame_pixels.max(1) as f64;
         println!(
@@ -351,9 +354,10 @@ impl App {
             sky_fraction
         );
         println!(
-            "CLOUD COST DETAIL masked {:.1}% of candidates, reused {:.1}%",
+            "CLOUD COST DETAIL full-update masked {:.1}% of candidates; amortised frames reuse {:.1}% and mask {:.1}% of candidates",
             100.0 * masked_fraction,
-            100.0 * (full.reused as f64 / full.candidates.max(1) as f64),
+            100.0 * mean(|frame| frame.reused) / full.candidates.max(1) as f64,
+            100.0 * mean(|frame| frame.masked) / full.candidates.max(1) as f64,
         );
     }
 }

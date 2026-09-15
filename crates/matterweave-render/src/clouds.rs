@@ -148,6 +148,91 @@ pub(crate) const FULL_UPDATE: u32 = 4;
 /// Byte size of the counter storage buffer: six `u32` atomics.
 pub(crate) const COUNTER_BYTES: usize = 24;
 
+/// Push constants for the cloud composite. 64 bytes, inside the 128 every
+/// Vulkan implementation guarantees.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub(crate) struct CompositePush {
+    /// (inverse frame width, inverse frame height, cloud texel width, cloud texel height)
+    pub texel: [f32; 4],
+    /// Column-major 3x3 that maps this frame's UV to the target's own UV.
+    pub homography: [[f32; 4]; 3],
+}
+
+pub(crate) const COMPOSITE_PUSH_BYTES: u32 = 64;
+
+/// How far the camera may move, in target pixels, before the amortised cloud
+/// target is recomputed in full instead of one sub-grid at a time. The reused
+/// pixels are stale by up to a few frames, so this bounds their screen-space
+/// error; 1.5 target pixels is under two full-resolution pixels at the cheap
+/// quality level and stays below the cloud field's own detail scale.
+pub(crate) const AMORTISATION_BUDGET_PX: f32 = 1.5;
+
+/// Column-major 3x3 homography mapping a UV in the `current` view-projection
+/// back to the UV the same far-plane direction had under `previous`.
+///
+/// Computed in f64: it composes an inverse projection with a projection, and
+/// f32 loses too much of the far-plane direction for a distant cloud layer.
+/// A cloud layer is not a plane, so this is exact only for rotation; the
+/// residual translation parallax between the layer and the far plane is under
+/// a pixel per frame at walking speed.
+pub(crate) fn cloud_reprojection(
+    previous: [[f32; 4]; 4],
+    current_inverse: [[f32; 4]; 4],
+) -> [[f32; 4]; 3] {
+    // Both matrices are column-major, as WGSL and glam use them.
+    let b = glam::DMat4::from_cols_array_2d(&current_inverse.map(|c| c.map(f64::from)));
+    let a = glam::DMat4::from_cols_array_2d(&previous.map(|c| c.map(f64::from)));
+    // A UV (u, v) reaches clip space as (2u - 1, 1 - 2v, 1, 1), which is the
+    // linear combination u * (2, 0, 0, 0) + v * (0, -2, 0, 0) + (-1, 1, 1, 1).
+    let columns = glam::DMat4::from_cols(
+        2.0 * b.x_axis,
+        -2.0 * b.y_axis,
+        -b.x_axis + b.y_axis + b.z_axis + b.w_axis,
+        glam::DVec4::ZERO,
+    );
+    let r = a * columns;
+    // ndc back to UV is (x/2 + 1/2, 1/2 - y/2), applied to the homogeneous x/y
+    // before the divide so the whole map stays one 3x3. Each of X, Y and W is a
+    // row of `r`: a coefficient vector over (u, v, 1).
+    let x = 0.5 * r.row(0) + 0.5 * r.row(3);
+    let y = 0.5 * r.row(3) - 0.5 * r.row(1);
+    let w = r.row(3);
+    // Column-major 3x3: column j holds the (u, v, 1) coefficients of the j-th
+    // input component.
+    let mut out = [[0.0_f32; 4]; 3];
+    out[0] = [x.x as f32, y.x as f32, w.x as f32, 0.0];
+    out[1] = [x.y as f32, y.y as f32, w.y as f32, 0.0];
+    out[2] = [x.z as f32, y.z as f32, w.z as f32, 0.0];
+    out
+}
+
+/// Largest screen-space movement, in target pixels, that `homography` (current
+/// UV -> reference UV) implies over a grid covering the target. This is the
+/// error the amortised reuse would carry, so it decides when to recompute the
+/// whole target instead of one sub-grid.
+pub(crate) fn reprojection_displacement_px(homography: &[[f32; 4]; 3], target: (u32, u32)) -> f32 {
+    // A 5x5 grid: the mapping is projective, so the corners carry most of the
+    // motion, and the centre catches a pure zoom.
+    let mut worst = 0.0_f32;
+    for j in 0..5 {
+        for i in 0..5 {
+            let u = i as f32 / 4.0;
+            let v = j as f32 / 4.0;
+            let x = homography[0][0] * u + homography[1][0] * v + homography[2][0];
+            let y = homography[0][1] * u + homography[1][1] * v + homography[2][1];
+            let w = homography[0][2] * u + homography[1][2] * v + homography[2][2];
+            if w.abs() < 1.0e-9 {
+                return f32::INFINITY;
+            }
+            let du = (x / w - u) * target.0 as f32;
+            let dv = (y / w - v) * target.1 as f32;
+            worst = worst.max(du.hypot(dv));
+        }
+    }
+    worst
+}
+
 /// Per-frame counts from the sky dome and the cloud march. Every field is zero
 /// unless the counters were enabled for the frame that produced it; the whole
 /// value is absent when they were not.
@@ -171,23 +256,37 @@ pub struct CostCounters {
     /// Sky dome fragments that reached the shading path.
     pub sky_shaded_pixels: u32,
 }
-/// Push constants for the composite: frame and cloud-texel sizes.
-const COMPOSITE_PUSH_BYTES: u32 = 16;
+
 /// Colour format of the offscreen target. Vulkan requires optimal-tiling
 /// R8G8B8A8_UNORM to support colour attachment, sampling and linear filtering,
 /// so no fallback is needed; support is still asserted rather than assumed.
 const TARGET_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 
+/// One full-screen pipeline request: both stages, the fragment entry, and the
+/// two state choices that differ between the three full-screen draws.
+struct FullScreenPipeline {
+    vertex_spirv: &'static [u8],
+    fragment_spirv: &'static [u8],
+    fragment_entry: &'static std::ffi::CStr,
+    /// Premultiplied cloud light (blend on) or an opaque background (off).
+    premultiplied_blend: bool,
+    /// Depth compare EQUAL against the cleared far value, with the early test.
+    depth_equal: bool,
+}
+
 fn full_screen_pipeline(
     device: &Device,
     layout: vk::PipelineLayout,
     pass: vk::RenderPass,
-    vertex_spirv: &[u8],
-    fragment_spirv: &[u8],
-    fragment_entry: &std::ffi::CStr,
-    premultiplied_blend: bool,
-    depth_equal: bool,
+    request: &FullScreenPipeline,
 ) -> Result<vk::Pipeline> {
+    let FullScreenPipeline {
+        vertex_spirv,
+        fragment_spirv,
+        fragment_entry,
+        premultiplied_blend,
+        depth_equal,
+    } = *request;
     let mut modules = Vec::new();
     // SAFETY: build-time Naga validates every module; the modules outlive pipeline
     // creation and are destroyed on both paths. Slices stay live across the call.
@@ -303,8 +402,14 @@ struct CloudTarget {
     memory: vk::DeviceMemory,
     view: vk::ImageView,
     sampler: vk::Sampler,
+    /// Steady state: load the previous target so an amortised frame can keep the
+    /// pixels it did not re-march.
     pass: vk::RenderPass,
     frame: vk::Framebuffer,
+    /// First use of a new target: there is nothing to load yet, and the image is
+    /// still UNDEFINED, so this pass clears it instead.
+    first_pass: vk::RenderPass,
+    first_frame: vk::Framebuffer,
     march: vk::Pipeline,
     set_layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
@@ -326,6 +431,8 @@ impl Drop for CloudTarget {
             d.destroy_descriptor_set_layout(self.set_layout, None);
             d.destroy_framebuffer(self.frame, None);
             d.destroy_render_pass(self.pass, None);
+            d.destroy_framebuffer(self.first_frame, None);
+            d.destroy_render_pass(self.first_pass, None);
             d.destroy_sampler(self.sampler, None);
             d.destroy_image_view(self.view, None);
             d.destroy_image(self.image, None);
@@ -350,6 +457,8 @@ impl CloudTarget {
             sampler: vk::Sampler::null(),
             pass: vk::RenderPass::null(),
             frame: vk::Framebuffer::null(),
+            first_pass: vk::RenderPass::null(),
+            first_frame: vk::Framebuffer::null(),
             march: vk::Pipeline::null(),
             set_layout: vk::DescriptorSetLayout::null(),
             pool: vk::DescriptorPool::null(),
@@ -443,9 +552,19 @@ impl CloudTarget {
                     None,
                 )
                 .map_err(err)?;
-            // One colour attachment, cleared to fully transparent and left in
-            // shader-read layout for the composite in the frame's own pass.
-            let attachments = [vk::AttachmentDescription::default()
+            // One colour attachment, left in shader-read layout for the
+            // composite in the frame's own pass. Two descriptions: the first use
+            // of a new image must start from UNDEFINED and clear (there is
+            // nothing valid to load); every later frame loads the pixels it did
+            // not re-march.
+            let steady = [vk::AttachmentDescription::default()
+                .format(TARGET_FORMAT)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .initial_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let first = [vk::AttachmentDescription::default()
                 .format(TARGET_FORMAT)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -477,38 +596,61 @@ impl CloudTarget {
                     .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)
                     .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
                     .dst_access_mask(vk::AccessFlags::SHADER_READ),
+                // This pass samples the frame depth, which the frame pass wrote
+                // earlier in the same command buffer (and which it also clears at
+                // the start of the next frame), so make that write visible here
+                // and the read complete before the next write.
+                vk::SubpassDependency::default()
+                    .src_subpass(vk::SUBPASS_EXTERNAL)
+                    .dst_subpass(0)
+                    .src_stage_mask(vk::PipelineStageFlags::LATE_FRAGMENT_TESTS)
+                    .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)
+                    .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ),
             ];
-            out.pass = d
-                .raw
-                .create_render_pass(
-                    &vk::RenderPassCreateInfo::default()
-                        .attachments(&attachments)
-                        .subpasses(&subpasses)
-                        .dependencies(&dependencies),
-                    None,
-                )
-                .map_err(err)?;
-            out.frame = d
-                .raw
-                .create_framebuffer(
-                    &vk::FramebufferCreateInfo::default()
-                        .render_pass(out.pass)
-                        .attachments(&[out.view])
-                        .width(extent.width)
-                        .height(extent.height)
-                        .layers(1),
-                    None,
-                )
-                .map_err(err)?;
+            for (pass, attachments) in [&mut out.pass, &mut out.first_pass]
+                .into_iter()
+                .zip([&steady, &first])
+            {
+                *pass = d
+                    .raw
+                    .create_render_pass(
+                        &vk::RenderPassCreateInfo::default()
+                            .attachments(attachments)
+                            .subpasses(&subpasses)
+                            .dependencies(&dependencies),
+                        None,
+                    )
+                    .map_err(err)?;
+            }
+            for (framebuffer, pass) in [&mut out.frame, &mut out.first_frame]
+                .into_iter()
+                .zip([out.pass, out.first_pass])
+            {
+                *framebuffer = d
+                    .raw
+                    .create_framebuffer(
+                        &vk::FramebufferCreateInfo::default()
+                            .render_pass(pass)
+                            .attachments(&[out.view])
+                            .width(extent.width)
+                            .height(extent.height)
+                            .layers(1),
+                        None,
+                    )
+                    .map_err(err)?;
+            }
             out.march = full_screen_pipeline(
                 d,
                 march_layout,
                 out.pass,
-                include_bytes!(concat!(env!("OUT_DIR"), "/sky.vs_main.spv")),
-                include_bytes!(concat!(env!("OUT_DIR"), "/sky.fs_clouds.spv")),
-                c"fs_clouds",
-                false,
-                false,
+                &FullScreenPipeline {
+                    vertex_spirv: include_bytes!(concat!(env!("OUT_DIR"), "/sky.vs_main.spv")),
+                    fragment_spirv: include_bytes!(concat!(env!("OUT_DIR"), "/sky.fs_clouds.spv")),
+                    fragment_entry: c"fs_clouds",
+                    premultiplied_blend: false,
+                    depth_equal: false,
+                },
             )?;
             // Composite set: the cloud target and its sampler, as separate
             // bindings, matching what Naga emits for `cloud_composite.wgsl`.
@@ -593,15 +735,34 @@ impl CloudTarget {
                 d,
                 out.composite_layout,
                 frame_pass,
-                include_bytes!(concat!(env!("OUT_DIR"), "/cloud_composite.vs_main.spv")),
-                include_bytes!(concat!(env!("OUT_DIR"), "/cloud_composite.fs_main.spv")),
-                c"fs_main",
-                true,
-                true,
+                &FullScreenPipeline {
+                    vertex_spirv: include_bytes!(concat!(
+                        env!("OUT_DIR"),
+                        "/cloud_composite.vs_main.spv"
+                    )),
+                    fragment_spirv: include_bytes!(concat!(
+                        env!("OUT_DIR"),
+                        "/cloud_composite.fs_main.spv"
+                    )),
+                    fragment_entry: c"fs_main",
+                    premultiplied_blend: true,
+                    depth_equal: true,
+                },
             )?;
         }
         Ok(out)
     }
+}
+
+/// Everything about this frame's surface that the sky pass is built from. A
+/// change in any of it rebuilds the pass: the pipelines name the render pass,
+/// the target follows the extent, and the march samples the depth view.
+pub(crate) struct SkyFrame {
+    pub device: Arc<Device>,
+    pub lighting_set_layout: vk::DescriptorSetLayout,
+    pub frame_pass: vk::RenderPass,
+    pub extent: vk::Extent2D,
+    pub depth_view: vk::ImageView,
 }
 
 /// The sky dome pipeline, plus the cloud target while clouds are enabled.
@@ -611,13 +772,16 @@ pub(crate) struct SkyPass {
     device: Arc<Device>,
     frame_pass: vk::RenderPass,
     frame: vk::Extent2D,
-    layout: vk::PipelineLayout,
+    dome_pipe_layout: vk::PipelineLayout,
+    march_pipe_layout: vk::PipelineLayout,
     dome: vk::Pipeline,
     clouds: Option<CloudTarget>,
     counters: Buffer,
-    counter_layout: vk::DescriptorSetLayout,
-    counter_pool: vk::DescriptorPool,
-    counter_set: vk::DescriptorSet,
+    dome_set_layout: vk::DescriptorSetLayout,
+    march_set_layout: vk::DescriptorSetLayout,
+    pool: vk::DescriptorPool,
+    dome_set: vk::DescriptorSet,
+    march_set: vk::DescriptorSet,
 }
 
 impl Drop for SkyPass {
@@ -626,13 +790,19 @@ impl Drop for SkyPass {
         unsafe {
             self.clouds.take();
             self.device.raw.destroy_pipeline(self.dome, None);
-            self.device.raw.destroy_pipeline_layout(self.layout, None);
             self.device
                 .raw
-                .destroy_descriptor_pool(self.counter_pool, None);
+                .destroy_pipeline_layout(self.dome_pipe_layout, None);
             self.device
                 .raw
-                .destroy_descriptor_set_layout(self.counter_layout, None);
+                .destroy_pipeline_layout(self.march_pipe_layout, None);
+            self.device.raw.destroy_descriptor_pool(self.pool, None);
+            self.device
+                .raw
+                .destroy_descriptor_set_layout(self.dome_set_layout, None);
+            self.device
+                .raw
+                .destroy_descriptor_set_layout(self.march_set_layout, None);
         }
     }
 }
@@ -643,20 +813,24 @@ impl SkyPass {
     /// idle. Nothing is allocated for a frame that draws neither.
     pub(crate) fn ensure(
         slot: &mut Option<Self>,
-        device: &Arc<Device>,
-        lighting_set_layout: vk::DescriptorSetLayout,
-        frame_pass: vk::RenderPass,
-        frame: vk::Extent2D,
+        frame: SkyFrame,
         atmosphere: &Atmosphere,
         clouds: &Clouds,
     ) -> Result<()> {
+        let SkyFrame {
+            device,
+            lighting_set_layout,
+            frame_pass,
+            extent,
+            depth_view,
+        } = frame;
         if !atmosphere.sky_gradient && !clouds.enabled {
             *slot = None;
             return Ok(());
         }
         if slot
             .as_ref()
-            .is_some_and(|s| s.frame_pass != frame_pass || s.frame != frame)
+            .is_some_and(|s| s.frame_pass != frame_pass || s.frame != extent)
         {
             *slot = None;
         }
@@ -665,18 +839,22 @@ impl SkyPass {
                 device.clone(),
                 lighting_set_layout,
                 frame_pass,
-                frame,
+                extent,
+                depth_view,
             )?);
         }
         let pass = slot.as_mut().expect("sky pass created");
-        let plan = CloudPlan::new((frame.width, frame.height), clouds);
+        let plan = CloudPlan::new((extent.width, extent.height), clouds);
         if pass.clouds.as_ref().map(|target| target.plan) != plan {
-            // Free first: one target at a time, and the old one is idle.
+            // Free first: one target at a time, and the old one is idle. A new
+            // target holds nothing, so the composite is skipped for one frame
+            // while the march below fills it; a cleared-but-never-written
+            // image is not something to sample.
             pass.clouds = None;
             if let Some(plan) = plan {
                 pass.clouds = Some(CloudTarget::new(
-                    device.clone(),
-                    pass.layout,
+                    device,
+                    pass.march_pipe_layout,
                     frame_pass,
                     plan,
                 )?);
@@ -690,6 +868,7 @@ impl SkyPass {
         lighting_set_layout: vk::DescriptorSetLayout,
         frame_pass: vk::RenderPass,
         frame: vk::Extent2D,
+        depth_view: vk::ImageView,
     ) -> Result<Self> {
         let counters = Buffer::new(
             device.clone(),
@@ -700,84 +879,133 @@ impl SkyPass {
             device,
             frame_pass,
             frame,
-            layout: vk::PipelineLayout::null(),
+            dome_pipe_layout: vk::PipelineLayout::null(),
+            march_pipe_layout: vk::PipelineLayout::null(),
             dome: vk::Pipeline::null(),
             clouds: None,
             counters,
-            counter_layout: vk::DescriptorSetLayout::null(),
-            counter_pool: vk::DescriptorPool::null(),
-            counter_set: vk::DescriptorSet::null(),
+            dome_set_layout: vk::DescriptorSetLayout::null(),
+            march_set_layout: vk::DescriptorSetLayout::null(),
+            pool: vk::DescriptorPool::null(),
+            dome_set: vk::DescriptorSet::null(),
+            march_set: vk::DescriptorSet::null(),
         };
         // SAFETY: every handle is stored in this partial-construction guard as
         // it is created. The lighting set layout outlives this pass; the counter
-        // buffer is owned here and referenced by exactly one set.
+        // buffer is owned here, and the depth view belongs to the swapchain the
+        // renderer rebuilds this pass with.
         unsafe {
             let d = &out.device.raw;
-            let binding = vk::DescriptorSetLayoutBinding::default()
+            let counter_binding = vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT);
-            out.counter_layout = d
+            out.dome_set_layout = d
                 .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[binding]),
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[counter_binding]),
                     None,
                 )
                 .map_err(err)?;
-            out.counter_pool = d
+            // The march reads the frame depth as a texture at binding 1; the
+            // dome must not have that binding in its layout, because in the
+            // frame pass it is the depth attachment and cannot be sampled.
+            let depth_binding = vk::DescriptorSetLayoutBinding::default()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+            out.march_set_layout = d
+                .create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::default()
+                        .bindings(&[counter_binding, depth_binding]),
+                    None,
+                )
+                .map_err(err)?;
+            out.pool = d
                 .create_descriptor_pool(
                     &vk::DescriptorPoolCreateInfo::default()
-                        .max_sets(1)
-                        .pool_sizes(&[vk::DescriptorPoolSize {
-                            ty: vk::DescriptorType::STORAGE_BUFFER,
-                            descriptor_count: 1,
-                        }]),
+                        .max_sets(2)
+                        .pool_sizes(&[
+                            vk::DescriptorPoolSize {
+                                ty: vk::DescriptorType::STORAGE_BUFFER,
+                                descriptor_count: 2,
+                            },
+                            vk::DescriptorPoolSize {
+                                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                                descriptor_count: 1,
+                            },
+                        ]),
                     None,
                 )
                 .map_err(err)?;
-            out.counter_set = d
+            let sets = d
                 .allocate_descriptor_sets(
                     &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(out.counter_pool)
-                        .set_layouts(&[out.counter_layout]),
-                )
-                .map_err(err)?[0];
-            let info = [vk::DescriptorBufferInfo::default()
-                .buffer(out.counters.raw)
-                .range(COUNTER_BYTES as u64)];
-            d.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::default()
-                    .dst_set(out.counter_set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&info)],
-                &[],
-            );
-            out.layout = out
-                .device
-                .raw
-                .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default()
-                        .set_layouts(&[lighting_set_layout, out.counter_layout])
-                        .push_constant_ranges(&[vk::PushConstantRange::default()
-                            .stage_flags(
-                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                            )
-                            .offset(0)
-                            .size(SKY_PUSH_BYTES)]),
-                    None,
+                        .descriptor_pool(out.pool)
+                        .set_layouts(&[out.dome_set_layout, out.march_set_layout]),
                 )
                 .map_err(err)?;
+            out.dome_set = sets[0];
+            out.march_set = sets[1];
+            let counter_info = [vk::DescriptorBufferInfo::default()
+                .buffer(out.counters.raw)
+                .range(COUNTER_BYTES as u64)];
+            let depth_info = [vk::DescriptorImageInfo::default()
+                .image_view(depth_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            d.update_descriptor_sets(
+                &[
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(out.dome_set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&counter_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(out.march_set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&counter_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(out.march_set)
+                        .dst_binding(1)
+                        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                        .image_info(&depth_info),
+                ],
+                &[],
+            );
+            for (layout, set_layout) in [
+                (&mut out.dome_pipe_layout, out.dome_set_layout),
+                (&mut out.march_pipe_layout, out.march_set_layout),
+            ] {
+                *layout = out
+                    .device
+                    .raw
+                    .create_pipeline_layout(
+                        &vk::PipelineLayoutCreateInfo::default()
+                            .set_layouts(&[lighting_set_layout, set_layout])
+                            .push_constant_ranges(&[vk::PushConstantRange::default()
+                                .stage_flags(
+                                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                                )
+                                .offset(0)
+                                .size(SKY_PUSH_BYTES)]),
+                        None,
+                    )
+                    .map_err(err)?;
+            }
         }
         out.dome = full_screen_pipeline(
             &out.device,
-            out.layout,
+            out.dome_pipe_layout,
             frame_pass,
-            include_bytes!(concat!(env!("OUT_DIR"), "/sky.vs_main.spv")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/sky.fs_main.spv")),
-            c"fs_main",
-            false,
-            true,
+            &FullScreenPipeline {
+                vertex_spirv: include_bytes!(concat!(env!("OUT_DIR"), "/sky.vs_main.spv")),
+                fragment_spirv: include_bytes!(concat!(env!("OUT_DIR"), "/sky.fs_main.spv")),
+                fragment_entry: c"fs_main",
+                premultiplied_blend: false,
+                depth_equal: true,
+            },
         )?;
         Ok(out)
     }
@@ -789,6 +1017,12 @@ impl SkyPass {
 
     pub(crate) fn cloud_quality(&self) -> Option<u8> {
         self.clouds.as_ref().map(|t| t.plan.quality)
+    }
+
+    /// The target plan of the currently allocated target, if any. The renderer
+    /// compares it frame to frame to notice a target that has just been built.
+    pub(crate) fn cloud_plan(&self) -> Option<CloudPlan> {
+        self.clouds.as_ref().map(|t| t.plan)
     }
 
     /// Zero this frame's counters. Safe from the CPU only while the previous
@@ -815,12 +1049,15 @@ impl SkyPass {
     /// The volumetric march, recorded outside the frame's render pass. Returns
     /// whether a pass was recorded. `push` is completed here with the cloud
     /// target's own inverse size, so the march reconstructs the same rays the
-    /// full-resolution dome does.
+    /// full-resolution dome does. `clear_first` is set on the first march into
+    /// a newly built target: that pass clears instead of loading, because the
+    /// image has no valid contents yet.
     pub(crate) fn record_clouds(
         &self,
         cmd: vk::CommandBuffer,
         lighting_set: vk::DescriptorSet,
         push: SkyPush,
+        clear_first: bool,
     ) -> bool {
         let Some(target) = &self.clouds else {
             return false;
@@ -828,6 +1065,11 @@ impl SkyPass {
         let extent = vk::Extent2D {
             width: target.plan.width,
             height: target.plan.height,
+        };
+        let (pass, framebuffer) = if clear_first {
+            (target.first_pass, target.first_frame)
+        } else {
+            (target.pass, target.frame)
         };
         let mut push = push;
         push.params[2] = 1.0 / extent.width as f32;
@@ -843,8 +1085,8 @@ impl SkyPass {
             d.cmd_begin_render_pass(
                 cmd,
                 &vk::RenderPassBeginInfo::default()
-                    .render_pass(target.pass)
-                    .framebuffer(target.frame)
+                    .render_pass(pass)
+                    .framebuffer(framebuffer)
                     .render_area(area)
                     .clear_values(&[vk::ClearValue {
                         color: vk::ClearColorValue { float32: [0.0; 4] },
@@ -868,7 +1110,7 @@ impl SkyPass {
             d.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.layout,
+                self.march_pipe_layout,
                 0,
                 &[lighting_set],
                 &[],
@@ -876,14 +1118,14 @@ impl SkyPass {
             d.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.layout,
+                self.march_pipe_layout,
                 1,
-                &[self.counter_set],
+                &[self.march_set],
                 &[],
             );
             d.cmd_push_constants(
                 cmd,
-                self.layout,
+                self.march_pipe_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 bytemuck::bytes_of(&push),
@@ -911,7 +1153,7 @@ impl SkyPass {
             d.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.layout,
+                self.dome_pipe_layout,
                 0,
                 &[lighting_set],
                 &[],
@@ -919,14 +1161,14 @@ impl SkyPass {
             d.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.layout,
+                self.dome_pipe_layout,
                 1,
-                &[self.counter_set],
+                &[self.dome_set],
                 &[],
             );
             d.cmd_push_constants(
                 cmd,
-                self.layout,
+                self.dome_pipe_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 bytemuck::bytes_of(&push),
@@ -936,17 +1178,23 @@ impl SkyPass {
     }
 
     /// The upsample, recorded immediately after the dome and before the water
-    /// and HUD passes. Does nothing when no cloud target exists.
-    pub(crate) fn record_composite(&self, cmd: vk::CommandBuffer) {
+    /// and HUD passes. Does nothing when no cloud target exists. `homography`
+    /// maps this frame's UV to the camera the sampled target was marched with,
+    /// which cancels the one frame of lag the march needs to see this frame's
+    /// depth.
+    pub(crate) fn record_composite(&self, cmd: vk::CommandBuffer, homography: [[f32; 4]; 3]) {
         let Some(target) = &self.clouds else {
             return;
         };
-        let push: [f32; 4] = [
-            1.0 / self.frame.width.max(1) as f32,
-            1.0 / self.frame.height.max(1) as f32,
-            1.0 / target.plan.width as f32,
-            1.0 / target.plan.height as f32,
-        ];
+        let push = CompositePush {
+            texel: [
+                1.0 / self.frame.width.max(1) as f32,
+                1.0 / self.frame.height.max(1) as f32,
+                1.0 / target.plan.width as f32,
+                1.0 / target.plan.height as f32,
+            ],
+            homography,
+        };
         // SAFETY: recorded inside the caller's render pass; the descriptor set
         // points at the target this struct owns until its fence completes.
         unsafe {
@@ -1136,7 +1384,81 @@ mod tests {
     #[test]
     fn push_constants_fit_the_guaranteed_range() {
         assert_eq!(size_of::<SkyPush>(), SKY_PUSH_BYTES as usize);
+        assert_eq!(size_of::<CompositePush>(), COMPOSITE_PUSH_BYTES as usize);
         // 128 bytes is the range every Vulkan implementation guarantees.
         const { assert!(SKY_PUSH_BYTES <= 128 && COMPOSITE_PUSH_BYTES <= 128) };
+    }
+
+    fn look(eye: glam::Vec3, target: glam::Vec3) -> glam::Mat4 {
+        glam::Mat4::perspective_rh(70_f32.to_radians(), 1.0, 0.2, 20_000.0)
+            * glam::Mat4::look_at_rh(eye, target, glam::Vec3::Y)
+    }
+
+    /// Apply the stored column-major homography to a UV the way the shader does.
+    fn apply(homography: &[[f32; 4]; 3], uv: (f32, f32)) -> (f32, f32) {
+        let x = homography[0][0] * uv.0 + homography[1][0] * uv.1 + homography[2][0];
+        let y = homography[0][1] * uv.0 + homography[1][1] * uv.1 + homography[2][1];
+        let w = homography[0][2] * uv.0 + homography[1][2] * uv.1 + homography[2][2];
+        (x / w, y / w)
+    }
+
+    #[test]
+    fn the_reprojection_homography_matches_an_unprojection_for_every_uv() {
+        let current = look(
+            glam::Vec3::new(5.0, 60.0, 0.0),
+            glam::Vec3::new(5.0, 60.0, -1.0),
+        );
+        let previous = look(
+            glam::Vec3::new(0.0, 60.0, 0.0),
+            glam::Vec3::new(4.0, 64.0, -1.0),
+        );
+        let inverse = current.inverse();
+        let homography =
+            cloud_reprojection(previous.to_cols_array_2d(), inverse.to_cols_array_2d());
+        // The oracle runs in f64 too: the far-plane point is 20 km out, and f32
+        // roundoff there is larger than the tolerance being checked.
+        let previous =
+            glam::DMat4::from_cols_array_2d(&previous.to_cols_array_2d().map(|c| c.map(f64::from)));
+        let inverse =
+            glam::DMat4::from_cols_array_2d(&inverse.to_cols_array_2d().map(|c| c.map(f64::from)));
+        for j in 0..5 {
+            for i in 0..5 {
+                let uv = (i as f32 / 4.0, j as f32 / 4.0);
+                // The shader's ray convention: ndc = (2u - 1, 1 - 2v) at far depth.
+                let point = inverse
+                    * glam::DVec4::new(
+                        f64::from(uv.0) * 2.0 - 1.0,
+                        1.0 - f64::from(uv.1) * 2.0,
+                        1.0,
+                        1.0,
+                    );
+                let clip = previous * point;
+                let expected = ((clip.x / clip.w) * 0.5 + 0.5, 0.5 - (clip.y / clip.w) * 0.5);
+                let got = apply(&homography, uv);
+                assert!(
+                    (f64::from(got.0) - expected.0).abs() < 1.0e-4
+                        && (f64::from(got.1) - expected.1).abs() < 1.0e-4,
+                    "uv {uv:?}: {got:?} vs {expected:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_stationary_camera_reprojects_to_itself_and_a_turn_is_visible() {
+        let eye = glam::Vec3::new(0.0, 60.0, 0.0);
+        let still = look(eye, glam::Vec3::new(0.0, 60.0, -1.0));
+        let inverse = still.inverse();
+        let identity = cloud_reprojection(still.to_cols_array_2d(), inverse.to_cols_array_2d());
+        assert!(reprojection_displacement_px(&identity, (792, 360)) < 0.01);
+
+        let turned = look(eye, glam::Vec3::new(5_f32.to_radians().tan(), 60.0, -1.0));
+        let turn = cloud_reprojection(turned.to_cols_array_2d(), inverse.to_cols_array_2d());
+        let pixels = reprojection_displacement_px(&turn, (792, 360));
+        // Five degrees of a 70 degree view is about 1/14 of the width.
+        assert!(
+            (20.0..100.0).contains(&pixels),
+            "five degree turn measured {pixels} target pixels"
+        );
     }
 }

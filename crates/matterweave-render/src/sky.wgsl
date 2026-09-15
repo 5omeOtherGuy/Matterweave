@@ -37,6 +37,9 @@ struct Counters {
 // so both entries share one module; `fs_main` never touches it.
 @group(1) @binding(1) var frame_depth: texture_depth_2d;
 const COUNTERS_ENABLED: u32 = 8u;
+// Amortisation flags, matching the renderer's SkyPush::control bits.
+const SUBGRID_MASK: u32 = 3u;
+const FULL_UPDATE: u32 = 4u;
 // Layout is defined once in Rust: crates/matterweave-render/src/shader_contract.rs.
 struct Lighting {
     view_proj: mat4x4<f32>,
@@ -181,8 +184,33 @@ fn light_transmittance(position: vec3<f32>, sun: vec3<f32>, steps: i32, octaves:
         // exponent, and that detail is invisible through it.  Two octaves is
         // the floor, so this differs from the view march only at quality.
         optical = optical + cloud_density(sample, octaves - 1) * LIGHT_STEP_M;
+        // Once the sun is this blocked, the remaining steps only multiply an
+        // already negligible transmittance; stop marching toward it.
+        if optical > 8.0 {
+            break;
+        }
     }
     return exp(-optical);
+}
+
+// True when every full-resolution texel of this target pixel's footprint has
+// scene geometry in front of it. Deliberately conservative: a block that runs
+// off the frame edge, or that holds a single background texel, is never
+// reported as covered. Skipping such a pixel would drop cloud that the scene
+// does not actually cover, which is exactly the silhouette halo to avoid. The
+// depth buffer's cleared value is 1.0, so anything below it is geometry.
+fn block_covered(origin: vec2<i32>) -> bool {
+    let divisor = i32(sky.control.z);
+    if origin.x + divisor > i32(sky.control.x) || origin.y + divisor > i32(sky.control.y) {
+        return false;
+    }
+    var farthest = 0.0;
+    for (var j = 0; j < divisor; j = j + 1) {
+        for (var i = 0; i < divisor; i = i + 1) {
+            farthest = max(farthest, textureLoad(frame_depth, origin + vec2(i, j), 0));
+        }
+    }
+    return farthest < 1.0;
 }
 
 // Horizon-to-zenith gradient, sun disc and glow, and a ground-side floor.
@@ -231,6 +259,28 @@ fn sky_dome(dir: vec3<f32>) -> vec3<f32> {
     let counters_on = (sky.control.w & COUNTERS_ENABLED) != 0u;
     if counters_on {
         atomicAdd(&counters.candidates, 1u);
+    }
+    // Amortisation: only one 2x2 sub-grid is re-marched each frame, and the
+    // rest of the target keeps the previous frame's pixels, reprojected by the
+    // camera delta in the composite. `discard` leaves the loaded value alone.
+    if (sky.control.w & FULL_UPDATE) == 0u
+        && ((u32(frag.x) & 1u) != (sky.control.w & 1u)
+            || (u32(frag.y) & 1u) != ((sky.control.w >> 1u) & 1u)) {
+        if counters_on {
+            atomicAdd(&counters.reused, 1u);
+        }
+        discard;
+    }
+    // The frame was drawn before this pass, so the depth buffer already knows
+    // which rays the scene covers. Skip those blocks without marching them.
+    let footprint = vec2<i32>(i32(frag.x), i32(frag.y)) * i32(sky.control.z);
+    if block_covered(footprint) {
+        if counters_on {
+            atomicAdd(&counters.masked, 1u);
+        }
+        return vec4(0.0);
+    }
+    if counters_on {
         atomicAdd(&counters.marched, 1u);
     }
     // Hash dither on the first step. There is no history buffer in this

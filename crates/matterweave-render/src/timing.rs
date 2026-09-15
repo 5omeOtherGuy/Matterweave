@@ -11,8 +11,10 @@ pub struct GpuTimings {
     pub render_ms: f64,
     /// None when disabled or when this submission reused the stored depth map.
     pub shadow_ms: Option<f64>,
-    /// The offscreen volumetric cloud pass. None when this submission drew no
-    /// clouds; the marks are still written, so the frame total stays available.
+    /// The offscreen volumetric cloud march, which follows the frame's own
+    /// passes because it masks against the depth they wrote. None when this
+    /// submission drew no clouds; the marks are still written, so the frame
+    /// total stays available.
     pub cloud_ms: Option<f64>,
     pub shadows: bool,
     /// This submission executed a depth pass, including a first-use clear.
@@ -35,7 +37,8 @@ pub(crate) struct TimestampQueries {
     pub completed: Option<GpuTimings>,
 }
 
-/// Frame start, after the shadow pass, after the cloud pass, and frame end.
+/// Frame start, after the shadow pass, after the frame's own passes, and after
+/// the cloud march that follows them.
 const QUERIES: u32 = 4;
 
 fn elapsed_ms(start: u64, end: u64, bits: u32, period_ns: f64) -> Option<f64> {
@@ -137,7 +140,7 @@ impl TimestampQueries {
                             None
                         },
                         cloud_ms: if self.clouds {
-                            elapsed_ms(values[1][0], values[2][0], self.bits, self.period_ns)
+                            elapsed_ms(values[2][0], values[3][0], self.bits, self.period_ns)
                         } else {
                             None
                         },

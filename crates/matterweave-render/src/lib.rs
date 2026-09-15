@@ -22,8 +22,8 @@ mod timing;
 mod wind_tests;
 use ash::{vk, Entry};
 use bytemuck::{Pod, Zeroable};
+use clouds::{CloudPlan, SkyPass, SkyPush};
 pub use clouds::{Clouds, CostCounters};
-use clouds::{SkyPass, SkyPush};
 use frustum::Frustum;
 pub use hud::Hud;
 pub use lighting::{
@@ -693,12 +693,17 @@ impl Swapchain {
             let stages = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
                 | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
                 | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
+            // The source side also covers the cloud march, which samples this
+            // depth buffer after the pass: its read must finish before the next
+            // frame clears and rewrites the attachment.
             let dependencies = [vk::SubpassDependency::default()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
-                .src_stage_mask(stages)
+                .src_stage_mask(stages | vk::PipelineStageFlags::FRAGMENT_SHADER)
                 .dst_stage_mask(stages)
-                .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                .src_access_mask(
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE | vk::AccessFlags::SHADER_READ,
+                )
                 .dst_access_mask(
                     vk::AccessFlags::COLOR_ATTACHMENT_WRITE
                         | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
@@ -1237,6 +1242,16 @@ pub struct Renderer {
     /// true. Off by default: counting costs one uniform branch plus one atomic
     /// per counted pixel, which is not worth paying in normal operation.
     cost_counters_enabled: bool,
+    /// View-projection the cloud target was last marched with, and the plan in
+    /// force then. The composite reprojects with the first; a change of the
+    /// second means the target was rebuilt and holds nothing to show yet.
+    cloud_view_proj: Option<[[f32; 4]; 4]>,
+    cloud_plan_marched: Option<CloudPlan>,
+    /// View-projection and interleaved phase of the last *full* cloud target
+    /// update. A camera that has moved past the amortisation budget since then
+    /// forces the next update to be full again.
+    cloud_full_view_proj: Option<[[f32; 4]; 4]>,
+    cloud_subgrid: u32,
     diagnostics: DrawDiagnostics,
     upload_waits: WaitTally,
     submissions: u64,
@@ -1468,6 +1483,10 @@ impl Renderer {
             timestamps,
             diagnostics_enabled: false,
             cost_counters_enabled: false,
+            cloud_view_proj: None,
+            cloud_plan_marched: None,
+            cloud_full_view_proj: None,
+            cloud_subgrid: 0,
             diagnostics: DrawDiagnostics::default(),
             upload_waits: WaitTally::default(),
             submissions: 0,
@@ -2192,16 +2211,23 @@ impl Renderer {
         // Sky and clouds follow this frame's settings and extent. Nothing is
         // allocated for a frame that asks for neither, and the previous frame's
         // fence is already waited above, so a replaced target is idle.
-        let (frame_pass, frame_extent) = {
+        let (frame_pass, frame_extent, depth_view) = {
             let s = self.swapchain.as_ref().expect("swapchain created");
-            (s.pass, s.size)
+            (
+                s.pass,
+                s.size,
+                s.depth.as_ref().expect("depth created").view,
+            )
         };
         SkyPass::ensure(
             &mut self.sky,
-            &self.device,
-            self.shadow.set_layout,
-            frame_pass,
-            frame_extent,
+            clouds::SkyFrame {
+                device: self.device.clone(),
+                lighting_set_layout: self.shadow.set_layout,
+                frame_pass,
+                extent: frame_extent,
+                depth_view,
+            },
             &lighting.atmosphere,
             &lighting.clouds,
         )?;
@@ -2214,13 +2240,50 @@ impl Renderer {
         // own matrix; a matrix that cannot be inverted skips them for this frame
         // rather than marching NaN directions.
         let inverse = glam::Mat4::from_cols_array_2d(&view_proj).inverse();
+        let inverse = inverse.is_finite().then(|| inverse.to_cols_array_2d());
         let counter_flags = if self.cost_counters_enabled {
             clouds::COUNTERS_ENABLED
         } else {
             0
         };
-        let sky_push = inverse.is_finite().then(|| SkyPush {
-            inv_view_proj: inverse.to_cols_array_2d(),
+        // What the cloud target should do this frame. The march runs after the
+        // frame pass because it reads the depth that pass just wrote, so the
+        // target the composite can show is one frame old and is reprojected by
+        // the camera delta below.
+        let plan = self.sky.as_ref().and_then(SkyPass::cloud_plan);
+        let fresh = plan.is_none() || plan != self.cloud_plan_marched;
+        let mut full = fresh;
+        if !full {
+            match (inverse, self.cloud_full_view_proj) {
+                (Some(inverse), Some(reference)) => {
+                    let reprojection = clouds::cloud_reprojection(reference, inverse);
+                    let target = self
+                        .sky
+                        .as_ref()
+                        .and_then(SkyPass::cloud_extent)
+                        .unwrap_or((1, 1));
+                    full = clouds::reprojection_displacement_px(&reprojection, target)
+                        > clouds::AMORTISATION_BUDGET_PX;
+                }
+                // No usable reference: rebuild everything rather than reuse
+                // pixels whose camera we cannot name.
+                _ => full = true,
+            }
+        }
+        let phase = if full {
+            0
+        } else {
+            (self.cloud_subgrid + 1) & clouds::SUBGRID_MASK
+        };
+        let composite_homography = match (inverse, self.cloud_view_proj) {
+            (Some(inverse), Some(previous)) if !fresh => {
+                Some(clouds::cloud_reprojection(previous, inverse))
+            }
+            _ => None,
+        };
+        let cloud_flags = counter_flags | phase | if full { clouds::FULL_UPDATE } else { 0 };
+        let sky_push = inverse.map(|inverse| SkyPush {
+            inv_view_proj: inverse,
             eye: [eye[0], eye[1], eye[2], lighting.clouds.time()],
             params: [
                 lighting.clouds.march_steps() as f32,
@@ -2232,7 +2295,7 @@ impl Renderer {
                 frame_extent.width,
                 frame_extent.height,
                 lighting.clouds.divisor(),
-                counter_flags,
+                cloud_flags,
             ],
         });
         let s = self.swapchain.as_ref().expect("swapchain created");
@@ -2284,15 +2347,6 @@ impl Renderer {
             );
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 1);
-            }
-            // Volumetric clouds march into their own reduced-resolution target,
-            // outside this frame's render pass. The composite below reads it.
-            let clouds_recorded = match (&self.sky, sky_push) {
-                (Some(sky), Some(push)) => sky.record_clouds(cmd, self.shadow.set, push),
-                _ => false,
-            };
-            if let Some(timestamps) = &self.timestamps {
-                timestamps.mark(cmd, 2);
             }
             // The background is the same colour distance fades to, so the
             // horizon and the end of the world are indistinguishable.
@@ -2427,7 +2481,9 @@ impl Renderer {
                 if lighting.atmosphere.sky_gradient {
                     sky.record_dome(cmd, self.shadow.set, push);
                 }
-                sky.record_composite(cmd);
+                if let Some(homography) = composite_homography {
+                    sky.record_composite(cmd, homography);
+                }
             }
             // Derived water: translucent, drawn after every opaque surface so the
             // bed is already in the depth buffer, never writing depth itself.
@@ -2468,6 +2524,31 @@ impl Renderer {
                 d.cmd_draw(cmd, hud_count, 1, 0, 0);
             }
             d.cmd_end_render_pass(cmd);
+            if let Some(timestamps) = &self.timestamps {
+                timestamps.mark(cmd, 2);
+            }
+            // Volumetric clouds march into their own reduced-resolution target
+            // after the frame pass: that pass wrote the depth this mask needs,
+            // and the composite will read the target next frame. The pass is
+            // still outside the frame's render pass.
+            let clouds_recorded = match (&self.sky, sky_push) {
+                (Some(sky), Some(push)) => sky.record_clouds(cmd, self.shadow.set, push, fresh),
+                _ => false,
+            };
+            if clouds_recorded {
+                self.cloud_view_proj = Some(view_proj);
+                self.cloud_plan_marched = plan;
+                self.cloud_subgrid = phase;
+                if full {
+                    self.cloud_full_view_proj = Some(view_proj);
+                }
+            } else {
+                // Nothing marched: the next target is a new one, and the first
+                // frame it exists must update every pixel.
+                self.cloud_view_proj = None;
+                self.cloud_plan_marched = None;
+                self.cloud_full_view_proj = None;
+            }
             if let Some(timestamps) = &self.timestamps {
                 timestamps.mark(cmd, 3);
             }
