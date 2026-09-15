@@ -25,6 +25,11 @@ struct Lighting {
     // (coarse-surface water shading enabled, ripple time in seconds, depth in
     // metres assumed for a coarse flooded cell, unused)
     water: vec4<f32>,
+    // (aerial-perspective strength 0..1, 0, 0, 0). Zero keeps the
+    // constant-colour fade; a nonzero strength shades distance with the
+    // directional in-scatter of `aerial_perspective` below, and with the
+    // distance face split and per-voxel tone variation further down.
+    aerial: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> lighting: Lighting;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
@@ -37,6 +42,123 @@ struct Lighting {
 // Colour a reflected ray terminates against; identical to the fog target and to
 // the cleared background, so the horizon and the world's end are one colour.
 fn sky_color() -> vec3<f32> { return lighting.atmosphere.xyz; }
+// -- Aerial perspective -------------------------------------------------------
+//
+// The old fog blended every distance to one constant colour, so at kilometres a
+// surface facing away from the sun sat within a couple of luminance levels of
+// the lit face beside it and the voxel stepping the rings now carry was
+// invisible. Distance is two terms:
+//
+//   colour = surface * exp(-density * distance)
+//          + in_scatter * (1 - exp(-density * distance))
+//
+// The first is what the surface sends through the air. The second is what the
+// air scatters toward the eye in its place, and unlike a fog colour it is not
+// constant: it is the sky's scattering colour in the view direction, dimmed
+// when looking away from the sun and grown toward it. That sun-angle term is
+// what keeps an away-facing surface dark at four kilometres while a lit one
+// stays bright, and it costs a normalize, a dot and a square.
+
+/// Fraction of the sky's scattering the air returns along a ray looking away
+/// from the sun. Sunlight scattered toward the eye is strongly peaked about the
+/// sun direction, so with the sun high a horizontal ray away from it carries
+/// only this fraction. Low enough that shadowed rock and soil stay dark at
+/// kilometres, high enough that distance is a soft blue veil rather than a
+/// darkening.
+const AERIAL_FLOOR: f32 = 0.30;
+
+/// In-scattered skylight along a view ray, before extinction.
+///
+/// `view` points from the surface toward the eye, so the ray runs along
+/// `-view`. The colour is the horizon-to-zenith gradient `sky.wgsl` draws,
+/// without its sun disc and glow - those are direct sunlight, not the path's
+/// own scattering - and the strength is a forward-scattering lobe about the
+/// sun. `lighting.aerial.x` blends the lobe in; at zero this returns the
+/// horizon colour itself, so a sample that never asks for the directional
+/// model fades to exactly the colour it did before.
+fn aerial_inscatter(view: vec3<f32>) -> vec3<f32> {
+    let base = sky_color();
+    let ray = -view;
+    let zenith = base * vec3(0.52, 0.66, 1.0);
+    let sky = mix(base, zenith, smoothstep(0.0, 0.55, ray.y));
+    let sun = normalize(lighting.sun.xyz);
+    let forward = max(dot(ray, sun), 0.0);
+    let phase = AERIAL_FLOOR + (1.0 - AERIAL_FLOOR) * forward * forward;
+    return sky * mix(1.0, phase, lighting.aerial.x);
+}
+
+/// Two-term distance shading: what the surface sends through the path, plus
+/// what the path scatters in its place.
+fn aerial_perspective(lit: vec3<f32>, view: vec3<f32>, distance: f32) -> vec3<f32> {
+    let transmittance = exp(-distance * lighting.atmosphere.w);
+    return mix(lit, aerial_inscatter(view), 1.0 - transmittance);
+}
+
+// -- Distance face shading and tone -------------------------------------------
+//
+// Past the near field two things that made voxel steps read at forty metres have
+// both gone: the atmosphere has removed most of the surface contrast, and a
+// coarse cell carries one flat colour while its neighbours quantise to the same
+// handful of values. Two distance-shaded terms put them back, and both fade in
+// over the band the brief fixes, so nothing inside 60 m changes from them. Both
+// belong to the aerial-perspective model, so a sample that does not ask for it
+// keeps the shading it always had:
+//
+//   * the face split: the sun and the sky ambient are weighted by how much sky
+//     a face sees, so a distant wall keeps about a third of the direct sun and a
+//     quarter of the ambient a top beside it gets;
+//   * the tone jitter: a deterministic per-voxel variation of the material
+//     tone, fixed to the world rather than the screen so it cannot crawl.
+//
+// The tone jitter is the far half of fidelity-spec A3: the palette variation a
+// near chunk carries per voxel at meshing time is carried into the coarse ring
+// shader as a hash on the world position instead, one cell per authoritative
+// metre and never finer than a pixel.
+
+/// Metres at which the face split and the tone jitter begin and are full.
+const FACE_SPLIT_START_M: f32 = 60.0;
+const FACE_SPLIT_END_M: f32 = 300.0;
+const TONE_START_M: f32 = 60.0;
+const TONE_END_M: f32 = 200.0;
+/// Sky ambient a vertical face keeps once the split is full, and the fraction
+/// of the direct sun it keeps. A horizontal face is unchanged: 0.40 ambient and
+/// the full sun, at every distance.
+const DISTANT_AMBIENT_FLOOR: f32 = 0.10;
+const DISTANT_AMBIENT_UP: f32 = 0.30;
+const DISTANT_SUN_FLOOR: f32 = 0.35;
+/// Peak tone variation at full distance, as a fraction of the material colour.
+/// The variation is split: a correlated luminance term, which is what puts a
+/// break of several levels between neighbouring cells and keeps a distant
+/// surface from reading as one flat sheet, plus a gentler per-channel
+/// remainder so the mottle is colour rather than grey noise.
+const TONE_JITTER: f32 = 0.20;
+const TONE_CHROMA: f32 = 0.12;
+
+/// Deterministic per-cell tone in `0..=1` per channel.
+///
+/// `footprint` is the world-space size of one pixel; at distance a pixel covers
+/// many metres, so the cell grows with it and the pattern stays no finer than
+/// about two pixels. Integer hash, so the same world cell is the same tone on
+/// every device and in every frame.
+fn voxel_tone(world: vec3<f32>, footprint: f32) -> vec3<f32> {
+    let grain = max(footprint * 2.0, 1.0);
+    let cell = vec3<u32>(vec3<i32>(floor(world / grain)));
+    var h = cell.x * 374761393u ^ cell.y * 668265263u ^ cell.z * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return vec3<f32>(
+        f32(h & 0xffu),
+        f32((h >> 8u) & 0xffu),
+        f32((h >> 16u) & 0xffu),
+    ) * (1.0 / 255.0);
+}
+
+/// The tone variation one world cell applies to its material colour.
+fn tone_variation(world: vec3<f32>, footprint: f32) -> vec3<f32> {
+    let t = voxel_tone(world, footprint) - vec3<f32>(0.5);
+    let luma = (t.x + t.y + t.z) * (1.0 / 3.0);
+    return TONE_JITTER * luma + TONE_CHROMA * (t - vec3<f32>(luma));
+}
 struct Input {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -455,7 +577,6 @@ fn water_surface(world: vec3<f32>, depth_m: f32, opaque: bool) -> vec4<f32> {
     let sheen = pow(alignment, 36.0) * 0.30;
     color = color
         + vec3(1.0, 0.97, 0.88) * (glint + sheen) * lighting.sun.w * (0.25 + 0.75 * fresnel);
-    let fog = 1.0 - exp(-view_distance * lighting.atmosphere.w);
     // Caustics reach the eye as a change in how much bed light comes through,
     // so they are applied to the transmitted fraction rather than added as a
     // colour. Deep water has almost none to modulate, which is why this fades
@@ -471,7 +592,15 @@ fn water_surface(world: vec3<f32>, depth_m: f32, opaque: bool) -> vec4<f32> {
         1.0,
         opaque,
     );
-    return vec4(mix(color, sky_color(), fog), alpha);
+    // The far water gets the same per-voxel tone variation as far terrain: its
+    // analytic ripple field has faded out by this distance, and without it the
+    // sea quantises to one flat colour between the shoreline and the horizon.
+    let tone = smoothstep(TONE_START_M, TONE_END_M, view_distance) * lighting.aerial.x;
+    if tone > 0.0 {
+        let footprint = length(dpdx(world));
+        color = color * (1.0 + tone * tone_variation(world, footprint));
+    }
+    return vec4(aerial_perspective(color, view, view_distance), alpha);
 }
 
 /// Shade one opaque surface. The derived water pass has its own entry and its
@@ -507,22 +636,41 @@ fn shade(v: Output) -> vec4<f32> {
     if water && !enhanced && normal.y > 0.5 && lighting.water.x > 0.5 {
         return water_surface(v.world, lighting.water.z, true);
     }
-    let sunlight = max(dot(normal, lighting.sun.xyz), 0.0);
-    let ambient = 0.28 + 0.12 * max(normal.y, 0.0);
+    var path_length = distance(v.world, camera.eye.xyz);
+    // Face-orientation split, faded in over 60-300 m. Up close a top and a wall
+    // differ by their material as much as by the light, so the near field keeps
+    // the shading it always had; at range the atmosphere has removed what is
+    // left of that difference, so how much sky the face can see carries both
+    // the ambient and the direct sun. A top is unchanged at every distance,
+    // which is what leaves a distant wall clearly darker than the top beside it.
+    let up = clamp(normal.y, 0.0, 1.0);
+    let split = smoothstep(FACE_SPLIT_START_M, FACE_SPLIT_END_M, path_length)
+        * lighting.aerial.x;
+    let ambient = mix(0.28 + 0.12 * up, DISTANT_AMBIENT_FLOOR + DISTANT_AMBIENT_UP * up, split);
+    let sunlight = max(dot(normal, lighting.sun.xyz), 0.0)
+        * mix(1.0, DISTANT_SUN_FLOOR + (1.0 - DISTANT_SUN_FLOOR) * up, split);
+    // Per-voxel tone variation, faded in past the near field. Applied to the
+    // material before lighting and fog so it shades like the material it
+    // varies, and gated to the distance band so the shore keeps its look.
+    let tone = smoothstep(TONE_START_M, TONE_END_M, path_length) * lighting.aerial.x;
+    // Unconditional derivative: a derivative under non-uniform control flow is
+    // undefined, and a silhouette can cross the fade threshold inside a quad.
+    let footprint = length(dpdx(v.world));
+    if tone > 0.0 {
+        color = color * (1.0 + tone * tone_variation(v.world, footprint));
+    }
     let visibility = shadow_visibility(v.world,v.normal);
     let indirect = indirect_diffuse(v.world, v.normal);
     var lit = color * (vec3(ambient + sunlight * lighting.sun.w * visibility) + indirect) + highlight*visibility;
     // Opt-in single specular bounce. With every mirror strength zero this block is
     // skipped and the result is bit-identical to nonreflective rendering.
-    var path_length = distance(v.world, camera.eye.xyz);
     let mirror = reflection_mirror(v.world, v.normal);
     if mirror > 0.0 {
         let sample = specular_reflection(v.world, normal, camera.eye.xyz);
         path_length = path_length + sample.distance;
         lit = mix(lit, sample.color, mirror);
     }
-    let fog = 1.0 - exp(-path_length * lighting.atmosphere.w);
-    return vec4(mix(lit, sky_color(), fog), 1.0);
+    return vec4(aerial_perspective(lit, view, path_length), 1.0);
 }
 @fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
     return shade(v);

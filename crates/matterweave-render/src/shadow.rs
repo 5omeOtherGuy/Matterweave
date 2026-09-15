@@ -378,6 +378,7 @@ impl Shadow {
                 wind: settings.wind.packed(),
                 player: settings.player.packed(),
                 water: settings.water.packed(),
+                aerial: [settings.atmosphere.aerial_perspective, 0., 0., 0.],
                 sun: [sun[0], sun[1], sun[2], settings.sun.intensity],
                 // World-space bias preserves its scale when the fitted depth span changes.
                 params: [

@@ -1430,6 +1430,7 @@ fn main() {
                     player: [0.0; 4],
                     // Flat water: this harness probes reflection, not the sea.
                     water: [0.0; 4],
+                    aerial: [0.0; 4],
                 };
                 let on = probe_harness
                     .render(&mesh, &camera, &lighting, true)
@@ -1539,6 +1540,7 @@ fn main() {
                 player: [0.0; 4],
                 // Flat water: this harness probes reflection, not the sea.
                 water: [0.0; 4],
+                aerial: [0.0; 4],
             };
             let pixel = probe_harness
                 .render(&mesh, &camera, &lighting, true)
@@ -1689,6 +1691,7 @@ fn main() {
                     player: [0.0; 4],
                     // Flat water: this harness probes reflection, not the sea.
                     water: [0.0; 4],
+                    aerial: [0.0; 4],
                 };
                 let pixel = probe_harness
                     .render(&mesh, &camera, &lighting, true)
@@ -1780,6 +1783,7 @@ fn main() {
             player: [0.0; 4],
             // Flat water: this harness probes reflection, not the sea.
             water: [0.0; 4],
+            aerial: [0.0; 4],
         };
         let mesh = scene_mesh(&world, &t);
         let camera_on = camera(projection * view, eye);
