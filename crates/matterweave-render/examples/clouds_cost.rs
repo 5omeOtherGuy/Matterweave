@@ -39,10 +39,13 @@ use winit::{
 
 #[derive(Clone, Copy)]
 struct Options {
+    /// Diagnostic only: drop the water quad, to tell a water result from terrain.
+    water: bool,
     width: u32,
     height: u32,
     frames: u32,
-    quality: u8,
+    /// None disables the cloud pass entirely, for isolating the sky reorder.
+    quality: Option<u8>,
     turn_deg_per_frame: f32,
     hold_seconds: f32,
 }
@@ -53,7 +56,8 @@ impl Default for Options {
             width: 800,
             height: 480,
             frames: 8,
-            quality: 0,
+            water: true,
+            quality: None,
             turn_deg_per_frame: 0.0,
             hold_seconds: 0.0,
         }
@@ -73,13 +77,15 @@ fn parse_options() -> Options {
             }
             "--frames" => options.frames = args.next().expect("--frames N").parse().expect("N"),
             "--quality" => {
-                let value = args.next().expect("--quality low|high");
+                let value = args.next().expect("--quality off|low|high");
                 options.quality = match value.as_str() {
-                    "low" | "0" => 0,
-                    "high" | "1" => 1,
-                    other => panic!("--quality takes low or high, not {other}"),
+                    "off" | "none" => None,
+                    "low" | "0" => Some(0),
+                    "high" | "1" => Some(1),
+                    other => panic!("--quality takes off, low or high, not {other}"),
                 };
             }
+            "--no-water" => options.water = false,
             "--turn" => {
                 options.turn_deg_per_frame = args
                     .next()
@@ -254,9 +260,11 @@ impl ApplicationHandler for App {
         let mut renderer = result.unwrap();
         println!("{}", renderer.capabilities);
         renderer.upload_chunk([0, 0, 0], &shore_scene()).unwrap();
-        renderer
-            .upload_water_chunk([0, 0, 0], &shore_water())
-            .unwrap();
+        if self.options.water {
+            renderer
+                .upload_water_chunk([0, 0, 0], &shore_water())
+                .unwrap();
+        }
         renderer.set_cost_counters_enabled(true);
         self.renderer = Some(renderer);
         self.window = Some(window);
@@ -274,10 +282,13 @@ impl ApplicationHandler for App {
                 sky_gradient: true,
                 ..Default::default()
             },
-            clouds: Clouds {
-                enabled: true,
-                quality: options.quality,
-                time_s: self.frame as f32 * 0.25,
+            clouds: match options.quality {
+                Some(quality) => Clouds {
+                    enabled: true,
+                    quality,
+                    time_s: self.frame as f32 * 0.25,
+                },
+                None => Clouds::default(),
             },
             ..Default::default()
         };

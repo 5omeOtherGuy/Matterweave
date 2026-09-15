@@ -148,18 +148,15 @@ pub(crate) const FULL_UPDATE: u32 = 4;
 /// Byte size of the counter storage buffer: six `u32` atomics.
 pub(crate) const COUNTER_BYTES: usize = 24;
 
-/// Push constants for the cloud composite. 64 bytes, inside the 128 every
-/// Vulkan implementation guarantees.
+/// Push constants for the cloud composite: frame and cloud-texel sizes.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(crate) struct CompositePush {
     /// (inverse frame width, inverse frame height, cloud texel width, cloud texel height)
     pub texel: [f32; 4],
-    /// Column-major 3x3 that maps this frame's UV to the target's own UV.
-    pub homography: [[f32; 4]; 3],
 }
 
-pub(crate) const COMPOSITE_PUSH_BYTES: u32 = 64;
+pub(crate) const COMPOSITE_PUSH_BYTES: u32 = 16;
 
 /// How far the camera may move, in target pixels, before the amortised cloud
 /// target is recomputed in full instead of one sub-grid at a time. The reused
@@ -811,12 +808,17 @@ impl SkyPass {
     /// Bring `slot` in line with this frame's settings, pass and extent. The
     /// caller has already waited the frame fence, so anything replaced here is
     /// idle. Nothing is allocated for a frame that draws neither.
+    /// Bring `slot` in line with this frame's settings, pass and extent, and
+    /// report whether the pass or its cloud target was (re)built. A rebuilt
+    /// target holds nothing: the composite for this frame must be skipped and
+    /// the march has to run after the frame pass, because only that pass can
+    /// give the freshly built target a depth buffer to mask against.
     pub(crate) fn ensure(
         slot: &mut Option<Self>,
         frame: SkyFrame,
         atmosphere: &Atmosphere,
         clouds: &Clouds,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let SkyFrame {
             device,
             lighting_set_layout,
@@ -826,8 +828,9 @@ impl SkyPass {
         } = frame;
         if !atmosphere.sky_gradient && !clouds.enabled {
             *slot = None;
-            return Ok(());
+            return Ok(false);
         }
+        let mut rebuilt = false;
         if slot
             .as_ref()
             .is_some_and(|s| s.frame_pass != frame_pass || s.frame != extent)
@@ -842,14 +845,12 @@ impl SkyPass {
                 extent,
                 depth_view,
             )?);
+            rebuilt = true;
         }
         let pass = slot.as_mut().expect("sky pass created");
         let plan = CloudPlan::new((extent.width, extent.height), clouds);
         if pass.clouds.as_ref().map(|target| target.plan) != plan {
-            // Free first: one target at a time, and the old one is idle. A new
-            // target holds nothing, so the composite is skipped for one frame
-            // while the march below fills it; a cleared-but-never-written
-            // image is not something to sample.
+            // Free first: one target at a time, and the old one is idle.
             pass.clouds = None;
             if let Some(plan) = plan {
                 pass.clouds = Some(CloudTarget::new(
@@ -859,8 +860,9 @@ impl SkyPass {
                     plan,
                 )?);
             }
+            rebuilt = true;
         }
-        Ok(())
+        Ok(rebuilt)
     }
 
     fn new(
@@ -1178,11 +1180,8 @@ impl SkyPass {
     }
 
     /// The upsample, recorded immediately after the dome and before the water
-    /// and HUD passes. Does nothing when no cloud target exists. `homography`
-    /// maps this frame's UV to the camera the sampled target was marched with,
-    /// which cancels the one frame of lag the march needs to see this frame's
-    /// depth.
-    pub(crate) fn record_composite(&self, cmd: vk::CommandBuffer, homography: [[f32; 4]; 3]) {
+    /// and HUD passes. Does nothing when no cloud target exists.
+    pub(crate) fn record_composite(&self, cmd: vk::CommandBuffer) {
         let Some(target) = &self.clouds else {
             return;
         };
@@ -1193,7 +1192,6 @@ impl SkyPass {
                 1.0 / target.plan.width as f32,
                 1.0 / target.plan.height as f32,
             ],
-            homography,
         };
         // SAFETY: recorded inside the caller's render pass; the descriptor set
         // points at the target this struct owns until its fence completes.

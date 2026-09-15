@@ -11,10 +11,8 @@ pub struct GpuTimings {
     pub render_ms: f64,
     /// None when disabled or when this submission reused the stored depth map.
     pub shadow_ms: Option<f64>,
-    /// The offscreen volumetric cloud march, which follows the frame's own
-    /// passes because it masks against the depth they wrote. None when this
-    /// submission drew no clouds; the marks are still written, so the frame
-    /// total stays available.
+    /// The offscreen volumetric cloud march. None when this submission drew no
+    /// clouds; the marks are still written, so the frame total stays available.
     pub cloud_ms: Option<f64>,
     pub shadows: bool,
     /// This submission executed a depth pass, including a first-use clear.
@@ -37,9 +35,11 @@ pub(crate) struct TimestampQueries {
     pub completed: Option<GpuTimings>,
 }
 
-/// Frame start, after the shadow pass, after the frame's own passes, and after
-/// the cloud march that follows them.
-const QUERIES: u32 = 4;
+/// Frame start, after the shadow pass, immediately before the cloud march,
+/// immediately after it, and frame end. The march moves between the two halves
+/// of the frame depending on whether the cloud target was just rebuilt, so its
+/// own pair of marks is what identifies the pass whichever side it ran on.
+const QUERIES: u32 = 5;
 
 fn elapsed_ms(start: u64, end: u64, bits: u32, period_ns: f64) -> Option<f64> {
     if !(1..=64).contains(&bits) || !period_ns.is_finite() || period_ns <= 0. {
@@ -129,7 +129,7 @@ impl TimestampQueries {
         match result {
             Ok(()) if values.iter().all(|v| v[1] != 0) => {
                 if let Some(render_ms) =
-                    elapsed_ms(values[0][0], values[3][0], self.bits, self.period_ns)
+                    elapsed_ms(values[0][0], values[4][0], self.bits, self.period_ns)
                 {
                     self.completed = Some(GpuTimings {
                         frame_id: self.frame_id,
