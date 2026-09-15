@@ -18,6 +18,7 @@ mod metrics;
 mod pacing_check;
 mod platform;
 mod reflection_check;
+mod scale_check;
 mod settings;
 mod terrain_lab;
 pub mod voxel_relay;
@@ -1545,6 +1546,8 @@ pub fn run_desktop() {
     // None until asked for: the flag wins, and without it a device marker can
     // still select the setting, since NativeActivity passes no command line.
     let mut clouds: Option<landscape::CloudChoice> = None;
+    let mut render_scale: Option<f32> = None;
+    let mut scale_check = false;
     let mut engine_check = false;
     let mut async_engine_check = false;
     let mut detail_check = false;
@@ -1576,6 +1579,21 @@ pub fn run_desktop() {
                         .expect("--clouds takes off|low|high or 0|1|2"),
                 );
             }
+            "--render-scale" => {
+                let value = args
+                    .next()
+                    .expect("--render-scale requires a fraction in 0.4..=1.0");
+                render_scale = Some(landscape::parse_render_scale(&value).unwrap_or_else(|| {
+                    eprintln!("--render-scale takes a number in 0.4..=1.0, e.g. 0.8");
+                    std::process::exit(2);
+                }));
+            }
+            "--scale-check" => {
+                // Native and scaled captures of the same frame; it only means
+                // anything in the landscape sample.
+                scale_check = true;
+                landscape_sample = true;
+            }
             "--engine-check" => engine_check = true,
             "--async-engine-check" => async_engine_check = true,
             "--detail-check" => detail_check = true,
@@ -1595,7 +1613,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\n--landscape-exercise flies a deterministic path so a smoke run stresses tile streaming, eviction and the per-frame budget\n--clouds off|low|high (or 0|1|2) selects the landscape sample's volumetric clouds; C cycles them at run time, and a `clouds low` word in `landscape.txt` selects one on a device. Default off\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\n--landscape-exercise flies a deterministic path so a smoke run stresses tile streaming, eviction and the per-frame budget\n--clouds off|low|high (or 0|1|2) selects the landscape sample's volumetric clouds; C cycles them at run time, and a `clouds low` word in `landscape.txt` selects one on a device. Default off\n--render-scale 0.4..=1.0 renders the world at that fraction of the swapchain extent and upscales it; the HUD composites after the upscale. Default 0.8, and a `render-scale 0.8` word in `landscape.txt` selects it on a device\n--scale-check captures the same landscape frame at native and configured scale, prints the image difference and writes scale-check-*.ppm beside the save\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
 --mesh-lighting-check runs the MeshProxy GI/reflection publication gate and writes mesh-lighting-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
@@ -1722,6 +1740,13 @@ pub fn run_desktop() {
         eprintln!("--smoke-exercise requires --save with a new, disposable file path");
         std::process::exit(2);
     }
+    // The scale check runs at 90 presented frames of warmup and then exits, so
+    // the run needs one more frame of budget than the warmup itself; a shorter
+    // explicit budget would exit before the captures and report nothing.
+    if scale_check {
+        let needed = landscape::SCALE_CHECK_FRAME + 1;
+        smoke_frames = Some(smoke_frames.unwrap_or(needed).max(needed));
+    }
     if smoke_exercise && smoke_frames.is_none() {
         smoke_frames = Some(30);
     }
@@ -1734,6 +1759,11 @@ pub fn run_desktop() {
         // the scripted path, since a phone has no command line.
         sample.exercise = landscape_exercise || landscape::exercise_marker_present(&directory);
         sample.clouds = clouds.unwrap_or_else(|| landscape::marker_clouds(&directory));
+        sample.render_scale = landscape::resolve_render_scale(
+            render_scale,
+            landscape::marker_render_scale(&directory),
+        );
+        sample.scale_check = scale_check;
         event_loop
             .run_app(&mut sample)
             .expect("landscape event loop run");
@@ -1903,6 +1933,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         // device run takes, so both markers have to be read here too.
         sample.exercise = landscape::exercise_marker_present(&directory);
         sample.clouds = landscape::marker_clouds(&directory);
+        sample.render_scale =
+            landscape::resolve_render_scale(None, landscape::marker_render_scale(&directory));
         if let Err(e) = event_loop.run_app(&mut sample) {
             log::error!("Landscape sample: {e}");
         }

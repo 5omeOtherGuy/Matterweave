@@ -705,6 +705,9 @@ mod reuse_tests {
         };
         cache.submitted(true, camera([0.; 3], sun));
         assert!(!cache.needs_pass(true, camera([0.001, 0., 0.001], sun)));
+        // A metre of motion stays inside the fit's anchor cell, so the stored
+        // depth still matches the matrix the cache would hand the shader.
+        assert!(!cache.needs_pass(true, camera([1., 0., 0.], sun)));
         assert!(!cache.needs_pass(
             true,
             camera(
@@ -715,7 +718,8 @@ mod reuse_tests {
                 }
             )
         ));
-        assert!(cache.needs_pass(true, camera([1., 0., 0.], sun)));
+        // Crossing the anchor cell changes the fitted matrix.
+        assert!(cache.needs_pass(true, camera([9., 0., 0.], sun)));
         assert!(cache.needs_pass(true, camera([0.; 3], Default::default())));
         let expanded =
             ShadowCamera::new([0.; 3], sun, &[[[-1., -1000., -1.], [1., 1000., 1.]]], 1024)

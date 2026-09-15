@@ -14,6 +14,7 @@ mod moving_lighting_probe;
 pub mod ray_hierarchy_gpu;
 pub mod ray_reference;
 pub mod reflection;
+mod scale;
 pub mod shader_contract;
 mod shadow;
 mod static_scene;
@@ -493,8 +494,17 @@ struct Swapchain {
     api: ash::khr::swapchain::Device,
     raw: vk::SwapchainKHR,
     size: vk::Extent2D,
+    format: vk::Format,
+    images: Vec<vk::Image>,
     views: Vec<vk::ImageView>,
     frames: Vec<vk::Framebuffer>,
+    /// Colour-only pass for the reduced-resolution present: the upscale writes
+    /// every pixel from the world target and the HUD draws after it. No depth
+    /// attachment is declared, so a scaled frame never clears a full-resolution
+    /// depth buffer it does not use.
+    present_pass: vk::RenderPass,
+    present_frames: Vec<vk::Framebuffer>,
+    hud_present: vk::Pipeline,
     // A semaphore per acquired image: acquire proves that image's prior present wait completed.
     finished: Vec<vk::Semaphore>,
     depth: Option<Depth>,
@@ -512,6 +522,11 @@ impl Drop for Swapchain {
             for f in self.frames.drain(..) {
                 self.device.raw.destroy_framebuffer(f, None);
             }
+            for f in self.present_frames.drain(..) {
+                self.device.raw.destroy_framebuffer(f, None);
+            }
+            self.device.raw.destroy_pipeline(self.hud_present, None);
+            self.device.raw.destroy_render_pass(self.present_pass, None);
             self.device.raw.destroy_pipeline(self.world, None);
             self.device.raw.destroy_pipeline(self.water, None);
             self.device.raw.destroy_pipeline(self.hud, None);
@@ -533,6 +548,7 @@ impl Swapchain {
         device: Arc<Device>,
         requested: vk::Extent2D,
         shadow_layout: vk::DescriptorSetLayout,
+        capture_transfer_src: bool,
     ) -> Result<Self> {
         let api = ash::khr::swapchain::Device::new(&device.instance.raw, &device.raw);
         let mut out = Self {
@@ -540,8 +556,13 @@ impl Swapchain {
             api,
             raw: vk::SwapchainKHR::null(),
             size: requested,
+            format: vk::Format::UNDEFINED,
+            images: vec![],
             views: vec![],
             frames: vec![],
+            present_pass: vk::RenderPass::null(),
+            present_frames: vec![],
+            hud_present: vk::Pipeline::null(),
             finished: vec![],
             depth: None,
             pass: vk::RenderPass::null(),
@@ -573,6 +594,7 @@ impl Swapchain {
             if format.format == vk::Format::UNDEFINED {
                 format.format = vk::Format::B8G8R8A8_SRGB;
             }
+            out.format = format.format;
             out.size = if caps.current_extent.width != u32::MAX {
                 caps.current_extent
             } else {
@@ -593,6 +615,20 @@ impl Swapchain {
                 .contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
             {
                 return Err("Surface lacks color attachment usage".into());
+            }
+            // TRANSFER_SRC is requested only by the opt-in frame-capture gate,
+            // never by the normal path: on some surfaces the extra usage keeps
+            // the compositor from using the buffer as a scanout source, and this
+            // renderer does not pay that for a diagnostic.
+            let mut usage = vk::ImageUsageFlags::COLOR_ATTACHMENT;
+            if capture_transfer_src {
+                if !caps
+                    .supported_usage_flags
+                    .contains(vk::ImageUsageFlags::TRANSFER_SRC)
+                {
+                    return Err("Surface lacks TRANSFER_SRC usage for frame capture".into());
+                }
+                usage |= vk::ImageUsageFlags::TRANSFER_SRC;
             }
             // The app supplies window-oriented world and HUD coordinates. Ask the
             // compositor to handle display rotation; claiming current_transform
@@ -632,7 +668,7 @@ impl Swapchain {
                         .image_color_space(format.color_space)
                         .image_extent(out.size)
                         .image_array_layers(1)
-                        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                        .image_usage(usage)
                         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
                         .composite_alpha(alpha)
@@ -734,7 +770,43 @@ impl Swapchain {
             out.world = pipeline(&out.device, out.layout, out.pass, PipelineKind::World)?;
             out.water = pipeline(&out.device, out.layout, out.pass, PipelineKind::Water)?;
             out.hud = pipeline(&out.device, out.layout, out.pass, PipelineKind::Hud)?;
-            for image in out.api.get_swapchain_images(out.raw).map_err(err)? {
+            // Present pass: one colour attachment, no clear (the upscale writes
+            // every pixel) and no depth. Built before the per-image views so
+            // the HUD pipeline names it and shares this swapchain's layout.
+            let present_attachments = [vk::AttachmentDescription::default()
+                .format(format.format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)];
+            let present_color = [vk::AttachmentReference {
+                attachment: 0,
+                layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            }];
+            let present_subpasses = [vk::SubpassDescription::default()
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .color_attachments(&present_color)];
+            let present_dependencies = [vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+            out.present_pass = d
+                .raw
+                .create_render_pass(
+                    &vk::RenderPassCreateInfo::default()
+                        .attachments(&present_attachments)
+                        .subpasses(&present_subpasses)
+                        .dependencies(&present_dependencies),
+                    None,
+                )
+                .map_err(err)?;
+            out.hud_present =
+                pipeline(&out.device, out.layout, out.present_pass, PipelineKind::Hud)?;
+            let mut images = out.api.get_swapchain_images(out.raw).map_err(err)?;
+            for image in images.drain(..) {
                 let view = d
                     .raw
                     .create_image_view(
@@ -751,7 +823,21 @@ impl Swapchain {
                         None,
                     )
                     .map_err(err)?;
+                out.images.push(image);
                 out.views.push(view);
+                out.present_frames.push(
+                    d.raw
+                        .create_framebuffer(
+                            &vk::FramebufferCreateInfo::default()
+                                .render_pass(out.present_pass)
+                                .attachments(&[view])
+                                .width(out.size.width)
+                                .height(out.size.height)
+                                .layers(1),
+                            None,
+                        )
+                        .map_err(err)?,
+                );
                 let views = [view, out.depth.as_ref().expect("depth created").view];
                 out.frames.push(
                     d.raw
@@ -1225,6 +1311,27 @@ fn classify_present(
     }
 }
 
+/// One frame captured for the render-scale acceptance gate: tightly packed
+/// RGBA8 in presentation order, after the upscale and the HUD.
+pub struct CapturedFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Opt-in presented-image readback. The swapchain only carries the extra
+/// TRANSFER_SRC usage while this is enabled, and the copy is recorded into the
+/// same command buffer that presents, so the captured pixels are exactly the
+/// frame the display would have shown.
+#[derive(Default)]
+struct FrameCapture {
+    enabled: bool,
+    pending: bool,
+    buffer: Option<Buffer>,
+    width: u32,
+    height: u32,
+}
+
 pub struct Renderer {
     material_time: Option<f32>,
     world_visible: bool,
@@ -1272,6 +1379,11 @@ pub struct Renderer {
     hud: Option<Buffer>,
     requested: vk::Extent2D,
     recreate: bool,
+    /// World render scale, 1.0 untouched. The reduced-resolution target is built
+    /// lazily and dropped again at 1.0, so no sample pays for it unasked.
+    render_scale: f32,
+    scaled: Option<scale::ScaledTarget>,
+    capture: FrameCapture,
     reflection_published: Option<u64>,
     reflection_presented: Option<u64>,
     pub mesh_revision: Option<u64>,
@@ -1501,6 +1613,9 @@ impl Renderer {
                 height: size.height,
             },
             recreate: true,
+            render_scale: scale::MAX_RENDER_SCALE,
+            scaled: None,
+            capture: FrameCapture::default(),
             reflection_published: None,
             reflection_presented: None,
             mesh_revision: None,
@@ -1514,6 +1629,103 @@ impl Renderer {
         self.requested = vk::Extent2D { width, height };
         self.recreate = true;
     }
+
+    /// World render scale: the fraction of the swapchain extent the world,
+    /// water, sky and cloud composite are rasterised at. 1.0 is the untouched
+    /// native path and allocates nothing; a lower value builds a reduced target
+    /// on the next draw and presents it through a full-resolution upscale whose
+    /// HUD is drawn after the filter. Serialized by the frame fence like every
+    /// other renderer change.
+    pub fn set_render_scale(&mut self, render_scale: f32) -> Result<()> {
+        if !render_scale.is_finite()
+            || !(scale::MIN_RENDER_SCALE..=scale::MAX_RENDER_SCALE).contains(&render_scale)
+        {
+            return Err(format!(
+                "Render scale must be finite in {}..={}",
+                scale::MIN_RENDER_SCALE,
+                scale::MAX_RENDER_SCALE
+            ));
+        }
+        self.render_scale = render_scale;
+        Ok(())
+    }
+
+    /// The scale the next draw uses. A request, not the size of an allocation.
+    pub fn render_scale(&self) -> f32 {
+        self.render_scale
+    }
+
+    /// Extent the world is rasterised at: the allocated target's own size once
+    /// it exists, otherwise the extent the next draw would build for this
+    /// scale. Reported to the HUD as the actual render extent.
+    pub fn render_extent(&self) -> (u32, u32) {
+        if let Some(target) = &self.scaled {
+            return (target.extent.width, target.extent.height);
+        }
+        let full = self.swapchain.as_ref().map_or(self.requested, |s| s.size);
+        let extent = scale::scaled_extent(full, self.render_scale);
+        (extent.width, extent.height)
+    }
+
+    /// Request the swapchain's TRANSFER_SRC usage so [`Renderer::capture_frame`]
+    /// can read the presented image. The swapchain rebuilds on the next draw;
+    /// an error surfaces when the surface cannot supply that usage. Diagnostic
+    /// only: the normal path never asks for it.
+    pub fn enable_frame_capture(&mut self) -> Result<()> {
+        self.capture.enabled = true;
+        self.recreate = true;
+        Ok(())
+    }
+
+    /// Render one frame through the real path and read the presented image
+    /// back. The frame is acquired, submitted and presented normally; the copy
+    /// is recorded into the same command buffer, so the pixels are the frame
+    /// the display would have shown. Waits for the frame fence, so this is a
+    /// diagnostic call, never a per-frame one.
+    pub fn capture_frame(
+        &mut self,
+        view_proj: [[f32; 4]; 4],
+        eye: [f32; 3],
+        hud: &Hud,
+        lighting: &LightingSettings,
+    ) -> Result<CapturedFrame> {
+        if !self.capture.enabled {
+            return Err("Frame capture is not enabled".into());
+        }
+        self.capture.pending = true;
+        let result = self.render_with_lighting(view_proj, eye, hud, lighting);
+        self.capture.pending = false;
+        match result {
+            FrameResult::Presented => {}
+            FrameResult::Retry => {
+                return Err("Captured frame was retried (swapchain out of date)".into())
+            }
+            FrameResult::OutOfMemory => return Err("Captured frame is out of memory".into()),
+            FrameResult::Fatal(error) => return Err(error),
+        }
+        self.commands.wait()?;
+        let width = self.capture.width;
+        let height = self.capture.height;
+        let mut raw = vec![0u8; (width as usize) * (height as usize) * 4];
+        self.capture
+            .buffer
+            .as_ref()
+            .ok_or("No capture buffer was recorded")?
+            .read(&mut raw)?;
+        // Every consumer of a captured frame sees RGBA; the surface's BGRA
+        // orders are the only ones that need swapping.
+        if matches!(
+            self.swapchain.as_ref().map(|s| s.format),
+            Some(vk::Format::B8G8R8A8_SRGB) | Some(vk::Format::B8G8R8A8_UNORM)
+        ) {
+            raw.chunks_exact_mut(4).for_each(|px| px.swap(0, 2));
+        }
+        Ok(CapturedFrame {
+            width,
+            height,
+            rgba: raw,
+        })
+    }
     /// Compatibility whole-world path. A successful upload replaces cached chunks.
     pub fn upload(&mut self, mesh: &Mesh) -> Result<()> {
         if self.mesh_revision.is_some_and(|r| r > mesh.revision) {
@@ -1526,6 +1738,7 @@ impl Renderer {
         self.legacy = Some(replacement);
         self.chunks.clear();
         self.mesh_revision = Some(mesh.revision);
+        self.shadow.invalidate();
         self.update_counters();
         Ok(())
     }
@@ -1544,6 +1757,7 @@ impl Renderer {
         self.chunks.insert(key, replacement);
         self.legacy = None;
         self.mesh_revision = None;
+        self.shadow.invalidate();
         self.update_counters();
         Ok(())
     }
@@ -1675,6 +1889,7 @@ impl Renderer {
             self.commands.wait()?;
             self.upload_waits.record(wait);
             self.chunks.retain(|key, _| keep.contains(key));
+            self.shadow.invalidate();
             self.update_counters();
         }
         Ok(())
@@ -1722,6 +1937,7 @@ impl Renderer {
         self.upload_waits.record(wait);
         if plan.instance_count == 0 {
             self.static_scene = None;
+            self.shadow.invalidate();
             self.update_counters();
             return Ok(StaticSceneStats::default());
         }
@@ -1731,6 +1947,7 @@ impl Renderer {
         let scene = StaticScene::new(self.device.clone(), plan)?;
         let stats = scene.stats();
         self.static_scene = Some(scene);
+        self.shadow.invalidate();
         self.update_counters();
         Ok(stats)
     }
@@ -1755,6 +1972,7 @@ impl Renderer {
         let scene = self.static_scene.as_mut().expect("retained static scene");
         scene.update_instances(plan)?;
         let stats = scene.stats();
+        self.shadow.invalidate();
         self.update_counters();
         Ok(stats)
     }
@@ -1788,12 +2006,14 @@ impl Renderer {
         self.upload_waits.record(wait);
         if plan.instance_count == 0 {
             self.flora_scene = None;
+            self.shadow.invalidate();
             self.update_counters();
             return Ok(StaticSceneStats::default());
         }
         let scene = StaticScene::new(self.device.clone(), plan)?;
         let stats = scene.stats();
         self.flora_scene = Some(scene);
+        self.shadow.invalidate();
         self.update_counters();
         Ok(stats)
     }
@@ -1821,6 +2041,7 @@ impl Renderer {
         let scene = self.flora_scene.as_mut().expect("retained flora scene");
         scene.update_instances(plan)?;
         let stats = scene.stats();
+        self.shadow.invalidate();
         self.update_counters();
         Ok(stats)
     }
@@ -1848,8 +2069,11 @@ impl Renderer {
         // Every committed geometry replacement/removal comes through here.
         // Rejected transactional uploads leave both geometry and validity intact.
         // Reflection depends on the geometry it was published against, so all of
-        // these retire the publication identity as well.
-        self.shadow.invalidate();
+        // these retire the publication identity as well. The shadow cache is
+        // *not* retired here: only chunks, the legacy/dynamic meshes and the
+        // static/flora batches are casters, and water uploads or far-tile
+        // streaming must not force a depth pass. Caster-changing methods call
+        // [`Shadow::invalidate`] themselves.
         self.reflection_published = None;
         self.reflection_presented = None;
         self.resident_chunks = self.chunks.len();
@@ -2178,18 +2402,24 @@ impl Renderer {
             // Vulkan may hand the replacement the same handle value. Retire them
             // with it rather than trusting the handle comparison in `ensure`.
             self.sky = None;
+            // The scaled target's pipelines and framebuffer are built against
+            // this swapchain's present pass and extent. Vulkan may hand the
+            // replacement the same handle value, so retire it with the old
+            // pass rather than trusting a handle comparison.
+            self.scaled = None;
             self.swapchain.take();
-            self.swapchain =
-                match Swapchain::new(self.device.clone(), self.requested, self.shadow.set_layout) {
-                    Ok(swapchain) => Some(swapchain),
-                    Err(e)
-                        if e == "Surface has zero extent"
-                            || e.contains("ERROR_OUT_OF_DATE_KHR") =>
-                    {
-                        return Ok(FrameResult::Retry)
-                    }
-                    Err(e) => return Err(e),
-                };
+            self.swapchain = match Swapchain::new(
+                self.device.clone(),
+                self.requested,
+                self.shadow.set_layout,
+                self.capture.enabled,
+            ) {
+                Ok(swapchain) => Some(swapchain),
+                Err(e) if e == "Surface has zero extent" || e.contains("ERROR_OUT_OF_DATE_KHR") => {
+                    return Ok(FrameResult::Retry)
+                }
+                Err(e) => return Err(e),
+            };
             self.recreate = false;
         }
         let bytes = bytemuck::cast_slice(&hud.vertices);
@@ -2202,16 +2432,54 @@ impl Renderer {
         } else {
             self.hud.as_ref().expect("HUD allocated").write(bytes)?;
         }
-        // Sky and clouds follow this frame's settings and extent. Nothing is
-        // allocated for a frame that asks for neither, and the previous frame's
-        // fence is already waited above, so a replaced target is idle.
-        let (frame_pass, frame_extent, depth_view) = {
+        // The world target, the sky pass and the present pass all follow the
+        // swapchain's current extent and pass handles.
+        let (s_format, s_size, s_layout, s_pass, s_depth_view, s_present_pass) = {
             let s = self.swapchain.as_ref().expect("swapchain created");
             (
-                s.pass,
+                s.format,
                 s.size,
+                s.layout,
+                s.pass,
                 s.depth.as_ref().expect("depth created").view,
+                s.present_pass,
             )
+        };
+        // The reduced-resolution world target. Rebuilt when its extent, the
+        // swapchain format or its depth-store need changes; dropped at scale
+        // 1.0 so the native path allocates nothing. The frame fence above
+        // makes whatever is replaced idle.
+        let wanted_extent = scale::scaled_extent(s_size, self.render_scale);
+        let scaled_stale = self.scaled.as_ref().is_some_and(|target| {
+            target.extent != wanted_extent
+                || target.format != s_format
+                || target.store_depth != lighting.clouds.enabled
+        });
+        if scaled_stale || (self.render_scale >= scale::MAX_RENDER_SCALE && self.scaled.is_some()) {
+            self.scaled = None;
+        }
+        if self.render_scale < scale::MAX_RENDER_SCALE && self.scaled.is_none() {
+            self.scaled = Some(scale::ScaledTarget::new(
+                self.device.clone(),
+                s_layout,
+                s_present_pass,
+                wanted_extent,
+                s_format,
+                lighting.clouds.enabled,
+            )?);
+        }
+        // Sky and clouds follow this frame's settings and extent. Nothing is
+        // allocated for a frame that asks for neither, and the previous frame's
+        // fence is already waited above, so a replaced target is idle. A scaled
+        // frame is the sky's frame too: the dome and the cloud composite are
+        // part of the world image the upscale presents.
+        let (frame_pass, frame_extent, depth_view) = match &self.scaled {
+            Some(target) => (
+                target.pass,
+                target.extent,
+                target.depth.as_ref().expect("scaled depth").view,
+            ),
+            None => (s_pass, s_size, s_depth_view),
         };
         let target_rebuilt = SkyPass::ensure(
             &mut self.sky,
@@ -2286,6 +2554,25 @@ impl Renderer {
                 cloud_flags,
             ],
         });
+        // Allocate the diagnostic readback buffer before recording, so the
+        // unsafe block only ever copies into memory that exists.
+        if self.capture.pending {
+            let bytes = (s_size.width as usize) * (s_size.height as usize) * 4;
+            if self
+                .capture
+                .buffer
+                .as_ref()
+                .is_none_or(|buffer| buffer.size < bytes)
+            {
+                self.capture.buffer = Some(Buffer::new(
+                    self.device.clone(),
+                    &vec![0u8; bytes],
+                    vk::BufferUsageFlags::TRANSFER_DST,
+                )?);
+            }
+            self.capture.width = s_size.width;
+            self.capture.height = s_size.height;
+        }
         let s = self.swapchain.as_ref().expect("swapchain created");
         let hud_count =
             u32::try_from(hud.vertices.len()).map_err(|_| "HUD exceeds u32 vertex count")?;
@@ -2371,16 +2658,32 @@ impl Renderer {
                     },
                 },
             ];
-            let area = vk::Rect2D {
+            // The world pass's own target: the swapchain at scale 1.0, the
+            // reduced target otherwise. `scaled` only copies handles out, so
+            // recording below can still mutate the shadow, water and counter
+            // fields.
+            let scaled = self.scaled.as_ref();
+            let (world_pass, world_extent, world_framebuffer, world_pipeline, water_pipeline) =
+                match scaled {
+                    Some(target) => (
+                        target.pass,
+                        target.extent,
+                        target.frame,
+                        target.world,
+                        target.water,
+                    ),
+                    None => (s.pass, s.size, s.frames[index as usize], s.world, s.water),
+                };
+            let world_area = vk::Rect2D {
                 offset: vk::Offset2D::default(),
-                extent: s.size,
+                extent: world_extent,
             };
             d.cmd_begin_render_pass(
                 cmd,
                 &vk::RenderPassBeginInfo::default()
-                    .render_pass(s.pass)
-                    .framebuffer(s.frames[index as usize])
-                    .render_area(area)
+                    .render_pass(world_pass)
+                    .framebuffer(world_framebuffer)
+                    .render_area(world_area)
                     .clear_values(&clear),
                 vk::SubpassContents::INLINE,
             );
@@ -2390,14 +2693,14 @@ impl Renderer {
                 &[vk::Viewport {
                     x: 0.0,
                     y: 0.0,
-                    width: s.size.width as f32,
-                    height: s.size.height as f32,
+                    width: world_extent.width as f32,
+                    height: world_extent.height as f32,
                     min_depth: 0.0,
                     max_depth: 1.0,
                 }],
             );
-            d.cmd_set_scissor(cmd, 0, &[area]);
-            d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.world);
+            d.cmd_set_scissor(cmd, 0, &[world_area]);
+            d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, world_pipeline);
             d.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -2513,7 +2816,7 @@ impl Renderer {
                 })
                 .count();
             if self.water_visible > 0 {
-                d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.water);
+                d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, water_pipeline);
                 // The composite above bound its own descriptor set 0 (the cloud
                 // target); the water pipeline expects the lighting set there.
                 d.cmd_bind_descriptor_sets(
@@ -2541,7 +2844,9 @@ impl Renderer {
                     }
                 }
             }
-            if hud_count > 0 {
+            // Native scale keeps the HUD in the world pass. A scaled frame ends
+            // the world pass here and presents through the upscale below.
+            if scaled.is_none() && hud_count > 0 {
                 d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.hud);
                 d.cmd_bind_vertex_buffers(
                     cmd,
@@ -2552,6 +2857,121 @@ impl Renderer {
                 d.cmd_draw(cmd, hud_count, 1, 0, 0);
             }
             d.cmd_end_render_pass(cmd);
+            if let Some(target) = scaled {
+                // Present pass: the upscale writes every pixel from the world
+                // target, then the HUD draws at full resolution after the
+                // filter. Text never passes through the resample, so the HUD
+                // is bit-identical to the native one.
+                let present_area = vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: s.size,
+                };
+                d.cmd_begin_render_pass(
+                    cmd,
+                    &vk::RenderPassBeginInfo::default()
+                        .render_pass(s.present_pass)
+                        .framebuffer(s.present_frames[index as usize])
+                        .render_area(present_area)
+                        .clear_values(&[]),
+                    vk::SubpassContents::INLINE,
+                );
+                d.cmd_set_viewport(
+                    cmd,
+                    0,
+                    &[vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: s.size.width as f32,
+                        height: s.size.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    }],
+                );
+                d.cmd_set_scissor(cmd, 0, &[present_area]);
+                target.record_upscale(cmd, s.size);
+                if hud_count > 0 {
+                    d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, s.hud_present);
+                    d.cmd_bind_vertex_buffers(
+                        cmd,
+                        0,
+                        &[self.hud.as_ref().expect("HUD allocated").raw],
+                        &[0],
+                    );
+                    d.cmd_draw(cmd, hud_count, 1, 0, 0);
+                }
+                d.cmd_end_render_pass(cmd);
+            }
+            // Diagnostic readback, if requested: recorded in the same command
+            // buffer as the presentation, after the last colour write to the
+            // acquired image, so the copied pixels are the presented frame.
+            if self.capture.pending {
+                if let Some(buffer) = self.capture.buffer.as_ref() {
+                    let image = s.images[index as usize];
+                    let range = vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1);
+                    let to_transfer = vk::ImageMemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                        .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                        .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                        .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .image(image)
+                        .subresource_range(range);
+                    d.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &[to_transfer],
+                    );
+                    let copy = vk::BufferImageCopy::default()
+                        .buffer_offset(0)
+                        .buffer_row_length(0)
+                        .buffer_image_height(0)
+                        .image_subresource(
+                            vk::ImageSubresourceLayers::default()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .mip_level(0)
+                                .base_array_layer(0)
+                                .layer_count(1),
+                        )
+                        .image_offset(vk::Offset3D::default())
+                        .image_extent(vk::Extent3D {
+                            width: s.size.width,
+                            height: s.size.height,
+                            depth: 1,
+                        });
+                    d.cmd_copy_image_to_buffer(
+                        cmd,
+                        image,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        buffer.raw,
+                        &[copy],
+                    );
+                    let to_present = vk::ImageMemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+                        .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .image(image)
+                        .subresource_range(range);
+                    d.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &[to_present],
+                    );
+                }
+            }
             if !march_before {
                 if let Some(timestamps) = &self.timestamps {
                     timestamps.mark(cmd, 2);

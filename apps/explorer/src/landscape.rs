@@ -33,13 +33,15 @@ use crate::landscape_tiles::{TileStream, MAX_TILE_MS, MAX_TILE_UPLOADS};
 use crate::landscape_water::WaterStream;
 use crate::metrics;
 use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
+use crate::scale_check;
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
 };
 use matterweave_core::{AsyncWorld, World};
 use matterweave_render::{
-    Atmosphere, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer, Sun, Water, Wind,
+    Atmosphere, CapturedFrame, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer,
+    Sun, Water, Wind,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -68,6 +70,9 @@ pub const SEED: u64 = 20260913;
 const EYE_HEIGHT: f32 = 1.7;
 /// Fly speed in metres per second.
 const FLY_SPEED: f32 = 90.0;
+/// Presented frames of streaming warmup before the opt-in scale check
+/// captures. The pair must show a settled scene, not a first-fill one.
+pub const SCALE_CHECK_FRAME: u64 = 90;
 /// Camera limits. The horizontal clamp keeps the eye inside the simulation
 /// domain, which is where the ring planner's coverage contract holds and where
 /// the streaming window is a full 7x7 square.
@@ -370,6 +375,41 @@ impl CloudChoice {
     }
 }
 
+/// Default world render scale for this sample. Chosen from the measured image
+/// difference against native rather than taste: 0.8 linear is 2534x1152 on the
+/// 3168x1440 panel, 36.0% fewer world fragments, and the acceptance run
+/// reports the fraction of pixels over 4/255 and the mean difference at this
+/// value. 1.0 is the untouched native path.
+pub const DEFAULT_RENDER_SCALE: f32 = 0.8;
+
+/// Parse one render-scale value. The desktop flag and the device marker share
+/// this function, so both paths accept exactly the same text; `1` and `1.0`
+/// select the native path.
+pub fn parse_render_scale(text: &str) -> Option<f32> {
+    let render_scale: f32 = text.trim().parse().ok()?;
+    (render_scale.is_finite() && (0.4..=1.0).contains(&render_scale)).then_some(render_scale)
+}
+
+/// The render scale a device run asked for in the marker, beside the cloud
+/// word: `render-scale 0.8`. An absent or malformed word leaves the default in
+/// place, exactly like `clouds`.
+pub fn marker_render_scale(directory: &Path) -> Option<f32> {
+    let text = marker_text(directory)?;
+    let mut words = text.split_whitespace();
+    while let Some(word) = words.next() {
+        if word.eq_ignore_ascii_case("render-scale") {
+            return words.next().and_then(parse_render_scale);
+        }
+    }
+    None
+}
+
+/// The scale a run uses: the desktop flag wins, then the device marker, then
+/// the measured default.
+pub fn resolve_render_scale(flag: Option<f32>, marker: Option<f32>) -> f32 {
+    flag.or(marker).unwrap_or(DEFAULT_RENDER_SCALE)
+}
+
 /// `Some(ms)` as `0.00`, `None` as `-`, for the periodic log line: a missing
 /// diagnostics reading must not print as a zero.
 fn option_ms(value: Option<f64>) -> String {
@@ -455,6 +495,17 @@ pub struct LandscapeSample {
     /// Which cloud setting this run is flying with. Switched by C at run time
     /// and by `--clouds` before the first frame.
     pub clouds: CloudChoice,
+    /// World render scale this run uses. The flag wins on the desktop, the
+    /// marker selects on a device, and [`DEFAULT_RENDER_SCALE`] applies
+    /// otherwise; the renderer builds the reduced target on the first frame.
+    pub render_scale: f32,
+    /// Opt-in acceptance mode: capture the real frame at native scale and at
+    /// [`Self::render_scale`], quantify the difference, write both images and
+    /// exit. It enables the diagnostic swapchain capture and never runs during
+    /// a normal sample.
+    pub scale_check: bool,
+    /// Directory the run's save would live in; where the scale-check images go.
+    directory: PathBuf,
     /// Water surfaces: the identity-keyed derived-mesh cache plus the window
     /// residency that decides what the renderer holds.
     water: WaterStream,
@@ -479,7 +530,8 @@ pub struct LandscapeSample {
     /// and a moving one must stay far below one per frame.
     shadow_renders: u64,
     /// Renders and presented frames accumulated since the last 300-frame
-    /// report, so the device lead reads a rate rather than a total.
+    /// report, so the device lead reads a rate rather than a total. The HUD
+    /// shows the window's own count while it fills.
     shadow_window_renders: u64,
     shadow_window_frames: u64,
     /// Platform lifecycle state: window, focus and activity pause. The one gate
@@ -582,6 +634,9 @@ impl LandscapeSample {
             wind_time: 0.,
             cloud_time: 0.,
             clouds: CloudChoice::default(),
+            render_scale: DEFAULT_RENDER_SCALE,
+            scale_check: false,
+            directory,
             water: WaterStream::new(terrain_source, SEED),
             water_uploaded: 0,
             water_ms: 0.,
@@ -868,6 +923,7 @@ impl LandscapeSample {
             1.,
             muted,
         );
+        hud.text(30., 164., &self.render_line(), 1., white);
         let zone = self.controls.move_zone();
         hud.rect(zone, [0.04, 0.10, 0.13, 0.52]);
         hud.text(zone[0] + 18., zone[1] + 18., "MOVE", 1.5, white);
@@ -981,6 +1037,10 @@ impl LandscapeSample {
         self.lighting.clouds = self.clouds.settings(self.cloud_time);
         let hud = self.hud();
         let matrix = view_projection(&self.camera, size.width as f32 / size.height as f32);
+        if self.scale_check && self.frames >= SCALE_CHECK_FRAME {
+            self.run_scale_check(event_loop, &hud, matrix, eye);
+            return;
+        }
         let render_begin = capturing.then(Instant::now);
         let outcome =
             self.renderer
@@ -1023,6 +1083,8 @@ impl LandscapeSample {
                     let water = self.renderer.as_ref().unwrap().water_stats();
                     let fence = self.renderer.as_ref().and_then(|r| r.draw_diagnostics());
                     let tile_work = self.tiles.counters();
+                    let (render_width, render_height) =
+                        self.renderer.as_ref().unwrap().render_extent();
                     // Built as one string so the desktop host, which has no
                     // logger installed, prints the same per-phase line to
                     // stderr that an Android run sends to logcat.
@@ -1035,7 +1097,7 @@ impl LandscapeSample {
                          uploaded {} evicted {} outstanding {} pinned {} cache_hit {} cache_kib {} \
                          worker_pending {} tile_kib {} \
                          water {}/{} up {} {:.2} ms generate {:.2} upload {:.2} \
-                         fence_ms {} fence_waits {} eye {:?}",
+                         fence_ms {} fence_waits {} eye {:?} render {}x{} scale {:.2}",
                         self.frames,
                         self.frame_ms,
                         self.chunks.wall_ms,
@@ -1068,7 +1130,10 @@ impl LandscapeSample {
                         self.water_upload_ms,
                         option_ms(fence.and_then(|d| d.upload_fence_wait_ms)),
                         option_count(fence.and_then(|d| d.upload_fence_waits)),
-                        eye
+                        eye,
+                        render_width,
+                        render_height,
+                        self.renderer.as_ref().unwrap().render_scale()
                     );
                     log::info!("{message}");
                     #[cfg(not(target_os = "android"))]
@@ -1184,6 +1249,22 @@ impl LandscapeSample {
                 tile_work.total_generate_ms
             );
             eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
+            let (render_width, render_height) = self.renderer.as_ref().unwrap().render_extent();
+            let present = self
+                .window
+                .as_ref()
+                .map(|window| window.inner_size())
+                .unwrap_or_default();
+            let render_fragments = u64::from(render_width) * u64::from(render_height);
+            let present_fragments = u64::from(present.width) * u64::from(present.height);
+            eprintln!(
+                "LANDSCAPE RENDER: world {render_width}x{render_height} at scale {:.2} ({render_fragments} fragments) \
+                 | present {}x{} ({present_fragments} fragments) | world fragments {:.1}% of native",
+                self.renderer.as_ref().unwrap().render_scale(),
+                present.width,
+                present.height,
+                100.0 * render_fragments as f64 / present_fragments.max(1) as f64,
+            );
             eprintln!(
                 "LANDSCAPE SHADOW TOTAL: {} depth passes over {} presented frames ({:.3} per frame)",
                 self.shadow_renders,
@@ -1330,6 +1411,161 @@ impl LandscapeSample {
         )
     }
 
+    /// What the world is actually rasterised at and presented at, plus the
+    /// shadow cache rate since the last 300-frame report. The lead reads this
+    /// on the phone, so it is the allocated extent, not the request.
+    fn render_line(&self) -> String {
+        let (render_width, render_height) = self
+            .renderer
+            .as_ref()
+            .map_or((0, 0), Renderer::render_extent);
+        let scale = self
+            .renderer
+            .as_ref()
+            .map_or(self.render_scale, Renderer::render_scale);
+        let present = self
+            .window
+            .as_ref()
+            .map(|window| window.inner_size())
+            .unwrap_or_default();
+        format!(
+            "RENDER {render_width}x{render_height} @{scale:.2} | PRESENT {}x{} | SHADOW {} RENDERS / {} FRAMES",
+            present.width, present.height, self.shadow_window_renders, self.shadow_window_frames,
+        )
+    }
+
+    /// One real frame through the renderer at `scale`, read back. `lighting`
+    /// and `hud` are the caller's, so both halves of the scale check see the
+    /// same state.
+    fn capture_at(
+        &mut self,
+        scale: f32,
+        matrix: [[f32; 4]; 4],
+        eye: [f32; 3],
+        hud: &Hud,
+        lighting: &LightingSettings,
+    ) -> Result<CapturedFrame, String> {
+        let renderer = self.renderer.as_mut().ok_or("no renderer")?;
+        renderer.set_render_scale(scale)?;
+        renderer.capture_frame(matrix, eye, hud, lighting)
+    }
+
+    fn scale_check_failed(&mut self, event_loop: &ActiveEventLoop, error: &str) {
+        log::error!("Landscape scale check failed: {error}");
+        eprintln!("SCALE CHECK: FAIL {error}");
+        self.failed = true;
+        event_loop.exit();
+    }
+
+    /// The opt-in render-scale acceptance: native and scaled captures of the
+    /// same frame, then a HUD-only pair under a flat background that must be
+    /// bit-identical because the HUD is composited after the upscale. The
+    /// world difference is measured and reported, not asserted: the gate is
+    /// the pixels-over-4/255 and mean-difference numbers themselves.
+    fn run_scale_check(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        hud: &Hud,
+        matrix: [[f32; 4]; 4],
+        eye: [f32; 3],
+    ) {
+        let scaled_scale = self.render_scale;
+        if scaled_scale >= 1.0 {
+            self.scale_check_failed(
+                event_loop,
+                "render scale 1.0 has no scaled pair; pass --render-scale below 1.0",
+            );
+            return;
+        }
+        let lighting = self.lighting;
+        let native = match self.capture_at(1.0, matrix, eye, hud, &lighting) {
+            Ok(frame) => frame,
+            Err(error) => return self.scale_check_failed(event_loop, &error),
+        };
+        let scaled = match self.capture_at(scaled_scale, matrix, eye, hud, &lighting) {
+            Ok(frame) => frame,
+            Err(error) => return self.scale_check_failed(event_loop, &error),
+        };
+        let Some(world_difference) = scale_check::image_difference(&native.rgba, &scaled.rgba)
+        else {
+            return self.scale_check_failed(event_loop, "captured world images are not comparable");
+        };
+        let native_fragments = u64::from(native.width) * u64::from(native.height);
+        let scaled_fragments = u64::from(scaled.width) * u64::from(scaled.height);
+        let reduction = 100.0 * (1.0 - scaled_fragments as f64 / native_fragments as f64);
+        eprintln!(
+            "SCALE CHECK WORLD: native {}x{} ({} fragments) vs {scaled_scale:.2} {}x{} ({} fragments, -{reduction:.1}%) \
+             | over 4/255 {:.4}% | mean |delta| {:.3}/255 | identical {}/{}",
+            native.width,
+            native.height,
+            native_fragments,
+            scaled.width,
+            scaled.height,
+            scaled_fragments,
+            world_difference.over_4_255 * 100.0,
+            world_difference.mean_absolute,
+            world_difference.identical,
+            world_difference.pixels,
+        );
+        // HUD-only pair: no world, no dome, no clouds. The background is the
+        // cleared sky on both sides, so every pixel that differs is the HUD
+        // passing through a resample, which is exactly the contract.
+        let mut flat = lighting;
+        flat.atmosphere.sky_gradient = false;
+        flat.clouds = Clouds::default();
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_world_visible(false);
+        }
+        let hud_native = self.capture_at(1.0, matrix, eye, hud, &flat);
+        let hud_scaled = self.capture_at(scaled_scale, matrix, eye, hud, &flat);
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_world_visible(true);
+        }
+        let (hud_native, hud_scaled) = match (hud_native, hud_scaled) {
+            (Ok(native), Ok(scaled)) => (native, scaled),
+            (Err(error), _) | (_, Err(error)) => {
+                return self.scale_check_failed(event_loop, &error)
+            }
+        };
+        let Some(hud_difference) =
+            scale_check::image_difference(&hud_native.rgba, &hud_scaled.rgba)
+        else {
+            return self.scale_check_failed(event_loop, "captured HUD images are not comparable");
+        };
+        eprintln!(
+            "SCALE CHECK HUD: native vs {scaled_scale:.2} | identical {}/{} | over 4/255 {:.4}% | mean |delta| {:.3}/255",
+            hud_difference.identical,
+            hud_difference.pixels,
+            hud_difference.over_4_255 * 100.0,
+            hud_difference.mean_absolute,
+        );
+        for (name, frame) in [
+            ("scale-check-native.ppm", &native),
+            ("scale-check-scaled.ppm", &scaled),
+            ("scale-check-hud-native.ppm", &hud_native),
+            ("scale-check-hud-scaled.ppm", &hud_scaled),
+        ] {
+            let path = self.directory.join(name);
+            if let Err(error) =
+                scale_check::write_ppm(&path, frame.width, frame.height, &frame.rgba)
+            {
+                log::warn!("Landscape scale check image: {error}");
+            }
+        }
+        let pass = hud_difference.bit_identical();
+        eprintln!(
+            "SCALE CHECK: {} world {:.4}% over 4/255, mean {:.3}/255; HUD bit-identical {}",
+            if pass { "PASS" } else { "FAIL" },
+            world_difference.over_4_255 * 100.0,
+            world_difference.mean_absolute,
+            pass,
+        );
+        if !pass {
+            self.failed = true;
+        }
+        event_loop.exit();
+    }
+
     fn cycle_clouds(&mut self) {
         self.clouds = self.clouds.next();
         self.status = format!("Clouds {}", self.clouds.label().to_lowercase());
@@ -1376,6 +1612,25 @@ impl ApplicationHandler for LandscapeSample {
                 // labels every capture row so the two generations cannot join.
                 self.renderer_epoch += 1;
                 renderer.set_diagnostics_enabled(self.profile.is_some());
+                if let Err(error) = renderer.set_render_scale(self.render_scale) {
+                    log::error!("Landscape render scale rejected: {error}");
+                    eprintln!("Landscape render scale rejected: {error}");
+                    self.failed = true;
+                    event_loop.exit();
+                    return;
+                }
+                if self.scale_check {
+                    // The swapchain picks the extra TRANSFER_SRC usage up on
+                    // its first build; a surface that cannot supply it fails
+                    // the draw with a message naming frame capture.
+                    if let Err(error) = renderer.enable_frame_capture() {
+                        log::error!("Landscape scale check capture unavailable: {error}");
+                        eprintln!("Landscape scale check capture unavailable: {error}");
+                        self.failed = true;
+                        event_loop.exit();
+                        return;
+                    }
+                }
                 self.renderer = Some(renderer);
                 self.window = Some(window);
                 // Prototype pooling is CPU work that does not need the
@@ -1613,6 +1868,48 @@ mod tests {
         ] {
             std::fs::write(dir.join(MARKER_FILE), text).unwrap();
             assert_eq!(marker_clouds(&dir), expected, "{text:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_render_scale_shares_one_grammar_between_flag_and_marker() {
+        // The flag parser and the marker parser are the same function, so a
+        // value the desktop accepts is the value a device accepts.
+        assert_eq!(parse_render_scale("0.8"), Some(0.8));
+        assert_eq!(parse_render_scale(" 1 "), Some(1.0));
+        assert_eq!(parse_render_scale("0.4"), Some(0.4));
+        for text in ["0.39", "1.1", "0", "-0.5", "nan", "off", ""] {
+            assert_eq!(parse_render_scale(text), None, "{text:?}");
+        }
+        // The flag wins; the marker is the device path; absent, the default.
+        assert_eq!(resolve_render_scale(Some(0.9), Some(0.6)), 0.9);
+        assert_eq!(resolve_render_scale(None, Some(0.6)), 0.6);
+        assert_eq!(resolve_render_scale(None, None), DEFAULT_RENDER_SCALE);
+        assert!((0.4..1.0).contains(&DEFAULT_RENDER_SCALE));
+    }
+
+    #[test]
+    fn a_marker_can_ask_a_device_run_for_a_render_scale() {
+        let dir = temp_dir("marker-render-scale");
+        assert_eq!(marker_render_scale(&dir), None);
+        for text in [
+            "",
+            "anything at all\n",
+            "render-scale\n",
+            "render-scale sideways",
+            "render-scale 0.39",
+        ] {
+            std::fs::write(dir.join(MARKER_FILE), text).unwrap();
+            assert_eq!(marker_render_scale(&dir), None, "{text:?}");
+        }
+        for (text, expected) in [
+            ("render-scale 0.8", 0.8),
+            ("RENDER-SCALE 1\n", 1.0),
+            ("landscape\nrender-scale 0.65\nclouds low", 0.65),
+        ] {
+            std::fs::write(dir.join(MARKER_FILE), text).unwrap();
+            assert_eq!(marker_render_scale(&dir), Some(expected), "{text:?}");
         }
         std::fs::remove_dir_all(&dir).ok();
     }

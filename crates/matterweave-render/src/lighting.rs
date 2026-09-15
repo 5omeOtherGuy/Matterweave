@@ -262,6 +262,15 @@ impl Default for LightingSettings {
 
 pub(crate) const SHADOW_HALF_EXTENT: f32 = 64.0;
 
+/// World-space grid the shadow fit is anchored to before the light transform.
+/// The fitted matrix must be a step function of the eye, not a continuous
+/// function of it: a fit that follows the eye refits the map on every frame of
+/// a flight, so the cache never hits. The anchor is one landscape chunk; the
+/// eye stays within ~14 m of the fitted centre while the orthographic box still
+/// reaches 64 m, and a 90 m/s flight crosses a cell about every four ticks
+/// instead of moving the frustum every texel.
+pub(crate) const SHADOW_ANCHOR_M: f32 = 16.0;
+
 pub(crate) struct ShadowCamera {
     pub view_proj: [[f32; 4]; 4],
     pub depth_span: f32,
@@ -300,7 +309,15 @@ impl ShadowCamera {
             Vec3::Y
         };
         let light = Mat4::look_to_rh(Vec3::ZERO, -direction, up);
-        let center = light.transform_point3(eye);
+        // Anchor the fit to a world grid before projecting into light space, so
+        // a sub-cell camera move cannot change the matrix at all. The existing
+        // texel snap below still removes the sub-texel jitter inside the cell.
+        let anchor = Vec3::new(
+            (eye.x / SHADOW_ANCHOR_M).round() * SHADOW_ANCHOR_M,
+            (eye.y / SHADOW_ANCHOR_M).round() * SHADOW_ANCHOR_M,
+            (eye.z / SHADOW_ANCHOR_M).round() * SHADOW_ANCHOR_M,
+        );
+        let center = light.transform_point3(anchor);
         let texel = 2.0 * SHADOW_HALF_EXTENT / size as f32;
         let x = (center.x / texel).round() * texel;
         let y = (center.y / texel).round() * texel;
@@ -383,12 +400,62 @@ mod tests {
     }
 
     #[test]
-    fn negative_world_positions_remain_centered_and_finite() {
+    fn negative_world_positions_stay_centered_and_finite() {
         let eye = [-230., -12., -230.];
         let camera = ShadowCamera::new(eye, Sun::default(), &[FLOOR], 1024).unwrap();
         let p = projected(camera.view_proj, eye);
-        assert!(p[0].abs() < 0.002 && p[1].abs() < 0.002);
+        // The fit is anchored up to half a cell away from the eye, so the eye
+        // sits inside the box rather than exactly at its centre. Half the box
+        // is the bound the anchor guarantees.
+        assert!(p[0].abs() < 0.5 && p[1].abs() < 0.5, "{p:?}");
         assert!(camera.view_proj.iter().flatten().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn sub_texel_camera_motion_keeps_the_whole_fitted_matrix() {
+        // The old test only compared projected XY under a vertical sun. The
+        // cache compares the whole matrix, and an angled sun moves the depth
+        // range with the eye, so stability has to be checked on every term.
+        let sun = Sun {
+            direction_to_sun: [0.35, 0.82, 0.45],
+            intensity: 0.85,
+        };
+        let eye = [137.5, 12.25, -201.25];
+        let reference = ShadowCamera::new(eye, sun, &[FLOOR], 1024).unwrap();
+        for delta in [
+            [0.0, 0.0, 0.0],
+            [0.001, 0.0, 0.0],
+            [-0.001, 0.0, 0.001],
+            [0.0, -0.001, 0.0],
+            [0.05, 0.05, -0.05],
+        ] {
+            let moved = ShadowCamera::new(
+                [eye[0] + delta[0], eye[1] + delta[1], eye[2] + delta[2]],
+                sun,
+                &[FLOOR],
+                1024,
+            )
+            .unwrap();
+            assert_eq!(moved.view_proj, reference.view_proj, "delta {delta:?}");
+            assert_eq!(moved.depth_span, reference.depth_span, "delta {delta:?}");
+        }
+    }
+
+    #[test]
+    fn the_fit_is_a_step_function_of_the_anchor_cell() {
+        let sun = Sun {
+            direction_to_sun: [0.35, 0.82, 0.45],
+            intensity: 0.85,
+        };
+        let reference = ShadowCamera::new([0.; 3], sun, &[FLOOR], 1024).unwrap();
+        // Just inside the same cell: identical fit.
+        let inside = ShadowCamera::new([7.9, 0., -7.9], sun, &[FLOOR], 1024).unwrap();
+        assert_eq!(inside.view_proj, reference.view_proj);
+        // One cell over: the fit moves, exactly once per cell crossed.
+        let outside = ShadowCamera::new([8.1, 0., 0.], sun, &[FLOOR], 1024).unwrap();
+        assert_ne!(outside.view_proj, reference.view_proj);
+        let back = ShadowCamera::new([16.1, 0., 0.], sun, &[FLOOR], 1024).unwrap();
+        assert_eq!(back.view_proj, outside.view_proj);
     }
 
     #[test]
