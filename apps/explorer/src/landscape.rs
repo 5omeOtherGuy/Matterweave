@@ -34,6 +34,7 @@ use crate::landscape_water::WaterStream;
 use crate::metrics;
 use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use crate::scale_check;
+use crate::world_player::{self, PlayerInput, WorldPlayer};
 use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
@@ -112,7 +113,7 @@ fn marker_text(directory: &Path) -> Option<String> {
 }
 
 /// One bounded, non-fatal marker read, shared by every marker beside the save.
-fn bounded_marker_text(directory: &Path, name: &str) -> Option<String> {
+pub(crate) fn bounded_marker_text(directory: &Path, name: &str) -> Option<String> {
     use std::io::Read;
     let path = directory.join(name);
     let file = match std::fs::File::open(&path) {
@@ -653,6 +654,10 @@ pub struct LandscapeSample {
     /// exit. It enables the diagnostic swapchain capture and never runs during
     /// a normal sample.
     pub scale_check: bool,
+    /// World mode: the walking player this run is. `None` is the fly sample,
+    /// exactly as it shipped; `Some` replaces the fly camera with physics and
+    /// makes flying unreachable.
+    player: Option<WorldPlayer>,
     /// Directory the run's save would live in; where the scale-check images go.
     directory: PathBuf,
     /// Water surfaces: the identity-keyed derived-mesh cache plus the window
@@ -699,7 +704,7 @@ pub struct LandscapeSample {
     /// capture run fixed the air (see [`wind_strength`]).
     wind_strength: f32,
     /// One capture to take once the scene has settled, then exit. See
-    /// [`SHOT_ENV_VAR`].
+    /// [`SHOT_ENV_VAR`] and [`Self::request_world_capture`].
     shot: Option<PathBuf>,
     /// Presented frame the capture is taken on. The tiles stream in over the
     /// first seconds, so a capture of a landscape has to wait for them: this is
@@ -715,7 +720,7 @@ impl LandscapeSample {
     /// `save_path` names where a save would live. This slice makes no edits, so
     /// nothing is ever written there; only its directory is used, for the
     /// capture request and the opt-in marker.
-    pub fn new(save_path: PathBuf, frame_limit: Option<u64>) -> Self {
+    pub fn new(save_path: PathBuf, frame_limit: Option<u64>, world_sample: bool) -> Self {
         let directory = crate::data_directory(&save_path).to_path_buf();
         // The capture request is consumed here, at construction, so a device run
         // that selected this sample with the marker records from its first
@@ -736,13 +741,76 @@ impl LandscapeSample {
         };
         let mut world = World::landscape(SEED);
         let terrain_source = world.terrain_source();
-        let mut camera = eye_override(&directory).unwrap_or_else(spawn_camera);
+        let override_eye = eye_override(&directory);
+        let mut camera = match &override_eye {
+            Some(overridden) => Camera {
+                position: overridden.position,
+                yaw: overridden.yaw,
+                pitch: overridden.pitch,
+            },
+            None => spawn_camera(),
+        };
         clamp_camera(&mut camera);
-        world.stream_around(camera.position.to_array());
+        let mut player = None;
+        let mut failed = false;
+        if world_player::requested(world_sample, &directory) {
+            let spawn = match &override_eye {
+                Some(overridden) => {
+                    // An override names the camera a run should open at. The
+                    // player owns the eye in this mode, so it takes the
+                    // override's column and yaw and stands on that column's
+                    // surface: the named height is a fly framing, not a pose a
+                    // walking player can be in.
+                    let x = overridden.position.x.floor() as i32;
+                    let z = overridden.position.z.floor() as i32;
+                    world_player::Spawn {
+                        eye: [
+                            overridden.position.x,
+                            world_player::surface_at(x, z) + world_player::EYE_HEIGHT_M,
+                            overridden.position.z,
+                        ],
+                        yaw: overridden.yaw,
+                        pitch: overridden.pitch,
+                    }
+                }
+                None => world_player::spawn(),
+            };
+            world.stream_around(spawn.eye);
+            match WorldPlayer::new(&world, spawn) {
+                Ok(built) => {
+                    camera.position = built.eye();
+                    camera.yaw = spawn.yaw;
+                    camera.pitch = spawn.pitch;
+                    player = Some(built);
+                }
+                Err(error) => {
+                    log::error!("World player spawn failed: {error}");
+                    eprintln!("World player spawn failed: {error}");
+                    failed = true;
+                }
+            }
+            log::info!(
+                "Landscape world mode: player eye {:?}, fly toggle disabled",
+                camera.position
+            );
+        } else {
+            world.stream_around(camera.position.to_array());
+        }
         log::info!(
             "Landscape sample: seed {SEED}, rings {:?}, fog {FOG_DENSITY}/m",
             LANDSCAPE_RINGS.map(|ring| (ring.level, ring.half_extent))
         );
+        let status = if player.is_some() {
+            "Walk the landscape. The ground is solid.".to_string()
+        } else {
+            format!(
+                "Fly the landscape. Rings reach {} km.",
+                landscape::LANDSCAPE_RINGS
+                    .last()
+                    .map_or(0, |ring| ring.half_extent)
+                    / 1000
+            )
+        };
         Self {
             renderer: None,
             window: None,
@@ -811,6 +879,7 @@ impl LandscapeSample {
             clouds: CloudChoice::default(),
             render_scale: DEFAULT_RENDER_SCALE,
             scale_check: false,
+            player,
             directory,
             water: WaterStream::new(terrain_source, SEED),
             water_uploaded: 0,
@@ -820,13 +889,7 @@ impl LandscapeSample {
             water_window: 0,
             water_candidates: 0,
             profile,
-            status: format!(
-                "Fly the landscape. Rings reach {} km.",
-                landscape::LANDSCAPE_RINGS
-                    .last()
-                    .map_or(0, |ring| ring.half_extent)
-                    / 1000
-            ),
+            status,
             frames: 0,
             frame_limit,
             last_frame: Instant::now(),
@@ -840,7 +903,7 @@ impl LandscapeSample {
             hud: hud_shown(),
             wind_strength: wind_strength(),
             return_to_menu: false,
-            failed: false,
+            failed,
         }
     }
 
@@ -1051,15 +1114,23 @@ impl LandscapeSample {
                 tile_work.served_from_cache,
                 self.frame_ms,
                 tiles.bytes / 1024,
-                if self.walking { "WALK" } else { "FLY" }
+                if self.player.is_some() {
+                    "WORLD"
+                } else if self.walking {
+                    "WALK"
+                } else {
+                    "FLY"
+                }
             ),
             1.15,
             white,
         );
-        hud.text(
-            30.,
-            94.,
-            &format!(
+        // The world mode's own line: ground contact, the surface that carried
+        // the last step, speed and position, so a screenshot alone shows the
+        // player is standing rather than hovering.
+        let eye_line = match &self.player {
+            Some(player) => player.hud_line(),
+            None => format!(
                 "EYE {:.0} {:.0} {:.0} | GROUND {} M | SEED {}",
                 self.camera.position.x,
                 self.camera.position.y,
@@ -1071,9 +1142,8 @@ impl LandscapeSample {
                 ),
                 SEED
             ),
-            1.,
-            muted,
-        );
+        };
+        hud.text(30., 94., &eye_line, 1., muted);
         let flora = self
             .flora
             .as_ref()
@@ -1108,12 +1178,21 @@ impl LandscapeSample {
         let zone = self.controls.move_zone();
         hud.rect(zone, [0.04, 0.10, 0.13, 0.52]);
         hud.text(zone[0] + 18., zone[1] + 18., "MOVE", 1.5, white);
+        if self.player.is_some() {
+            let jump = world_player::jump_zone(zone, self.controls.swapped);
+            hud.rect(jump, [0.04, 0.10, 0.13, 0.52]);
+            hud.text(jump[0] + 26., jump[1] + 40., "JUMP", 1.4, white);
+        }
         hud.text(760., 350., "DRAG TO LOOK", 1.25, white);
         #[cfg(not(target_os = "android"))]
         hud.text(
             240.,
             586.,
-            "WASD FLY | SPACE/SHIFT UP DOWN | RMB LOOK | G WALK OR FLY | C CLOUDS | ESC BACK",
+            if self.player.is_some() {
+                "WASD WALK | SHIFT RUN | SPACE JUMP | RMB LOOK | C CLOUDS | ESC BACK"
+            } else {
+                "WASD FLY | SPACE/SHIFT UP DOWN | RMB LOOK | G WALK OR FLY | C CLOUDS | ESC BACK"
+            },
             1.,
             white,
         );
@@ -1147,19 +1226,37 @@ impl LandscapeSample {
             renderer.begin_frame_diagnostics();
         }
         let (motion, look) = self.controls.consume();
-        fly(&mut self.camera, motion, look, dt, FLY_SPEED);
-        if self.exercise {
-            self.exercise_step();
+        if self.player.is_some() {
+            // The player owns the eye; looking keeps the fly camera's
+            // convention so the controls do not change between modes.
+            self.camera.yaw -= look.x * 0.004;
+            self.camera.pitch = (self.camera.pitch - look.y * 0.004).clamp(-1.50, 1.50);
+        } else {
+            fly(&mut self.camera, motion, look, dt, FLY_SPEED);
+            if self.exercise {
+                self.exercise_step();
+            }
+            if self.walking {
+                // No physics in this slice: the eye follows the generator
+                // surface directly, which is the same function the rings are
+                // derived from.
+                let ground = landscape::height_at(
+                    SEED,
+                    self.camera.position.x.floor() as i32,
+                    self.camera.position.z.floor() as i32,
+                ) as f32;
+                self.camera.position.y = ground + 1.0 + EYE_HEIGHT;
+            }
         }
-        if self.walking {
-            // No physics in this slice: the eye follows the generator surface
-            // directly, which is the same function the rings are derived from.
-            let ground = landscape::height_at(
-                SEED,
-                self.camera.position.x.floor() as i32,
-                self.camera.position.z.floor() as i32,
-            ) as f32;
-            self.camera.position.y = ground + 1.0 + EYE_HEIGHT;
+        if let Some(player) = self.player.as_mut() {
+            let input = PlayerInput {
+                move_x: motion.x,
+                move_z: motion.z,
+                jump: motion.y > 0.0,
+                run: self.controls.keys.contains(&KeyCode::ShiftLeft),
+            };
+            player.step(dt, input, self.camera.yaw);
+            self.camera.position = player.eye();
         }
         let stream_begin = Instant::now();
         if self.preparation.available() {
@@ -1170,6 +1267,13 @@ impl LandscapeSample {
             self.world.stream_around(self.camera.position.to_array());
         }
         let stream_ms = stream_begin.elapsed().as_secs_f64() * 1000.;
+        if let Some(player) = self.player.as_mut() {
+            // Publish the window the stream just settled on, so the next step
+            // collides with it. This frame's step ran against the previous
+            // publication, which is exactly when the analytic fallback covers
+            // a column the window has not caught up with.
+            player.sync_world(&self.world);
+        }
         let mesh_begin = Instant::now();
         if let Err(error) = self
             .sync_chunks()
@@ -1467,6 +1571,9 @@ impl LandscapeSample {
                 tile_work.total_generate_ms
             );
             eprintln!("LANDSCAPE SKY: {}", self.cloud_line());
+            if let Some(player) = &self.player {
+                eprintln!("WORLD PLAYER: {}", player.summary_line());
+            }
             let (render_width, render_height) = self.renderer.as_ref().unwrap().render_extent();
             let present = self
                 .window
@@ -1681,6 +1788,14 @@ impl LandscapeSample {
         renderer.capture_frame(matrix, eye, hud, lighting)
     }
 
+    /// Ask for one capture of the settled scene, written beside the save as
+    /// `world-capture.ppm`. This is the world sample's `--world-capture` flag:
+    /// it goes through the same frame and the same writer as
+    /// [`SHOT_ENV_VAR`], so there is one capture path and not two.
+    pub fn request_world_capture(&mut self) {
+        self.shot = Some(self.directory.join("world-capture.ppm"));
+    }
+
     /// One settled frame, written as a PPM. The frame is the sample's own: the
     /// same camera, lighting and HUD a player gets, captured after the warmup
     /// frames the scale check also waits for.
@@ -1707,6 +1822,16 @@ impl LandscapeSample {
             log::warn!("Landscape shot image: {error}");
             eprintln!("LANDSCAPE SHOT: FAIL {error}");
             self.failed = true;
+        } else if let Some(player) = self.player.as_ref() {
+            // The walking sample's evidence is which frame the display would
+            // have shown *and* what the player line says about where it is.
+            eprintln!(
+                "WORLD CAPTURE: {}x{} {} | {}",
+                frame.width,
+                frame.height,
+                path.display(),
+                player.hud_line()
+            );
         } else {
             eprintln!(
                 "LANDSCAPE SHOT: {} at {}x{} from eye {eye:?}",
@@ -1865,6 +1990,12 @@ impl LandscapeSample {
 
 impl ApplicationHandler for LandscapeSample {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.failed {
+            // Construction already reported the failure; a window would only
+            // render a sample it cannot run.
+            event_loop.exit();
+            return;
+        }
         self.apply_platform(PlatformEvent::WindowCreated);
         if self.renderer.is_some() {
             return;
@@ -1905,8 +2036,8 @@ impl ApplicationHandler for LandscapeSample {
                     // its first build; a surface that cannot supply it fails
                     // the draw with a message naming frame capture.
                     if let Err(error) = renderer.enable_frame_capture() {
-                        log::error!("Landscape scale check capture unavailable: {error}");
-                        eprintln!("Landscape scale check capture unavailable: {error}");
+                        log::error!("Landscape capture unavailable: {error}");
+                        eprintln!("Landscape capture unavailable: {error}");
                         self.failed = true;
                         event_loop.exit();
                         return;
@@ -2004,7 +2135,13 @@ impl ApplicationHandler for LandscapeSample {
                     if pressed && !event.repeat {
                         match code {
                             KeyCode::Escape => self.return_to_menu = true,
-                            KeyCode::KeyG => self.toggle_walk(),
+                            // Flying is unreachable in world mode: the terrain
+                            // is the point of the mode.
+                            KeyCode::KeyG => {
+                                if self.player.is_none() {
+                                    self.toggle_walk();
+                                }
+                            }
                             KeyCode::KeyC => self.cycle_clouds(),
                             _ => {}
                         }
@@ -2029,7 +2166,15 @@ impl ApplicationHandler for LandscapeSample {
                 let point = self.point(touch.location.x, touch.location.y);
                 match touch.phase {
                     TouchPhase::Started => {
-                        self.controls.start(touch.id, point);
+                        if self.player.is_some() {
+                            // The move stick and the jump button, and nothing
+                            // else: no sandbox edit zones and no fly control.
+                            let move_zone = self.controls.move_zone();
+                            let jump = world_player::jump_zone(move_zone, self.controls.swapped);
+                            self.controls.start_player(move_zone, jump, touch.id, point);
+                        } else {
+                            self.controls.start(touch.id, point);
+                        }
                     }
                     TouchPhase::Moved => self.controls.moved(touch.id, point),
                     TouchPhase::Ended => self.controls.end(touch.id),
@@ -2216,10 +2361,31 @@ mod tests {
     }
 
     #[test]
+    fn the_world_marker_and_the_flag_both_build_the_player() {
+        let dir = temp_dir("world-mode");
+        let save = dir.join("world.json");
+        // The desktop flag selects the player with no marker at all.
+        let flagged = LandscapeSample::new(save.clone(), None, true);
+        assert!(flagged.player.is_some());
+        // Nothing is captured unless a run asks: the flag is the only caller.
+        assert!(flagged.shot.is_none());
+        // The device marker selects it with the flag absent, and the sample
+        // reads it itself so android_main's marker path gets it for free.
+        std::fs::write(dir.join(world_player::MARKER_FILE), "").unwrap();
+        let marked = LandscapeSample::new(save.clone(), None, false);
+        assert!(marked.player.is_some());
+        // Neither: the fly sample every measurement depends on is unchanged.
+        std::fs::remove_file(dir.join(world_player::MARKER_FILE)).unwrap();
+        let flying = LandscapeSample::new(save, None, false);
+        assert!(flying.player.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn pause_and_resume_gate_frames_and_both_workers() {
         let dir = temp_dir("lifecycle");
         let save = dir.join("world.json");
-        let mut sample = LandscapeSample::new(save, None);
+        let mut sample = LandscapeSample::new(save, None, false);
         assert!(!sample.wants_frames(), "no window yet");
 
         sample.apply_platform(PlatformEvent::WindowCreated);
@@ -2273,7 +2439,7 @@ mod tests {
         let dir = temp_dir("capture");
         std::fs::write(dir.join("profile-frames.txt"), "4").unwrap();
         let save = dir.join("world.json");
-        let sample = LandscapeSample::new(save.clone(), Some(1));
+        let sample = LandscapeSample::new(save.clone(), Some(1), false);
         // The capture request is consumed at construction, before the first
         // frame, so a marker-selected device run records from frame one.
         assert!(

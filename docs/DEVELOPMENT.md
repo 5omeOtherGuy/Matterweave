@@ -262,6 +262,32 @@ pixel that differs from the `shadow` frame is vegetation; one that differs from 
 coverage measurement needs, because a blade's shaded side and the terrain's step
 faces are nearly the same colour. The sample draws the field normally by default.
 
+### Walkable landscape (`--world`)
+
+The same landscape scene with a player instead of a camera on rails: `--world` on
+the desktop, `world.txt` beside the save on a device. The player walks at 4.5 m/s
+(Shift runs), jumps 1.2 m, steps onto one-voxel ledges and cannot fly. Desktop: WASD,
+Space, right-drag to look. Touch: the MOVE stick, the JUMP button, drag anywhere else
+to look. Collision is the resident window's voxel geometry; outside it an explicit
+analytic probe supplies the generator surface, and the HUD names which of the two is
+carrying the player (`GROUND VOXEL` or `GROUND ANALYTIC`) along with speed and
+position.
+
+```sh
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json MATTERWEAVE_VALIDATION=1 \
+  timeout 600s xvfb-run -a target/debug/matterweave-explorer --world --smoke-frames 120 \
+  --save /tmp/world-smoke/world.json
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  timeout 600s xvfb-run -a target/debug/matterweave-explorer --world --world-capture \
+  --smoke-frames 45 --save /tmp/world-capture/world.json
+```
+
+The smoke prints `WORLD PLAYER:` with ground contact, supporting surface, speed and
+the physics step and collision-publish costs; the capture writes
+`world-capture.ppm` beside the save. Movement, the window handover and the step-up
+are held by host tests (`cargo test -p matterweave-explorer --lib world_player`,
+`cargo test -p matterweave-physics`); the phone check remains the owner's.
+
 ### Bounded reflection gate
 
 The headless host validator compiles the shipping `world.wgsl` through the renderer's

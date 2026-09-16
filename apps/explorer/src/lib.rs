@@ -27,6 +27,7 @@ mod wetland_lighting;
 mod wetland_metrics;
 mod wetland_replay;
 mod wetland_state;
+mod world_player;
 use controls::{Action, Camera, Controls};
 use glam::{Vec2, Vec3};
 use matterweave_core::{AsyncWorld, World};
@@ -1543,6 +1544,8 @@ pub fn run_desktop() {
     let mut terrain_lab = false;
     let mut landscape_sample = false;
     let mut landscape_exercise = false;
+    let mut world_sample = false;
+    let mut world_capture = false;
     // None until asked for: the flag wins, and without it a device marker can
     // still select the setting, since NativeActivity passes no command line.
     let mut clouds: Option<landscape::CloudChoice> = None;
@@ -1568,6 +1571,19 @@ pub fn run_desktop() {
             "--voxel-relay" => voxel_relay = true,
             "--terrain-lab" => terrain_lab = true,
             "--landscape" => landscape_sample = true,
+            "--world" => {
+                // The walking player on the same landscape scene. Flying is
+                // unavailable in this mode by construction.
+                landscape_sample = true;
+                world_sample = true;
+            }
+            "--world-capture" => {
+                // Host evidence run: capture one settled frame, write it beside
+                // the save and exit. The frame is --smoke-frames, or 60.
+                landscape_sample = true;
+                world_sample = true;
+                world_capture = true;
+            }
             "--landscape-exercise" => {
                 landscape_sample = true;
                 landscape_exercise = true;
@@ -1613,7 +1629,7 @@ pub fn run_desktop() {
                 )
             }
             "--help" => {
-                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\n--landscape-exercise flies a deterministic path so a smoke run stresses tile streaming, eviction and the per-frame budget\n--clouds off|low|high (or 0|1|2) selects the landscape sample's volumetric clouds; C cycles them at run time, and a `clouds low` word in `landscape.txt` selects one on a device. Default off\n--render-scale 0.4..=1.0 renders the world at that fraction of the swapchain extent and upscales it; the HUD composites after the upscale. Default 1.0 (native); `--scale-check` also needs a value below 1.0, and a `render-scale 0.8` word in `landscape.txt` selects it on a device. Whether a reduced scale wins on power is a phone measurement, so the default stays native until one exists\n--scale-check captures the same landscape frame at native and configured scale, prints the image difference and writes scale-check-*.ppm beside the save\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
+                println!("Matterweave native explorer\n--save PATH (default matterweave-world.json)\n--voxel-relay runs the Voxel Relay puzzle sample\n--terrain-lab opens the interactive terrain detail lab\n--landscape opens the far-terrain landscape sample (7x7-chunk window plus three distance rings to 6 km)\n--world walks the same landscape with a physical player: gravity, walking and a jump, no flying. `world.txt` beside the save selects it on a device\n--world-capture captures one settled world-mode frame beside the save and exits (host only; with --smoke-frames N, default 60)\n--landscape-exercise flies a deterministic path so a smoke run stresses tile streaming, eviction and the per-frame budget\n--clouds off|low|high (or 0|1|2) selects the landscape sample's volumetric clouds; C cycles them at run time, and a `clouds low` word in `landscape.txt` selects one on a device. Default off\n--render-scale 0.4..=1.0 renders the world at that fraction of the swapchain extent and upscales it; the HUD composites after the upscale. Default 1.0 (native); `--scale-check` also needs a value below 1.0, and a `render-scale 0.8` word in `landscape.txt` selects it on a device. Whether a reduced scale wins on power is a phone measurement, so the default stays native until one exists\n--scale-check captures the same landscape frame at native and configured scale, prints the image difference and writes scale-check-*.ppm beside the save\nLandscape opt-in without a command line (Android): `landscape.txt` beside the save; --landscape wins on the desktop\n--smoke-frames N exits after N presented frames\n--smoke-exercise tests edits, save/reload, resize and host surface recreation; requires new --save PATH\n--gallery-exercise checks the opt-in detail gallery viewer lifecycle; requires a gallery request and never writes user data\nDetail gallery opt-in: `detail-gallery.txt` beside the save, or MATTERWEAVE_DETAIL_GALLERY; e.g. `tile source`, `parasol-underside half`\n--reflection-check / --reflection-cost run the bounded reflection gate and write reflection-check-report.txt\n--pacing-check runs the frame-loop pacing gate and writes pacing-check-report.txt\n--destruction-check renders the 64-piece fracture/reset cycle gate and writes destruction-check-report.txt
 --mesh-lighting-check runs the MeshProxy GI/reflection publication gate and writes mesh-lighting-check-report.txt\nWASD walk; Space jump; F flight; right-drag look; left remove; E place; G grab; T throw; B break; Home respawn; F5 save; H swap; J size");
                 return;
             }
@@ -1753,8 +1769,11 @@ pub fn run_desktop() {
     let event_loop = EventLoop::new().expect("event loop");
     // The marker is the entry a device run can script; the flag is the desktop
     // equivalent and wins when both are present.
-    if landscape_sample || landscape::marker_present(&directory) {
-        let mut sample = landscape::LandscapeSample::new(save_path, smoke_frames);
+    if landscape_sample
+        || landscape::marker_present(&directory)
+        || world_player::marker_present(&directory)
+    {
+        let mut sample = landscape::LandscapeSample::new(save_path, smoke_frames, world_sample);
         // The flag wins on the desktop; the marker is how a device run selects
         // the scripted path, since a phone has no command line.
         sample.exercise = landscape_exercise || landscape::exercise_marker_present(&directory);
@@ -1764,6 +1783,13 @@ pub fn run_desktop() {
             landscape::marker_render_scale(&directory),
         );
         sample.scale_check = scale_check;
+        // Host-only: one settled frame at the requested index, then exit. The
+        // walking sample settles in about a second, so 60 frames is a standing
+        // spawn, not a fall. `--smoke-frames N` also exits at N, so the capture
+        // has to be the frame before it.
+        if world_capture {
+            sample.request_world_capture();
+        }
         event_loop
             .run_app(&mut sample)
             .expect("landscape event loop run");
@@ -1927,8 +1953,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     // entered directly rather than through the chooser: the sample has to own
     // the capture request from its first frame, and the chooser would consume
     // it while its own recorder is still paused in the menu.
-    if landscape::marker_present(&directory) {
-        let mut sample = landscape::LandscapeSample::new(directory.join("world.json"), None);
+    if landscape::marker_present(&directory) || world_player::marker_present(&directory) {
+        let mut sample = landscape::LandscapeSample::new(directory.join("world.json"), None, false);
         // The phone entry: this path, not the desktop flag above, is the one a
         // device run takes, so both markers have to be read here too.
         sample.exercise = landscape::exercise_marker_present(&directory);
