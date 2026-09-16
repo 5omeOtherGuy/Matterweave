@@ -229,10 +229,10 @@ pub fn normalized_filter(tile: &RingTile) -> TileFilter {
 // -- Sample ------------------------------------------------------------------
 
 /// The demo's opening camera: the named spawn in
-/// `matterweave_core::landmarks`, on plains ground with stony mountain ground
-/// 24 m away, tundra ground 116 m away and the beach beyond them. It frames a
-/// spire at 329 m, a ziggurat at 1057 m and a second ziggurat at 1284 m, with
-/// the plains-to-mountain transition beginning inside its first 30 m.
+/// `matterweave_core::landmarks`, on plains ground with tundra ground at its
+/// feet and stony mountain ground 16 m away. It frames a rock spire at 447 m, a
+/// ziggurat at 1114 m and a second ziggurat at 1375 m against the skyline, with a
+/// plains/tundra/mountain transition beginning inside its first metre.
 ///
 /// This used to be a scan for the first 64 m grid point with open water nearby,
 /// which meant the opening view was a property of the seed rather than of the
@@ -347,8 +347,10 @@ pub const EYE_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_EYE";
 
 /// Environment variable asking a desktop run for one full-resolution capture of
 /// the settled scene: `MATTERWEAVE_LANDSCAPE_SHOT=/tmp/spawn.ppm`. The run
-/// renders `SCALE_CHECK_FRAME` presented frames first, so the streaming window
-/// and the distance rings have filled, then writes the frame and exits.
+/// presents frames until the scene has settled - the last frame a
+/// `--smoke-frames` limit allows, or `SCALE_CHECK_FRAME` without one - so the
+/// streaming window and the distance rings have filled, then writes the frame as
+/// a PPM and exits.
 ///
 /// This exists because an acceptance claim about what a player *sees* needs an
 /// image of it, and before it there was no way to take one on the host without
