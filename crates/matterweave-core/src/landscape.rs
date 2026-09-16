@@ -1170,6 +1170,17 @@ impl FloraCellCache {
         self.trees.clear();
     }
 
+    /// Make room for `ground_cells` populations and `tree_cells` cells.
+    ///
+    /// A first plan fills a whole window, and every cell it inserts carries a
+    /// [`FloraCell`] of up to [`MAX_FLORA_PER_CELL`] sites; reserving the window
+    /// once keeps the maps from rehashing a few hundred entries at a time,
+    /// which is most of what a cold plan costs.
+    pub fn reserve(&mut self, ground_cells: usize, tree_cells: usize) {
+        self.ground.reserve(ground_cells);
+        self.trees.reserve(tree_cells);
+    }
+
     /// The cell's population, generating it if it is not memoised. `None` means
     /// the budget was exhausted; the cell may still be memoised by a later call.
     fn ensure_ground(
@@ -1257,6 +1268,12 @@ pub fn plan_flora_cached_into(
     let eye_x = eye_metre(eye[0]);
     let eye_z = eye_metre(eye[2]);
     let outer = tiers.iter().map(|tier| tier.radius_m).max().unwrap_or(0);
+    if cache.ground_cells() == 0 && cache.tree_cells() == 0 {
+        // A cold cache is about to be filled with a whole window of cells.
+        let ground_side = (2 * outer / FLORA_CELL_M + 1).max(0) as usize;
+        let tree_side = (2 * LANDSCAPE_TREE_RADIUS_M / TREE_CELL_M + 1).max(0) as usize;
+        cache.reserve(ground_side * ground_side, tree_side * tree_side);
+    }
     let mut ground_window: Option<[i32; 4]> = None;
     if outer > 0 {
         let first = (eye_x - outer).div_euclid(FLORA_CELL_M);

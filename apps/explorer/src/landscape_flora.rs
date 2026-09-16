@@ -122,6 +122,15 @@ pub const REBUILD_MARGIN_CELLS: i32 = 5;
 /// frame's admitted work small, while a pathological jump is carried by the
 /// next frame's slice.
 pub const MAX_PLAN_SAMPLES_PER_FRAME: usize = 256;
+/// Cells the first plan of a field may generate in one frame.
+///
+/// Nothing is on screen before the first plan commits, so the shipped 256-cell
+/// slice would leave a bare field in front of a player who is already walking
+/// for a dozen frames. The first plan is a startup, not a frame: a larger slice
+/// commits it on the second frame while keeping every frame's admitted work
+/// bounded, and the cost is paid once. A plan that has committed once goes back
+/// to the smaller budget, so a jump or a retarget cannot overrun a frame.
+pub const FIRST_PLAN_SAMPLES_PER_FRAME: usize = 2_048;
 /// Main-thread milliseconds one rebuild may spend planning. Reported, not
 /// enforced by truncation: a plan that overran is still a correct plan, and
 /// hiding the overrun would be worse than showing it.
@@ -369,12 +378,20 @@ impl LandscapeFlora {
         let previous = self.counters;
         let plan_begin = Instant::now();
         let generation_before = self.field.generation();
+        // The first plan is not sliced: see [`FIRST_PLAN_SAMPLES_PER_FRAME`]. A
+        // plan that has committed at least once keeps the smaller budget, so a
+        // jump or a retarget still cannot overrun a frame.
+        let budget = if generation_before == 0 {
+            FIRST_PLAN_SAMPLES_PER_FRAME
+        } else {
+            MAX_PLAN_SAMPLES_PER_FRAME
+        };
         let ready = self.field.advance(
             eye,
             &LANDSCAPE_FLORA_TIERS,
             MAX_PLANNED_SITES,
             MAX_PLANNED_TREES,
-            MAX_PLAN_SAMPLES_PER_FRAME,
+            budget,
         );
         let plan_ms = plan_begin.elapsed().as_secs_f64() * 1000.;
         if !ready {
