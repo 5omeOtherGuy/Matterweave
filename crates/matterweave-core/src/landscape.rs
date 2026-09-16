@@ -2232,29 +2232,29 @@ pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mu
             (bound.max[0] - 1).div_euclid(tile_size),
             (bound.max[1] - 1).div_euclid(tile_size),
         ];
+        let ring_start = plan.len();
+        for key_z in first[1]..=last[1] {
+            for key_x in first[0]..=last[0] {
+                plan.push(RingTile {
+                    level,
+                    key: [key_x, key_z],
+                    filter,
+                });
+            }
+        }
         // Nearest tile first, so a bounded upload budget fills the ring around
         // the eye before the far side of the square. Ties break on the key, so
-        // the order is a pure function of the eye and the ring set.
+        // the order is a pure function of the eye and the ring set. Sorting the
+        // plan's own tail keeps the no-allocation property the buffer promises.
         let centre_tile = [
             centre[0].div_euclid(tile_size),
             centre[1].div_euclid(tile_size),
         ];
-        let mut keys = Vec::with_capacity(
-            ((last[0] - first[0] + 1).max(0) as usize) * ((last[1] - first[1] + 1).max(0) as usize),
-        );
-        for key_z in first[1]..=last[1] {
-            for key_x in first[0]..=last[0] {
-                keys.push([key_x, key_z]);
-            }
-        }
-        keys.sort_unstable_by_key(|key| {
-            let dx = (key[0] - centre_tile[0]).abs();
-            let dz = (key[1] - centre_tile[1]).abs();
-            (dx.max(dz), dx, dz, key[0], key[1])
+        plan[ring_start..].sort_unstable_by_key(|tile| {
+            let dx = (tile.key[0] - centre_tile[0]).abs();
+            let dz = (tile.key[1] - centre_tile[1]).abs();
+            (dx.max(dz), dx, dz, tile.key[0], tile.key[1])
         });
-        for key in keys {
-            plan.push(RingTile { level, key, filter });
-        }
         hole = Some(bound);
         bed = None;
     }

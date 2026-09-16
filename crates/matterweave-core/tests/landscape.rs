@@ -1195,9 +1195,22 @@ fn ring_plans_are_deterministic_and_bounded() {
         let levels: Vec<u32> = plan.iter().map(|tile| tile.level).collect();
         assert!(levels.windows(2).all(|pair| pair[0] <= pair[1]));
         for config in LANDSCAPE_RINGS {
-            assert!(
-                plan.iter().any(|tile| tile.level == config.level),
-                "ring {config:?} planned no tiles"
+            let tile_size = config.tile_size_m();
+            let first = plan
+                .iter()
+                .find(|tile| tile.level == config.level)
+                .unwrap_or_else(|| panic!("ring {config:?} planned no tiles"));
+            // The nearest tile is planned first, so a frame's bounded uploads
+            // fill the ring around the eye before the far side of the square -
+            // which is what lets the sample cover the camera's own ground
+            // before anything else in the ring.
+            assert_eq!(
+                first.key,
+                [
+                    (eye[0].floor() as i32).div_euclid(tile_size),
+                    (eye[2].floor() as i32).div_euclid(tile_size),
+                ],
+                "ring {config:?} did not plan the eye's own tile first at {eye:?}"
             );
         }
     }
