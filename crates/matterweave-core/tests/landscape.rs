@@ -1800,14 +1800,15 @@ fn the_material_roll_follows_the_mixture() {
     for direction in [(1, 0), (0, 1), (1, 1), (2, -1), (-1, 3), (3, 2)] {
         let metres = 400;
         let lines = line(DEMO_SPAWN, direction, metres);
-        for window in lines.windows(64) {
+        for (start, window) in lines.windows(64).enumerate() {
             if !window.iter().all(land) || window.iter().all(|column| column.mix.len() == 1) {
                 continue;
             }
             for (step, column) in window.iter().enumerate() {
+                let along = (start + step) as i32;
                 let (x, z) = (
-                    DEMO_SPAWN[0] + direction.0 * step as i32,
-                    DEMO_SPAWN[1] + direction.1 * step as i32,
+                    DEMO_SPAWN[0] + direction.0 * along,
+                    DEMO_SPAWN[1] + direction.1 * along,
                 );
                 for &(biome, weight) in column.mix.entries() {
                     let material = landscape::biome_surface(SEED, x, z, biome);
@@ -1819,7 +1820,10 @@ fn the_material_roll_follows_the_mixture() {
         }
     }
     let total: f64 = expected.values().sum();
-    println!("{windows} banded windows, {total:.0} columns");
+    println!(
+        "{windows} banded windows, {total:.0} columns (the roll is per 8 m patch, so this \
+         sample is correlated and the tolerance below is loose on purpose)"
+    );
     let mut worst = 0.0f64;
     for (material, want) in &expected {
         let got = observed.get(material).copied().unwrap_or(0) as f64;
