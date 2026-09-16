@@ -870,14 +870,17 @@ pub struct FloraTier {
 ///
 /// The first radius is a density *plateau*, not just an LOD band. A plan is
 /// rebuilt only after the eye has left the committed anchor by the sample's
-/// rebuild hysteresis - 20 m - so the density profile can trail the eye by up to
-/// that distance; the plateau is wider than the trail by the near field it must
-/// keep covered, and the fade is then far enough from the eye that plants
-/// appearing and disappearing in it, the price of any profile that moves, cannot
-/// be resolved. Density is a percentage at each band's outer edge and ramps
-/// smoothly from the previous edge, so no boundary is a step. Radii ascend, are
-/// whole numbers of [`FLORA_CELL_M`] cells and are the square half-extent the
-/// plan covers.
+/// rebuild hysteresis (20 m), so the profile trails the eye by up to that
+/// distance; the plateau is what keeps full density in front of the eye
+/// whatever the trail is, and 32 m leaves at least a dozen metres of it. The
+/// fade then has to be long enough not to read as a fence and short enough to
+/// fit the instance budget: 16 m is six times the slope the replaced
+/// `keep_every` step had, and the 48 m end costs nothing that 40 m did not -
+/// the window is a square, so its area and the plan's cost are set by the
+/// plateau, not by the last metres of the fade. Density is a percentage at each
+/// band's outer edge and ramps smoothly from the previous edge, so no boundary
+/// is a step. Radii ascend, are whole numbers of [`FLORA_CELL_M`] cells and are
+/// the square half-extent the plan covers.
 pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     FloraTier {
         radius_m: 32,
