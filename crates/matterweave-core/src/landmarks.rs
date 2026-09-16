@@ -77,10 +77,14 @@ pub const SUMMIT_HEADROOM_M: i32 = 16;
 /// Ground above sea level a site's own centre needs before it is built, in
 /// metres: a site under water or in the swash is not a landmark, it is a wreck.
 pub const BASE_CLEARANCE_M: i32 = 6;
-/// Slope the demo's walking player is expected to climb, in per-mille (35
-/// degrees). The physics player owns the real number; every landmark flank and
-/// apron stays at or below it, so a player that can walk a 35 degree slope can
-/// reach every footprint and every summit.
+/// Slope the acceptance tests walk at, in per-mille (35 degrees).
+///
+/// The physics controller allows the player 45 degrees
+/// (`matterweave_physics`'s `MAX_CLIMB_ANGLE`), so this is the *stricter* limit:
+/// every landmark flank and apron stays at or below it, and a route these tests
+/// accept is one the real player can walk. Keeping the constant here rather than
+/// reading the physics crate keeps the generator free of it, and the two numbers
+/// are worth re-checking together if either moves.
 pub const WALK_SLOPE_PERMILLE: i32 = 700;
 /// Highest slope any landmark apron reaches, in per-mille (21 degrees): the
 /// part of the footprint a player stands on to look up at the landmark.
