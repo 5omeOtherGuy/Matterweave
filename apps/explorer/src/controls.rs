@@ -135,6 +135,18 @@ impl Controls {
 
         self.service.pointer_down(id, [p.x, p.y]);
     }
+    /// Gesture roles for the `world` sample's player: the move stick the
+    /// landscape sample already draws, plus one jump button. No elevation
+    /// zones - they would be a second fly control - and no sandbox buttons.
+    pub fn start_player(&mut self, move_zone: [f32; 4], jump_zone: [f32; 4], id: u64, p: Vec2) {
+        self.service.clear_button_zones();
+        self.service.clear_motion_zones();
+        self.service.add_motion_zone(jump_zone, [0., 1., 0.], true);
+        self.service.set_move_zone(move_zone, 70.0);
+        self.service.clear_look_zones();
+
+        self.service.pointer_down(id, [p.x, p.y]);
+    }
     pub fn moved(&mut self, id: u64, p: Vec2) {
         self.service.pointer_move(id, [p.x, p.y]);
     }
@@ -731,5 +743,34 @@ mod tests {
             "a held touch over the previous stick position must not move the right-hand layout"
         );
         c.end(4);
+    }
+
+    #[test]
+    fn the_player_start_walks_from_the_stick_and_jumps_from_the_button() {
+        let move_zone = [20., 390., 190., 190.];
+        let jump_zone = crate::world_player::jump_zone(move_zone, false);
+        let mut c = Controls::default();
+        c.start_player(move_zone, jump_zone, 1, centered(move_zone));
+        assert_eq!(c.service.move_zone(), Some((move_zone, 70.0)));
+        c.moved(1, centered(move_zone) + Vec2::new(70., 0.));
+        assert!((c.consume().0.x - 1.0).abs() < 1e-4);
+        c.end(1);
+        // The jump button raises only the upward axis, which is the jump
+        // request; there is no down axis to fly with.
+        c.start_player(move_zone, jump_zone, 2, centered(jump_zone));
+        c.end(2);
+        assert_eq!(c.consume().0, Vec3::Y);
+        // The button does not overlap the stick on either handedness, and it
+        // stays inside the 1000x600 HUD space the touch mapping uses.
+        for swapped in [false, true] {
+            let zone = if swapped {
+                [790., 390., 190., 190.]
+            } else {
+                move_zone
+            };
+            let jump = crate::world_player::jump_zone(zone, swapped);
+            assert!(!overlaps(zone, jump), "{zone:?} overlaps {jump:?}");
+            assert!(jump[0] >= 0.0 && jump[0] + jump[2] <= 1000.0);
+        }
     }
 }
