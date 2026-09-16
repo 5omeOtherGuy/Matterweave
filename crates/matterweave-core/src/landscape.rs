@@ -55,7 +55,12 @@ use std::collections::HashMap;
 
 /// Identity of this generator's output. Bump for any change to the columns,
 /// materials or flora population it produces.
-pub const LANDSCAPE_GENERATOR_VERSION: u32 = 1;
+///
+/// Version 2: ground cover and flowers are placed at the pressures and bands the
+/// vegetation pass ships (denser grass, sparse dune grass, coastal palms), so
+/// the flora population is not the one version 1 produced. Columns, materials
+/// and tile meshes are unchanged.
+pub const LANDSCAPE_GENERATOR_VERSION: u32 = 2;
 
 /// Sea surface height in metres. Columns strictly below this are flooded.
 pub const SEA_LEVEL: i32 = 0;
@@ -126,40 +131,81 @@ impl Biome {
     }
 
     /// Grass tuft pressure in `0..=64` per flora slot; 64 fills every slot.
+    ///
+    /// Ground cover is the layer a close capture judges the landscape by, so the
+    /// grassy biomes sit near the top of the range: the slot is one clump per
+    /// metre column, and one clump is a clump of thin blades, not a mat. Beach
+    /// and desert keep a sparse dune-grass cover rather than none, which is what
+    /// the reference shore shows.
     pub fn grass_density(self) -> u8 {
         match self {
             Biome::Ocean => 0,
-            Biome::Beach | Biome::Desert | Biome::Snow => 2,
-            Biome::Mountain | Biome::Tundra => 10,
-            Biome::Hills => 40,
-            Biome::Plains => 52,
-            Biome::Forest => 44,
-            Biome::Swamp => 34,
+            Biome::Snow => 2,
+            Biome::Desert => 3,
+            Biome::Beach => 8,
+            Biome::Mountain => 14,
+            Biome::Tundra => 16,
+            Biome::Swamp => 48,
+            Biome::Hills => 56,
+            Biome::Forest => 62,
+            Biome::Plains => 64,
+        }
+    }
+
+    /// Second, independent ground-cover pressure in `0..=64` per flora slot.
+    ///
+    /// One clump per metre column still leaves the ground showing between
+    /// clumps at the grazing angle a walking eye sees it from, because a clump
+    /// is a clump of thin blades and not a mat. This slot rolls its own hash, so
+    /// a second clump can stand in the same metre column: the pair is one denser
+    /// tuft rather than two clumps apart, which is what closes the gaps without
+    /// a prototype the size of the gap. It is 0 where ground cover is meant to
+    /// be thin, so the sparse biomes keep their single sparse layer.
+    pub fn understory_density(self) -> u8 {
+        match self {
+            Biome::Ocean | Biome::Snow | Biome::Desert => 0,
+            Biome::Beach => 4,
+            Biome::Mountain => 6,
+            Biome::Tundra => 8,
+            Biome::Swamp => 40,
+            Biome::Hills => 48,
+            Biome::Forest => 56,
+            Biome::Plains => 64,
         }
     }
 
     /// Flower pressure in `0..=64` per flora slot.
+    ///
+    /// The flower layer stays a minority of the field - a meadow with a flower
+    /// on every column would be a flower bed - but it is a distinct layer rather
+    /// than a garnish, and it is densest where the reference meadow is.
     pub fn flower_density(self) -> u8 {
         match self {
             Biome::Ocean | Biome::Snow => 0,
             Biome::Desert => 4,
-            Biome::Beach => 3,
-            Biome::Mountain | Biome::Tundra => 8,
-            Biome::Hills => 14,
-            Biome::Plains => 22,
-            Biome::Forest => 12,
-            Biome::Swamp => 10,
+            Biome::Beach => 5,
+            Biome::Mountain => 8,
+            Biome::Tundra => 10,
+            Biome::Swamp => 12,
+            Biome::Hills => 16,
+            Biome::Forest => 16,
+            Biome::Plains => 26,
         }
     }
 
     /// Tree pressure in `0..=64` per 8 m cell.
+    ///
+    /// Beach carries a sparse palm layer (the reference's sand is treed, not
+    /// bare), and the coastal margin is where a spawn camera looks first, so the
+    /// shoreline is not an empty strip between the water and the forest.
     pub fn tree_density(self) -> u8 {
         match self {
             Biome::Forest => 44,
             Biome::Swamp => 22,
             Biome::Plains | Biome::Hills => 6,
+            Biome::Beach => 3,
             Biome::Tundra => 3,
-            Biome::Beach | Biome::Desert | Biome::Mountain | Biome::Snow | Biome::Ocean => 0,
+            Biome::Desert | Biome::Mountain | Biome::Snow | Biome::Ocean => 0,
         }
     }
 
@@ -691,6 +737,19 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
             };
             push(kind, grass_roll >> 32);
         }
+        // A second ground-cover slot on its own roll, so a metre column can
+        // carry two clumps and the pair reads as one denser tuft. It uses the
+        // understory pressure, which is zero where cover is meant to be thin.
+        let understory_roll = hash3(seed ^ SALT_FLORA ^ 0x2f11_9a3d, x, z);
+        let understory = column.biome.understory_density() as i32;
+        if understory > 0 && ((understory_roll & 0xFFFF) as i32) < understory * 1024 {
+            let kind = match (understory_roll >> 26) & 0x3F {
+                0..=2 if column.biome.grassy() => FloraKind::Fern,
+                3 if column.biome == Biome::Swamp => FloraKind::Reed,
+                _ => FloraKind::GrassTuft,
+            };
+            push(kind, understory_roll >> 40);
+        }
         // Flowers use an independent roll so a tuft and a flower can share a
         // column instead of displacing each other.
         let flower_roll = hash3(seed ^ SALT_FLORA ^ 0x51ed_2701, x, z);
@@ -757,24 +816,26 @@ pub struct FloraTier {
     pub keep_every: u32,
 }
 
-/// The shipped density falloff: full density to 16 m, then half, quarter and
-/// eighth out to 96 m. Radii ascend and each is a whole number of
+/// The shipped density falloff: full density to 28 m, then a sparse eighth to
+/// 40 m, and no ground cover beyond that.
+///
+/// The outer radius is the blade LOD crossover, not a budget compromise. A
+/// blade is one fine voxel - 6.25 cm - across, and the landscape render target
+/// resolves about 1.6 mrad per pixel (65 degrees over 720 rows), so a blade is
+/// sub-pixel beyond ~40 m and a clump is a handful of pixels; the last band
+/// ends exactly there, and beyond it the field is drawn as ground colour rather
+/// than as thousands of instances nobody can resolve. The second band is a
+/// sparse eighth rather than half because the instances it does not draw are
+/// instances the near band spends on clumps the eye can actually resolve. Radii
+/// ascend and each is a whole number of
 /// [`FLORA_CELL_M`] cells, which is what makes the band predicate exact.
-pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 4] = [
+pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     FloraTier {
-        radius_m: 16,
+        radius_m: 28,
         keep_every: 1,
     },
     FloraTier {
-        radius_m: 32,
-        keep_every: 2,
-    },
-    FloraTier {
-        radius_m: 64,
-        keep_every: 4,
-    },
-    FloraTier {
-        radius_m: 96,
+        radius_m: 40,
         keep_every: 8,
     },
 ];

@@ -34,7 +34,7 @@ fn fingerprint(seed: u64, edge: i32) -> u64 {
 
 #[test]
 fn generation_is_deterministic_and_seed_dependent() {
-    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 1);
+    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 2);
     for (x, z) in [(0, 0), (1, -1), (1000, -2000), (-9999, 30000)] {
         assert_eq!(
             landscape::column(SEED, x, z),
@@ -331,9 +331,14 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // made it. This value moved with the per-voxel surface tone
     // (`material::tone`), which reaches every tile as `TopRect::tone` /
     // `WallRun::tone`: 0x63ec_1387_d1e7_09da before the tone, this after.
-    // Vertex positions, normals, counts and indices are unchanged by it.
+    // Vertex positions, normals, counts and indices are unchanged by it, and the
+    // per-voxel tone alone moved this value to 0xc8c5_258b_e67a_f422. The
+    // vegetation form change moves it again, to the value below: flora prototypes
+    // are larger and the tile builder carries their tone, so the two changes
+    // together are one digest, measured after the merge rather than copied from
+    // either change.
     assert_eq!(
-        value, 0xc8c5_258b_e67a_f422,
+        value, 0x238c_a60d_0189_c137,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }
