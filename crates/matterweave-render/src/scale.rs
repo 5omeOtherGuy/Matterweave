@@ -12,6 +12,11 @@
 //! attachment set (colour stored for sampling, depth optionally stored) than
 //! the swapchain's. Its depth range covers the swapchain's own selection, so a
 //! driver that can sample one can sample the other.
+//!
+//! The upscale is sharp bilinear rather than plain bilinear: a coordinate warp
+//! keeps a one-pixel target step a step instead of blending its contrast across
+//! two output pixels. `UPSCALE_SNAP` carries the measured value and the trade
+//! against sub-pixel stability.
 use super::{err, pipeline, Depth, Device, PipelineKind, Result};
 use crate::clouds::{full_screen_pipeline, FullScreenPipeline};
 use ash::vk;
@@ -23,6 +28,21 @@ use std::sync::Arc;
 pub(crate) const MIN_RENDER_SCALE: f32 = 0.4;
 /// The scale that selects the untouched native path.
 pub(crate) const MAX_RENDER_SCALE: f32 = 1.0;
+
+/// Plateau fraction of the sharp-bilinear upscale: the share of each target
+/// texel's half-width the sample takes whole. The remaining `0.5 * (1 - value)`
+/// of a target pixel is the transition band around the texel boundary.
+///
+/// The value is measured on the device-style host crop (`400,600,3168,720` of a
+/// 3168x1440 present frame with clouds low, the phone's own distant band).
+/// Distant-band K1 at scale 0.8 against a native 0.0268 and a gate of 0.020:
+/// plain bilinear 0.0162, 0.5 plateau 0.0196, 0.75 0.0222, nearest 0.0258.
+/// The worst per-pixel change for a 1/16-target-texel camera motion over the
+/// same candidates is 0.06, 0.13, 0.25 and 1.0 of the local step contrast.
+/// 0.75 is the snappiest single-sample setting that both clears the gate and
+/// holds the sub-pixel change under a quarter step; nearest clears it best but
+/// snaps an edge by a whole present pixel. See the PR for the table.
+pub(crate) const UPSCALE_SNAP: f32 = 0.75;
 
 /// The world extent a requested swapchain extent renders at for `scale`.
 /// Rounded to the nearest pixel, never zero, so a degenerate surface and a
@@ -380,7 +400,7 @@ impl ScaledTarget {
                         .push_constant_ranges(&[vk::PushConstantRange::default()
                             .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                             .offset(0)
-                            .size(8)]),
+                            .size(24)]),
                     None,
                 )
                 .map_err(err)?;
@@ -407,16 +427,22 @@ impl ScaledTarget {
     /// caller has already set that pass's viewport and scissor to the present
     /// extent, which the shader needs as the inverse of that extent: the
     /// fragment position is in present pixels, and the whole range has to map
-    /// onto the target's 0..1.
+    /// onto the target's 0..1. The target's own inverse extent lets the shader
+    /// measure the sharp-bilinear phase in target pixels rather than in the
+    /// rounded ratio of the two extents.
     ///
     /// # Safety
     ///
     /// Must be recorded inside `present_pass`, whose colour attachment is the
     /// swapchain image this target's upscale pipeline was built against.
     pub(crate) unsafe fn record_upscale(&self, cmd: vk::CommandBuffer, present: vk::Extent2D) {
-        let texel = [
+        let push = [
             1.0 / present.width.max(1) as f32,
             1.0 / present.height.max(1) as f32,
+            1.0 / self.extent.width.max(1) as f32,
+            1.0 / self.extent.height.max(1) as f32,
+            UPSCALE_SNAP,
+            0.0,
         ];
         let d = &self.device.raw;
         d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.upscale);
@@ -433,7 +459,7 @@ impl ScaledTarget {
             self.upscale_layout,
             vk::ShaderStageFlags::FRAGMENT,
             0,
-            bytemuck::cast_slice(&texel),
+            bytemuck::cast_slice(&push),
         );
         d.cmd_draw(cmd, 3, 1, 0, 0);
     }
@@ -464,5 +490,101 @@ mod tests {
             MIN_RENDER_SCALE,
         );
         assert_eq!((tiny.width, tiny.height), (2, 1));
+    }
+
+    /// The upscale's sample-position warp, mirrored from `upscale.wgsl` so the
+    /// shipped arithmetic can be checked without a GPU. Keep the two in step:
+    /// this is the function that decides whether a one-pixel target step stays
+    /// a step in the present image.
+    fn warped_sample(target_px: f32, snap: f32) -> f32 {
+        let base = target_px.floor() + 0.5;
+        let d = target_px - base;
+        let band = snap * 0.5;
+        let t = ((d.abs() - band) / (0.5 - band)).clamp(0.0, 1.0);
+        base + d.signum() * t * 0.5
+    }
+
+    /// One row of the sharp-bilinear upscale of a 64-texel target row, dark for
+    /// the first half and bright for the second, at `scale`. A `nearest` sample
+    /// mirrors the exact-texel candidate this filter was measured against.
+    /// `phase` is the sub-texel camera position in target pixels.
+    fn upscale_row(scale: f32, phase: f32, snap: f32, nearest: bool) -> Vec<f32> {
+        const TEXELS: f32 = 64.0;
+        const DARK: f32 = 0.1;
+        const BRIGHT: f32 = 0.7;
+        let texel = |i: f32| if i < TEXELS * 0.5 { DARK } else { BRIGHT };
+        let present = (TEXELS * scale).round() as usize;
+        (0..present)
+            .map(|x| {
+                let target_px = (x as f32 + 0.5) * scale + phase;
+                if nearest {
+                    return texel(target_px.floor().clamp(0.0, TEXELS - 1.0));
+                }
+                let pos = warped_sample(target_px, snap);
+                let left = (pos - 0.5).floor();
+                let low = texel(left.clamp(0.0, TEXELS - 1.0));
+                let high = texel((left + 1.0).clamp(0.0, TEXELS - 1.0));
+                low + (high - low) * (pos - 0.5 - left)
+            })
+            .collect()
+    }
+
+    /// The distant voxel steps are one to two target pixels wide, so the
+    /// upscale has to preserve a one-texel step's contrast at scale 0.8; and it
+    /// has to do so without snapping the edge between texels, which is what a
+    /// sub-pixel camera motion would show as shimmer. Both properties are
+    /// measured here on the same synthetic step for every candidate the
+    /// comparison ran, so the shipped `UPSCALE_SNAP` is the value that passes
+    /// the first without losing the second.
+    #[test]
+    fn the_upscale_keeps_a_one_pixel_step_and_does_not_snap_a_sub_pixel_shift() {
+        const CONTRAST: f32 = 0.6; // The row's bright minus dark value.
+        const STEP: f32 = 1.0 / 16.0; // One sixteenth of a target texel.
+        let step_delta = |row: &[f32]| {
+            row.windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .fold(0.0, f32::max)
+        };
+        let mean_step = |snap: f32| {
+            (0..16)
+                .map(|k| step_delta(&upscale_row(0.8, k as f32 * STEP, snap, false)))
+                .sum::<f32>()
+                / 16.0
+        };
+        let worst_jump = |snap: f32, nearest: bool| {
+            (0..16)
+                .map(|k| {
+                    let before = upscale_row(0.8, k as f32 * STEP, snap, nearest);
+                    let after = upscale_row(0.8, (k + 1) as f32 * STEP, snap, nearest);
+                    before
+                        .iter()
+                        .zip(&after)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0.0, f32::max)
+                })
+                .fold(0.0, f32::max)
+        };
+
+        // Plain bilinear loses the step: this is the K1 collapse the sharp warp
+        // was added to fix.
+        assert!(mean_step(0.0) < 0.80 * CONTRAST);
+        // The shipped filter keeps almost all of it.
+        assert!(mean_step(UPSCALE_SNAP) >= 0.90 * CONTRAST);
+        // A sub-texel move changes the shipped filter by at most a quarter of
+        // the step and plain bilinear by less; nearest moves a whole step.
+        assert!(worst_jump(UPSCALE_SNAP, false) <= 0.30 * CONTRAST);
+        assert!(worst_jump(0.0, false) <= 0.10 * CONTRAST);
+        assert!(worst_jump(0.0, true) >= 0.90 * CONTRAST);
+    }
+
+    /// At native scale every sample lands on a texel centre and the warp is
+    /// inactive, so a scaled path promoted back to 1.0 would still be a copy
+    /// rather than a filtered image.
+    #[test]
+    fn the_upscale_is_a_copy_when_the_present_extent_matches_the_target() {
+        let row = upscale_row(1.0, 0.0, UPSCALE_SNAP, false);
+        assert_eq!(row.len(), 64);
+        assert_eq!(row[..32], [0.1; 32]);
+        assert_eq!(row[32..], [0.7; 32]);
     }
 }
