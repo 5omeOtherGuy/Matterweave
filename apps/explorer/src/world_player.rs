@@ -745,6 +745,11 @@ mod tests {
             (outside - inside).abs() <= 1.0,
             "seam step: inside {inside} m -> outside {outside} m"
         );
+        eprintln!(
+            "WORLD SEAM: window edge at x {seam}, z {z} | inside column {} voxel top {:?} / analytic {inside} | outside column {seam} analytic {outside}",
+            seam - 1,
+            voxel_surface(&world, seam - 1, z),
+        );
 
         // Walk across with the window frozen: past the edge only the analytic
         // fallback can carry the player.
