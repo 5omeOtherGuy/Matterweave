@@ -66,11 +66,31 @@ use std::time::Instant;
 
 use crate::detail_runtime::{DetailRuntime, RESIDENT_LODS};
 
+/// Upper edges in metres of the Chebyshev distance bands the drawn-instance
+/// counter reports, measured from the eye the plan was made for. The last band
+/// is open-ended, so every drawn instance is counted in exactly one band.
+///
+/// The bands are the evidence for the near field: a report that names the
+/// instance count within 16 m of the eye, and the density factor across every
+/// band boundary, is checkable against these numbers instead of a screenshot.
+/// Eight-metre bands divide the shipped ground-cover band boundaries exactly.
+pub const FLORA_BAND_EDGES_M: [i32; 8] = [8, 16, 24, 32, 40, 48, 64, i32::MAX];
+/// Number of distance bands [`FLORA_BAND_EDGES_M`] defines.
+pub const FLORA_BANDS: usize = FLORA_BAND_EDGES_M.len();
+
+/// Index of the band a Chebyshev distance from the eye falls in.
+pub fn band_of(distance_m: i32) -> usize {
+    FLORA_BAND_EDGES_M
+        .iter()
+        .position(|edge| distance_m <= *edge)
+        .unwrap_or(FLORA_BANDS - 1)
+}
+
 /// Ground-cover placements one plan may carry. Together with
 /// [`MAX_PLANNED_TREES`] this stays inside the renderer's
 /// [`MAX_FLORA_INSTANCES`] budget with room for the caps to be raised.
 ///
-/// The full-density band is 57x57 metres and holds up to 3.4 clumps per metre
+/// The full-density area is 91x91 metres and holds up to 3.4 clumps per metre
 /// column once the understory slot is counted, so a lush inland eye can plan
 /// over ten thousand ground-cover placements; the cap is what keeps a plan
 /// bounded on the phone and the planner's `dropped` counter reports any refusal
@@ -226,6 +246,11 @@ pub struct FloraCounters {
     pub pending: bool,
     /// Lattice cells the field has generated over the run, i.e. memo misses.
     pub samples: u64,
+    /// Drawn instances per [`FLORA_BAND_EDGES_M`] band, from the eye of the
+    /// plan that produced them. The nearest band is what "vegetation in front
+    /// of the camera" means; the ratios between bands are the density falloff
+    /// the field actually has, not the one its constants describe.
+    pub drawn_by_band: [usize; FLORA_BANDS],
 }
 
 /// Pool index and prototype height in metres per `(prototype id, level)`.
@@ -364,9 +389,11 @@ impl LandscapeFlora {
             return Ok(());
         }
         let rebuilt = self.field.generation() != generation_before;
+        let mut bands = [0usize; FLORA_BANDS];
         let (planned_sites, planned_trees, dropped, refused) = {
             let plan = self.field.plan();
-            let refused = fill_instances(&self.resident, plan, eye, &mut self.instances);
+            let refused =
+                fill_instances(&self.resident, plan, eye, &mut self.instances, &mut bands);
             (plan.sites.len(), plan.trees.len(), plan.dropped, refused)
         };
         let upload_begin = Instant::now();
@@ -399,6 +426,7 @@ impl LandscapeFlora {
             over_budget: previous.over_budget + u64::from(plan_ms > MAX_REBUILD_MS),
             pending: false,
             samples: self.field.samples(),
+            drawn_by_band: bands,
         };
         Ok(())
     }
@@ -425,6 +453,8 @@ fn anchor_covers(anchor: [i32; 2], eye: [f32; 3]) -> bool {
 
 /// Fill `instances` with every placement of `plan` that has resident geometry,
 /// in plan order, and return how many planned placements this module refused.
+/// `bands` receives the count of drawn instances per [`FLORA_BAND_EDGES_M`]
+/// band, from the eye the plan was made for.
 ///
 /// Refusing is allowed - a placement whose geometry failed to build, or a field
 /// larger than the renderer's instance budget, must not be drawn - but the count
@@ -437,9 +467,11 @@ fn fill_instances(
     plan: &FloraPlan,
     eye: [f32; 3],
     instances: &mut Vec<FloraInstance>,
+    bands: &mut [usize; FLORA_BANDS],
 ) -> usize {
     let mut refused = 0;
     instances.clear();
+    *bands = [0; FLORA_BANDS];
     for placed in plan.sites.iter().chain(&plan.trees) {
         if instances.len() >= MAX_FLORA_INSTANCES {
             // Keep counting: the field is refused from here on, and every
@@ -448,7 +480,13 @@ fn fill_instances(
             continue;
         }
         match instance_for(resident, placed, eye) {
-            Some(instance) => instances.push(instance),
+            Some(instance) => {
+                let distance = (placed.x - eye[0] as i32)
+                    .abs()
+                    .max((placed.z - eye[2] as i32).abs());
+                bands[band_of(distance)] += 1;
+                instances.push(instance);
+            }
             None => refused += 1,
         }
     }
@@ -593,7 +631,23 @@ mod tests {
         let planned = plan.sites.len() + plan.trees.len();
         assert!(planned > 1_000, "a plains eye plans a field, got {planned}");
         let mut instances = Vec::new();
-        let refused = fill_instances(&flora.resident, &plan, [0.0, 40.0, 0.0], &mut instances);
+        let mut bands = [0usize; FLORA_BANDS];
+        let refused = fill_instances(
+            &flora.resident,
+            &plan,
+            [0.0, 40.0, 0.0],
+            &mut instances,
+            &mut bands,
+        );
+        assert_eq!(
+            bands.iter().sum::<usize>(),
+            instances.len(),
+            "every drawn instance lands in exactly one band"
+        );
+        assert!(
+            bands[0] + bands[1] > 0,
+            "the eye's own cell must hold drawn vegetation, bands {bands:?}"
+        );
         // The catalogue has geometry for every id at every level, so nothing is
         // refused here and the two counts still agree.
         assert_eq!(refused, 0, "the full catalogue must draw every placement");
@@ -607,7 +661,14 @@ mod tests {
             flora.resident.remove(&(victim, lod));
         }
         let mut instances = Vec::new();
-        let refused = fill_instances(&flora.resident, &plan, [0.0, 40.0, 0.0], &mut instances);
+        let mut bands = [0usize; FLORA_BANDS];
+        let refused = fill_instances(
+            &flora.resident,
+            &plan,
+            [0.0, 40.0, 0.0],
+            &mut instances,
+            &mut bands,
+        );
         let expected = plan
             .sites
             .iter()

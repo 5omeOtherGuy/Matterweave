@@ -39,7 +39,8 @@ use glam::{Mat4, Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
 };
-use matterweave_core::{AsyncWorld, World};
+use matterweave_core::water::sea_level_chunk_y;
+use matterweave_core::{AsyncWorld, World, CHUNK_EDGE};
 use matterweave_render::{
     Atmosphere, CapturedFrame, Clouds, FrameResult, Hud, LightingSettings, PlayerPush, Renderer,
     ShadowCacheCounters, Sun, Water, Wind,
@@ -226,6 +227,64 @@ pub fn normalized_filter(tile: &RingTile) -> TileFilter {
 }
 
 // -- Sample ------------------------------------------------------------------
+
+/// One line naming the drawn-instance count per [`FLORA_BAND_EDGES_M`] band,
+/// edges included. A log line rather than a formatter because these numbers are
+/// what a coverage report quotes.
+fn band_line(bands: &[usize; crate::landscape_flora::FLORA_BANDS]) -> String {
+    use crate::landscape_flora::FLORA_BAND_EDGES_M;
+    let mut text = String::new();
+    let mut low = 0;
+    for (index, edge) in FLORA_BAND_EDGES_M.iter().enumerate() {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        if *edge == i32::MAX {
+            text.push_str(&format!("{low}+:{}", bands[index]));
+        } else {
+            text.push_str(&format!("{low}-{edge}:{}", bands[index]));
+        }
+        low = *edge;
+    }
+    text
+}
+
+/// Whether drawn geometry covered the ground under the camera, counted per
+/// frame.
+///
+/// The innermost distance ring is cut with the streaming window: its cells
+/// inside the window are omitted because the authoritative chunk meshes draw
+/// them. That promise holds only once those meshes are actually resident, and a
+/// fresh start, a window that just moved or a renderer recreated after a
+/// suspend leaves the ground under the eye with no geometry until streaming
+/// catches up. These counters name the frames where that happened, so the
+/// regression is visible in a log and not only in a screenshot.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CoverageCounters {
+    /// Presented frames observed.
+    pub frames: u64,
+    /// Frames where nothing drawn covered the ground cell under the camera.
+    pub gaps: u64,
+    /// Of `gaps`, the consecutive run at the start of the run, before the first
+    /// frame that did cover the camera. The opening fill is the one part that
+    /// cannot be removed by drawing alone, only shortened.
+    pub opening_gaps: u64,
+    /// Frames where the authoritative fine mesh under the camera was missing.
+    /// While the innermost ring's clip took its hole unconditionally, every one
+    /// of them was a frame with clear colour under the player.
+    pub fine_misses: u64,
+    /// Of `fine_misses`, the frames a resident coarse tile covered anyway.
+    pub coarse_covered: u64,
+}
+
+impl CoverageCounters {
+    /// Gaps after the opening fill, which must stay zero. A later gap is a real
+    /// hole: no drawn geometry under the camera while streaming had every
+    /// opportunity to cover it.
+    pub fn later_gaps(&self) -> u64 {
+        self.gaps - self.opening_gaps
+    }
+}
 
 /// Open on a shore: the first 64 m grid point (scanned from the origin outward,
 /// so the same build always opens in the same place) whose own ground is low
@@ -603,6 +662,10 @@ pub struct LandscapeSample {
     /// This frame's chunk mesh sync, and the running upload total.
     chunks: ChunkFrame,
     chunks_uploaded: u64,
+    /// Ground-coverage bookkeeping: whether drawn geometry covered the cell the
+    /// camera stands on, counted per presented frame. It is the regression
+    /// counter for the hole the innermost ring's clip once left around the eye.
+    coverage: CoverageCounters,
     /// Frame-capture identity: increments once per renderer creation or
     /// recreation, so per-renderer GPU submission counters cannot be joined
     /// across one.
@@ -845,6 +908,7 @@ impl LandscapeSample {
             tiles: TileStream::new(terrain_source, SEED),
             chunks: ChunkFrame::default(),
             chunks_uploaded: 0,
+            coverage: CoverageCounters::default(),
             renderer_epoch: 0,
             draw_attempts: 0,
             gpu_completions: metrics::GpuCompletionTracker::default(),
@@ -1038,6 +1102,63 @@ impl LandscapeSample {
         Ok(())
     }
 
+    /// Whether drawn geometry covered the ground under the camera this frame,
+    /// and whether it was the authoritative fine mesh that did it.
+    ///
+    /// The camera stands on the generator column under it, so `height_at(SEED,
+    /// x, z)` at the eye's own `(x, z)` names the surface that cell shows. A
+    /// flooded column's visible surface is the derived water mesh, so that is
+    /// what must be resident there; on land it is the chunk mesh holding the
+    /// surface voxel. The coarse half is the innermost ring: a resident tile
+    /// whose filter draws that cell. A fine miss the underlay covers is exactly
+    /// the case the ring's former unconditional hole left empty.
+    fn measure_coverage(&self) -> (bool, bool) {
+        let Some(renderer) = self.renderer.as_ref() else {
+            return (false, false);
+        };
+        let eye = self.camera.position;
+        let x = eye.x.floor() as i32;
+        let z = eye.z.floor() as i32;
+        let ground = landscape::height_at(SEED, x, z);
+        let fine = if ground < landscape::SEA_LEVEL {
+            renderer.water_chunk_has_geometry([
+                x.div_euclid(CHUNK_EDGE),
+                sea_level_chunk_y(),
+                z.div_euclid(CHUNK_EDGE),
+            ])
+        } else {
+            renderer.chunk_has_geometry([
+                x.div_euclid(CHUNK_EDGE),
+                ground.div_euclid(CHUNK_EDGE),
+                z.div_euclid(CHUNK_EDGE),
+            ])
+        };
+        let coarse = self.plan.iter().any(|tile| {
+            tile.covers_point(x, z) && renderer.terrain_tile_has_geometry(tile.level, tile.key)
+        });
+        (fine, coarse)
+    }
+
+    /// Count this frame's ground coverage. A gap is a frame with neither the
+    /// fine mesh nor a coarse underlay over the camera's own ground cell.
+    fn update_coverage(&mut self) {
+        let (fine, coarse) = self.measure_coverage();
+        self.coverage.frames += 1;
+        if !fine {
+            self.coverage.fine_misses += 1;
+            if coarse {
+                self.coverage.coarse_covered += 1;
+            }
+        }
+        if !fine && !coarse {
+            self.coverage.gaps += 1;
+            if self.coverage.gaps == self.coverage.frames {
+                // Every frame so far was a gap: still the opening fill.
+                self.coverage.opening_gaps += 1;
+            }
+        }
+    }
+
     fn hud(&self) -> Hud {
         let mut hud = Hud::new(1000., 600.);
         if !self.hud {
@@ -1103,11 +1224,12 @@ impl LandscapeSample {
         );
         // The world mode's own line: ground contact, the surface that carried
         // the last step, speed and position, so a screenshot alone shows the
-        // player is standing rather than hovering.
+        // player is standing rather than hovering. The flying sample's line
+        // also names the frames that had no drawn ground under the camera.
         let eye_line = match &self.player {
             Some(player) => player.hud_line(),
             None => format!(
-                "EYE {:.0} {:.0} {:.0} | GROUND {} M | SEED {}",
+                "EYE {:.0} {:.0} {:.0} | GROUND {} M | SEED {} | COVER GAPS {} (FINE MISS {})",
                 self.camera.position.x,
                 self.camera.position.y,
                 self.camera.position.z,
@@ -1116,7 +1238,9 @@ impl LandscapeSample {
                     self.camera.position.x as i32,
                     self.camera.position.z as i32
                 ),
-                SEED
+                SEED,
+                self.coverage.later_gaps(),
+                self.coverage.fine_misses,
             ),
         };
         hud.text(30., 94., &eye_line, 1., muted);
@@ -1262,6 +1386,7 @@ impl LandscapeSample {
             event_loop.exit();
             return;
         }
+        self.update_coverage();
         let mesh_ms = mesh_begin.elapsed().as_secs_f64() * 1000.;
         // Flora is rebuilt only when the eye leaves its rebuild cell, which is
         // what keeps a moving camera from re-running the planner every frame.
@@ -1615,7 +1740,7 @@ impl LandscapeSample {
             eprintln!(
                 "LANDSCAPE FLORA: sites {} trees {} dropped {} | drawn {} batches {} | instance \
                  bytes {} | plan {:.2} ms (worst {:.2}, budget {:.1}, over {}, pending {}) \
-                 upload {:.2} ms | rebuilds {} cells {}",
+                 upload {:.2} ms | rebuilds {} cells {} | drawn by band {}",
                 flora.planned_sites,
                 flora.planned_trees,
                 flora.dropped,
@@ -1630,6 +1755,17 @@ impl LandscapeSample {
                 flora.upload_ms,
                 flora.rebuilds,
                 flora.samples,
+                band_line(&flora.drawn_by_band),
+            );
+            eprintln!(
+                "LANDSCAPE COVERAGE: gaps {} of {} frames ({} opening, {} later) | fine mesh \
+                 missed {} frames ({} covered by the coarse ring)",
+                self.coverage.gaps,
+                self.coverage.frames,
+                self.coverage.opening_gaps,
+                self.coverage.later_gaps(),
+                self.coverage.fine_misses,
+                self.coverage.coarse_covered,
             );
             event_loop.exit();
         }

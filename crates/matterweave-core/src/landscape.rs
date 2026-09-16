@@ -371,6 +371,26 @@ pub struct TileFilter {
     pub bound: Option<Clip>,
 }
 
+impl TileFilter {
+    /// Whether the coarse cell of `level` that contains world metre point
+    /// `(x, z)` is drawn by this filter.
+    ///
+    /// The test is the mesher's own: a cell is drawn when its centre lies in
+    /// the bound and not in the hole. It says nothing about which tile owns the
+    /// cell, so a caller holding a tile must use [`RingTile::covers_point`],
+    /// which asks this of the filter only once the tile owns the cell.
+    pub fn covers_point(&self, level: u32, x: i32, z: i32) -> bool {
+        let cell_m = lod_cell_m(level);
+        let centre = [
+            x.div_euclid(cell_m) * cell_m + cell_m / 2,
+            z.div_euclid(cell_m) * cell_m + cell_m / 2,
+        ];
+        let in_hole = self.hole.is_some_and(|hole| hole.contains_centre(centre));
+        let in_bound = self.bound.is_none_or(|bound| bound.contains_centre(centre));
+        !in_hole && in_bound
+    }
+}
+
 // -- Fixed-point noise -------------------------------------------------------
 
 const SALT_CONTINENT: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -1963,6 +1983,22 @@ pub struct RingTile {
     pub filter: TileFilter,
 }
 
+impl RingTile {
+    /// Whether this tile draws the coarse cell of its own level that contains
+    /// the world metre point `(x, z)`.
+    ///
+    /// The tile owns the cells of `LOD_TILE_CELLS` square starting at its key,
+    /// and draws the ones its filter keeps; a caller uses this to ask whether
+    /// geometry built for this tile covers the ground under a camera.
+    pub fn covers_point(&self, x: i32, z: i32) -> bool {
+        let cell_m = lod_cell_m(self.level);
+        let cell = [x.div_euclid(cell_m), z.div_euclid(cell_m)];
+        cell[0].div_euclid(LOD_TILE_CELLS) == self.key[0]
+            && cell[1].div_euclid(LOD_TILE_CELLS) == self.key[1]
+            && self.filter.covers_point(self.level, x, z)
+    }
+}
+
 /// Largest world metre a `f32` eye coordinate is folded into. Far beyond the
 /// simulation domain, but finite, so a runaway camera cannot overflow the plan.
 const EYE_LIMIT: f32 = 1.0e9;
@@ -2390,6 +2426,71 @@ mod tests {
             );
         }
         assert_eq!(lod_step_m(0), 1, "the finest level is exact");
+    }
+
+    #[test]
+    fn a_tile_filter_agrees_with_the_mesher_about_the_cell_it_draws() {
+        // A cell-sized window inside a tile: the filter's own cell is drawn and
+        // the hole's cell is not, at every level the rings use.
+        for level in 0..=MAX_LOD_LEVEL {
+            let cell = lod_cell_m(level);
+            let filter = TileFilter {
+                hole: Some(Clip {
+                    min: [0, 0],
+                    max: [cell, cell],
+                }),
+                bound: Some(Clip {
+                    min: [-cell, -cell],
+                    max: [cell, cell],
+                }),
+            };
+            assert!(
+                filter.covers_point(level, -1, -1),
+                "inside the bound and outside the hole is drawn at level {level}"
+            );
+            assert!(
+                !filter.covers_point(level, 0, 0),
+                "the hole's own cell is not drawn at level {level}"
+            );
+            assert!(
+                !filter.covers_point(level, cell, cell),
+                "the bound's far edge is not drawn at level {level}"
+            );
+        }
+        // A point anywhere in a cell tests the cell's centre, not the point.
+        let level = 1;
+        let filter = TileFilter {
+            hole: Some(Clip {
+                min: [1, 1],
+                max: [2, 2],
+            }),
+            bound: None,
+        };
+        assert!(
+            !filter.covers_point(level, 0, 0),
+            "the centre (1, 1) is inside"
+        );
+        assert!(
+            filter.covers_point(level, 1, 1),
+            "the centre (2, 2) is outside"
+        );
+        // The same predicate against the real mesher: the cell it reports drawn
+        // is a cell the mesh emits a top for, and one it reports cut is not.
+        let key = [0, 0];
+        let filter = TileFilter {
+            hole: Some(Clip {
+                min: [0, 0],
+                max: [32, 32],
+            }),
+            bound: None,
+        };
+        let mesh = lod_tile_mesh(7, 1, key, filter);
+        assert!(!mesh.indices.is_empty(), "the east strip is still drawn");
+        let drawn_x: Vec<i32> = mesh.vertices.iter().map(|v| v.position[0] as i32).collect();
+        assert!(
+            drawn_x.iter().all(|x| *x >= 31),
+            "no vertex may stand inside the hole: {drawn_x:?}"
+        );
     }
 
     #[test]
