@@ -2189,6 +2189,13 @@ pub fn fine_clip(eye: [f32; 3]) -> Clip {
 /// emitted nearest ring first and, within a ring, nearest tile first, which is
 /// the order a frame's bounded uploads should follow.
 ///
+/// The ground under the window is the *generator's*, one quantised step below
+/// the voxel surface. A world whose fine meshes differ from the generator - an
+/// edited one - must not use this: removing the top voxel of a column would
+/// expose the ring's ground at exactly the height the dig removed. The sample
+/// this planner serves makes no edits; one that does needs the ring's hole back,
+/// or the underlay lowered by the depth it can be edited to.
+///
 /// `rings` must be ordered from finest to coarsest with nested squares;
 /// [`LANDSCAPE_RINGS`] is that set.
 pub fn ring_plan(eye: [f32; 3], fine: Clip, rings: &[RingConfig]) -> Vec<RingTile> {
