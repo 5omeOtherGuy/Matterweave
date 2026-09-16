@@ -10,7 +10,7 @@ types; no Rapier, window or Vulkan handle escapes.
 | Area | What it is |
 | --- | --- |
 | Terrain collision | `sync_world` publishes exact solid-voxel collision from loaded 16³ chunks as one compound of merged boxes per chunk. |
-| Character | A 1.7 m capsule with an eye 1.5 m above its feet, moved by Rapier move-and-slide at a fixed 60 Hz step. |
+| Character | A 1.7 m capsule moved by Rapier move-and-slide at a fixed 60 Hz step, under a [`CharacterProfile`](#public-surface) that sets its eye height, jump, step-up and travel bounds. |
 | Dynamic bodies | Solid half-metre voxel volumes with density-derived mass/inertia and CCD; bounded fracture into the original voxels. |
 | Interaction | A spring-joint grab, a mass-scaled throw, terrain-occluded ray interaction, and fly-mode `step_objects`. |
 | Detail collision | Static collision built from authoritative `DetailScene` cells, synchronously or on one background worker, with an edit-to-publication cadence controller. |
@@ -19,7 +19,10 @@ types; no Rapier, window or Vulkan handle escapes.
 ### Simulation and body contracts
 
 - Coordinates are metres, Y up. Solid terrain cells are one metre. The standing capsule is
-  1.7 m tall; its eye is 1.5 m above its feet.
+  1.7 m tall. Its default profile puts the eye 1.5 m above its feet, jumps 1.6 m, autosteps
+  0.30 m and clamps travel to ±255.5 m, which is exactly the character every earlier sample
+  had; a sample that needs different movement sets its own valid profile and nothing else
+  changes.
 - `sync_world` merges occupied cells into solid boxes and builds one compound per chunk.
   Collision uses authoritative cells, independently of visual meshes and LOD. Changed
   revisions replace colliders synchronously; evicted chunks are removed. The next fixed step
@@ -29,10 +32,19 @@ types; no Rapier, window or Vulkan handle escapes.
   stalled time is discarded; nonfinite/negative dt is ignored. Horizontal speed is bounded to
   12 m/s, falling character speed to 35 m/s, and jump edges survive sub-step frames. Dynamic
   rendering interpolates the two latest fixed poses.
-- Walking uses Rapier move-and-slide, ground snapping, gravity and an 8 m/s jump. Character
-  impulses push dynamic objects. Autostep is disabled: full-metre steps require jumping. X/Z
-  position stays within the finite world's ±256 m boundary. The application owns respawning
-  after the character falls below the world.
+- Walking uses Rapier move-and-slide, ground snapping, gravity and a jump whose launch speed
+  is derived from the profile's design apex. Character impulses push dynamic objects. A
+  profile's autostep climbs the stairs and risers it declares, and a voxel riser within the
+  autostep height is climbed even where Rapier's own autostep cannot place the capsule: the
+  step-up casts the capsule up, forward by at least the capsule's radius, and down, and
+  accepts the landing only when it is a flat walkable surface within the autostep height. A
+  taller face stays solid; slopes remain the controller's. X/Z position stays within the
+  profile's bounds. The application owns respawning after the character falls below the world.
+- `set_analytic_ground` installs a sample-supplied surface for columns with no resident
+  collision: the probe is consulted only where the character's own column is outside the
+  published window, so voxel collision always wins inside it, and a probe that is not
+  installed leaves every earlier sample unchanged. `on_analytic_ground` reports whether the
+  last fixed step's support or blocking came from it.
 - Dynamic bodies are solid half-metre voxel volumes (each axis 1..=6 voxels, at most 32 voxels
   per body; `MAX_VOXEL_DIM`, `MAX_VOXELS_PER_BODY`), with density-derived mass and inertia and
   CCD enabled. A break converts the volume into its original voxels, carrying rotation and
@@ -104,6 +116,8 @@ types; no Rapier, window or Vulkan handle escapes.
 | Item | Notes |
 | --- | --- |
 | `Physics` | `new`, `sync_world`, `step`, `step_objects`, `teleport`, `set_flying_eye`, `intersects_character_cell`, `character_eye`, `grounded`, `held`, `body_count`, `body_activity`. |
+| Movement profile | `CharacterProfile` (`eye_height_m`, `jump_height_m`, `autostep_height_m`, `autostep_min_width_m`, `bounds_m`), `set_character_profile`, `character_profile`. |
+| Analytic ground | `AnalyticGround`, `set_analytic_ground`, `on_analytic_ground`: the surface for columns outside the resident window. |
 | Dynamic interaction | `spawn_demo`, `spawn_playground`, `has_target`, `grab`, `update_grab`, `release`, `throw`, `break_body`, `dynamic_mesh`. |
 | Persistence | `snapshot`, `restore`, `PhysicsSnapshot`, `BodySnapshot`. |
 | Detail collision | `replace_detail_scene`, `publish_detail_scene`, `detail_added_blocked`, `detail_collision_stats`, `detail_collider_count`, `dynamic_body_aabbs`; `PreparedDetailCollision`, `DetailCollisionStats`, `DetailCollisionCadence`, `AsyncDetailCollision`, `AsyncDetailStats`. |

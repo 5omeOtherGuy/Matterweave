@@ -102,9 +102,13 @@ pub fn marker_present(directory: &Path) -> bool {
 /// A coastal spawn worth opening the demo on: low ground with open water 64 m
 /// away and a flat enough neighbourhood to stand on. It is the same
 /// deterministic scan the landscape sample's fly spawn uses, but the eye
-/// stands on the surface rather than eight metres above it.
+/// stands on the surface and a sparsely covered shore (beach, dune, rock) is
+/// preferred, because the fly camera looks from eight metres up while the
+/// walking eye looks from inside the ground cover.
 pub fn spawn() -> Spawn {
-    let mut fallback = None;
+    let mut coast = None;
+    let mut sparse = None;
+    let mut flat = None;
     for gz in (-24..24).rev() {
         for gx in -24..24 {
             let (x, z) = (gx * 64, gz * 64);
@@ -132,17 +136,29 @@ pub fn spawn() -> Spawn {
                 continue;
             };
             let spawn = standing_spawn(x, z, (dx as f32).atan2(dz as f32));
-            if fallback.is_none() {
-                fallback = Some(spawn);
+            if coast.is_none() {
+                coast = Some(spawn);
+            }
+            let open = landscape::biome_at(SEED, x, z).grass_density() <= 16;
+            if open && sparse.is_none() {
+                sparse = Some(spawn);
             }
             if flat_enough(x, z) {
-                return spawn;
+                if open {
+                    return spawn;
+                }
+                if flat.is_none() {
+                    flat = Some(spawn);
+                }
             }
         }
     }
-    // No coast in the probed square: keep the sample startable rather than
-    // failing, exactly as the fly spawn does.
-    fallback.unwrap_or_else(|| standing_spawn(0, 0, 0.6))
+    // No open shore in the probed square: a flat one, then any coast, then a
+    // start on the origin rather than failing to start.
+    sparse
+        .or(flat)
+        .or(coast)
+        .unwrap_or_else(|| standing_spawn(0, 0, 0.6))
 }
 
 /// A spawn with the eye a hair above the column's surface, so the settle can
@@ -229,6 +245,9 @@ pub struct WorldPlayer {
     speed_m_s: f32,
     steps_simulated: u64,
     frames: u64,
+    /// Collision publishes this player performed: one per world revision, i.e.
+    /// per window shift or edit, never per frame.
+    syncs: u64,
     step_ms: f64,
     worst_step_ms: f64,
     sync_ms: f64,
@@ -275,6 +294,7 @@ impl WorldPlayer {
             speed_m_s: 0.0,
             steps_simulated: 0,
             frames: 0,
+            syncs: 0,
             step_ms: 0.0,
             worst_step_ms: 0.0,
             sync_ms: 0.0,
@@ -294,6 +314,7 @@ impl WorldPlayer {
         self.physics.sync_world(world);
         self.sync_ms = begin.elapsed().as_secs_f64() * 1000.0;
         self.worst_sync_ms = self.worst_sync_ms.max(self.sync_ms);
+        self.syncs += 1;
         self.synced_revision = revision;
     }
 
@@ -373,13 +394,14 @@ impl WorldPlayer {
     /// The smoke run's summary: what the player did and what physics cost.
     pub fn summary_line(&self) -> String {
         format!(
-            "{} | step {:.3} ms/frame worst {:.3} ({:.2} fixed steps/frame) | collision sync {:.3} ms worst {:.3}",
+            "{} | step {:.3} ms/frame worst {:.3} ({:.2} fixed steps/frame) | collision sync {:.3} ms worst {:.3} over {} publishes",
             self.hud_line(),
             self.step_ms,
             self.worst_step_ms,
             self.steps_simulated as f64 / self.frames.max(1) as f64,
             self.sync_ms,
             self.worst_sync_ms,
+            self.syncs,
         )
     }
 }
@@ -886,6 +908,50 @@ mod tests {
         );
         let line = player.hud_line();
         assert!(line.contains("SPEED 4.5 M/S"), "{line}");
+    }
+
+    #[test]
+    fn the_host_cost_of_a_walking_step_and_a_window_publish_is_measured() {
+        // Not a gate: this prints the numbers the PR states, with the
+        // conditions attached. The smoke run stands still, so the walk here
+        // crosses chunk boundaries to exercise the fixed step and the
+        // collision publish on the same path the sample uses.
+        let mut world = World::landscape(SEED);
+        let spawn = spawn();
+        world.stream_around(spawn.eye);
+        let started = Instant::now();
+        let mut player = WorldPlayer::new(&world, spawn).unwrap();
+        let build_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let yaw = spawn.yaw + std::f32::consts::FRAC_PI_2;
+        for _ in 0..900 {
+            player.step(
+                FIXED_DT,
+                PlayerInput {
+                    move_z: 1.0,
+                    run: true,
+                    ..PlayerInput::IDLE
+                },
+                yaw,
+            );
+            // The sample's order: the stream follows the new eye, then the
+            // collision publish picks up whatever revision it published.
+            world.stream_around(player.eye().to_array());
+            player.sync_world(&world);
+        }
+        let eye = player.eye();
+        let travelled = ((eye.x - spawn.eye[0]).hypot(eye.z - spawn.eye[2])) as f64;
+        eprintln!(
+            "WORLD HOST COST: construction+settle {build_ms:.1} ms | {} frames at run speed, {travelled:.0} m travelled, {} publishes | step {:.3} ms/frame worst {:.3} ({:.2} fixed steps/frame) | collision sync {:.3} ms worst {:.3}",
+            player.frames,
+            player.syncs,
+            player.step_ms,
+            player.worst_step_ms,
+            player.steps_simulated as f64 / player.frames.max(1) as f64,
+            player.sync_ms,
+            player.worst_sync_ms,
+        );
+        assert!(travelled > 50.0, "the walk did not move: {eye:?}");
+        assert!(player.grounded(), "the walk did not stay on the ground");
     }
 
     #[test]

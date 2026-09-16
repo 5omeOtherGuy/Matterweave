@@ -1785,8 +1785,10 @@ pub fn run_desktop() {
         sample.scale_check = scale_check;
         // Host-only: one settled frame at the requested index, then exit. The
         // walking sample settles in about a second, so 60 frames is a standing
-        // spawn, not a fall.
-        sample.world_capture = world_capture.then(|| smoke_frames.unwrap_or(60));
+        // spawn, not a fall. `--smoke-frames N` also exits at N, so the capture
+        // has to be the frame before it.
+        sample.world_capture =
+            world_capture.then(|| smoke_frames.map_or(60, |limit| limit.saturating_sub(1)));
         event_loop
             .run_app(&mut sample)
             .expect("landscape event loop run");
