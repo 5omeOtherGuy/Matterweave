@@ -32,3 +32,6 @@ captures/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Worker run artifacts (orchestration scaffolding, not project documents)
+ENGINEERING-LOG-*.md
