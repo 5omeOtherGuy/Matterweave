@@ -1,5 +1,6 @@
 //! Landscape generator acceptance: determinism, relief, biomes, water, tiles,
 //! flora population and the authoritative streaming path that uses them.
+use matterweave_core::landmarks;
 use matterweave_core::landscape::{
     self, Biome, Clip, RingTile, TileFilter, FLORA_CELL_M, LANDSCAPE_GENERATOR_VERSION,
     LANDSCAPE_RINGS, LOD_TILE_CELLS, MAX_SURFACE_Y, MIN_SURFACE_Y, SEA_LEVEL,
@@ -34,7 +35,7 @@ fn fingerprint(seed: u64, edge: i32) -> u64 {
 
 #[test]
 fn generation_is_deterministic_and_seed_dependent() {
-    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 2);
+    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 3);
     for (x, z) in [(0, 0), (1, -1), (1000, -2000), (-9999, 30000)] {
         assert_eq!(
             landscape::column(SEED, x, z),
@@ -61,9 +62,15 @@ fn generator_fingerprint_is_stable() {
     // Golden value: any change to the noise fields, biome rules or material
     // tables moves it. Updating the constant is a deliberate generator change
     // (and a LANDSCAPE_GENERATOR_VERSION bump), never a test fix.
+    //
+    // v3 moved it from 0x3e12_047e_a85c_b89e to 0x5231_cffe_2b4dc609: the
+    // biome mixture, its material roll, the blended vegetation pressures and the
+    // landmark shaping all reach `landscape::column`, which is what this digest
+    // samples. Heights changed only inside landmark footprints; every column
+    // kept its hard-classified biome label.
     assert_eq!(
         fingerprint(SEED, 12),
-        0x3e12_047e_a85c_b89e,
+        0x5231_cffe_2b4d_c609,
         "landscape output drifted from the recorded generator identity"
     );
 }
@@ -336,9 +343,15 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // vegetation form change moves it again, to the value below: flora prototypes
     // are larger and the tile builder carries their tone, so the two changes
     // together are one digest, measured after the merge rather than copied from
-    // either change.
+    // either change. It stands at 0x238c_a60d_0189_c137 for v2.
+    //
+    // v3 moved it to 0x457d_182a_5cc9_e146: the surface tone now carries the
+    // blend's per-patch material (sand thinning into grass, stone into soil),
+    // the flora population follows the mixed pressures, and a landmark's own
+    // rock face reaches the tiles as STONE/GRAVEL. Vertex counts move with the
+    // new material patches, because a merged top needs equal colours.
     assert_eq!(
-        value, 0x238c_a60d_0189_c137,
+        value, 0x457d_182a_5cc9_e146,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }
@@ -1400,4 +1413,437 @@ fn pre_landscape_saves_restore_as_the_legacy_island() {
     assert_eq!(restored.stream_y_range(), (-16, 32));
     assert_eq!(restored.get([0, 3, 0]), world.get([0, 3, 0]));
     std::fs::remove_dir_all(&directory).ok();
+}
+
+// -- Biome transitions -------------------------------------------------------
+//
+// The generator used to classify every column hard, so two neighbouring metres
+// either side of a threshold carried different ground materials and different
+// vegetation pressures: a fence line. These tests are the acceptance for the
+// blend that replaced it, and they measure the band rather than assuming it.
+
+/// The demo region, where the transitions the sample walks through live.
+const DEMO_SPAWN: [i32; 2] = [5632, 1408];
+
+/// Sample a straight line of metre-columns.
+fn line(from: [i32; 2], direction: (i32, i32), metres: i32) -> Vec<landscape::Column> {
+    (0..metres)
+        .map(|step| {
+            landscape::column(
+                SEED,
+                from[0] + direction.0 * step,
+                from[1] + direction.1 * step,
+            )
+        })
+        .collect()
+}
+
+/// Whether a column is land. The sea is a hard edge by nature - the water plane
+/// is the generator's one sea level - so a transition across the waterline is
+/// not a band and these tests leave it out.
+fn land(column: &landscape::Column) -> bool {
+    !column.flooded() && column.biome != Biome::Ocean
+}
+
+#[test]
+fn a_column_still_is_the_biome_the_hard_classifier_names() {
+    // The blend changes transitions, not worlds: every column's label is the
+    // classification the generator shipped before the bands existed, so biome
+    // coverage, flora kinds and every claim about "where the plains are" still
+    // describe the same world. Outside a band the mixture agrees with the label
+    // too; inside it the mixture is what the material and cover are made of.
+    let mut single = 0;
+    let mut banded = 0;
+    let mut disagreed = 0;
+    for z in -300..300 {
+        for x in -300..300 {
+            let (wx, wz) = (x * 23, z * 23);
+            let column = landscape::column(SEED, wx, wz);
+            let inputs = landscape::blend_inputs_at(SEED, wx, wz);
+            assert_eq!(
+                column.biome,
+                matterweave_core::biome_blend::hard_classify(inputs),
+                "({wx}, {wz}) is labelled differently than the hard classifier names it"
+            );
+            if column.mix.len() == 1 {
+                assert_eq!(
+                    column.mix.dominant(),
+                    column.biome,
+                    "({wx}, {wz}) has left every band but still disagrees with its label"
+                );
+                single += 1;
+            } else {
+                banded += 1;
+                if column.mix.dominant() != column.biome {
+                    disagreed += 1;
+                }
+            }
+        }
+    }
+    let share = 100.0 * banded as f64 / (banded + single) as f64;
+    println!(
+        "{single} columns outside a band, {banded} inside one ({share:.1}%), \
+         {disagreed} of them dominated by the other biome"
+    );
+    assert!(single > 0 && banded > 0, "the sample must cover both cases");
+    assert!(
+        share > 20.0 && share < 60.0,
+        "the bands must cover a real share of the ground without dissolving the \
+         biomes into each other: {share:.1}%"
+    );
+}
+
+/// `values[p]`, nearest rank. The samples here are small and deliberately so.
+fn percentile(values: &[i32], p: usize) -> i32 {
+    if values.is_empty() {
+        0
+    } else {
+        values[(values.len() - 1) * p / 100]
+    }
+}
+
+/// One boundary the generator puts in front of a walker, measured along a
+/// straight line of metre-columns.
+#[derive(Debug)]
+struct Crossing {
+    /// Where the mixture first holds more than one biome.
+    at: [i32; 2],
+    /// Metres of real mixture either side of it: both biomes hold at least a
+    /// fifth of the ground, so a walker sees two kinds of ground, not a tail.
+    band_m: i32,
+    /// Biome the walk starts in and the one it ends in.
+    from: Biome,
+    to: Biome,
+    /// Largest weight one metre of that band moves.
+    worst_step: i32,
+    /// Largest elevation one metre of that band crosses, in metres.
+    worst_rise: i32,
+    /// Metres of the band whose ground steps further than a walking player can.
+    steep_m: i32,
+}
+
+/// Every material-changing boundary a straight walk from `from` crosses.
+///
+/// A boundary only counts when the two biomes lay down *different ground*: a
+/// hills/plains edge is the same moss on both sides, and nothing about it can
+/// read as a seam. The sea is left out too - the waterline is the generator's
+/// one sea plane and an edge by nature.
+fn crossings(from: [i32; 2], directions: &[(i32, i32)], metres: i32) -> Vec<Crossing> {
+    let mut found = Vec::new();
+    for direction in directions {
+        let line = line(from, *direction, metres);
+        let mut start = None;
+        for step in 0..=line.len() {
+            let inside = step < line.len() && land(&line[step]) && line[step].mix.mixed(51);
+            match (start, inside) {
+                (None, true) => start = Some(step),
+                (Some(begin), false) => {
+                    // The band's own first column: the column before it can be
+                    // water, and a walker stepping out of the sea is not walking
+                    // through a transition band.
+                    let index = begin;
+                    let subject = line[index].biome;
+                    let after = line[step.min(line.len() - 1)].biome;
+                    let at = [
+                        from[0] + direction.0 * index as i32,
+                        from[1] + direction.1 * index as i32,
+                    ];
+                    start = None;
+                    if landscape::biome_surface(SEED, at[0], at[1], subject)
+                        == landscape::biome_surface(SEED, at[0], at[1], after)
+                    {
+                        continue;
+                    }
+                    let window = &line[index..step];
+                    let (mut worst_step, mut steep_m, mut worst_rise) = (0, 0, 0);
+                    for pair in window.windows(2) {
+                        let before = i32::from(pair[0].mix.weight(subject));
+                        let after = i32::from(pair[1].mix.weight(subject));
+                        worst_step = worst_step.max((after - before).abs());
+                        worst_rise = worst_rise.max((pair[1].height - pair[0].height).abs());
+                        // A diagonal line step is 1.414 m of ground.
+                        let run = if direction.0 != 0 && direction.1 != 0 {
+                            1414
+                        } else {
+                            1000
+                        };
+                        let rise = (pair[1].height - pair[0].height).abs();
+                        if rise * 1000 * 1000 > run * landmarks::WALK_SLOPE_PERMILLE {
+                            steep_m += 1;
+                        }
+                    }
+                    found.push(Crossing {
+                        at,
+                        band_m: (step - begin) as i32,
+                        from: subject,
+                        to: after,
+                        worst_step,
+                        worst_rise,
+                        steep_m,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    found
+}
+
+/// The lines the demo region is walked along: eight bearings from the spawn and
+/// from a ring of origins around it, so the sample is the world and not one
+/// convenient direction.
+fn demo_crossings() -> Vec<Crossing> {
+    let directions = [
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (1, -1),
+        (2, 1),
+        (3, 1),
+        (-1, 2),
+        (2, -3),
+        (-3, 1),
+        (1, 3),
+    ];
+    let mut found = crossings(DEMO_SPAWN, &directions, 600);
+    for origin_z in -2..3 {
+        for origin_x in -2..3 {
+            let origin = [
+                DEMO_SPAWN[0] + origin_x * 2048,
+                DEMO_SPAWN[1] + origin_z * 2048,
+            ];
+            found.extend(crossings(origin, &directions, 600));
+        }
+    }
+    found
+}
+
+#[test]
+fn a_biome_boundary_is_a_band_of_metres_not_a_fence_line() {
+    let found = demo_crossings();
+    let mut widths: Vec<i32> = found.iter().map(|crossing| crossing.band_m).collect();
+    widths.sort_unstable();
+    let mut pairs: BTreeMap<(&'static str, &'static str), (usize, i32)> = BTreeMap::new();
+    for crossing in &found {
+        let record = pairs
+            .entry((crossing.from.name(), crossing.to.name()))
+            .or_insert((0, 0));
+        record.0 += 1;
+        record.1 = record.1.max(crossing.band_m);
+    }
+    println!(
+        "{} material-changing crossings: band p10 {} m, p25 {} m, p50 {} m, p75 {} m, p90 {} m, \
+         widest {} m",
+        widths.len(),
+        percentile(&widths, 10),
+        percentile(&widths, 25),
+        percentile(&widths, 50),
+        percentile(&widths, 75),
+        percentile(&widths, 90),
+        widths.last().copied().unwrap_or(0),
+    );
+    for ((from, to), (count, widest)) in &pairs {
+        println!("  {from}->{to}: {count} crossings, widest {widest} m");
+    }
+    let steep = found.iter().filter(|crossing| crossing.steep_m > 0).count();
+    println!("{steep} of them cross at least one step past the walk slope");
+    assert!(
+        widths.len() >= 20,
+        "the sample must cross many boundaries: {}",
+        widths.len()
+    );
+    assert!(
+        percentile(&widths, 50) >= 16,
+        "the median transition must be tens of metres of walking: {widths:?}"
+    );
+    assert!(
+        percentile(&widths, 10) >= 4,
+        "even the narrowest transition must span metres: {widths:?}"
+    );
+}
+
+#[test]
+fn no_single_metre_carries_more_than_a_quarter_of_a_transition() {
+    // The acceptance: along a line crossing a boundary, no step may be larger
+    // than the blend's own step. The blend's step is the *scalar* band it is
+    // built from - a biome's share of the ground moves with the elevation the
+    // walk crosses, at most the whole weight over twelve metres of it - plus the
+    // climate fields' own budget for the same metre. A hard threshold moves the
+    // whole weight in one metre whatever the ground does; this is the bound that
+    // says the blend cannot.
+    const CLIMATE_BUDGET: i32 = 32;
+    let found = demo_crossings();
+    let mut worst = 0;
+    let mut worst_at = [0i32; 2];
+    let mut flat_worst = 0;
+    let mut over = 0;
+    let mut worst_ratio = 0.0f64;
+    let mut worst_ratio_line = String::new();
+    for crossing in &found {
+        let allowance = 256 * crossing.worst_rise / matterweave_core::biome_blend::SHORE_BAND_M;
+        let allowed = CLIMATE_BUDGET + allowance;
+        let ratio = crossing.worst_step as f64 / allowed.max(1) as f64;
+        if ratio > worst_ratio {
+            worst_ratio = ratio;
+            worst_ratio_line = format!(
+                "{:?} {}->{} step {} rise {}",
+                crossing.at,
+                crossing.from.name(),
+                crossing.to.name(),
+                crossing.worst_step,
+                crossing.worst_rise
+            );
+        }
+        if crossing.worst_step > allowed {
+            over += 1;
+        }
+        if crossing.worst_step > worst {
+            worst = crossing.worst_step;
+            worst_at = crossing.at;
+        }
+        if crossing.steep_m == 0 {
+            flat_worst = flat_worst.max(crossing.worst_step);
+        }
+    }
+    println!(
+        "{} crossings: worst one-metre weight step {worst}/256 at ({}, {}), \
+         worst on entirely walkable ground {flat_worst}/256, {over} over the elevation budget, \
+         worst share of the budget {:.2} ({worst_ratio_line})",
+        found.len(),
+        worst_at[0],
+        worst_at[1],
+        worst_ratio,
+    );
+    assert!(found.len() >= 20, "the sample must cross boundaries");
+    assert!(
+        over == 0,
+        "a metre moved more weight than the elevation it crossed: {over} crossings"
+    );
+    assert!(
+        flat_worst <= 64,
+        "a walkable metre carried more than a quarter of a transition: {flat_worst}/256"
+    );
+}
+
+#[test]
+fn flora_pressures_slide_across_a_boundary_instead_of_stepping() {
+    // Vegetation is the other half of the transition: a forest edge that thins
+    // is a density slide, and the mean pressure per metre must not jump. The
+    // bound follows from the weight bound: a metre of *walkable* ground moves a
+    // biome's share by at most a quarter, so its pressure - at most 64 - moves
+    // by at most a quarter of 64.
+    let mut walkable_worst = 0;
+    let mut walkable_at = [0i32; 2];
+    let mut steep_worst = 0;
+    for direction in [
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (2, 1),
+        (-1, 2),
+        (3, 1),
+        (1, 3),
+        (-2, 1),
+    ] {
+        let lines = line(DEMO_SPAWN, direction, 600);
+        for step in 1..lines.len() {
+            if !land(&lines[step]) || !land(&lines[step - 1]) {
+                continue;
+            }
+            let before = lines[step - 1].mix.pressure(Biome::grass_density) as i32;
+            let after = lines[step].mix.pressure(Biome::grass_density) as i32;
+            let moved = (after - before).abs();
+            let at = [
+                DEMO_SPAWN[0] + direction.0 * step as i32,
+                DEMO_SPAWN[1] + direction.1 * step as i32,
+            ];
+            let run = if direction.0 != 0 && direction.1 != 0 {
+                1414
+            } else if direction.1.abs() > 1 {
+                // The longer steps of the shallow bearings: (1, 3) is 3.2 m.
+                3162
+            } else {
+                1000
+            };
+            let rise = (lines[step].height - lines[step - 1].height).abs();
+            if rise * 1000 * 1000 <= run * landmarks::WALK_SLOPE_PERMILLE {
+                if moved > walkable_worst {
+                    walkable_worst = moved;
+                    walkable_at = at;
+                }
+            } else {
+                steep_worst = steep_worst.max(moved);
+            }
+        }
+    }
+    println!(
+        "worst grass pressure step: {walkable_worst}/64 on walkable ground at ({}, {}), \
+         {steep_worst}/64 where the ground itself steps",
+        walkable_at[0], walkable_at[1]
+    );
+    assert!(
+        walkable_worst <= 16,
+        "ground cover steps a quarter of its range in one walkable metre: {walkable_worst}/64"
+    );
+}
+
+#[test]
+fn the_material_roll_follows_the_mixture() {
+    // The surface material is chosen by one deterministic roll per 8 m patch, so
+    // a band is the two biomes' own palettes thinning into each other rather
+    // than a line where one replaces the other. Pooled over every banded window
+    // in the demo region, the share of each palette has to be the weight that
+    // asked for it: an unbiased roll, not a lucky one.
+    let mut expected: BTreeMap<u8, f64> = BTreeMap::new();
+    let mut observed: BTreeMap<u8, i64> = BTreeMap::new();
+    let mut windows = 0;
+    for direction in [(1, 0), (0, 1), (1, 1), (2, -1), (-1, 3), (3, 2)] {
+        let metres = 400;
+        let lines = line(DEMO_SPAWN, direction, metres);
+        for window in lines.windows(64) {
+            if !window.iter().all(land) || window.iter().all(|column| column.mix.len() == 1) {
+                continue;
+            }
+            for step in 0..window.len() {
+                let x = DEMO_SPAWN[0] + direction.0 * (windows * 0 + step) as i32;
+                let z = DEMO_SPAWN[1] + direction.1 * (windows * 0 + step) as i32;
+                let _ = (x, z);
+                let column = &window[step];
+                for &(biome, weight) in column.mix.entries() {
+                    let material = landscape::biome_surface(
+                        SEED,
+                        DEMO_SPAWN[0] + direction.0 * step as i32,
+                        DEMO_SPAWN[1] + direction.1 * step as i32,
+                        biome,
+                    );
+                    *expected.entry(material).or_default() += f64::from(weight) / 256.0;
+                }
+                *observed.entry(column.surface).or_default() += 1;
+            }
+            windows += 1;
+        }
+    }
+    let total: f64 = expected.values().sum();
+    println!("{windows} banded windows, {total:.0} columns");
+    let mut worst = 0.0f64;
+    for (material, want) in &expected {
+        let got = observed.get(material).copied().unwrap_or(0) as f64;
+        let share = (got - want) / total;
+        if share.abs() > worst.abs() {
+            worst = share;
+        }
+        println!(
+            "  {:<8} expected {:>7.1}, counted {:>7} ({:+.2}%)",
+            matterweave_core::material::name(*material),
+            want,
+            got as i64,
+            100.0 * share
+        );
+    }
+    assert!(windows >= 8, "the sample must contain banded windows");
+    assert!(
+        worst.abs() < 0.05,
+        "a material's share is off its weight by {:.2}%",
+        100.0 * worst
+    );
 }
