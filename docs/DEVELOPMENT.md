@@ -210,6 +210,14 @@ specular and flora cast shadows are only defined for a sun elevation the sample 
 not otherwise have, and both have to stay measurable without a private build. A
 malformed or degenerate value is logged and ignored.
 
+Two more developer switches exist only so a surface can be captured without scene
+furniture over it: `MATTERWEAVE_LANDSCAPE_HUD=off` stops drawing the status panel and
+touch zones (the 0.52-alpha panel covers the near ground on the desktop), and
+`MATTERWEAVE_LANDSCAPE_WIND=0` fixes the flora sway so two captures of the same
+ground stand at the same phase. Both are off by default, an absent or malformed
+value leaves the sample exactly as it was, and neither changes terrain, materials
+or any measurement other than the one asked for.
+
 ### Bounded reflection gate
 
 The headless host validator compiles the shipping `world.wgsl` through the renderer's

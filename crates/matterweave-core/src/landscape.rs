@@ -349,7 +349,9 @@ fn hash3(seed: u64, x: i32, y: i32) -> u64 {
 
 /// Deterministic four-input mixing for voxel-level detail (ore and deep rock),
 /// where folding one coordinate into another would repeat patterns along a diagonal.
-fn hash4(seed: u64, x: i32, y: i32, z: i32) -> u64 {
+/// Also the mixer behind [`crate::material::tone`], which is why it is visible
+/// to the rest of the crate.
+pub(crate) fn hash4(seed: u64, x: i32, y: i32, z: i32) -> u64 {
     let mut value = seed
         ^ (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ (y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
@@ -1379,7 +1381,12 @@ pub fn lod_tile_mesh(seed: u64, level: u32, key: [i32; 2], filter: TileFilter) -
                 // and below one step still merges with the water it borders.
                 height: quantise_height(height, step),
                 colour: material::color(top_material),
+                // The cell's world metre position: centre in x and z, its drawn
+                // top in y. Two tiles sampling the same cell agree exactly.
+                tone: material::tone(top_material, x, height, z),
                 sub_colour: material::color(sample.sub_surface),
+                sub_tone: material::tone(sample.sub_surface, x, height, z),
+                rock_tone: material::tone(material::STONE, x, height, z),
                 sub_depth: sample.sub_depth,
             };
         }
@@ -1417,27 +1424,35 @@ const FILTER_WALL_CELLS: i32 = 2;
 struct CellSample {
     /// Top height in metres; the whole cell is flat at this height.
     height: i32,
-    /// Top-face colour.
+    /// Top-face base colour, before the per-cell tone.
     colour: [f32; 3],
-    /// Colour of the sub-surface layer, which is what a wall shows.
+    /// Deterministic tone of the top material at this cell, in 1/256ths.
+    tone: [i32; 3],
+    /// Base colour of the sub-surface layer, which is what a wall shows.
     sub_colour: [f32; 3],
+    /// Tone of that sub-surface layer at this cell.
+    sub_tone: [i32; 3],
+    /// Tone of bare rock at this cell, for a wall reaching past the sub layer.
+    rock_tone: [i32; 3],
     /// Depth of that sub-surface layer in metres.
     sub_depth: i32,
 }
 
 impl CellSample {
-    /// Colour of a wall hanging from this cell's top down to `foot`.
+    /// Base colour and tone of a wall hanging from this cell's top down to
+    /// `foot`.
     ///
     /// A step that stays inside the sub-surface layer shows that layer - soil
     /// under grass, stone under snow - and anything deeper is bare rock. This is
     /// the same material [`material_in_column`] reports for the voxels the wall
     /// stands for, and it is what makes a wall read as a break rather than as a
-    /// darker copy of the top above it.
-    fn wall_colour(&self, foot: i32) -> [f32; 3] {
+    /// darker copy of the top above it. The tone comes from the cell's own
+    /// position, so the two layers of one wall do not share a tone.
+    fn wall_colour(&self, foot: i32) -> ([f32; 3], [i32; 3]) {
         if self.height - foot <= self.sub_depth {
-            self.sub_colour
+            (self.sub_colour, self.sub_tone)
         } else {
-            material::color(material::STONE)
+            (material::color(material::STONE), self.rock_tone)
         }
     }
 }
@@ -1515,6 +1530,8 @@ struct TopRect {
     extent: [i32; 2],
     height: i32,
     colour: [f32; 3],
+    /// Mean tone of the rectangle's cells, applied when the quad is emitted.
+    tone: [i32; 3],
 }
 
 /// Greedy-merge the drawn cells into as few flat rectangles as possible.
@@ -1570,13 +1587,29 @@ fn merge_tops(surface: &Surface, rects: &mut Vec<TopRect>) {
                 extent: [width, depth],
                 height: cell.height,
                 colour: cell.colour,
+                tone: merged_tone(surface, cx, cz, width, depth),
             });
         }
     }
 }
 
+/// Mean top tone over a rectangle of cells: the aggregate a merged top carries
+/// instead of the tone of one sampled cell.
+fn merged_tone(surface: &Surface, cx: i32, cz: i32, width: i32, depth: i32) -> [i32; 3] {
+    let mut sum = [0i32; 3];
+    for z in cz..cz + depth {
+        for x in cx..cx + width {
+            let tone = surface.sample_at(x, z).tone;
+            for channel in 0..3 {
+                sum[channel] += tone[channel];
+            }
+        }
+    }
+    material::mean_tone(sum, width * depth)
+}
+
 /// One greedy-merged wall: a run of cell faces in one plane sharing top, foot
-/// and colour.
+/// and base colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct WallRun {
     /// Outward normal of the wall in cell axes: one of `-x`, `+x`, `-z`, `+z`.
@@ -1590,11 +1623,14 @@ struct WallRun {
     /// Wall top and foot in metres, `top > foot`.
     top: i32,
     foot: i32,
+    /// Base wall colour, before the run's aggregate tone.
     colour: [f32; 3],
+    /// Mean tone of the run's cells, in 1/256ths.
+    tone: [i32; 3],
 }
 
-/// The wall one cell face needs, as `(top, foot, colour)`, or `None` for a face
-/// that needs no wall.
+/// The wall one cell face needs: top, foot, base colour and the cell's own
+/// tone, or `None` for a face that needs no wall.
 ///
 /// Between two drawn cells of this level the higher cell owns the face, so
 /// exactly one of the two tiles that can see the pair emits it and the wall
@@ -1602,13 +1638,17 @@ struct WallRun {
 /// hole, beyond a bound - there is no same-level neighbour to meet, so the wall
 /// hangs at least [`FILTER_WALL_CELLS`] cells below its own top, and reaches
 /// further down when the neighbour across the edge stands lower than that.
+///
+/// The base colour, not the tone, decides whether two faces merge: a run is
+/// tinted once with the mean tone of its cells, so colour variation never
+/// shortens a run that shares a plane and a layer.
 fn wall_spec(
     surface: &Surface,
     cell_m: i32,
     cx: i32,
     cz: i32,
     offset: [i32; 2],
-) -> Option<(i32, i32, [f32; 3])> {
+) -> Option<(i32, i32, [f32; 3], [i32; 3])> {
     if !surface.drawn(cx, cz) {
         return None;
     }
@@ -1624,7 +1664,8 @@ fn wall_spec(
         let fallback = own.height - FILTER_WALL_CELLS * cell_m;
         (neighbour.height.min(fallback), own.height)
     };
-    Some((top, foot, own.wall_colour(foot)))
+    let (colour, tone) = own.wall_colour(foot);
+    Some((top, foot, colour, tone))
 }
 
 /// Greedy-merge the walls of every drawn cell into runs.
@@ -1663,10 +1704,19 @@ fn merge_walls(surface: &Surface, cell_m: i32, runs: &mut Vec<WallRun>) {
                     continue;
                 };
                 let mut len = 1;
+                let mut tone_sum = spec.3;
                 while run + len < LOD_TILE_CELLS {
                     let (nx, nz) = at(run + len);
-                    if wall_spec(surface, cell_m, nx, nz, offset) != Some(spec) {
+                    let Some(next) = wall_spec(surface, cell_m, nx, nz, offset) else {
                         break;
+                    };
+                    // Base colour, top and foot are the merge key; the tone is
+                    // aggregated below, so variation cannot shorten a run.
+                    if (next.0, next.1, next.2) != (spec.0, spec.1, spec.2) {
+                        break;
+                    }
+                    for (channel, sum) in tone_sum.iter_mut().enumerate() {
+                        *sum += next.3[channel];
                     }
                     len += 1;
                 }
@@ -1678,6 +1728,7 @@ fn merge_walls(surface: &Surface, cell_m: i32, runs: &mut Vec<WallRun>) {
                     top: spec.0,
                     foot: spec.1,
                     colour: spec.2,
+                    tone: material::mean_tone(tone_sum, len),
                 });
                 run += len;
             }
@@ -1702,7 +1753,7 @@ fn emit_top(mesh: &mut Mesh, rect: TopRect, key: [i32; 2], cell_m: i32) {
         mesh.vertices.push(Vertex {
             position: position.map(|v| v as f32),
             normal: [0.0, 1.0, 0.0],
-            color: rect.colour,
+            color: material::tint(rect.colour, rect.tone),
         });
     }
     mesh.indices
@@ -1752,7 +1803,7 @@ fn emit_wall(mesh: &mut Mesh, run: WallRun, key: [i32; 2], cell_m: i32) {
         mesh.vertices.push(Vertex {
             position,
             normal: run.normal.map(|v| v as f32),
-            color: run.colour,
+            color: material::tint(run.colour, run.tone),
         });
     }
     mesh.indices
@@ -1976,7 +2027,10 @@ mod tests {
                 surface.sample[slot.0][slot.1] = CellSample {
                     height,
                     colour: [0.1, 0.2, 0.3],
+                    tone: [0; 3],
                     sub_colour: [0.1, 0.2, 0.3],
+                    sub_tone: [0; 3],
+                    rock_tone: [0; 3],
                     sub_depth: 1_000,
                 };
             }
@@ -1994,7 +2048,10 @@ mod tests {
         CellSample {
             height,
             colour,
+            tone: [0; 3],
             sub_colour: colour,
+            sub_tone: [0; 3],
+            rock_tone: [0; 3],
             sub_depth: 1_000,
         }
     }
@@ -2043,8 +2100,50 @@ mod tests {
                 extent: [LOD_TILE_CELLS, LOD_TILE_CELLS],
                 height: 12,
                 colour: [0.1, 0.2, 0.3],
+                tone: [0; 3],
             }],
             "a flat tile is one quad whatever its cell count"
+        );
+    }
+
+    #[test]
+    fn a_merged_top_carries_the_mean_tone_of_its_cells() {
+        let mut surface = flat_surface(6);
+        // Two tones, two cells each along x, over rows 0..4: the aggregate is
+        // their mean, not the tone of the cell the greedy scan started on.
+        for cz in 0..4 {
+            for cx in 0..4 {
+                let tone = if cx < 2 { [8, -4, 0] } else { [-2, 10, 6] };
+                let mut only = cell(6, [0.1, 0.2, 0.3]);
+                only.tone = tone;
+                set(&mut surface, cx, cz, only);
+            }
+            // The rest of the row keeps its zero tone, so a 4x4 aggregate is
+            // exactly the two tones it covers.
+        }
+        assert_eq!(
+            merged_tone(&surface, 0, 0, 4, 4),
+            [(8 - 2) / 2, (10 - 4) / 2, 6 / 2],
+            "the mean over the merged cells"
+        );
+        // A whole-tile merge of one tone carries that tone unchanged, and the
+        // tint reaches the emitted colour.
+        let mut uniform = flat_surface(6);
+        for cz in -TILE_HALO..=LOD_TILE_CELLS {
+            for cx in -TILE_HALO..=LOD_TILE_CELLS {
+                let mut only = cell(6, [0.1, 0.2, 0.3]);
+                only.tone = [8, -4, 16];
+                set(&mut uniform, cx, cz, only);
+            }
+        }
+        let mut rects = Vec::new();
+        merge_tops(&uniform, &mut rects);
+        assert_eq!(rects.len(), 1, "one height, one base colour, one tone");
+        assert_eq!(rects[0].tone, [8, -4, 16]);
+        assert_ne!(
+            material::tint(rects[0].colour, rects[0].tone),
+            rects[0].colour,
+            "the aggregate reaches the quad"
         );
     }
 
@@ -2091,6 +2190,7 @@ mod tests {
                     top: 3,
                     foot: 0,
                     colour: [0.1, 0.2, 0.3],
+                    tone: [0; 3],
                 },
                 &WallRun {
                     normal: [0, 0, -1],
@@ -2100,6 +2200,7 @@ mod tests {
                     top: 3,
                     foot: 0,
                     colour: [0.1, 0.2, 0.3],
+                    tone: [0; 3],
                 },
             ],
             "two runs, split where the block is interrupted: {runs:?}"
@@ -2155,20 +2256,23 @@ mod tests {
             CellSample {
                 height: 10,
                 colour: [0.1, 0.2, 0.3],
+                tone: [0; 3],
                 sub_colour: [0.4, 0.3, 0.2],
+                sub_tone: [0; 3],
+                rock_tone: [0; 3],
                 sub_depth: 4,
             },
         );
         set(&mut deep, 4, 3, cell(8, [0.1, 0.2, 0.3]));
         assert_eq!(
             wall_spec(&deep, cell_m, 3, 3, [1, 0]),
-            Some((10, 8, [0.4, 0.3, 0.2])),
+            Some((10, 8, [0.4, 0.3, 0.2], [0; 3])),
             "a step inside the sub-surface layer shows that layer"
         );
         set(&mut deep, 4, 3, cell(2, [0.1, 0.2, 0.3]));
         assert_eq!(
             wall_spec(&deep, cell_m, 3, 3, [1, 0]),
-            Some((10, 2, material::color(material::STONE))),
+            Some((10, 2, material::color(material::STONE), [0; 3])),
             "a step deeper than the sub-surface layer is bare rock"
         );
 
@@ -2177,7 +2281,7 @@ mod tests {
         set(&mut low, 4, 3, cell(2, [0.1, 0.2, 0.3]));
         assert_eq!(
             wall_spec(&low, cell_m, 3, 3, [1, 0]),
-            Some((10, 2, [0.1, 0.2, 0.3])),
+            Some((10, 2, [0.1, 0.2, 0.3], [0; 3])),
             "the higher cell owns the face"
         );
         assert_eq!(
@@ -2699,6 +2803,7 @@ mod tests {
                 extent: [3, 4],
                 height: 7,
                 colour,
+                tone: [0; 3],
             },
             [0, 0],
             4,
@@ -2714,6 +2819,7 @@ mod tests {
                     top: 7,
                     foot: 3,
                     colour,
+                    tone: [0; 3],
                 },
                 [0, 0],
                 4,

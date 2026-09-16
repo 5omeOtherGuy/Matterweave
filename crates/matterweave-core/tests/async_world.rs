@@ -56,9 +56,15 @@ fn dump(mesh: &Mesh) -> (Vec<[u32; 9]>, Vec<u32>) {
     (vertices, mesh.indices.clone())
 }
 
-type Surface = ([i32; 3], [i32; 3], [u32; 3]);
+type Surface = ([i32; 3], [i32; 3], u8);
 /// Unit faces covered by each quad, with an outward winding check.
-fn surfaces(mesh: &Mesh) -> BTreeSet<Surface> {
+///
+/// The third element is the material of the cell the quad starts on, taken from
+/// the world rather than from the mesh colour: a merged quad now carries the
+/// mean tone of its cells, so its vertices are no longer one material colour
+/// lookup. Inserting every covered cell under that material is what proves a
+/// quad never grows across a material boundary.
+fn surfaces(world: &World, mesh: &Mesh) -> BTreeSet<Surface> {
     let mut result = BTreeSet::new();
     for quad in mesh.vertices.chunks_exact(4) {
         let normal = quad[0].normal.map(|v| v as i32);
@@ -69,12 +75,13 @@ fn surfaces(mesh: &Mesh) -> BTreeSet<Surface> {
             std::array::from_fn(|i| quad.iter().map(|p| p.position[i] as i32).min().unwrap());
         let max: [i32; 3] =
             std::array::from_fn(|i| quad.iter().map(|p| p.position[i] as i32).max().unwrap());
+        let material = world.get(min);
         for a in min[u]..max[u] {
             for b in min[v]..max[v] {
                 let mut cell = min;
                 cell[u] = a;
                 cell[v] = b;
-                assert!(result.insert((cell, normal, quad[0].color.map(f32::to_bits))));
+                assert!(result.insert((cell, normal, material)));
             }
         }
     }
@@ -229,11 +236,11 @@ fn background_window_and_meshes_equal_the_synchronous_reference() {
     for (&key, mesh) in &accepted {
         assert_eq!(world.chunk_revision(key), Some(mesh.revision));
         assert_eq!(dump(mesh), dump(&world.mesh_chunk(key)));
-        for face in surfaces(mesh) {
+        for face in surfaces(&world, mesh) {
             assert!(faces.insert(face), "duplicate face in {key:?}");
         }
     }
-    assert_eq!(faces, surfaces(&reference.mesh()));
+    assert_eq!(faces, surfaces(&reference, &reference.mesh()));
 }
 
 #[test]
