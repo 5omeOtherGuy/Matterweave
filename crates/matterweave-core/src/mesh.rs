@@ -36,6 +36,14 @@ impl World {
     /// Synchronous whole-world exposed-face baseline, including cross-chunk occlusion.
     /// Stable iteration order makes equal worlds produce equal mesh bytes.
     /// Call after edits, not each frame. This is not greedy meshing, LOD or streaming.
+    ///
+    /// Its vertex colour stays the palette colour. This path is the compatibility
+    /// and comparison baseline: `renderer_comparison` requires it to agree
+    /// pixel-for-pixel with the ray reference, which shades from the same palette
+    /// by material, and the per-voxel tone of [`crate::material::tone`] cannot be
+    /// reproduced by a per-material palette. The streamed mesher
+    /// ([`Self::mesh_chunk`]) and [`crate::landscape::lod_tile_mesh`] carry the
+    /// tone; they are the paths the landscape sample draws.
     pub fn mesh(&self) -> Mesh {
         let mut mesh = Mesh {
             revision: self.revision(),
@@ -162,17 +170,180 @@ pub(crate) fn mesh_halo(key: [i32; 3], voxels: &[u8; HALO_VOLUME], revision: u64
         for quad in group {
             let base = mesh.vertices.len() as u32;
             let material = voxels[Shape::linearize(quad.minimum) as usize].0;
+            let colour = quad_color(key, quad, &face, material);
             for position in face.quad_mesh_positions(quad, 1.0) {
                 mesh.vertices.push(Vertex {
                     position: std::array::from_fn(|axis| {
                         (i64::from(key[axis]) * 16) as f32 + position[axis] - 1.0
                     }),
                     normal: face.signed_normal().as_vec3().to_array(),
-                    color: color(material),
+                    color: colour,
                 });
             }
             mesh.indices.extend(face.quad_mesh_indices(base));
         }
     }
     mesh
+}
+
+/// Colour of one greedy-merged quad: the mean per-voxel tone of every cell the
+/// quad merges, applied to the material colour.
+///
+/// Colour is deliberately not part of the merge key. If it were, neighbouring
+/// cells would almost never merge and every flat run would explode into per-cell
+/// quads; aggregating at the quad instead keeps the merge (and the triangle
+/// count) exactly as it was, at the cost of one colour per run rather than one
+/// per cell. A run therefore reads as one block of ground, which is what the
+/// coarse distance rings show anyway.
+fn quad_color(
+    key: [i32; 3],
+    quad: &block_mesh::UnorientedQuad,
+    face: &block_mesh::OrientedBlockFace,
+    material: u8,
+) -> [f32; 3] {
+    let corners = face.quad_corners(quad);
+    // The second and third corners step one cell along the face's own axes, so
+    // the deltas divided by the quad's extent are those unit steps.
+    let u = (corners[1] - corners[0]) / quad.width;
+    let v = (corners[2] - corners[0]) / quad.height;
+    let mut sum = [0i32; 3];
+    let mut cell = block_mesh::ilattice::glam::UVec3::from(quad.minimum);
+    for _ in 0..quad.width {
+        let mut at = cell;
+        for _ in 0..quad.height {
+            let world: [i32; 3] = std::array::from_fn(|axis| key[axis] * 16 + at[axis] as i32 - 1);
+            let tone = crate::material::tone(material, world[0], world[1], world[2]);
+            for channel in 0..3 {
+                sum[channel] += tone[channel];
+            }
+            at += v;
+        }
+        cell += u;
+    }
+    crate::material::tint(
+        color(material),
+        crate::material::mean_tone(sum, (quad.width * quad.height) as i32),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::material;
+
+    /// One flat 16x16 slab of `material` at y = 0 in the origin chunk: the top
+    /// faces of all 256 cells are coplanar and share a material, so the mesher
+    /// merges them into a single quad.
+    fn slab(material: u8) -> World {
+        let mut world = World::new(7);
+        for z in 0..16 {
+            for x in 0..16 {
+                world.set([x, 0, z], material);
+            }
+        }
+        world
+    }
+
+    fn top_colour(mesh: &Mesh) -> [f32; 3] {
+        for quad in mesh.vertices.chunks_exact(4) {
+            if quad[0].normal == [0.0, 1.0, 0.0] {
+                return quad[0].color;
+            }
+        }
+        panic!("the slab has no top face");
+    }
+
+    #[test]
+    fn a_merged_quad_carries_the_mean_tone_of_its_cells() {
+        let world = slab(material::MOSS);
+        let mesh = world.mesh_chunk([0, 0, 0]);
+        // The expected colour is summed here from the same public per-cell tone
+        // the mesher reads, over the same 256 cells: a mesher that sampled one
+        // cell, or skipped the aggregate, lands on a different colour.
+        let mut sum = [0i32; 3];
+        for z in 0..16 {
+            for x in 0..16 {
+                let tone = material::tone(material::MOSS, x, 0, z);
+                for channel in 0..3 {
+                    sum[channel] += tone[channel];
+                }
+            }
+        }
+        let mean = material::mean_tone(sum, 16 * 16);
+        let expected = material::tint(material::color(material::MOSS), mean);
+        assert_eq!(top_colour(&mesh), expected);
+        // Averaging a whole tile of one family's white noise converges on the
+        // material colour, which is the honest limit of quad-level aggregation:
+        // a 16x16 flat run carries a few 1/256ths, not a single cell's tens.
+        assert!(
+            mean.iter().all(|value| value.abs() <= 8),
+            "a whole slab averages back toward the base colour: {mean:?}"
+        );
+    }
+
+    #[test]
+    fn one_cell_keeps_its_own_tone_and_surfaces_stay_within_their_family() {
+        let mut world = World::new(7);
+        world.set([3, 0, 5], material::STONE);
+        let mesh = world.mesh_chunk([0, 0, 0]);
+        // A lone cell merges with nothing, so its per-cell tone is its colour.
+        let expected = material::tint(
+            material::color(material::STONE),
+            material::tone(material::STONE, 3, 0, 5),
+        );
+        assert_eq!(top_colour(&mesh), expected);
+        // Two materials at one cell are two different colours; a reload of the
+        // same world rebuilds them exactly.
+        let again = slab(material::MOSS).mesh_chunk([0, 0, 0]);
+        assert_eq!(
+            top_colour(&again),
+            top_colour(&slab(material::MOSS).mesh_chunk([0, 0, 0]))
+        );
+    }
+
+    #[test]
+    fn equal_worlds_mesh_to_equal_bytes_on_every_call() {
+        // Determinism is the whole contract of the tone: a mesh is bytes, and a
+        // worker result is accepted only if it equals the synchronous one.
+        let first = slab(material::SAND).mesh_chunk([0, 0, 0]);
+        let second = slab(material::SAND).mesh_chunk([0, 0, 0]);
+        let dump = |mesh: &Mesh| {
+            let mut bytes = Vec::new();
+            for vertex in &mesh.vertices {
+                for value in vertex
+                    .position
+                    .iter()
+                    .chain(&vertex.normal)
+                    .chain(&vertex.color)
+                {
+                    bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+                }
+            }
+            bytes.extend_from_slice(bytemuck::cast_slice(&mesh.indices));
+            bytes
+        };
+        assert_eq!(dump(&first), dump(&second));
+        // The whole-world baseline keeps the palette colour: it is the
+        // comparison mesh the ray reference must match by material, so the tone
+        // exists only in the streamed and tile meshers. A lone cell proves the
+        // two paths differ exactly by the cell's tone.
+        let mut single = World::new(7);
+        single.set([3, 0, 5], material::GRAVEL);
+        let reference = single.mesh();
+        let greedy = single.mesh_chunk([0, 0, 0]);
+        let reference_colour = reference
+            .vertices
+            .iter()
+            .find(|vertex| vertex.normal == [0.0, 1.0, 0.0])
+            .expect("top face")
+            .color;
+        assert_eq!(reference_colour, material::color(material::GRAVEL));
+        assert_eq!(
+            top_colour(&greedy),
+            material::tint(
+                material::color(material::GRAVEL),
+                material::tone(material::GRAVEL, 3, 0, 5)
+            )
+        );
+    }
 }
