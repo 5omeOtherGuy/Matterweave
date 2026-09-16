@@ -169,12 +169,6 @@ impl LandmarkKind {
         SEA_LEVEL + BASE_CLEARANCE_M
     }
 
-    /// Largest ground slope the shape ever adds, in per-mille, as an upper
-    /// bound the tests check against the generated terrain.
-    pub fn max_slope_per_mille(self) -> i32 {
-        WALK_SLOPE_PERMILLE
-    }
-
     /// Signed lift at distance `d` from the centre, in metres, before the fade:
     /// the profile with its apron taper.
     ///
@@ -426,14 +420,6 @@ pub fn shape(seed: u64, x: i32, z: i32, ground: i32) -> i32 {
     } else {
         ground.saturating_add(lift)
     }
-}
-
-/// Whether `(x, z)` is on the walkable apron of a landmark: the outermost part
-/// of its footprint, where a player stands to look at it.
-pub fn on_apron(seed: u64, x: i32, z: i32) -> Option<Landmark> {
-    let (landmark, d) = covering(seed, x, z)?;
-    let start = landmark.radius_m() * APRON_START / 256;
-    (d >= start).then_some(landmark)
 }
 
 /// Every site inside a square around a point, nearest first.
