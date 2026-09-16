@@ -317,7 +317,8 @@ impl Experience {
             if let Some(mut wetland) = self.wetland.take() {
                 wetland.suspended(event_loop);
             }
-            let mut sample = LandscapeSample::new(self.legacy_path.clone(), self.frame_limit);
+            let mut sample =
+                LandscapeSample::new(self.legacy_path.clone(), self.frame_limit, false);
             sample.resumed(event_loop);
             self.landscape = Some(sample);
         } else if self.landscape.as_ref().is_some_and(|l| l.return_to_menu) {

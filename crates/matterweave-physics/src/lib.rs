@@ -21,6 +21,7 @@ pub use dynamic_cache::DynamicMeshCache;
 use matterweave_core::{Mesh, Vertex, World};
 use rapier3d::{
     control::{CharacterAutostep, CharacterLength, KinematicCharacterController},
+    parry::query::ShapeCastOptions,
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
@@ -62,7 +63,16 @@ const BODY_ACTIVITY_RANGE: f32 = 40.0;
 /// Y below which a fallen body is retained inactive with zero velocity instead
 /// of accelerating without bound. Bodies are never deleted for falling.
 const BELOW_WORLD_FLOOR: f32 = -32.0;
-const EYE_OFFSET: f32 = 0.65;
+/// Gravity applied to the character and to dynamic bodies, in m/s².
+const GRAVITY: f32 = 20.0;
+/// Distance the walking controller keeps between the capsule and a surface, in
+/// metres. Explicit so the voxel step-up measures the same gap the controller
+/// stops at.
+const CHARACTER_OFFSET: f32 = 0.01;
+/// Steepest surface the character walks up, in radians. The controller and the
+/// voxel step-up's landing test share it: a landing the controller would treat
+/// as a wall is not a step.
+const MAX_CLIMB_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 const HALF_SEGMENT: f32 = 0.55;
 const RADIUS: f32 = 0.30;
 const VOXEL_SIZE: f32 = 0.5;
@@ -141,6 +151,70 @@ struct Constraint {
     second: RigidBodyHandle,
 }
 
+/// Walking-character movement profile. [`Default`] reproduces the character
+/// every existing sample shipped with, so a sample that does not set one is
+/// unchanged. The landscape world sample sets its own: a 1.7 m eye, a 1.2 m
+/// jump, a one-voxel autostep and the landscape's travel bounds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CharacterProfile {
+    /// Camera height above the feet, in metres. The capsule's centre sits
+    /// 0.85 m above the feet, so an eye height below that places the camera
+    /// inside the capsule.
+    pub eye_height_m: f32,
+    /// Apex of a standing jump, in metres. The initial speed is derived from
+    /// this and the fixed gravity, so the design height and the simulation
+    /// cannot drift apart.
+    pub jump_height_m: f32,
+    /// Largest step the walking controller climbs, in metres; zero disables
+    /// autostep and a full-height voxel then requires a jump.
+    pub autostep_height_m: f32,
+    /// Minimum landing width one autostep needs, in metres.
+    pub autostep_min_width_m: f32,
+    /// Horizontal half-extent the character's centre is clamped to, in metres.
+    pub bounds_m: f32,
+}
+impl Default for CharacterProfile {
+    fn default() -> Self {
+        Self {
+            eye_height_m: 1.5,
+            jump_height_m: 1.6,
+            autostep_height_m: 0.30,
+            autostep_min_width_m: 0.20,
+            bounds_m: 255.5,
+        }
+    }
+}
+impl CharacterProfile {
+    /// Offset of the camera above the capsule's centre, in metres.
+    fn eye_offset(&self) -> f32 {
+        self.eye_height_m - (HALF_SEGMENT + RADIUS)
+    }
+    /// Whether every field is finite and inside the range the controller can
+    /// simulate. A profile that fails is refused, never clamped.
+    pub fn valid(&self) -> bool {
+        let in_range = |value: f32, range: std::ops::RangeInclusive<f32>| {
+            value.is_finite() && range.contains(&value)
+        };
+        in_range(self.eye_height_m, 0.2..=8.0)
+            && in_range(self.jump_height_m, 0.0..=8.0)
+            && in_range(self.autostep_height_m, 0.0..=4.0)
+            && in_range(self.autostep_min_width_m, 0.01..=2.0)
+            && in_range(self.bounds_m, 1.0..=1.0e6)
+    }
+    /// Initial upward speed of a standing jump, in m/s, from its design apex.
+    fn jump_speed(&self) -> f32 {
+        (2.0 * GRAVITY * self.jump_height_m).sqrt()
+    }
+}
+
+/// Analytic ground outside the resident voxel window: for one metre column,
+/// the walkable surface height in metres, or `None` where the source has no
+/// surface. The probe is consulted only where no resident chunk covers the
+/// capsule, so published voxel collision always wins inside the window, and
+/// the same surface continues across the window's edge - which is what keeps
+/// the seam from becoming a hole or an invisible wall.
+pub type AnalyticGround = Box<dyn Fn(i32, i32) -> Option<f32> + Send + Sync>;
+
 pub struct Physics {
     pipeline: PhysicsPipeline,
     islands: IslandManager,
@@ -169,11 +243,18 @@ pub struct Physics {
     mesh_revision: u64,
     flying: bool,
     jump_pending: bool,
+    profile: CharacterProfile,
+    /// Sample-supplied ground for columns the resident window does not cover.
+    analytic_ground: Option<AnalyticGround>,
+    /// Whether the last fixed step's support or blocking came from
+    /// [`Self::analytic_ground`]. False whenever no probe is installed.
+    analytic_contact: bool,
 }
 impl Physics {
     pub fn new(world: &World) -> Self {
+        let profile = CharacterProfile::default();
         let mut bodies = RigidBodySet::new();
-        let center = Vector::new(12.0, 18.0 - EYE_OFFSET, 28.0);
+        let center = Vector::new(12.0, 18.0 - profile.eye_offset(), 28.0);
         let character =
             bodies.insert(RigidBodyBuilder::kinematic_position_based().translation(center));
         let mut colliders = ColliderSet::new();
@@ -210,6 +291,9 @@ impl Physics {
             mesh_revision: 0,
             flying: false,
             jump_pending: false,
+            profile,
+            analytic_ground: None,
+            analytic_contact: false,
         };
         result.sync_world(world);
         result
@@ -254,7 +338,32 @@ impl Physics {
         }
     }
     pub fn character_eye(&self) -> [f32; 3] {
-        (self.center + Vector::Y * EYE_OFFSET).to_array()
+        (self.center + Vector::Y * self.profile.eye_offset()).to_array()
+    }
+    /// Replaces the movement profile when it is valid; an invalid profile is
+    /// refused and the previous one is kept. The capsule does not move: the
+    /// camera follows the new eye height and the next movement uses the new
+    /// jump, autostep and bounds.
+    pub fn set_character_profile(&mut self, profile: CharacterProfile) -> bool {
+        if !profile.valid() {
+            return false;
+        }
+        self.profile = profile;
+        true
+    }
+    pub fn character_profile(&self) -> CharacterProfile {
+        self.profile
+    }
+    /// Installs or clears the analytic ground, see [`AnalyticGround`].
+    pub fn set_analytic_ground(&mut self, ground: Option<AnalyticGround>) {
+        self.analytic_ground = ground;
+        self.analytic_contact = false;
+    }
+    /// Whether the last fixed step's support or blocking came from the analytic
+    /// ground rather than resident voxel collision. A world with no probe
+    /// installed always reads false.
+    pub fn on_analytic_ground(&self) -> bool {
+        self.analytic_contact
     }
     pub fn grounded(&self) -> bool {
         self.grounded
@@ -320,7 +429,7 @@ impl Physics {
         if !valid_vector(eye, 16384.0) {
             return false;
         }
-        let center = Vector::from_array(eye) - Vector::Y * EYE_OFFSET;
+        let center = Vector::from_array(eye) - Vector::Y * self.profile.eye_offset();
         let shape = SharedShape::capsule_y(HALF_SEGMENT, RADIUS);
         let pos = Pose::from_translation(center);
         // Direct narrow-phase checks include newly inserted chunks before the next step.
@@ -352,7 +461,7 @@ impl Physics {
         if !valid_vector(eye, 16384.0) {
             return false;
         }
-        self.center = Vector::from_array(eye) - Vector::Y * EYE_OFFSET;
+        self.center = Vector::from_array(eye) - Vector::Y * self.profile.eye_offset();
         self.bodies[self.character].set_translation(self.center, true);
         self.bodies[self.character].set_next_kinematic_translation(self.center);
         self.vertical_velocity = 0.0;
@@ -398,7 +507,114 @@ impl Physics {
         self.colliders[self.character_collider].set_enabled(true);
         count
     }
+    /// Places the capsule on a voxel riser the walking controller cannot climb
+    /// on its own.
+    ///
+    /// Rapier's autostep moves the capsule forward only by the horizontal
+    /// translation left after the blocking hit, which for a full-metre riser is
+    /// smaller than the capsule's radius: the capsule then rests on the riser's
+    /// edge, where the tilted contact slides it back down. Terrain here is a
+    /// voxel grid with flat landings at least one cell wide, so the riser is
+    /// measured with the same queries the controller uses and the capsule is
+    /// placed squarely on the landing: room to rise, a landing clear for the
+    /// profile's minimum width, and ground within the profile's autostep height
+    /// below the landing pose. A taller face is out of reach and stays solid,
+    /// and a step the controller already takes never reaches this path because
+    /// its landing is the floor it is standing on.
+    fn voxel_step_up(
+        &self,
+        queries: &QueryPipeline,
+        shape: &dyn Shape,
+        horizontal: Vector,
+    ) -> Option<Vector> {
+        if !self.grounded
+            || self.profile.autostep_height_m <= 0.0
+            || horizontal.length_squared() < 1.0e-8
+        {
+            return None;
+        }
+        let direction = horizontal.normalize();
+        // The capsule's centre has to move past the riser's face to stand on
+        // the landing, so the nudge is at least the capsule's radius; the
+        // profile's minimum width is the landing a step needs beyond that.
+        let nudge = self.profile.autostep_min_width_m.max(RADIUS + 0.05);
+        let lift = self.profile.autostep_height_m + CHARACTER_OFFSET;
+        let cast = |max_time_of_impact: f32| ShapeCastOptions {
+            target_distance: CHARACTER_OFFSET,
+            stop_at_penetration: false,
+            max_time_of_impact,
+            compute_impact_geometry_on_penetration: true,
+        };
+        let start = Pose::from_translation(self.center);
+        if queries
+            .cast_shape(&start, Vector::Y, shape, cast(lift))
+            .is_some()
+        {
+            // No headroom for the rise.
+            return None;
+        }
+        let raised = Pose::from_translation(self.center + Vector::Y * lift);
+        if queries
+            .cast_shape(&raised, direction, shape, cast(nudge))
+            .is_some()
+        {
+            // Something stands at the raised height: not a landing to walk on.
+            return None;
+        }
+        let ahead = Pose::from_translation(raised.translation + direction * nudge);
+        let (_, drop) = queries.cast_shape(&ahead, -Vector::Y, shape, cast(lift))?;
+        // The landing must be a surface the controller would walk on. A capsule
+        // resting on a wall's top corner reports a near-horizontal normal
+        // there, and treating that as a step would let it hop up a face one
+        // autostep at a time.
+        if drop.normal1.dot(Vector::Y) < MAX_CLIMB_ANGLE.cos() {
+            return None;
+        }
+        // A flat floor stops the descent at the same feet height it started
+        // from, so only a real riser within the autostep height is a step.
+        let rise = lift - drop.time_of_impact;
+        if rise <= 1.0e-3 || rise > self.profile.autostep_height_m {
+            return None;
+        }
+        Some(ahead.translation - Vector::Y * drop.time_of_impact)
+    }
+
+    /// The analytic walkable surface under the capsule's footprint, or `None`
+    /// when the capsule's own column is covered by a resident chunk: published
+    /// voxel collision is authoritative there, so the fallback never competes
+    /// with it. The centre column decides, not the whole footprint: a capsule
+    /// crossing the window edge is still held by the last resident voxels
+    /// while its centre is outside, and the fallback takes over the moment the
+    /// centre leaves, which is what keeps the handover from dipping. The
+    /// highest of the footprint's columns is the one the capsule would rest on,
+    /// exactly as voxel collision rests it on the highest contact.
+    fn analytic_support(&self, x: f32, z: f32) -> Option<f32> {
+        let probe = self.analytic_ground.as_ref()?;
+        let columns = self.resident_columns.as_ref()?;
+        if !x.is_finite() || !z.is_finite() {
+            return None;
+        }
+        let column = [x.floor() as i32, z.floor() as i32];
+        if columns.contains(&[column[0].div_euclid(16), column[1].div_euclid(16)]) {
+            return None;
+        }
+        let margin = RADIUS + 0.02;
+        let mut surface: Option<f32> = None;
+        for (px, pz) in [
+            (x, z),
+            (x - margin, z - margin),
+            (x + margin, z - margin),
+            (x - margin, z + margin),
+            (x + margin, z + margin),
+        ] {
+            if let Some(value) = probe(px.floor() as i32, pz.floor() as i32) {
+                surface = Some(surface.map_or(value, |current: f32| current.max(value)));
+            }
+        }
+        surface
+    }
     fn fixed_step(&mut self, horizontal: Vector, jump: bool) {
+        self.analytic_contact = false;
         if self
             .held
             .as_ref()
@@ -454,7 +670,7 @@ impl Physics {
             self.release();
         }
         self.pipeline.step(
-            Vector::new(0.0, -20.0, 0.0),
+            Vector::new(0.0, -GRAVITY, 0.0),
             &IntegrationParameters {
                 dt: FIXED_DT,
                 ..Default::default()
@@ -487,21 +703,45 @@ impl Physics {
             self.mesh_revision = self.mesh_revision.wrapping_add(1);
             return;
         }
-        let controller = KinematicCharacterController {
-            // Quarter-metre source stairs are walking surfaces. Autostep still
-            // tests head clearance and landing width; walls and bodies stay solid.
-            autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(0.30),
-                min_width: CharacterLength::Absolute(0.20),
+        // The profile decides what counts as a walking surface: the default
+        // quarter-metre source stair, or a full landscape voxel. Autostep still
+        // tests head clearance and landing width; walls and bodies stay solid.
+        let autostep = if self.profile.autostep_height_m > 0.0 {
+            Some(CharacterAutostep {
+                max_height: CharacterLength::Absolute(self.profile.autostep_height_m),
+                min_width: CharacterLength::Absolute(self.profile.autostep_min_width_m),
                 include_dynamic_bodies: false,
-            }),
+            })
+        } else {
+            None
+        };
+        let controller = KinematicCharacterController {
+            autostep,
+            max_slope_climb_angle: MAX_CLIMB_ANGLE,
+            offset: CharacterLength::Absolute(CHARACTER_OFFSET),
             ..KinematicCharacterController::default()
         };
+
         let shape = SharedShape::capsule_y(HALF_SEGMENT, RADIUS);
         if jump && self.grounded {
-            self.vertical_velocity = 8.0;
+            self.vertical_velocity = self.profile.jump_speed();
         }
-        self.vertical_velocity = (self.vertical_velocity - 20.0 * FIXED_DT).max(-35.0);
+        self.vertical_velocity = (self.vertical_velocity - GRAVITY * FIXED_DT).max(-35.0);
+        // Analytic fallback outside the resident window: there is no voxel
+        // collider out there to refuse a step the character could not take, so
+        // a surface more than the autostep height above the feet stands in for
+        // it. This refuses the move; it never moves a wall or changes a height.
+        let mut horizontal = horizontal;
+        if self.analytic_ground.is_some() {
+            let feet = self.center.y - (HALF_SEGMENT + RADIUS);
+            let destination = self.center + horizontal * FIXED_DT;
+            if let Some(surface) = self.analytic_support(destination.x, destination.z) {
+                if surface > feet + self.profile.autostep_height_m + 1.0e-3 {
+                    horizontal = Vector::ZERO;
+                    self.analytic_contact = true;
+                }
+            }
+        }
         let desired = (horizontal + Vector::Y * self.vertical_velocity) * FIXED_DT;
         let mut collisions = Vec::new();
         let filter = QueryFilter::default().exclude_rigid_body(self.character);
@@ -511,6 +751,15 @@ impl Physics {
             &self.colliders,
             filter,
         );
+        // Terrain risers the controller cannot step onto by itself, before the
+        // movement so it walks across the landing in the same step it rises.
+        if !jump {
+            if let Some(pose) = self.voxel_step_up(&queries, shape.as_ref(), horizontal) {
+                self.center = pose;
+                self.vertical_velocity = 0.0;
+                self.grounded = true;
+            }
+        }
         let movement = controller.move_shape(
             FIXED_DT,
             &queries,
@@ -520,13 +769,33 @@ impl Physics {
             |c| collisions.push(c),
         );
         self.center += movement.translation;
-        self.center.x = self.center.x.clamp(-255.5, 255.5);
-        self.center.z = self.center.z.clamp(-255.5, 255.5);
+        self.center.x = self
+            .center
+            .x
+            .clamp(-self.profile.bounds_m, self.profile.bounds_m);
+        self.center.z = self
+            .center
+            .z
+            .clamp(-self.profile.bounds_m, self.profile.bounds_m);
         self.grounded = movement.grounded;
         if (movement.grounded && self.vertical_velocity < 0.0)
             || (desired.y > 0.0 && movement.translation.y < desired.y * 0.5)
         {
             self.vertical_velocity = 0.0;
+        }
+        // The analytic fallback owns the vertical pose where the window has no
+        // collider: the capsule rests exactly on the generator surface, so the
+        // handover at the window edge is a step of that surface, not a sink.
+        if let Some(surface) = self.analytic_support(self.center.x, self.center.z) {
+            let floor = surface + (HALF_SEGMENT + RADIUS);
+            if self.center.y <= floor {
+                self.center.y = floor;
+                self.vertical_velocity = 0.0;
+                self.grounded = true;
+                self.analytic_contact = true;
+            } else {
+                self.grounded = false;
+            }
         }
         let mut queries = self.broad.as_query_pipeline_mut(
             self.narrow.query_dispatcher(),
@@ -989,7 +1258,7 @@ impl Physics {
         }
         // Restoring the authoritative snapshot may place the character touching a body;
         // retain its saved pose instead of applying teleport's interactive rejection.
-        self.center = Vector::from_array(snapshot.eye) - Vector::Y * EYE_OFFSET;
+        self.center = Vector::from_array(snapshot.eye) - Vector::Y * self.profile.eye_offset();
         self.bodies[self.character].set_translation(self.center, true);
         self.bodies[self.character].set_next_kinematic_translation(self.center);
         self.vertical_velocity = 0.0;

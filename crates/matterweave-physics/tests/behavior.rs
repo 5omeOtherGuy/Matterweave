@@ -1,5 +1,7 @@
 use matterweave_core::World;
-use matterweave_physics::{BodySnapshot, Physics, PhysicsSnapshot, FIXED_DT, MAX_BODIES};
+use matterweave_physics::{
+    BodySnapshot, CharacterProfile, Physics, PhysicsSnapshot, FIXED_DT, MAX_BODIES,
+};
 
 fn floor() -> World {
     // Covers the full generated-world extent so the playground arch site near
@@ -280,6 +282,84 @@ fn full_body_budget_stack_remains_finite_and_supported() {
     physics.restore(&snapshot).unwrap();
 }
 
+#[test]
+fn character_profiles_validate_and_refuse_bad_values() {
+    let world = floor();
+    let mut physics = Physics::new(&world);
+    assert!(physics.teleport([0.5, 4.0, 0.5]));
+    advance(&mut physics, 120, [0.0; 3]);
+    let standing = physics.character_eye()[1];
+    // The default profile is the character every existing sample has: a 1.5 m
+    // eye, so the fixture's floor top (y = 1) puts the eye at 2.5.
+    assert!((standing - 2.5).abs() < 0.08, "{standing}");
+    assert_eq!(physics.character_profile(), CharacterProfile::default());
+    let invalid = CharacterProfile {
+        eye_height_m: f32::NAN,
+        ..CharacterProfile::default()
+    };
+    assert!(!physics.set_character_profile(invalid));
+    let invalid = CharacterProfile {
+        autostep_min_width_m: 0.0,
+        ..CharacterProfile::default()
+    };
+    assert!(!physics.set_character_profile(invalid));
+    assert_eq!(physics.character_profile(), CharacterProfile::default());
+    let world_profile = CharacterProfile {
+        eye_height_m: 1.7,
+        jump_height_m: 1.2,
+        autostep_height_m: 1.05,
+        autostep_min_width_m: 0.20,
+        bounds_m: 8126.0,
+    };
+    assert!(physics.set_character_profile(world_profile));
+    assert_eq!(physics.character_profile(), world_profile);
+    // An accepted eye height moves the camera, not the capsule.
+    assert!((physics.character_eye()[1] - (standing + 0.2)).abs() < 1.0e-4);
+    // A tighter bound clamps the next move instead of the whole world.
+    assert!(physics.teleport([8150.0, 4.0, 0.5]));
+    advance(&mut physics, 1, [12.0, 0.0, 0.0]);
+    assert!(
+        physics.character_eye()[0] <= 8126.0 + 0.85 + 1.0e-3,
+        "the character left its profile bounds at {}",
+        physics.character_eye()[0]
+    );
+}
+
+#[test]
+fn the_analytic_ground_carries_the_character_outside_the_resident_window() {
+    // The window is published at the origin; far away the installed probe is
+    // the only ground, so it must both carry and block the character.
+    let mut world = World::new(5);
+    world.enable_streaming();
+    world.stream_around([0.0, 4.0, 0.0]);
+    let mut physics = Physics::new(&world);
+    physics.set_analytic_ground(Some(Box::new(|x, _z| {
+        Some(if x < 100 { 5.0 } else { 8.0 })
+    })));
+    assert!(physics.teleport([95.5, 8.0, 0.5]));
+    advance(&mut physics, 180, [0.0; 3]);
+    assert!(physics.grounded(), "the analytic surface did not carry it");
+    assert!(physics.on_analytic_ground());
+    let resting = physics.character_eye()[1];
+    assert!((resting - 6.5).abs() < 0.01, "resting at {resting}");
+    // A 3 m face: the fallback must refuse it with no collider present.
+    advance(&mut physics, 120, [5.0, 0.0, 0.0]);
+    let eye = physics.character_eye();
+    assert!(
+        eye[0] < 100.0,
+        "passed through the analytic cliff to {}",
+        eye[0]
+    );
+    assert!((eye[1] - resting).abs() < 0.05, "climbed to {}", eye[1]);
+    assert!(physics.grounded());
+    // Clearing the probe restores the previous behaviour exactly: nothing is
+    // carried and the character falls through the absent window.
+    physics.set_analytic_ground(None);
+    assert!(!physics.on_analytic_ground());
+    advance(&mut physics, 240, [0.0; 3]);
+    assert!(physics.character_eye()[1] < 0.0);
+}
+
 fn voxels(dimensions: [u8; 3]) -> usize {
     dimensions.iter().map(|&n| n as usize).product()
 }
@@ -483,4 +563,77 @@ fn nearby_preserved_body_waits_for_its_collision_window() {
     let resumed = physics.snapshot();
     assert!(resumed.bodies[0].position[1] < 12.);
     assert!(resumed.bodies[0].position[1] > -8.);
+}
+
+#[test]
+fn a_voxel_riser_within_the_autostep_height_is_walked_onto() {
+    let mut world = floor();
+    for x in 4..16 {
+        for z in -3..4 {
+            world.set([x, 1, z], 3);
+        }
+    }
+    let world_profile = CharacterProfile {
+        eye_height_m: 1.7,
+        jump_height_m: 1.2,
+        autostep_height_m: 1.05,
+        autostep_min_width_m: 0.20,
+        bounds_m: 255.5,
+    };
+    let mut physics = Physics::new(&world);
+    assert!(physics.set_character_profile(world_profile));
+    assert!(physics.teleport([0.5, 2.75, 0.5]));
+    advance(&mut physics, 120, [0.0; 3]);
+    let standing = physics.character_eye()[1];
+    assert!(
+        physics.grounded(),
+        "not standing: {:?}",
+        physics.character_eye()
+    );
+    // The world mode's walking speed, where Rapier's own autostep leaves the
+    // capsule balanced on the riser's edge instead of on the landing.
+    advance(&mut physics, 120, [4.5, 0.0, 0.0]);
+    let eye = physics.character_eye();
+    assert!(
+        eye[0] > 5.0 && eye[0] < 15.0,
+        "did not step onto the one-voxel riser: {eye:?}"
+    );
+    assert!(
+        (eye[1] - (standing + 1.0)).abs() < 0.1,
+        "riser height wrong: {eye:?}"
+    );
+    assert!(physics.grounded());
+}
+
+#[test]
+fn a_two_voxel_face_is_not_a_step() {
+    let mut world = floor();
+    for y in 1..3 {
+        for x in 4..16 {
+            for z in -3..4 {
+                world.set([x, y, z], 3);
+            }
+        }
+    }
+    let world_profile = CharacterProfile {
+        eye_height_m: 1.7,
+        jump_height_m: 1.2,
+        autostep_height_m: 1.05,
+        autostep_min_width_m: 0.20,
+        bounds_m: 255.5,
+    };
+    let mut physics = Physics::new(&world);
+    assert!(physics.set_character_profile(world_profile));
+    assert!(physics.teleport([0.5, 2.75, 0.5]));
+    advance(&mut physics, 120, [0.0; 3]);
+    let standing = physics.character_eye()[1];
+    assert!(physics.grounded());
+    advance(&mut physics, 240, [4.5, 0.0, 0.0]);
+    let eye = physics.character_eye();
+    assert!(eye[0] < 4.0 - 0.25, "climbed a two-voxel face: {eye:?}");
+    assert!(
+        (eye[1] - standing).abs() < 0.15,
+        "the face lifted the character: {eye:?}"
+    );
+    assert!(physics.grounded());
 }
