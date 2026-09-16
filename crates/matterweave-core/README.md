@@ -55,9 +55,13 @@ interface.
   set is stable while the camera moves inside one tile. Every ring square's edges are a
   multiple of the next ring's cell size, which is what makes coverage exact: `tests/landscape.rs`
   enumerates the whole outermost square for four eye positions and asserts each part of it is
-  drawn by the window or by exactly one ring. `ring_plan_into` reuses a caller-owned buffer so a
-  frame loop allocates nothing after the first frame. Rings are derived render geometry only:
-  nothing outside the window is authoritative, editable or collidable.
+  drawn by exactly one ring. The innermost ring takes no hole over the window - that geometry
+  does not exist until the chunk meshes are generated and uploaded - and inside the window its
+  flooded cells are drawn as the bed under the fine water surface rather than as a second,
+  opaque water plane. `ring_plan_into` reuses a caller-owned buffer so a frame loop allocates
+  nothing after the first frame, and emits the nearest tile of each ring first so a bounded
+  upload budget covers the camera before the far side of the square. Rings are derived render
+  geometry only: nothing outside the window is authoritative, editable or collidable.
 - The first edit of a generated chunk copies its authoritative 4096-byte payload into a
   bounded override archive; later edits update that copy. Reaching 512 stored overrides
   rejects edits requiring another slot, preserving already saved data; `stored_overrides`
@@ -131,8 +135,9 @@ interface.
 - Streaming is a fixed radius-three window over a bounded domain, with a 512-override
   archive. It is not virtualized LOD, and saved chunks outside the window cannot be visited.
 - `ring_plan`'s coverage guarantee holds for an eye inside the simulation domain. Outside it
-  the streaming window is clamped against the world edge and stops being nested inside the
-  innermost ring; a caller that can leave the domain must keep its own camera inside it.
+  the streaming window is clamped against the world edge and stops being the innermost ring's
+  bed, so water inside the window can be drawn twice there; a caller that can leave the domain
+  must keep its own camera inside it.
 - Power-loss durability after rename is not guaranteed; directory sync is best-effort.
 - `allocated_bytes` and `MAX_MESH_RESULT_BYTES` are logical payload budgets, not measured
   process memory. No measured mobile speed advantage follows from the async bounds alone.

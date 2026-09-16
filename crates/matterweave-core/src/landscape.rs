@@ -60,7 +60,12 @@ use std::collections::HashMap;
 /// vegetation pass ships (denser grass, sparse dune grass, coastal palms), so
 /// the flora population is not the one version 1 produced. Columns, materials
 /// and tile meshes are unchanged.
-pub const LANDSCAPE_GENERATOR_VERSION: u32 = 2;
+///
+/// Version 3: the ground-cover density is a continuous profile in distance
+/// (`density_percent` per band) instead of an integer decimation step, so the
+/// population at every distance past the first band differs from version 2's.
+/// Columns, materials, tree placement and tile meshes are unchanged.
+pub const LANDSCAPE_GENERATOR_VERSION: u32 = 3;
 
 /// Sea surface height in metres. Columns strictly below this are flooded.
 pub const SEA_LEVEL: i32 = 0;
@@ -369,6 +374,39 @@ pub struct TileFilter {
     pub hole: Option<Clip>,
     /// Cells outside this square are omitted; a coarser level covers them.
     pub bound: Option<Clip>,
+    /// Flooded cells inside this square are drawn as the ground under them
+    /// instead of as the sea surface, because a finer water surface covers
+    /// them.
+    ///
+    /// This is the difference between a *hole* and a *bed*. A ring that
+    /// surrounds the authoritative streaming window must draw that window's
+    /// ground, or the camera stands in clear colour until the fine meshes
+    /// arrive - but it must not draw a second sea surface there: the derived
+    /// tile's water is opaque and a metre of water colour over the bed would
+    /// hide the bed the fine translucent surface is meant to show through. So
+    /// its flooded cells become the bed at their own quantised height, which
+    /// the fine bed (a metre above) and the fine water both cover.
+    pub bed: Option<Clip>,
+}
+
+impl TileFilter {
+    /// Whether the coarse cell of `level` that contains world metre point
+    /// `(x, z)` is drawn by this filter.
+    ///
+    /// The test is the mesher's own: a cell is drawn when its centre lies in
+    /// the bound and not in the hole. It says nothing about which tile owns the
+    /// cell, so a caller holding a tile must use [`RingTile::covers_point`],
+    /// which asks this of the filter only once the tile owns the cell.
+    pub fn covers_point(&self, level: u32, x: i32, z: i32) -> bool {
+        let cell_m = lod_cell_m(level);
+        let centre = [
+            x.div_euclid(cell_m) * cell_m + cell_m / 2,
+            z.div_euclid(cell_m) * cell_m + cell_m / 2,
+        ];
+        let in_hole = self.hole.is_some_and(|hole| hole.contains_centre(centre));
+        let in_bound = self.bound.is_none_or(|bound| bound.contains_centre(centre));
+        !in_hole && in_bound
+    }
 }
 
 // -- Fixed-point noise -------------------------------------------------------
@@ -812,31 +850,45 @@ pub fn tree_cell(seed: u64, cell_x: i32, cell_z: i32) -> Option<FloraSite> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FloraTier {
     pub radius_m: i32,
-    /// Keep one lattice cell in `keep_every`; `1` keeps every cell.
-    pub keep_every: u32,
+    /// Ground-cover density at this band's outer edge, in percent of full. The
+    /// density ramps smoothly from the previous band's edge to this one, so the
+    /// boundary is not a step; the first band is full density and the last
+    /// reaches zero, which is where ground cover ends.
+    pub density_percent: u8,
 }
 
-/// The shipped density falloff: full density to 28 m, then a sparse eighth to
-/// 40 m, and no ground cover beyond that.
+/// The shipped density profile: full density to 32 m, thinning smoothly to
+/// nothing at 48 m.
 ///
-/// The outer radius is the blade LOD crossover, not a budget compromise. A
-/// blade is one fine voxel - 6.25 cm - across, and the landscape render target
-/// resolves about 1.6 mrad per pixel (65 degrees over 720 rows), so a blade is
-/// sub-pixel beyond ~40 m and a clump is a handful of pixels; the last band
-/// ends exactly there, and beyond it the field is drawn as ground colour rather
-/// than as thousands of instances nobody can resolve. The second band is a
-/// sparse eighth rather than half because the instances it does not draw are
-/// instances the near band spends on clumps the eye can actually resolve. Radii
-/// ascend and each is a whole number of
-/// [`FLORA_CELL_M`] cells, which is what makes the band predicate exact.
+/// Ground cover is drawn where it resolves: a blade is one fine voxel (6.25 cm)
+/// across, and the landscape render target resolves about 1.6 mrad per pixel
+/// (65 degrees over 720 rows), so a blade is sub-pixel beyond ~40 m and a clump
+/// is a handful of pixels. The profile therefore ends near that distance, but
+/// it *fades* to it: an earlier profile kept every cell to 28 m and one in eight
+/// to 40 m and then stopped, which is a visible fence at walking distance, and
+/// because the plan is anchored to a lattice the fence moved with the player.
+///
+/// The first radius is a density *plateau*, not just an LOD band. A plan is
+/// rebuilt only after the eye has left the committed anchor by the sample's
+/// rebuild hysteresis (20 m), so the profile trails the eye by up to that
+/// distance; the plateau is what keeps full density in front of the eye
+/// whatever the trail is, and 32 m leaves at least a dozen metres of it. The
+/// fade then has to be long enough not to read as a fence and short enough to
+/// fit the instance budget: 16 m is six times the slope the replaced
+/// `keep_every` step had, and the 48 m end costs nothing that 40 m did not -
+/// the window is a square, so its area and the plan's cost are set by the
+/// plateau, not by the last metres of the fade. Density is a percentage at each
+/// band's outer edge and ramps smoothly from the previous edge, so no boundary
+/// is a step. Radii ascend, are whole numbers of [`FLORA_CELL_M`] cells and are
+/// the square half-extent the plan covers.
 pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
     FloraTier {
-        radius_m: 28,
-        keep_every: 1,
+        radius_m: 32,
+        density_percent: 100,
     },
     FloraTier {
-        radius_m: 40,
-        keep_every: 8,
+        radius_m: 48,
+        density_percent: 0,
     },
 ];
 
@@ -937,6 +989,39 @@ fn tier_of(tiers: &[FloraTier], distance: i32) -> Option<u8> {
         .map(|index| index as u8)
 }
 
+/// Ground-cover density in percent at Chebyshev `distance` from the eye, from
+/// the tier profile.
+///
+/// The profile is flat at the first tier's density up to its radius, then a
+/// smoothstep ramp to each following tier's density at its radius, and the last
+/// tier's density beyond it. `t` is scaled to 0..=1000 so the whole ramp is
+/// integer arithmetic on every target, and the smoothstep
+/// `t*t*(3000-2t)/1e6` has zero slope at both ends, so neither edge of a band
+/// is a visible step in the field. Radii are assumed ascending, which is what
+/// [`tier_of`] needs too.
+fn density_percent_at(tiers: &[FloraTier], distance: i32) -> u32 {
+    let Some(first) = tiers.first() else {
+        return 0;
+    };
+    if distance <= first.radius_m {
+        return u32::from(first.density_percent);
+    }
+    let mut previous = first;
+    for tier in &tiers[1..] {
+        if distance <= tier.radius_m {
+            let span = i64::from((tier.radius_m - previous.radius_m).max(1));
+            let t = ((i64::from(distance) - i64::from(previous.radius_m)).max(0) * 1000 / span)
+                .min(1000);
+            let eased = t * t * (3000 - 2 * t) / 1_000_000;
+            let from = i64::from(previous.density_percent);
+            let to = i64::from(tier.density_percent);
+            return (from + (to - from) * eased / 1000).clamp(0, 100) as u32;
+        }
+        previous = tier;
+    }
+    u32::from(previous.density_percent)
+}
+
 const SALT_FLORA_KEEP: u64 = 0x7f4a_7c15_bf58_476d;
 
 /// Per-site height and bend variation salts. Each field hashes its own salt and
@@ -947,20 +1032,44 @@ const SALT_FLORA_KEEP: u64 = 0x7f4a_7c15_bf58_476d;
 const SALT_FLORA_HEIGHT: u64 = 0x94d0_49bb_1331_11eb;
 const SALT_FLORA_BEND: u64 = 0xd2b7_4405_3f4a_6a1d;
 
-/// Whether a flora lattice cell survives its tier's decimation.
+/// Whether a flora lattice cell survives at `density_percent`.
 ///
-/// Decimation is decided from the *lattice cell*, before [`flora_cell`] samples
-/// any column, because the columns are the whole cost: keeping every cell
-/// inside 96 m would sample 9216 cells (36 864 [`column`] evaluations) where
-/// tiered decimation samples about 2 000. Per-site decimation cannot save that
-/// work, since a site only exists once its column has been generated. The
-/// consequence is stated rather than hidden: decimation thins the field in
-/// whole 2 m cells, not individual plants.
-fn keeps_cell(seed: u64, cell_x: i32, cell_z: i32, keep_every: u32) -> bool {
-    if keep_every <= 1 {
+/// Survival is decided from the *lattice cell*, before [`flora_cell`] samples
+/// any column, because the columns are the whole cost: a dense window out to
+/// 52 m would sample 2809 cells (11 236 [`column`] evaluations) where a thinned
+/// one samples about 2 000. Per-site survival cannot save that work, since a
+/// site only exists once its column has been generated. The consequence is
+/// stated rather than hidden: the field thins in whole 2 m cells, not individual
+/// plants.
+///
+/// The threshold is a deterministic hash of the cell, so a cell survives with
+/// exactly the requested probability and the same cell survives the same way on
+/// every target and in every plan that covers it. A cell that is thinned out is
+/// one hash, not a column sample.
+fn keeps_cell(seed: u64, cell_x: i32, cell_z: i32, density_percent: u32) -> bool {
+    if density_percent >= 100 {
         return true;
     }
-    hash3(seed ^ SALT_FLORA_KEEP, cell_x, cell_z).is_multiple_of(keep_every as u64)
+    if density_percent == 0 {
+        return false;
+    }
+    (hash3(seed ^ SALT_FLORA_KEEP, cell_x, cell_z) % 100) < u64::from(density_percent)
+}
+
+/// Whether the plan keeps the ground-cover lattice cell at `distance_m` from the
+/// eye: the planner's own density predicate, without sampling the cell's
+/// columns.
+///
+/// Exposed so a test or a coverage tool can measure the density profile itself.
+/// A caller that wants the *plants* must use [`plan_flora`]; this answers only
+/// whether that plan would visit the cell.
+pub fn keeps_flora_cell(seed: u64, cell: [i32; 2], tiers: &[FloraTier], distance_m: i32) -> bool {
+    keeps_cell(
+        seed,
+        cell[0],
+        cell[1],
+        density_percent_at(tiers, distance_m),
+    )
 }
 
 /// Plan the flora around one eye position.
@@ -987,10 +1096,11 @@ pub fn plan_flora(
 /// Ground cover comes from [`flora_cell`] on its [`FLORA_CELL_M`] lattice,
 /// inside the outermost tier's square. A cell belongs to the first tier whose
 /// radius covers the Chebyshev distance from the eye to the cell origin, and is
-/// kept when [`keeps_cell`] accepts it; no cell is visited twice, so no site
-/// appears twice. Trees come from [`tree_cell`] on its [`TREE_CELL_M`] lattice
-/// inside [`LANDSCAPE_TREE_RADIUS_M`]. Iteration is row-major in ascending
-/// lattice order, so the same eye and tiers always produce the same list.
+/// kept with the probability [`density_percent_at`] gives that distance; no cell
+/// is visited twice, so no site appears twice. Trees come from [`tree_cell`] on
+/// its [`TREE_CELL_M`] lattice inside [`LANDSCAPE_TREE_RADIUS_M`]. Iteration is
+/// row-major in ascending lattice order, so the same eye and tiers always
+/// produce the same list.
 ///
 /// Every placement also carries the per-site variation of its column:
 /// [`PlacedFlora::height_percent`] and [`PlacedFlora::bend_percent`], each from
@@ -1061,6 +1171,17 @@ impl FloraCellCache {
     pub fn clear(&mut self) {
         self.ground.clear();
         self.trees.clear();
+    }
+
+    /// Make room for `ground_cells` populations and `tree_cells` cells.
+    ///
+    /// A first plan fills a whole window, and every cell it inserts carries a
+    /// [`FloraCell`] of up to [`MAX_FLORA_PER_CELL`] sites; reserving the window
+    /// once keeps the maps from rehashing a few hundred entries at a time,
+    /// which is most of what a cold plan costs.
+    pub fn reserve(&mut self, ground_cells: usize, tree_cells: usize) {
+        self.ground.reserve(ground_cells);
+        self.trees.reserve(tree_cells);
     }
 
     /// The cell's population, generating it if it is not memoised. `None` means
@@ -1150,6 +1271,12 @@ pub fn plan_flora_cached_into(
     let eye_x = eye_metre(eye[0]);
     let eye_z = eye_metre(eye[2]);
     let outer = tiers.iter().map(|tier| tier.radius_m).max().unwrap_or(0);
+    if cache.ground_cells() == 0 && cache.tree_cells() == 0 {
+        // A cold cache is about to be filled with a whole window of cells.
+        let ground_side = (2 * outer / FLORA_CELL_M + 1).max(0) as usize;
+        let tree_side = (2 * LANDSCAPE_TREE_RADIUS_M / TREE_CELL_M + 1).max(0) as usize;
+        cache.reserve(ground_side * ground_side, tree_side * tree_side);
+    }
     let mut ground_window: Option<[i32; 4]> = None;
     if outer > 0 {
         let first = (eye_x - outer).div_euclid(FLORA_CELL_M);
@@ -1161,10 +1288,14 @@ pub fn plan_flora_cached_into(
             for cell_x in first..=last {
                 let origin_x = cell_x * FLORA_CELL_M;
                 let origin_z = cell_z * FLORA_CELL_M;
-                let Some(tier) = tier_of(tiers, chebyshev(origin_x, origin_z, eye_x, eye_z)) else {
+                let distance = chebyshev(origin_x, origin_z, eye_x, eye_z);
+                let Some(tier) = tier_of(tiers, distance) else {
                     continue;
                 };
-                if !keeps_cell(seed, cell_x, cell_z, tiers[tier as usize].keep_every) {
+                // Density is continuous in distance and the survival threshold
+                // is a hash of the cell, so a band boundary thins the field
+                // gradually instead of switching it off at a fence.
+                if !keeps_cell(seed, cell_x, cell_z, density_percent_at(tiers, distance)) {
                     continue;
                 }
                 let Some(cell) = cache.ensure_ground(seed, [cell_x, cell_z], &mut remaining) else {
@@ -1430,7 +1561,11 @@ pub fn lod_tile_mesh(seed: u64, level: u32, key: [i32; 2], filter: TileFilter) -
             // [`lod_vertex`] so the wall's sub-surface material comes from the
             // same sample as the top, at no extra cost.
             let sample = column(seed, x, z);
-            let (height, top_material) = if sample.flooded() {
+            // A flooded cell normally draws the sea surface. Inside the
+            // filter's bed square a finer water surface covers the cells, so
+            // this level draws the ground instead - see [`TileFilter::bed`].
+            let as_bed = sample.flooded() && bed_contains(&filter, x, z);
+            let (height, top_material) = if sample.flooded() && !as_bed {
                 (SEA_LEVEL, material::WATER)
             } else {
                 (sample.height, sample.surface)
@@ -1570,6 +1705,13 @@ fn cell_drawn(filter: &TileFilter, key: [i32; 2], cell_m: i32, cx: i32, cz: i32)
         .bound
         .is_none_or(|bound| bound.contains_centre(centre));
     !in_hole && in_bound
+}
+
+/// Whether the bed square of `filter` covers the cell at metre point `(x, z)`.
+/// Measured on the plant position, not the tile's local grid, because a bed
+/// square is not tile-aligned the way a ring's own bound is.
+fn bed_contains(filter: &TileFilter, x: i32, z: i32) -> bool {
+    filter.bed.is_some_and(|bed| bed.contains_centre([x, z]))
 }
 
 fn any_cell(surface: &Surface) -> bool {
@@ -1963,6 +2105,22 @@ pub struct RingTile {
     pub filter: TileFilter,
 }
 
+impl RingTile {
+    /// Whether this tile draws the coarse cell of its own level that contains
+    /// the world metre point `(x, z)`.
+    ///
+    /// The tile owns the cells of `LOD_TILE_CELLS` square starting at its key,
+    /// and draws the ones its filter keeps; a caller uses this to ask whether
+    /// geometry built for this tile covers the ground under a camera.
+    pub fn covers_point(&self, x: i32, z: i32) -> bool {
+        let cell_m = lod_cell_m(self.level);
+        let cell = [x.div_euclid(cell_m), z.div_euclid(cell_m)];
+        cell[0].div_euclid(LOD_TILE_CELLS) == self.key[0]
+            && cell[1].div_euclid(LOD_TILE_CELLS) == self.key[1]
+            && self.filter.covers_point(self.level, x, z)
+    }
+}
+
 /// Largest world metre a `f32` eye coordinate is folded into. Far beyond the
 /// simulation domain, but finite, so a runaway camera cannot overflow the plan.
 const EYE_LIMIT: f32 = 1.0e9;
@@ -1986,8 +2144,10 @@ fn snap(value: i32, size: i32) -> i32 {
 /// This is the [`STREAM_RADIUS_CHUNKS`] square of chunks centred on the eye's
 /// chunk, clamped to the world square, so it is exactly the square
 /// [`crate::World::stream_resident_chunks`] publishes for any eye inside the
-/// world. Its edges are chunk-aligned, hence aligned to every ring's cell size,
-/// and it is the hole the innermost ring is cut with.
+/// world. Its edges are chunk-aligned, hence aligned to every ring's cell size.
+/// It names where the authoritative one-metre meshes are drawn - and where the
+/// innermost ring draws its own coarser ground *under* them, because residency
+/// lags the eye and a hole here is a hole under the player. See [`ring_plan`].
 pub fn fine_clip(eye: [f32; 3]) -> Clip {
     // The ring planner serves the landscape source, whose domain is much wider
     // than the legacy sandbox: a camera anywhere in it still gets a full window.
@@ -2004,15 +2164,37 @@ pub fn fine_clip(eye: [f32; 3]) -> Clip {
 
 /// Plan the resident far-terrain tiles for one eye position.
 ///
-/// Ring `i` covers its bound square minus ring `i-1`'s bound square; the
-/// innermost ring is cut with `fine`. Every ring's square is centred on the eye
-/// snapped to that ring's tile size, so the tile set is stable while the camera
-/// moves inside one tile, and the same eye and configuration always produce the
-/// same ordered list. Together with the fine window the rings cover every
-/// surface cell inside the outermost square exactly once for an eye inside the
-/// world; outside the world the fine window is clamped to the world square and
-/// is no longer nested inside the innermost ring, which the sample avoids by
-/// keeping the camera inside the simulation domain.
+/// Ring `i` covers its bound square minus ring `i-1`'s bound square. The
+/// innermost ring is not cut at all: it draws its whole square, and inside the
+/// `fine` square - the authoritative streaming window [`fine_clip`] names - its
+/// flooded cells as the ground under them rather than as the sea surface. Every
+/// ground cell inside the outermost square is therefore drawn by exactly one
+/// ring tile, at every eye position, whether or not the authoritative chunk
+/// meshes have arrived yet. Inside the window the chunk meshes are drawn over
+/// that ground (they stand a metre above the ring's quantised surface), and the
+/// fine water mesh is drawn over the bed; before either arrives the ring's own
+/// ground is what the player stands on and what the sea floor is.
+///
+/// An earlier version cut the innermost ring with the streaming window, which
+/// made the window a promise that fine geometry exists. It does not exist until
+/// the meshes are generated and uploaded, so a fresh start, a window that just
+/// moved or a renderer recreated after a suspend showed clear colour under the
+/// camera. Taking the hole only when the fine geometry is resident would mean
+/// rebuilding those tiles whenever residency changes; drawing under it costs one
+/// coarse layer, most of which is depth-rejected.
+///
+/// Every ring's square is centred on the eye snapped to that ring's tile size,
+/// so the tile set is stable while the camera moves inside one tile, and the
+/// same eye and configuration always produce the same ordered list; tiles are
+/// emitted nearest ring first and, within a ring, nearest tile first, which is
+/// the order a frame's bounded uploads should follow.
+///
+/// The ground under the window is the *generator's*, one quantised step below
+/// the voxel surface. A world whose fine meshes differ from the generator - an
+/// edited one - must not use this: removing the top voxel of a column would
+/// expose the ring's ground at exactly the height the dig removed. The sample
+/// this planner serves makes no edits; one that does needs the ring's hole back,
+/// or the underlay lowered by the depth it can be edited to.
 ///
 /// `rings` must be ordered from finest to coarsest with nested squares;
 /// [`LANDSCAPE_RINGS`] is that set.
@@ -2029,7 +2211,8 @@ pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mu
     plan.clear();
     let centre_x = eye_metre(eye[0]);
     let centre_z = eye_metre(eye[2]);
-    let mut hole = fine;
+    let mut hole: Option<Clip> = None;
+    let mut bed: Option<Clip> = Some(fine);
     for config in rings {
         let level = config.level.min(MAX_LOD_LEVEL);
         let tile_size = LOD_TILE_CELLS * lod_cell_m(level);
@@ -2040,16 +2223,16 @@ pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mu
             max: [centre[0] + half_extent, centre[1] + half_extent],
         };
         debug_assert!(
-            hole == fine
-                || (bound.min[0] <= hole.min[0]
-                    && bound.min[1] <= hole.min[1]
-                    && bound.max[0] >= hole.max[0]
-                    && bound.max[1] >= hole.max[1]),
+            hole.is_none_or(|hole| bound.min[0] <= hole.min[0]
+                && bound.min[1] <= hole.min[1]
+                && bound.max[0] >= hole.max[0]
+                && bound.max[1] >= hole.max[1]),
             "ring squares must nest: {bound:?} does not contain {hole:?}"
         );
         let filter = TileFilter {
-            hole: Some(hole),
+            hole,
             bound: Some(bound),
+            bed,
         };
         let first = [
             bound.min[0].div_euclid(tile_size),
@@ -2059,6 +2242,7 @@ pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mu
             (bound.max[0] - 1).div_euclid(tile_size),
             (bound.max[1] - 1).div_euclid(tile_size),
         ];
+        let ring_start = plan.len();
         for key_z in first[1]..=last[1] {
             for key_x in first[0]..=last[0] {
                 plan.push(RingTile {
@@ -2068,7 +2252,21 @@ pub fn ring_plan_into(eye: [f32; 3], fine: Clip, rings: &[RingConfig], plan: &mu
                 });
             }
         }
-        hole = bound;
+        // Nearest tile first, so a bounded upload budget fills the ring around
+        // the eye before the far side of the square. Ties break on the key, so
+        // the order is a pure function of the eye and the ring set. Sorting the
+        // plan's own tail keeps the no-allocation property the buffer promises.
+        let centre_tile = [
+            centre[0].div_euclid(tile_size),
+            centre[1].div_euclid(tile_size),
+        ];
+        plan[ring_start..].sort_unstable_by_key(|tile| {
+            let dx = (tile.key[0] - centre_tile[0]).abs();
+            let dz = (tile.key[1] - centre_tile[1]).abs();
+            (dx.max(dz), dx, dz, tile.key[0], tile.key[1])
+        });
+        hole = Some(bound);
+        bed = None;
     }
 }
 
@@ -2393,6 +2591,56 @@ mod tests {
     }
 
     #[test]
+    fn a_tile_filter_agrees_with_the_mesher_about_the_cell_it_draws() {
+        // A cell-sized window inside a tile: the filter's own cell is drawn and
+        // the hole's cell is not, at every level the rings use.
+        for level in 0..=MAX_LOD_LEVEL {
+            let cell = lod_cell_m(level);
+            let filter = TileFilter {
+                hole: Some(Clip {
+                    min: [0, 0],
+                    max: [cell, cell],
+                }),
+                bound: Some(Clip {
+                    min: [-cell, -cell],
+                    max: [cell, cell],
+                }),
+                bed: None,
+            };
+            assert!(
+                filter.covers_point(level, -1, -1),
+                "inside the bound and outside the hole is drawn at level {level}"
+            );
+            assert!(
+                !filter.covers_point(level, 0, 0),
+                "the hole's own cell is not drawn at level {level}"
+            );
+            assert!(
+                !filter.covers_point(level, cell, cell),
+                "the bound's far edge is not drawn at level {level}"
+            );
+        }
+        // A point anywhere in a cell tests the cell's centre, not the point.
+        let level = 1;
+        let filter = TileFilter {
+            hole: Some(Clip {
+                min: [1, 1],
+                max: [2, 2],
+            }),
+            bound: None,
+            bed: None,
+        };
+        assert!(
+            !filter.covers_point(level, 0, 0),
+            "the cell centre (1, 1) is inside"
+        );
+        assert!(
+            filter.covers_point(level, 2, 2),
+            "the cell centre (3, 3) is outside"
+        );
+    }
+
+    #[test]
     fn ring_squares_nest_and_align_to_the_next_cell() {
         for eye in [
             [0.0, 0.0, 0.0],
@@ -2668,46 +2916,132 @@ mod tests {
     }
 
     #[test]
-    fn tiers_thin_the_field_with_distance() {
-        let eye = PLAINS_EYE;
-        let plan = plan_default(eye);
-        let eye_x = eye_metre(eye[0]);
-        let eye_z = eye_metre(eye[2]);
-        let mut counts = [0usize; LANDSCAPE_FLORA_TIERS.len()];
-        for site in &plan.sites {
-            // The tier is a property of the site's lattice cell, not of the
-            // metre column inside it; see `plan_flora_into`.
-            let origin_x = site.x.div_euclid(FLORA_CELL_M) * FLORA_CELL_M;
-            let origin_z = site.z.div_euclid(FLORA_CELL_M) * FLORA_CELL_M;
-            assert_eq!(
-                Some(site.tier),
-                tier_of(
-                    &LANDSCAPE_FLORA_TIERS,
-                    chebyshev(origin_x, origin_z, eye_x, eye_z)
-                ),
-                "site {site:?} carries the wrong tier"
-            );
-            counts[site.tier as usize] += 1;
-        }
-        // Sites per square metre of each band's annulus. The ratios follow
-        // keep_every, not the band's area, so this measures the decimation.
-        let mut previous = f64::INFINITY;
-        for (index, tier) in LANDSCAPE_FLORA_TIERS.iter().enumerate() {
-            let inner = if index == 0 {
-                0
-            } else {
-                LANDSCAPE_FLORA_TIERS[index - 1].radius_m
-            };
-            let outer = tier.radius_m;
-            let area = (2 * outer) * (2 * outer) - (2 * inner) * (2 * inner);
-            let density = counts[index] as f64 / area as f64;
-            assert!(density > 0.0, "tier {index} is empty");
+    fn the_density_profile_is_continuous_and_ends_at_zero() {
+        // The profile the planner uses, sampled on the lattice it uses. It must
+        // be flat inside the first band, monotone, and reach zero at the last
+        // radius without a step anywhere on the way.
+        let first = LANDSCAPE_FLORA_TIERS[0];
+        let outer = LANDSCAPE_FLORA_TIERS
+            .iter()
+            .map(|tier| tier.radius_m)
+            .max()
+            .unwrap();
+        assert_eq!(
+            density_percent_at(&LANDSCAPE_FLORA_TIERS, 0),
+            u32::from(first.density_percent)
+        );
+        assert_eq!(
+            density_percent_at(&LANDSCAPE_FLORA_TIERS, first.radius_m),
+            u32::from(first.density_percent)
+        );
+        assert_eq!(density_percent_at(&LANDSCAPE_FLORA_TIERS, outer), 0);
+        assert_eq!(density_percent_at(&LANDSCAPE_FLORA_TIERS, 400), 0);
+        let mut previous = 100;
+        for distance in 0..=outer {
+            let density = density_percent_at(&LANDSCAPE_FLORA_TIERS, distance);
             assert!(
-                density < previous,
-                "tier {index} density {density} is not below {previous}"
+                density <= previous,
+                "density rose at {distance} m: {density} after {previous}"
+            );
+            assert!(
+                previous - density <= 12,
+                "density stepped {previous} -> {density} in one metre at {distance} m"
             );
             previous = density;
         }
+    }
+
+    #[test]
+    fn the_planner_keeps_a_continuous_fraction_of_lattice_cells() {
+        // The measured survival, shell by shell, from the planner's own
+        // predicate. Measuring *cells* rather than sites avoids a biome
+        // gradient across the window reading as a density profile, and it is
+        // the quantity the profile defines: the fraction of 2 m cells the plan
+        // visits. The integer `keep_every` this replaced fell by 8x at the tier
+        // edge; the smoothstep fade changes by at most its own slope.
+        const SHELL_M: i32 = 4;
+        let outer = LANDSCAPE_FLORA_TIERS
+            .iter()
+            .map(|tier| tier.radius_m)
+            .max()
+            .unwrap();
+        let shells = (outer / SHELL_M) as usize;
+        assert_eq!(outer % SHELL_M, 0);
+        let mut kept = vec![0usize; shells + 1];
+        let mut total = vec![0usize; shells + 1];
+        // Every lattice cell whose origin distance falls in each shell, over the
+        // whole outer square.
+        for cell_z in -outer.div_euclid(FLORA_CELL_M)..=outer.div_euclid(FLORA_CELL_M) {
+            for cell_x in -outer.div_euclid(FLORA_CELL_M)..=outer.div_euclid(FLORA_CELL_M) {
+                let origin_x = cell_x * FLORA_CELL_M;
+                let origin_z = cell_z * FLORA_CELL_M;
+                let distance = chebyshev(origin_x, origin_z, 0, 0);
+                let shell = (distance / SHELL_M) as usize;
+                total[shell] += 1;
+                if keeps_flora_cell(
+                    SEED_UNDER_TEST,
+                    [cell_x, cell_z],
+                    &LANDSCAPE_FLORA_TIERS,
+                    distance,
+                ) {
+                    kept[shell] += 1;
+                }
+            }
+        }
+        let fraction = |shell: usize| -> f64 {
+            if total[shell] == 0 {
+                0.0
+            } else {
+                kept[shell] as f64 / total[shell] as f64
+            }
+        };
+        // The plateau is full and the outer shell is empty: the profile starts
+        // dense and ends at zero rather than at a fence.
+        assert_eq!(fraction(0), 1.0, "the eye's own cells are never thinned");
+        let beyond = fraction(shells);
+        assert_eq!(beyond, 0.0, "nothing survives past the outer radius");
+        // Monotone, and no shell changes the density by a step: the smoothstep's
+        // steepest metre is 9.4%, so a four-metre shell cannot move more than
+        // 0.38. The tier boundary in particular is mid-plateau.
+        let mut previous = fraction(0);
+        for shell in 1..=shells {
+            let current = fraction(shell);
+            assert!(
+                current <= previous,
+                "density rose at shell {shell}: {current:.3} after {previous:.3}"
+            );
+            assert!(
+                previous - current <= 0.42,
+                "kept fraction stepped {previous:.3} -> {current:.3} at {} m",
+                shell * SHELL_M as usize
+            );
+            previous = current;
+        }
+        let boundary = (LANDSCAPE_FLORA_TIERS[0].radius_m / SHELL_M) as usize;
+        assert!(
+            fraction(boundary) >= 0.9,
+            "the {} m band boundary thinned to {:.3}",
+            LANDSCAPE_FLORA_TIERS[0].radius_m,
+            fraction(boundary)
+        );
+        // And the plan itself keeps the near field: ground cover exists within
+        // 16 m of the eye and inside the cell the eye stands in, which is what
+        // "vegetation in the foreground" means as a number.
+        let plan = plan_default(PLAINS_EYE);
+        let near = plan
+            .sites
+            .iter()
+            .filter(|site| chebyshev(site.x, site.z, 0, 0) <= 16)
+            .count();
+        assert!(near > 0, "the plan drew nothing within 16 m of the eye");
+        let stand = [0i32.div_euclid(FLORA_CELL_M), 0i32.div_euclid(FLORA_CELL_M)];
+        assert!(
+            plan.sites.iter().any(|site| {
+                site.x.div_euclid(FLORA_CELL_M) == stand[0]
+                    && site.z.div_euclid(FLORA_CELL_M) == stand[1]
+            }),
+            "no plant stands in the cell under the eye"
+        );
     }
 
     #[test]

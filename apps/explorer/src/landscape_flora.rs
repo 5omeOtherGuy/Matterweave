@@ -66,16 +66,38 @@ use std::time::Instant;
 
 use crate::detail_runtime::{DetailRuntime, RESIDENT_LODS};
 
-/// Ground-cover placements one plan may carry. Together with
-/// [`MAX_PLANNED_TREES`] this stays inside the renderer's
-/// [`MAX_FLORA_INSTANCES`] budget with room for the caps to be raised.
+/// Upper edges in metres of the Chebyshev distance bands the drawn-instance
+/// counter reports, measured from the eye the plan was made for. The last band
+/// is open-ended, so every drawn instance is counted in exactly one band.
 ///
-/// The full-density band is 57x57 metres and holds up to 3.4 clumps per metre
-/// column once the understory slot is counted, so a lush inland eye can plan
-/// over ten thousand ground-cover placements; the cap is what keeps a plan
-/// bounded on the phone and the planner's `dropped` counter reports any refusal
-/// instead of truncating silently.
-pub const MAX_PLANNED_SITES: usize = 12_000;
+/// The bands are the evidence for the near field: a report that names the
+/// instance count within 16 m of the eye, and the density factor across every
+/// band boundary, is checkable against these numbers instead of a screenshot.
+/// Eight-metre bands divide the shipped ground-cover band boundaries exactly.
+pub const FLORA_BAND_EDGES_M: [i32; 8] = [8, 16, 24, 32, 40, 48, 64, i32::MAX];
+/// Number of distance bands [`FLORA_BAND_EDGES_M`] defines.
+pub const FLORA_BANDS: usize = FLORA_BAND_EDGES_M.len();
+
+/// Index of the band a Chebyshev distance from the eye falls in.
+pub fn band_of(distance_m: i32) -> usize {
+    FLORA_BAND_EDGES_M
+        .iter()
+        .position(|edge| distance_m <= *edge)
+        .unwrap_or(FLORA_BANDS - 1)
+}
+
+/// Ground-cover placements one plan may carry: the renderer's whole
+/// [`MAX_FLORA_INSTANCES`] budget less the tree cap. Together they are exactly
+/// the instance budget, so nothing a plan may hold is refused for being over
+/// it.
+///
+/// The densest eye the shipped profile planned over an 8x8 grid of 512 m cells
+/// held 15 889 ground-cover placements, so a plan that reaches the cap can
+/// refuse a couple of hundred rows of the outermost cells, where the profile is
+/// nearly zero anyway. A refusal truncates the plan by row, which is a straight
+/// edge, and the planner's `dropped` counter reports it rather than truncating
+/// silently.
+pub const MAX_PLANNED_SITES: usize = MAX_FLORA_INSTANCES - MAX_PLANNED_TREES;
 /// Tree placements one plan may carry.
 pub const MAX_PLANNED_TREES: usize = 700;
 /// Eye movement, in metres, that names a rebuild cell. The committed field is
@@ -100,6 +122,15 @@ pub const REBUILD_MARGIN_CELLS: i32 = 5;
 /// frame's admitted work small, while a pathological jump is carried by the
 /// next frame's slice.
 pub const MAX_PLAN_SAMPLES_PER_FRAME: usize = 256;
+/// Cells the first plan of a field may generate in one frame.
+///
+/// Nothing is on screen before the first plan commits, so the shipped 256-cell
+/// slice would leave a bare field in front of a player who is already walking
+/// for a dozen frames. The first plan is a startup, not a frame: a larger slice
+/// commits it on the second frame while keeping every frame's admitted work
+/// bounded, and the cost is paid once. A plan that has committed once goes back
+/// to the smaller budget, so a jump or a retarget cannot overrun a frame.
+pub const FIRST_PLAN_SAMPLES_PER_FRAME: usize = 2_048;
 /// Main-thread milliseconds one rebuild may spend planning. Reported, not
 /// enforced by truncation: a plan that overran is still a correct plan, and
 /// hiding the overrun would be worse than showing it.
@@ -226,6 +257,11 @@ pub struct FloraCounters {
     pub pending: bool,
     /// Lattice cells the field has generated over the run, i.e. memo misses.
     pub samples: u64,
+    /// Drawn instances per [`FLORA_BAND_EDGES_M`] band, from the eye of the
+    /// plan that produced them. The nearest band is what "vegetation in front
+    /// of the camera" means; the ratios between bands are the density falloff
+    /// the field actually has, not the one its constants describe.
+    pub drawn_by_band: [usize; FLORA_BANDS],
 }
 
 /// Pool index and prototype height in metres per `(prototype id, level)`.
@@ -342,12 +378,20 @@ impl LandscapeFlora {
         let previous = self.counters;
         let plan_begin = Instant::now();
         let generation_before = self.field.generation();
+        // The first plan is not sliced: see [`FIRST_PLAN_SAMPLES_PER_FRAME`]. A
+        // plan that has committed at least once keeps the smaller budget, so a
+        // jump or a retarget still cannot overrun a frame.
+        let budget = if generation_before == 0 {
+            FIRST_PLAN_SAMPLES_PER_FRAME
+        } else {
+            MAX_PLAN_SAMPLES_PER_FRAME
+        };
         let ready = self.field.advance(
             eye,
             &LANDSCAPE_FLORA_TIERS,
             MAX_PLANNED_SITES,
             MAX_PLANNED_TREES,
-            MAX_PLAN_SAMPLES_PER_FRAME,
+            budget,
         );
         let plan_ms = plan_begin.elapsed().as_secs_f64() * 1000.;
         if !ready {
@@ -364,9 +408,11 @@ impl LandscapeFlora {
             return Ok(());
         }
         let rebuilt = self.field.generation() != generation_before;
+        let mut bands = [0usize; FLORA_BANDS];
         let (planned_sites, planned_trees, dropped, refused) = {
             let plan = self.field.plan();
-            let refused = fill_instances(&self.resident, plan, eye, &mut self.instances);
+            let refused =
+                fill_instances(&self.resident, plan, eye, &mut self.instances, &mut bands);
             (plan.sites.len(), plan.trees.len(), plan.dropped, refused)
         };
         let upload_begin = Instant::now();
@@ -399,6 +445,7 @@ impl LandscapeFlora {
             over_budget: previous.over_budget + u64::from(plan_ms > MAX_REBUILD_MS),
             pending: false,
             samples: self.field.samples(),
+            drawn_by_band: bands,
         };
         Ok(())
     }
@@ -425,6 +472,8 @@ fn anchor_covers(anchor: [i32; 2], eye: [f32; 3]) -> bool {
 
 /// Fill `instances` with every placement of `plan` that has resident geometry,
 /// in plan order, and return how many planned placements this module refused.
+/// `bands` receives the count of drawn instances per [`FLORA_BAND_EDGES_M`]
+/// band, from the eye the plan was made for.
 ///
 /// Refusing is allowed - a placement whose geometry failed to build, or a field
 /// larger than the renderer's instance budget, must not be drawn - but the count
@@ -437,9 +486,11 @@ fn fill_instances(
     plan: &FloraPlan,
     eye: [f32; 3],
     instances: &mut Vec<FloraInstance>,
+    bands: &mut [usize; FLORA_BANDS],
 ) -> usize {
     let mut refused = 0;
     instances.clear();
+    *bands = [0; FLORA_BANDS];
     for placed in plan.sites.iter().chain(&plan.trees) {
         if instances.len() >= MAX_FLORA_INSTANCES {
             // Keep counting: the field is refused from here on, and every
@@ -448,7 +499,13 @@ fn fill_instances(
             continue;
         }
         match instance_for(resident, placed, eye) {
-            Some(instance) => instances.push(instance),
+            Some(instance) => {
+                let distance = (placed.x - eye[0] as i32)
+                    .abs()
+                    .max((placed.z - eye[2] as i32).abs());
+                bands[band_of(distance)] += 1;
+                instances.push(instance);
+            }
             None => refused += 1,
         }
     }
@@ -593,7 +650,23 @@ mod tests {
         let planned = plan.sites.len() + plan.trees.len();
         assert!(planned > 1_000, "a plains eye plans a field, got {planned}");
         let mut instances = Vec::new();
-        let refused = fill_instances(&flora.resident, &plan, [0.0, 40.0, 0.0], &mut instances);
+        let mut bands = [0usize; FLORA_BANDS];
+        let refused = fill_instances(
+            &flora.resident,
+            &plan,
+            [0.0, 40.0, 0.0],
+            &mut instances,
+            &mut bands,
+        );
+        assert_eq!(
+            bands.iter().sum::<usize>(),
+            instances.len(),
+            "every drawn instance lands in exactly one band"
+        );
+        assert!(
+            bands[0] + bands[1] > 0,
+            "the eye's own cell must hold drawn vegetation, bands {bands:?}"
+        );
         // The catalogue has geometry for every id at every level, so nothing is
         // refused here and the two counts still agree.
         assert_eq!(refused, 0, "the full catalogue must draw every placement");
@@ -607,7 +680,14 @@ mod tests {
             flora.resident.remove(&(victim, lod));
         }
         let mut instances = Vec::new();
-        let refused = fill_instances(&flora.resident, &plan, [0.0, 40.0, 0.0], &mut instances);
+        let mut bands = [0usize; FLORA_BANDS];
+        let refused = fill_instances(
+            &flora.resident,
+            &plan,
+            [0.0, 40.0, 0.0],
+            &mut instances,
+            &mut bands,
+        );
         let expected = plan
             .sites
             .iter()
@@ -620,6 +700,85 @@ mod tests {
             instances.len() + refused,
             planned,
             "every planned placement is drawn or dropped"
+        );
+    }
+
+    #[test]
+    fn the_drawn_field_has_a_continuous_density_profile() {
+        // The counters the sample prints, read the way the coverage report
+        // reads them: drawn instances per 8 m Chebyshev band from the eye, as a
+        // density, and the factor from one band to the next. An integer
+        // `keep_every` showed an 8x drop at its band edge; the smoothstep
+        // profile changes by the ramp's own slope, and this is the bound that
+        // catches a return to a step.
+        let flora = LandscapeFlora::new().expect("prototypes must build");
+        let mut plan = FloraPlan::default();
+        landscape::plan_flora_into(
+            crate::landscape::SEED,
+            [0.0f32, 40.0, 0.0],
+            &LANDSCAPE_FLORA_TIERS,
+            MAX_PLANNED_SITES,
+            MAX_PLANNED_TREES,
+            &mut plan,
+        );
+        let mut instances = Vec::new();
+        let mut bands = [0usize; FLORA_BANDS];
+        fill_instances(
+            &flora.resident,
+            &plan,
+            [0.0, 40.0, 0.0],
+            &mut instances,
+            &mut bands,
+        );
+        let area = |band: usize| -> f64 {
+            let inner = if band == 0 {
+                0.0
+            } else {
+                FLORA_BAND_EDGES_M[band - 1].min(1_000) as f64
+            };
+            let outer = FLORA_BAND_EDGES_M[band].min(1_000) as f64;
+            (2.0 * outer).powi(2) - (2.0 * inner).powi(2)
+        };
+        let density = |band: usize| bands[band] as f64 / area(band);
+        // Vegetation stands within 16 m of the eye; that is the near field the
+        // owner's report was about, as a number.
+        assert!(
+            bands[0] > 0 && bands[1] > 0,
+            "the eye's own band must hold drawn vegetation: {bands:?}"
+        );
+        // Find the bands either side of the profile's plateau edge and of its
+        // end. The plateau is full density, so the band inside it and the band
+        // straddling the edge differ by the ramp's own slope: an integer
+        // `keep_every` step dropped 8x here. The band past the outer radius is
+        // the fade's tail, which must be small in absolute terms - a fade, not
+        // a fence.
+        let outer_radius = LANDSCAPE_FLORA_TIERS
+            .iter()
+            .map(|tier| tier.radius_m)
+            .max()
+            .unwrap() as usize;
+        let plateau = LANDSCAPE_FLORA_TIERS[0].radius_m as usize;
+        let band_of = |metres: usize| {
+            FLORA_BAND_EDGES_M
+                .iter()
+                .position(|edge| *edge as usize >= metres.min(i32::MAX as usize))
+                .unwrap_or(FLORA_BANDS - 1)
+        };
+        let plateau_band = band_of(plateau);
+        assert!(
+            density(plateau_band) >= 0.6 * density(plateau_band - 1),
+            "the {} m plateau edge stepped {:.3} -> {:.3}/m2",
+            plateau,
+            density(plateau_band - 1),
+            density(plateau_band)
+        );
+        let tail = band_of(outer_radius + 1);
+        assert!(
+            density(tail) > 0.0 && density(tail) < 0.05 * density(plateau_band),
+            "the {} m fade must die out, not stop: {:.3}/m2 past it, {:.3}/m2 at the plateau",
+            outer_radius,
+            density(tail),
+            density(plateau_band)
         );
     }
 

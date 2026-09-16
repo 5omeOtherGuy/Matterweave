@@ -225,6 +225,15 @@ several framings - a near-field ground crop and a 20-200 m tree crop are not the
 same camera - and a framing that cannot be reproduced without a private build is not
 evidence. Out-of-range values are logged and ignored, as are malformed ones.
 
+`MATTERWEAVE_LANDSCAPE_SCALE_FRAME=<n>` moves the opt-in `--scale-check` capture off
+its 90-frame warmup, so the same framing can be captured during the fill (a value of
+2 shows what the ground under the camera looked like before streaming caught up) or
+after any other warmup. `MATTERWEAVE_LANDSCAPE_EXERCISE_ALT=<metres>` sets how high
+above the ground the scripted exercise path flies, which is 60 m by default; an eye
+height (1.7 m, the walk-mode constant) records the near-ground view along the real
+moving path. Both are absent by default, refuse a zero frame, clamp the altitude to
+the camera's own limits and leave everything else unchanged.
+
 `MATTERWEAVE_LANDSCAPE_FLORA=off|shadow` is a measurement mode, not a quality
 setting. `off` runs terrain, water, sky and HUD with no flora at all; `shadow` builds
 and uploads the field and lets it cast shadows, but does not draw it. A capture

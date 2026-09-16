@@ -651,12 +651,39 @@ impl TileStream {
 
     /// Apply one frame's plan: declare residency, evict, collect generated
     /// meshes, request what is missing and upload within the budget.
+    ///
+    /// `fine_covers_camera` is whether the authoritative mesh for the ground
+    /// under the camera is resident this frame. It only decides one thing: a
+    /// frame where it is false and no resident tile draws that ground either
+    /// would show clear colour under the player, so the tile that does draw it
+    /// is generated and uploaded outside the budget rather than waiting for the
+    /// worker. Every other tile stays on the worker.
     pub fn sync(
         &mut self,
         renderer: &mut Renderer,
         plan: &[RingTile],
         frame: u64,
+        eye: [f32; 3],
+        fine_covers_camera: bool,
     ) -> Result<(), String> {
+        // A non-finite eye folds to zero exactly as the planner's does.
+        let ground = [eye[0], eye[2]].map(|v| {
+            if v.is_finite() {
+                v.clamp(-1.0e9, 1.0e9).floor() as i32
+            } else {
+                0
+            }
+        });
+        // Whether a tile the renderer already holds draws the camera's own
+        // ground. The plan moves in whole tiles, so on the frame the innermost
+        // ring steps the previous tile still covers the eye; the exemption is
+        // for the frames where nothing does - the opening fill, and a step under
+        // a fine window that has not caught up.
+        let resident_covers = plan.iter().any(|tile| {
+            tile.covers_point(ground[0], ground[1])
+                && self.residency.filter(&(tile.level, tile.key)) == Some(&normalized_filter(tile))
+        });
+        let urgent = !fine_covers_camera && !resident_covers;
         let declare_begin = Instant::now();
         self.cache.begin_frame(frame);
         self.residency
@@ -704,7 +731,8 @@ impl TileStream {
         let mut upload_ms = 0.0;
         let mut served = 0u64;
         for tile in &self.work.build {
-            if build_begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
+            let covering = urgent && tile.covers_point(ground[0], ground[1]);
+            if !covering && build_begin.elapsed().as_secs_f64() * 1000. >= MAX_TILE_MS {
                 break;
             }
             let key = self.key(tile);
@@ -713,9 +741,12 @@ impl TileStream {
                     served += 1;
                     mesh
                 }
-                None if !self.worker.available() => {
-                    // Background preparation is unavailable: generate on the
-                    // main thread rather than leaving a hole in the rings.
+                None if !self.worker.available() || covering => {
+                    // Background preparation is unavailable, or this is the tile
+                    // over the camera: generate on the main thread rather than
+                    // leave a hole under the player. At most one tile a frame is
+                    // exempt, and only while the camera's own tile is not yet
+                    // cached - a plan crossing pays it once.
                     let generate_begin = Instant::now();
                     let mesh =
                         landscape::lod_tile_mesh(self.seed, tile.level, tile.key, key.filter);
@@ -821,6 +852,81 @@ mod tests {
         assert_eq!(work.evict.len(), 0);
         assert_eq!(work.outstanding, 0);
         assert_eq!(work.pinned.len(), 0);
+    }
+
+    #[test]
+    fn the_tile_over_the_camera_is_built_first_and_covers_it() {
+        // The sample's coverage promise, on the stream's own bookkeeping and at
+        // both speeds a player uses: once a frame has built the camera's tile,
+        // the ground under the eye is drawn by a resident tile. The tile is the
+        // nearest one in the plan, so it is inside the frame's upload budget
+        // even when the ring is filling, and the camera's cell is the one the
+        // budget may not skip - which is what the urgent path in
+        // `TileStream::sync` relies on.
+        for (name, per_frame) in [("walking", 5.0f32 / 60.0), ("flight", 90.0 / 60.0)] {
+            let mut residency = TileResidency::default();
+            let mut work = TilePlanWork::default();
+            let mut first_covered: Option<u64> = None;
+            for frame in 0..600u64 {
+                let t = frame as f32;
+                let eye = [
+                    -300.0 + t * per_frame + 30.0 * (t * 0.037).sin(),
+                    40.0,
+                    250.0 - t * per_frame * 0.5 + 30.0 * (t * 0.023).cos(),
+                ];
+                let fine = fine_clip(eye);
+                let plan = ring_plan(eye, fine, &LANDSCAPE_RINGS);
+                let x = eye[0].floor() as i32;
+                let z = eye[2].floor() as i32;
+                residency.plan_into(
+                    &plan,
+                    frame,
+                    TileBudget::default(),
+                    Hysteresis::NONE,
+                    &mut work,
+                );
+                // The engine builds every tile it is asked for within the
+                // frame, so the only cost that can delay coverage here is the
+                // plan and the budget.
+                let covering: Vec<_> = plan.iter().filter(|tile| tile.covers_point(x, z)).collect();
+                assert!(
+                    !covering.is_empty(),
+                    "{name} frame {frame}: the plan does not cover the camera"
+                );
+                let covered_before = residency
+                    .filter(&(covering[0].level, covering[0].key))
+                    .is_some_and(|filter| *filter == normalized_filter(covering[0]));
+                if !covered_before {
+                    assert!(
+                        work.build
+                            .iter()
+                            .any(|tile| tile.level == covering[0].level
+                                && tile.key == covering[0].key),
+                        "{name} frame {frame}: the tile over the camera is not in the \
+                         frame's build list"
+                    );
+                }
+                apply(&mut residency, &work);
+                let covered_after = plan.iter().any(|tile| {
+                    tile.covers_point(x, z)
+                        && residency.filter(&(tile.level, tile.key))
+                            == Some(&normalized_filter(tile))
+                });
+                assert!(
+                    covered_after,
+                    "{name} frame {frame}: nothing resident draws the ground under the camera"
+                );
+                if first_covered.is_none() {
+                    first_covered = Some(frame);
+                }
+            }
+            // The opening fill is the only frame that can need the camera's own
+            // tile before anything else is resident.
+            assert!(
+                first_covered.is_some_and(|frame| frame <= 1),
+                "{name}: coverage only arrived at {first_covered:?}"
+            );
+        }
     }
 
     #[test]
@@ -1168,6 +1274,7 @@ mod tests {
                     max: [32, 32],
                 }),
                 bound: None,
+                bed: None,
             },
             ..base
         };
