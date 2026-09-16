@@ -557,10 +557,6 @@ fn hill_relief(fields: &Fields) -> i32 {
     }
 }
 
-fn biome_of(fields: &Fields, height: i32) -> Biome {
-    biome_blend::classify(blend_inputs(fields, height)).dominant()
-}
-
 /// The climate and relief scalars the blender classifies one column from.
 fn blend_inputs(fields: &Fields, height: i32) -> biome_blend::Inputs {
     biome_blend::Inputs {

@@ -27,10 +27,6 @@ const VIEWPORT_PIXELS: f64 = 1440.0;
 /// degree horizontal field a 16:9 frame has at a 65 degree vertical field.
 const WEDGE_HALF_ANGLE_DEGREES: f64 = 48.0;
 
-fn yaw_radians() -> f64 {
-    YAW.to_radians()
-}
-
 fn eye() -> [i32; 3] {
     [
         SPAWN[0],
@@ -88,6 +84,37 @@ fn summit_is_visible(eye: [i32; 3], summit: [i32; 3]) -> bool {
 fn silhouette_pixels(height_m: i32, distance_m: i32) -> f64 {
     let half = (VIEW_FOV_DEGREES / 2.0).to_radians().tan();
     VIEWPORT_PIXELS * (height_m as f64 / distance_m as f64) / (2.0 * half)
+}
+
+/// How much of the landmark a player can actually see, in metres of its own
+/// height: the part of its silhouette that stands above whatever ridge is in the
+/// way.
+///
+/// The terrain along the eye-to-summit line is compared by *angle*, not by
+/// height: a ridge 40 m below the sight line at 100 m hides more of a landmark
+/// than the same ridge at a kilometre does. A landmark whose summit only just
+/// clears a hill is one a player cannot pick out, and this is that measurement.
+fn visible_height_m(eye: [i32; 3], landmark: &Landmark) -> i32 {
+    let summit = summit(landmark);
+    let dx = summit[0] - eye[0];
+    let dz = summit[2] - eye[2];
+    let distance = ((dx as i64 * dx as i64 + dz as i64 * dz as i64) as u64).isqrt() as i32;
+    if distance < 50 {
+        return 0;
+    }
+    // Only the ground in *front* of the landmark counts: the ray to the summit
+    // crosses the landmark's own flank, and reading that as the skyline would
+    // report a tower as hidden behind itself.
+    let front = (distance - landmark.radius_m()).max(8);
+    let mut skyline = f64::NEG_INFINITY;
+    for step in 1..(front / 8) {
+        let t = (step * 8) as f64;
+        let x = eye[0] + dx * step * 8 / distance;
+        let z = eye[2] + dz * step * 8 / distance;
+        skyline = skyline.max((landscape::height_at(SEED, x, z) - eye[1]) as f64 / t);
+    }
+    let target = (summit[1] - eye[1]) as f64 / distance as f64;
+    ((target - skyline) * distance as f64).max(0.0) as i32
 }
 
 /// The landmark's summit, from the generator.
@@ -277,22 +304,36 @@ fn the_spawn_view_frames_landmarks_and_the_start_of_a_transition() {
         visible.push((range, landmark));
     }
     visible.sort_by_key(|(range, _)| *range);
+    let mut above: Vec<i32> = visible
+        .iter()
+        .map(|(_, landmark)| visible_height_m(eye, landmark))
+        .collect();
     println!(
-        "visible from the spawn camera (eye {eye:?}), wedge +-{WEDGE_HALF_ANGLE_DEGREES} deg:"
+        "visible from the spawn camera (eye {eye:?}), wedge +-{WEDGE_HALF_ANGLE_DEGREES} deg, \
+         pixels at {VIEWPORT_PIXELS:.0} tall and {VIEW_FOV_DEGREES:.0} deg:"
     );
-    for (range, landmark) in &visible {
+    for ((range, landmark), above) in visible.iter().zip(&above) {
         println!(
-            "  {:<9} {:>5} m  off axis {:>6.1} deg  height {:>3} m  silhouette {:>5.1} px",
+            "  {:<9} {:>5} m  off axis {:>6.1} deg  tall {:>3} m  subtends {:>5.1} px  \
+             visible {:>3} m = {:>5.1} px",
             landmark.name(),
             range,
             angle_off_axis(landmark.centre),
             landmark.height_m(),
             silhouette_pixels(landmark.height_m(), *range),
+            above,
+            silhouette_pixels(*above, *range),
         );
     }
     assert!(
         visible.len() >= 2,
         "at least two landmarks must frame the spawn view: {visible:?}"
+    );
+    above.sort_unstable_by(|a, b| b.cmp(a));
+    assert!(
+        above[0] >= 40 && above[1] >= 16,
+        "two landmarks must stand hundreds of metres of ground above the skyline, \
+         not just clear it: {above:?} m"
     );
     let mut kinds: Vec<LandmarkKind> = visible.iter().map(|(_, landmark)| landmark.kind).collect();
     kinds.sort_by_key(|kind| kind.name());

@@ -1804,18 +1804,13 @@ fn the_material_roll_follows_the_mixture() {
             if !window.iter().all(land) || window.iter().all(|column| column.mix.len() == 1) {
                 continue;
             }
-            for step in 0..window.len() {
-                let x = DEMO_SPAWN[0] + direction.0 * (windows * 0 + step) as i32;
-                let z = DEMO_SPAWN[1] + direction.1 * (windows * 0 + step) as i32;
-                let _ = (x, z);
-                let column = &window[step];
+            for (step, column) in window.iter().enumerate() {
+                let (x, z) = (
+                    DEMO_SPAWN[0] + direction.0 * step as i32,
+                    DEMO_SPAWN[1] + direction.1 * step as i32,
+                );
                 for &(biome, weight) in column.mix.entries() {
-                    let material = landscape::biome_surface(
-                        SEED,
-                        DEMO_SPAWN[0] + direction.0 * step as i32,
-                        DEMO_SPAWN[1] + direction.1 * step as i32,
-                        biome,
-                    );
+                    let material = landscape::biome_surface(SEED, x, z, biome);
                     *expected.entry(material).or_default() += f64::from(weight) / 256.0;
                 }
                 *observed.entry(column.surface).or_default() += 1;

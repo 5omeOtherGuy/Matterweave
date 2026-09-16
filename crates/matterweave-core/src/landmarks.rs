@@ -132,13 +132,12 @@ impl LandmarkKind {
         }
     }
 
-    /// Height the kind needs above its own ground before it is a silhouette
-    /// rather than a bump: at two kilometres a spire's 110 m subtends 62
-    /// pixels, a mesa's 80 m forty-five, and a crater's 30 m seventeen, on the
-    /// reference viewport.
-
     /// Silhouette height in metres: summit above the ground it stands on, or
     /// rim above the ground for a crater.
+    ///
+    /// Sized so the kind is a silhouette rather than a bump at two kilometres:
+    /// at the reference viewport a spire's 110 m subtends 62 pixels there, a
+    /// mesa's 80 m forty-five, and a crater's 30 m seventeen.
     pub fn height_m(self) -> i32 {
         match self {
             LandmarkKind::Spire => 110,
@@ -313,12 +312,6 @@ impl Landmark {
         let dz = (self.centre[1] - z) as i64;
         ((dx * dx + dz * dz) as u64).isqrt() as i32
     }
-}
-
-/// Integer ramp from `0` at `low` to `256` at `high`, clamped.
-fn ramp(value: i32, low: i32, high: i32) -> i32 {
-    let span = (high - low).max(1);
-    (((value - low).max(0) as i64 * 256) / span as i64).min(256) as i32
 }
 
 /// The site a lattice cell holds, or `None`.
