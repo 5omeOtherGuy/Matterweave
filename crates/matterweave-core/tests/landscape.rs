@@ -35,7 +35,9 @@ fn fingerprint(seed: u64, edge: i32) -> u64 {
 
 #[test]
 fn generation_is_deterministic_and_seed_dependent() {
-    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 3);
+    // 4: the blend-and-landmark change and the near-field flora density profile
+    // landed in the same window, and both move what the generator produces.
+    assert_eq!(LANDSCAPE_GENERATOR_VERSION, 4);
     for (x, z) in [(0, 0), (1, -1), (1000, -2000), (-9999, 30000)] {
         assert_eq!(
             landscape::column(SEED, x, z),
@@ -63,11 +65,14 @@ fn generator_fingerprint_is_stable() {
     // tables moves it. Updating the constant is a deliberate generator change
     // (and a LANDSCAPE_GENERATOR_VERSION bump), never a test fix.
     //
-    // v3 moved it from 0x3e12_047e_a85c_b89e to 0x5231_cffe_2b4dc609: the
-    // biome mixture, its material roll, the blended vegetation pressures and the
-    // landmark shaping all reach `landscape::column`, which is what this digest
-    // samples. Heights changed only inside landmark footprints; every column
-    // kept its hard-classified biome label.
+    // The blend-and-landmark change moved it from 0x3e12_047e_a85c_b89e to
+    // 0x5231_cffe_2b4dc609: the biome mixture, its material roll, the blended
+    // vegetation pressures and the landmark shaping all reach `landscape::column`,
+    // which is what this digest samples. Heights changed only inside landmark
+    // footprints; every column kept its hard-classified biome label. The
+    // near-field flora density profile that landed beside it does not appear here
+    // - it changes what the runtime plans from the population, not the population
+    // this samples - which is why this value did not move again.
     assert_eq!(
         fingerprint(SEED, 12),
         0x5231_cffe_2b4d_c609,
@@ -345,7 +350,8 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // together are one digest, measured after the merge rather than copied from
     // either change. It stands at 0x238c_a60d_0189_c137 for v2.
     //
-    // v3 moved it to 0x457d_182a_5cc9_e146: the surface tone now carries the
+    // The blend-and-landmark change moved it to 0x457d_182a_5cc9_e146: the
+    // surface tone now carries the
     // blend's per-patch material (sand thinning into grass, stone into soil),
     // the flora population follows the mixed pressures, and a landmark's own
     // rock face reaches the tiles as STONE/GRAVEL. Vertex counts move with the
@@ -1060,7 +1066,7 @@ fn included_cells(tile: &RingTile) -> Vec<Clip> {
 fn rings_cover_the_visible_square_exactly_once() {
     for eye in RING_EYES {
         let fine = landscape::fine_clip(eye);
-        let plan = landscape::ring_plan(eye, fine, &LANDSCAPE_RINGS);
+        let plan = landscape::ring_plan(eye, landscape::fine_clip(eye), &LANDSCAPE_RINGS);
         assert!(!plan.is_empty());
 
         // Premise of the block granularity: every claim boundary is a multiple
@@ -1068,6 +1074,19 @@ fn rings_cover_the_visible_square_exactly_once() {
         for edge in [fine.min[0], fine.min[1], fine.max[0], fine.max[1]] {
             assert_eq!(edge.rem_euclid(CLAIM_BLOCK_M), 0, "fine edge {edge}");
         }
+        // The innermost ring takes no hole: it covers the streaming window too,
+        // drawing its flooded cells as the bed under the fine water surface, so
+        // the ground under the camera is drawn before the fine meshes land.
+        // Every other ring is cut with the square inside it.
+        assert_eq!(
+            plan[0].filter.hole, None,
+            "the innermost ring must not take a hole at eye {eye:?}"
+        );
+        assert_eq!(
+            plan[0].filter.bed,
+            Some(fine),
+            "the innermost ring must treat the streaming window as its bed at eye {eye:?}"
+        );
         for tile in &plan {
             // The grid runs at CLAIM_BLOCK_M; a coarser cell is a whole number of
             // blocks and a finer one is merged up to a block by `included_cells`.
@@ -1078,12 +1097,13 @@ fn rings_cover_the_visible_square_exactly_once() {
                 tile.level
             );
             let bound = tile.filter.bound.expect("a ring tile is always bounded");
-            let hole = tile.filter.hole.expect("a ring tile always has a hole");
             for edge in [bound.min[0], bound.min[1], bound.max[0], bound.max[1]] {
                 assert_eq!(edge.rem_euclid(landscape::lod_cell_m(tile.level)), 0);
             }
-            for edge in [hole.min[0], hole.min[1], hole.max[0], hole.max[1]] {
-                assert_eq!(edge.rem_euclid(landscape::lod_cell_m(tile.level)), 0);
+            if let Some(hole) = tile.filter.hole {
+                for edge in [hole.min[0], hole.min[1], hole.max[0], hole.max[1]] {
+                    assert_eq!(edge.rem_euclid(landscape::lod_cell_m(tile.level)), 0);
+                }
             }
         }
 
@@ -1092,8 +1112,9 @@ fn rings_cover_the_visible_square_exactly_once() {
             .and_then(|tile| tile.filter.bound)
             .expect("the coarsest ring is planned last");
         let mut grid = ClaimGrid::new(outer);
-        // The fine streaming window must be nested inside the innermost ring,
-        // otherwise it could claim a cell a ring also claims.
+        // The streaming window must be nested inside the innermost ring; the
+        // ring draws that ground itself now, so a window that escaped it would
+        // leave the part outside covered by neither.
         let inner = plan[0].filter.bound.unwrap();
         assert!(
             inner.min[0] <= fine.min[0]
@@ -1101,11 +1122,6 @@ fn rings_cover_the_visible_square_exactly_once() {
                 && inner.max[0] >= fine.max[0]
                 && inner.max[1] >= fine.max[1],
             "fine window {fine:?} escaped the innermost ring {inner:?} at eye {eye:?}"
-        );
-        assert_eq!(
-            grid.claim(fine),
-            0,
-            "the fine window left the visible square"
         );
         for tile in &plan {
             for cell in included_cells(tile) {
@@ -1132,6 +1148,39 @@ fn rings_cover_the_visible_square_exactly_once() {
             "eye {eye:?}: {unclaimed} blocks of the visible square are drawn by nobody \
              and {overlapped} are drawn more than once"
         );
+    }
+}
+
+#[test]
+fn the_ring_plan_covers_the_ground_under_a_moving_eye() {
+    // The innermost ring is not cut with the streaming window, so the union of
+    // planned tiles draws the ground cell under the camera at every eye
+    // position: at walking and flight speed, across chunk, tile and ring
+    // boundaries. The fine meshes are drawn over that ground, not instead of
+    // it, which is what makes the coverage hold before they arrive.
+    for (name, per_frame) in [("walking", 5.0f32 / 60.0), ("flight", 90.0 / 60.0)] {
+        for step in 0..900 {
+            let t = step as f32;
+            let eye = [
+                -400.0 + t * per_frame + 40.0 * (t * 0.031).sin(),
+                40.0 + (t * 0.017).cos() * 20.0,
+                300.0 - t * per_frame * 0.5 + 40.0 * (t * 0.043).cos(),
+            ];
+            let fine = landscape::fine_clip(eye);
+            let plan = landscape::ring_plan(eye, fine, &LANDSCAPE_RINGS);
+            let x = eye[0].floor() as i32;
+            let z = eye[2].floor() as i32;
+            assert!(
+                plan.iter().any(|tile| tile.covers_point(x, z)),
+                "{name} step {step} at {eye:?}: no planned tile draws the ground under the eye"
+            );
+            // The window the fine meshes draw in is inside the innermost ring,
+            // and that ring treats it as its bed.
+            let inner = plan[0].filter.bound.expect("the innermost ring is bounded");
+            assert!(inner.min[0] <= fine.min[0] && inner.max[0] >= fine.max[0]);
+            assert!(inner.min[1] <= fine.min[1] && inner.max[1] >= fine.max[1]);
+            assert_eq!(plan[0].filter.bed, Some(fine), "{name} step {step}");
+        }
     }
 }
 
@@ -1165,9 +1214,22 @@ fn ring_plans_are_deterministic_and_bounded() {
         let levels: Vec<u32> = plan.iter().map(|tile| tile.level).collect();
         assert!(levels.windows(2).all(|pair| pair[0] <= pair[1]));
         for config in LANDSCAPE_RINGS {
-            assert!(
-                plan.iter().any(|tile| tile.level == config.level),
-                "ring {config:?} planned no tiles"
+            let tile_size = config.tile_size_m();
+            let first = plan
+                .iter()
+                .find(|tile| tile.level == config.level)
+                .unwrap_or_else(|| panic!("ring {config:?} planned no tiles"));
+            // The nearest tile is planned first, so a frame's bounded uploads
+            // fill the ring around the eye before the far side of the square -
+            // which is what lets the sample cover the camera's own ground
+            // before anything else in the ring.
+            assert_eq!(
+                first.key,
+                [
+                    (eye[0].floor() as i32).div_euclid(tile_size),
+                    (eye[2].floor() as i32).div_euclid(tile_size),
+                ],
+                "ring {config:?} did not plan the eye's own tile first at {eye:?}"
             );
         }
     }
@@ -1198,8 +1260,8 @@ fn ring_tiles_are_stable_while_the_eye_stays_in_one_tile() {
             "the tile set changed at {eye:?}, still inside the same {finest_tile} m tile"
         );
         if step < 16.0 {
-            // Inside one chunk the hole does not move either, so nothing at all
-            // has to be rebuilt.
+            // Inside one chunk the streaming window does not move either, so
+            // nothing at all has to be rebuilt.
             assert_eq!(plan, reference, "the plan changed inside one chunk");
         }
     }
@@ -1316,6 +1378,95 @@ fn a_flat_sea_tile_costs_one_quad() {
             ]
         );
     }
+}
+
+#[test]
+fn a_bed_square_draws_the_ground_under_a_fine_water_surface() {
+    // The tile above is open water: every cell draws the sea surface as one
+    // merged quad. A bed square makes its flooded cells draw the ground under
+    // them instead. That is what the innermost ring does under the
+    // authoritative streaming window: the fine bed stands a metre above the
+    // ring's quantised surface and the fine translucent water is drawn over it,
+    // so an opaque second sea surface there would hide the bed the fine water
+    // is meant to show through.
+    let (level, key) = (4u32, [4, 3]);
+    let cell = landscape::lod_cell_m(level);
+    let span = LOD_TILE_CELLS * cell;
+    let square = Clip {
+        min: [key[0] * span, key[1] * span],
+        max: [key[0] * span + span, key[1] * span + span],
+    };
+    let plain = landscape::lod_tile_mesh(SEED, level, key, TileFilter::default());
+    let faces = tile_faces(&plain);
+    assert_eq!(faces.len(), 1, "the open-water tile is one quad");
+    assert_eq!(faces[0].limits, [SEA_LEVEL as f32, SEA_LEVEL as f32]);
+
+    let bed = landscape::lod_tile_mesh(
+        SEED,
+        level,
+        key,
+        TileFilter {
+            bed: Some(square),
+            ..TileFilter::default()
+        },
+    );
+    let faces = tile_faces(&bed);
+    assert!(!faces.is_empty(), "a bed tile still draws its ground");
+    for face in &faces {
+        assert!(
+            face.limits[1] < SEA_LEVEL as f32,
+            "every bed face is below the water plane: {face:?}"
+        );
+        assert_ne!(
+            face.colour,
+            material::color(material::WATER),
+            "a bed cell must not draw the water material: {face:?}"
+        );
+    }
+    // Each bed top is its own cell's quantised ground height, not one shared
+    // plane: the bed follows the floor it stands for.
+    let step = landscape::lod_step_m(level);
+    let quantised = |height: i32| (height.div_euclid(step) * step) as f32;
+    for face in faces.iter().filter(|face| face.is_top()) {
+        // The mesher samples each cell at its centre, and a top's span starts
+        // on a cell boundary, so the first cell the face covers is its centre
+        // plus half a cell.
+        let x = face.span[0] as i32 + cell / 2;
+        let z = face.span[2] as i32 + cell / 2;
+        let ground = landscape::column(SEED, x, z).height;
+        assert_eq!(
+            face.limits,
+            [quantised(ground), quantised(ground)],
+            "bed top at ({x}, {z}) must stand at its own ground height"
+        );
+    }
+
+    // A bed square covering half the tile changes only that half: the rest is
+    // still the sea surface, so the ring can draw both from one mesh.
+    let half = Clip {
+        min: square.min,
+        max: [square.min[0] + span / 2, square.min[1] + span],
+    };
+    let partial = landscape::lod_tile_mesh(
+        SEED,
+        level,
+        key,
+        TileFilter {
+            bed: Some(half),
+            ..TileFilter::default()
+        },
+    );
+    let faces = tile_faces(&partial);
+    assert!(
+        faces
+            .iter()
+            .any(|face| face.limits == [SEA_LEVEL as f32, SEA_LEVEL as f32]),
+        "the uncovered half still draws the sea surface"
+    );
+    assert!(
+        faces.iter().any(|face| face.limits[1] < SEA_LEVEL as f32),
+        "the bed half draws the ground"
+    );
 }
 
 /// Geometry the pre-voxel mesh builder produced for the same plan and eye, at

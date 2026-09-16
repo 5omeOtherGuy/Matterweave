@@ -1934,6 +1934,36 @@ impl Renderer {
         }
     }
 
+    /// Whether a chunk with drawn geometry is resident for `key`.
+    ///
+    /// [`Renderer::chunk_revision`] reports an empty resident chunk too; an
+    /// empty mesh draws nothing, so a caller asking whether the ground under a
+    /// point is actually covered must use this instead.
+    pub fn chunk_has_geometry(&self, key: [i32; 3]) -> bool {
+        self.chunks
+            .get(&key)
+            .is_some_and(|mesh| mesh.index_count > 0)
+    }
+
+    /// Whether a derived water surface with drawn geometry is resident.
+    pub fn water_chunk_has_geometry(&self, key: [i32; 3]) -> bool {
+        self.water
+            .get(&key)
+            .is_some_and(|mesh| mesh.index_count > 0)
+    }
+
+    /// Whether a far-terrain tile with drawn geometry is resident.
+    ///
+    /// A tile that meshed to nothing is not resident - [`upload_terrain_tile`]
+    /// is never called for an empty mesh - so residency here is drawn geometry.
+    ///
+    /// [`upload_terrain_tile`]: Renderer::upload_terrain_tile
+    pub fn terrain_tile_has_geometry(&self, level: u32, key: [i32; 2]) -> bool {
+        self.terrain
+            .get(&(level, key))
+            .is_some_and(|mesh| mesh.index_count > 0)
+    }
+
     pub fn terrain_tile_stats(&self) -> TerrainTileStats {
         TerrainTileStats {
             resident: self.terrain.len(),
