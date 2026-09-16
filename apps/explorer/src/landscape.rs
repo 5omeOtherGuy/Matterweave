@@ -70,11 +70,57 @@ pub const SEED: u64 = 20260913;
 
 /// Eye height above the surface in walk mode.
 const EYE_HEIGHT: f32 = 1.7;
+/// Height above the ground the scripted exercise path flies at, in metres.
+const EXERCISE_ALTITUDE_M: f32 = 60.0;
+
+/// Altitude the scripted exercise flies at, from
+/// `MATTERWEAVE_LANDSCAPE_EXERCISE_ALT`. The shipped 60 m exercises streaming
+/// from flight; a capture of the near ground needs the same path at an eye
+/// height, which is what the walk-mode constant approximates. Absent or
+/// malformed keeps the shipped altitude, and the value is clamped to the
+/// camera's own vertical limits.
+fn exercise_altitude() -> f32 {
+    match std::env::var(EXERCISE_ALT_ENV_VAR) {
+        Ok(text) => text
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| value.clamp(EYE_HEIGHT, MAX_EYE_Y))
+            .unwrap_or(EXERCISE_ALTITUDE_M),
+        Err(_) => EXERCISE_ALTITUDE_M,
+    }
+}
+
+/// Environment variable naming the scripted exercise's altitude. See
+/// [`exercise_altitude`].
+pub const EXERCISE_ALT_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_EXERCISE_ALT";
 /// Fly speed in metres per second.
 const FLY_SPEED: f32 = 90.0;
 /// Presented frames of streaming warmup before the opt-in scale check
 /// captures. The pair must show a settled scene, not a first-fill one.
 pub const SCALE_CHECK_FRAME: u64 = 90;
+
+/// Warmup the opt-in scale check may be asked for, from
+/// `MATTERWEAVE_LANDSCAPE_SCALE_FRAME`. The shipped 90 frames show the settled
+/// streaming state; a low value shows the fill, which is what a capture of the
+/// near ground during streaming needs. Absent or malformed keeps the shipped
+/// value, and zero is refused so a capture cannot fire before the first frame.
+fn scale_check_frame() -> u64 {
+    match std::env::var(SCALE_FRAME_ENV_VAR) {
+        Ok(text) => text
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|frames| *frames > 0)
+            .unwrap_or(SCALE_CHECK_FRAME),
+        Err(_) => SCALE_CHECK_FRAME,
+    }
+}
+
+/// Environment variable naming the scale check's warmup frame. See
+/// [`scale_check_frame`].
+pub const SCALE_FRAME_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_SCALE_FRAME";
 /// Camera limits. The horizontal clamp keeps the eye inside the simulation
 /// domain, which is where the ring planner's coverage contract holds and where
 /// the streaming window is a full 7x7 square.
@@ -190,8 +236,9 @@ pub fn marker_clouds(directory: &Path) -> CloudChoice {
 /// The filter that actually affects one tile, with parts that cannot change its
 /// mesh removed.
 ///
-/// A ring's hole is the whole previous ring's square and its bound is the whole
-/// ring square; most tiles are cut by neither. Normalizing lets the cache
+/// A ring's hole and bed are the whole previous ring's square - for the
+/// innermost ring, the streaming window - and its bound is the whole ring
+/// square; most tiles are cut by none of them. Normalizing lets the cache
 /// compare filters to decide what to rebuild: without it, every tile of the
 /// innermost ring would look different each time the streaming window moves one
 /// chunk, and all 64 would be rebuilt for a 16 m step.
@@ -223,6 +270,8 @@ pub fn normalized_filter(tile: &RingTile) -> TileFilter {
         hole: tile.filter.hole.and_then(overlap),
         // A bound containing the tile removes nothing.
         bound: tile.filter.bound.filter(|bound| !contains(*bound)),
+        // A bed square outside the tile changes nothing.
+        bed: tile.filter.bed.and_then(overlap),
     }
 }
 
@@ -747,6 +796,12 @@ pub struct LandscapeSample {
     /// Deterministic camera path for smoke runs. Off by default: it exists to
     /// exercise streaming, eviction and the per-frame budget without input.
     pub exercise: bool,
+    /// Altitude above the ground the exercise path flies at, read once at
+    /// construction (see [`exercise_altitude`]).
+    exercise_altitude: f32,
+    /// Presented frames of warmup before the opt-in scale check captures, read
+    /// once at construction (see [`scale_check_frame`]).
+    scale_check_frame: u64,
     /// Whether [`Self::hud`] draws the status panel. False only when a capture
     /// run asked for a clean frame; the scene path is identical either way.
     hud: bool,
@@ -940,6 +995,8 @@ impl LandscapeSample {
             shadow_window_start: ShadowCacheCounters::default(),
             lifecycle: PlatformLifecycle::default(),
             exercise: false,
+            exercise_altitude: exercise_altitude(),
+            scale_check_frame: scale_check_frame(),
             hud: hud_shown(),
             wind_strength: wind_strength(),
             return_to_menu: false,
@@ -963,7 +1020,7 @@ impl LandscapeSample {
             self.camera.position.x.floor() as i32,
             self.camera.position.z.floor() as i32,
         ) as f32;
-        self.camera.position.y = ground + 60.0;
+        self.camera.position.y = ground + self.exercise_altitude;
         self.camera.yaw = angle + std::f32::consts::FRAC_PI_2;
         clamp_camera(&mut self.camera);
     }
@@ -1063,13 +1120,22 @@ impl LandscapeSample {
     /// Plan the rings for this eye, then let the tile stream declare residency,
     /// evict, collect generated meshes and upload what the cache can serve.
     fn sync_tiles(&mut self) -> Result<(), String> {
+        let eye = self.camera.position.to_array();
+        landscape::ring_plan_into(
+            eye,
+            landscape::fine_clip(eye),
+            &LANDSCAPE_RINGS,
+            &mut self.plan,
+        );
+        // Whether the authoritative mesh for the camera's own ground is
+        // resident decides whether the ring's tile under it may wait for the
+        // worker; see [`TileStream::sync`].
+        let fine = self.fine_ground_resident();
         let Some(renderer) = self.renderer.as_mut() else {
             return Ok(());
         };
-        let eye = self.camera.position.to_array();
-        let fine = landscape::fine_clip(eye);
-        landscape::ring_plan_into(eye, fine, &LANDSCAPE_RINGS, &mut self.plan);
-        self.tiles.sync(renderer, &self.plan, self.frames)
+        self.tiles
+            .sync(renderer, &self.plan, self.frames, eye, fine)
     }
 
     /// Derive and upload the water surface of every resident sea-level chunk.
@@ -1112,15 +1178,22 @@ impl LandscapeSample {
     /// surface voxel. The coarse half is the innermost ring: a resident tile
     /// whose filter draws that cell. A fine miss the underlay covers is exactly
     /// the case the ring's former unconditional hole left empty.
-    fn measure_coverage(&self) -> (bool, bool) {
+    /// Whether the authoritative fine mesh draws the ground under the camera.
+    ///
+    /// The camera stands on the generator column under it, so `height_at(SEED,
+    /// x, z)` at the eye's own `(x, z)` names the surface that cell shows. A
+    /// flooded column's visible surface is the derived water mesh, so that is
+    /// what must be resident there; on land it is the chunk mesh holding the
+    /// surface voxel.
+    fn fine_ground_resident(&self) -> bool {
         let Some(renderer) = self.renderer.as_ref() else {
-            return (false, false);
+            return false;
         };
         let eye = self.camera.position;
         let x = eye.x.floor() as i32;
         let z = eye.z.floor() as i32;
         let ground = landscape::height_at(SEED, x, z);
-        let fine = if ground < landscape::SEA_LEVEL {
+        if ground < landscape::SEA_LEVEL {
             renderer.water_chunk_has_geometry([
                 x.div_euclid(CHUNK_EDGE),
                 sea_level_chunk_y(),
@@ -1132,7 +1205,19 @@ impl LandscapeSample {
                 ground.div_euclid(CHUNK_EDGE),
                 z.div_euclid(CHUNK_EDGE),
             ])
+        }
+    }
+
+    /// Whether drawn geometry covered the ground under the camera this frame,
+    /// and whether it was the authoritative fine mesh that did it.
+    fn measure_coverage(&self) -> (bool, bool) {
+        let Some(renderer) = self.renderer.as_ref() else {
+            return (false, false);
         };
+        let eye = self.camera.position;
+        let x = eye.x.floor() as i32;
+        let z = eye.z.floor() as i32;
+        let fine = self.fine_ground_resident();
         let coarse = self.plan.iter().any(|tile| {
             tile.covers_point(x, z) && renderer.terrain_tile_has_geometry(tile.level, tile.key)
         });
@@ -1463,7 +1548,7 @@ impl LandscapeSample {
             event_loop.exit();
             return;
         }
-        if self.scale_check && self.frames >= SCALE_CHECK_FRAME {
+        if self.scale_check && self.frames >= self.scale_check_frame {
             self.run_scale_check(event_loop, &hud, matrix, eye);
             return;
         }
@@ -2566,11 +2651,20 @@ mod tests {
         // remove one of its cells.
         assert_eq!(normalized_filter(outer), TileFilter::default());
         // The innermost ring has tiles the streaming window cuts into; those
-        // must keep a hole.
+        // carry the window as their bed square, so the ground under the fine
+        // meshes is drawn by the ring. The ring outside it is cut with a hole,
+        // because the innermost ring draws that square itself.
         assert!(
             plan.iter()
-                .any(|tile| normalized_filter(tile).hole.is_some()),
-            "the streaming window must cut at least one planned tile"
+                .any(|tile| normalized_filter(tile).bed.is_some()),
+            "the streaming window must reach at least one planned tile"
+        );
+        assert!(
+            plan.iter().any(|tile| {
+                let filter = normalized_filter(tile);
+                filter.bed.is_none() && filter.hole.is_some()
+            }),
+            "the ring outside the innermost one must be cut with a hole"
         );
     }
 
@@ -2599,11 +2693,15 @@ mod tests {
         }
         assert!(camera.position.x >= -MAX_EYE_XZ && camera.position.z >= -MAX_EYE_XZ);
         assert!(camera.position.y >= MIN_EYE_Y);
-        // The clamp is what keeps the planner's coverage contract valid.
+        // The clamp is what keeps the planner's coverage contract valid: the
+        // authoritative window is a full square inside the world, and the
+        // innermost ring covers all of it.
         let fine = landscape::fine_clip(camera.position.to_array());
         let plan = landscape::ring_plan(camera.position.to_array(), fine, &LANDSCAPE_RINGS);
         let inner = plan[0].filter.bound.unwrap();
         assert!(inner.min[0] <= fine.min[0] && inner.max[0] >= fine.max[0]);
         assert!(inner.min[1] <= fine.min[1] && inner.max[1] >= fine.max[1]);
+        assert_eq!(plan[0].filter.hole, None);
+        assert_eq!(plan[0].filter.bed, Some(fine));
     }
 }
