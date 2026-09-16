@@ -180,6 +180,7 @@ fn the_demo_spawn_is_settled_ground_with_a_view() {
 fn three_biomes_are_a_walk_from_the_demo_spawn() {
     let mut area: BTreeMap<&'static str, i64> = BTreeMap::new();
     let mut nearest: BTreeMap<&'static str, i32> = BTreeMap::new();
+    let mut nearest_at: BTreeMap<&'static str, [i32; 2]> = BTreeMap::new();
     let mut surface: BTreeMap<&'static str, BTreeMap<u8, i64>> = BTreeMap::new();
     let mut pressure: BTreeMap<&'static str, [i64; 2]> = BTreeMap::new();
     let step = 4;
@@ -199,7 +200,10 @@ fn three_biomes_are_a_walk_from_the_demo_spawn() {
             *area.entry(name).or_default() += 16;
             let distance = ((dx * dx + dz * dz) as f64).sqrt() as i32 * step;
             let entry = nearest.entry(name).or_insert(i32::MAX);
-            *entry = (*entry).min(distance);
+            if distance < *entry {
+                *entry = distance;
+                nearest_at.insert(name, [x - SPAWN[0], z - SPAWN[2]]);
+            }
             *surface
                 .entry(name)
                 .or_default()
@@ -210,6 +214,24 @@ fn three_biomes_are_a_walk_from_the_demo_spawn() {
             pressures[1] += i64::from(column.mix.pressure(matterweave_core::Biome::tree_density));
         }
     }
+    // The band each walk crosses on the way to its nearest ground: the boundary
+    // band width this test is about, measured on the radial rather than quoted
+    // from another test's sample.
+    let mut bands: BTreeMap<&'static str, i32> = BTreeMap::new();
+    for (name, offset) in nearest_at.iter() {
+        let metres = (offset[0].abs().max(offset[1].abs())).max(1);
+        let (dx, dz) = (offset[0], offset[1]);
+        let mut band = 0;
+        for step in 0..=metres {
+            let x = SPAWN[0] + dx * step / metres;
+            let z = SPAWN[2] + dz * step / metres;
+            if landscape::column(SEED, x, z).mix.mixed(51) {
+                band += 1;
+            }
+        }
+        bands.insert(*name, band);
+    }
+
     let mut present: Vec<(&'static str, i64)> = area
         .iter()
         .filter(|(_, size)| **size >= BIOME_AREA_M2)
@@ -229,8 +251,9 @@ fn three_biomes_are_a_walk_from_the_demo_spawn() {
         let samples = area[*name] / 16;
         let mean = pressure[*name];
         println!(
-            "  {name:<9} {size:>9} m2  nearest {:>4} m  ground {:<8} grass {:>2} tree {:>2}",
+            "  {name:<9} {size:>9} m2  nearest {:>4} m  band {:>4} m  ground {:<8} grass {:>2} tree {:>2}",
             nearest[*name],
+            bands[*name],
             material::name(modal),
             mean[0] / samples,
             mean[1] / samples,
