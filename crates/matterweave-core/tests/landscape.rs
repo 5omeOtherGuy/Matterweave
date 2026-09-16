@@ -331,9 +331,14 @@ fn material_flora_and_tile_fingerprint_is_stable() {
     // made it. This value moved with the per-voxel surface tone
     // (`material::tone`), which reaches every tile as `TopRect::tone` /
     // `WallRun::tone`: 0x63ec_1387_d1e7_09da before the tone, this after.
-    // Vertex positions, normals, counts and indices are unchanged by it.
+    // Vertex positions, normals, counts and indices are unchanged by it. The
+    // per-voxel surface tone reached every tile as `TopRect::tone` /
+    // `WallRun::tone`; that value was 0xc8c5_258b_e67a_f422 before the vegetation
+    // form change and 0x3799_a3d7_6126_6b0f after it, on their own branches. The
+    // merged value below is the digest of both changes together, measured after
+    // the merge rather than copied from either branch.
     assert_eq!(
-        value, 0x0,
+        value, 0x238c_a60d_0189_c137,
         "materials, flora or tile output drifted from the recorded generator identity"
     );
 }
