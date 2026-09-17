@@ -47,7 +47,9 @@
 //! [`lod_sample`] provides the conservative maximum for tools and silhouette
 //! checks.
 
+use crate::biome_blend::{self, BiomeMix};
 use crate::hash;
+use crate::landmarks;
 use crate::material;
 use crate::mesh::{Mesh, Vertex};
 use crate::{CHUNK_EDGE, STREAM_RADIUS_CHUNKS};
@@ -65,7 +67,16 @@ use std::collections::HashMap;
 /// (`density_percent` per band) instead of an integer decimation step, so the
 /// population at every distance past the first band differs from version 2's.
 /// Columns, materials, tree placement and tile meshes are unchanged.
-pub const LANDSCAPE_GENERATOR_VERSION: u32 = 3;
+///
+/// Version 4: biome boundaries are blend bands rather than thresholds, so a
+/// column's surface material and its vegetation pressures come from a mixture of
+/// biomes, and landmarks (spires, mesas, ziggurats, craters) shape the ground
+/// around their sites. Every column near a boundary or near a landmark is
+/// different from what version 3 produced, and an older landscape save is
+/// rejected by the recorded version rather than loading terrain that no longer
+/// exists. Written as 4 rather than 3 because the two changes landed in the same
+/// window and both move the generator's output.
+pub const LANDSCAPE_GENERATOR_VERSION: u32 = 4;
 
 /// Sea surface height in metres. Columns strictly below this are flooded.
 pub const SEA_LEVEL: i32 = 0;
@@ -231,6 +242,13 @@ pub struct Column {
     /// Water surface when the column is flooded, [`NO_WATER`] otherwise.
     pub water_level: i32,
     pub biome: Biome,
+    /// The biome mixture the material and vegetation of this column come from.
+    /// Equal to [`biome_mix`]`(seed, x, z)`.
+    ///
+    /// `biome` is the hard classification and `mix` is the blend, so inside a
+    /// transition band the two can name different biomes; that is the point of
+    /// the band, and it is why the label did not have to change.
+    pub mix: BiomeMix,
     /// Material of the surface cell.
     pub surface: u8,
     /// Material between the surface and deep rock.
@@ -419,10 +437,13 @@ const SALT_HUMID: u64 = 0x85eb_ca6b_c2b2_ae35;
 const SALT_FLORA: u64 = 0x1656_67b1_9e37_79f3;
 const SALT_ORE: u64 = 0x2545_f491_4f6c_dd1d;
 const SALT_ROCK: u64 = 0x9e37_79b9_7f4a_7c0f;
+const SALT_EDGE: u64 = 0x1b3f_8c2d_5a77_0e91;
 
 /// Deterministic three-input mixing for slot and site selection. `std`'s hashers
 /// are not a stable cross-release contract, so the project's own mixing is used.
-fn hash3(seed: u64, x: i32, y: i32) -> u64 {
+/// Visible to the rest of the crate so the landmark lattice mixes seeds the same
+/// way the fields and the flora do.
+pub(crate) fn hash3(seed: u64, x: i32, y: i32) -> u64 {
     let mut value = seed
         ^ (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ (y as u64).wrapping_mul(0xd6e8_feb8_6659_fd93);
@@ -576,46 +597,18 @@ fn hill_relief(fields: &Fields) -> i32 {
     }
 }
 
-fn biome_of(fields: &Fields, height: i32) -> Biome {
-    if height < SEA_LEVEL {
-        return Biome::Ocean;
+/// The climate and relief scalars the blender classifies one column from.
+fn blend_inputs(fields: &Fields, height: i32) -> biome_blend::Inputs {
+    biome_blend::Inputs {
+        temperature: fields.temperature,
+        humidity: fields.humidity,
+        height,
+        relief: hill_relief(fields),
     }
-    let cold = fields.temperature < 26000;
-    let hot = fields.temperature > 41000;
-    let wet = fields.humidity > 43000;
-    let dry = fields.humidity < 26000;
-    // Snow line rises with temperature: about 109 m in the coldest regions and
-    // 129 m in the warmest, never below 72 m.
-    let snow_line = (118 + ((fields.temperature - 32768) as i64 * 46 / 32768) as i32).max(72);
-    if height >= snow_line {
-        return Biome::Snow;
-    }
-    if height <= SEA_LEVEL + 1 {
-        return if wet || fields.humidity > 36000 {
-            Biome::Swamp
-        } else {
-            Biome::Beach
-        };
-    }
-    if hot && dry {
-        return Biome::Desert;
-    }
-    if cold {
-        return Biome::Tundra;
-    }
-    if height > 74 {
-        return Biome::Mountain;
-    }
-    if wet {
-        return Biome::Forest;
-    }
-    if hill_relief(fields).abs() > 5 {
-        return Biome::Hills;
-    }
-    Biome::Plains
 }
 
-fn surface_materials(biome: Biome, fields: &Fields) -> (u8, u8, i32) {
+/// The palette one candidate biome lays down, before any mixture.
+fn palette(biome: Biome, fields: &Fields) -> (u8, u8, i32) {
     match biome {
         Biome::Ocean => {
             if fields.elevation > -10 {
@@ -648,13 +641,82 @@ fn surface_materials(biome: Biome, fields: &Fields) -> (u8, u8, i32) {
     }
 }
 
+/// Terrain height from the climate and relief fields alone, before any
+/// landmark shaping, clamped to the declared range.
+///
+/// This is what [`landmarks`](crate::landmarks) anchors to: a landmark asks for
+/// its own centre's unshaped ground, and shaping a column asks for the same
+/// function, so the two can never recurse into each other.
+pub fn base_height(seed: u64, x: i32, z: i32) -> i32 {
+    base_height_of(&fields(seed, x, z))
+}
+
+fn base_height_of(fields: &Fields) -> i32 {
+    (fields.elevation + hill_relief(fields) + fields.mountain).clamp(MIN_SURFACE_Y, MAX_SURFACE_Y)
+}
+
+/// The scalars the biome blender classifies one column from: the climate and
+/// relief fields plus the shaped surface height. Exposed so a test can compare
+/// the mixture with the hard classification it replaced on the same inputs.
+pub fn blend_inputs_at(seed: u64, x: i32, z: i32) -> biome_blend::Inputs {
+    let fields = fields(seed, x, z);
+    let height = landmarks::shape(seed, x, z, base_height_of(&fields));
+    blend_inputs(&fields, height)
+}
+
+/// The surface palette of a mixed column.
+///
+/// The surface and sub-surface materials come from one candidate chosen by a
+/// deterministic roll, so a transition band is the two biomes' own materials
+/// thinning into each other over tens of metres rather than a line where one
+/// replaces the other. The roll is one value per 8 m patch, which keeps the
+/// pattern readable at walking distance and at the distance rings' coarser
+/// cells; it uses no state and is the same on every target. The sub-surface
+/// depth is the weights' own mean, which is already continuous.
+fn surface_materials(mix: &BiomeMix, fields: &Fields, seed: u64, x: i32, z: i32) -> (u8, u8, i32) {
+    let roll = ((hash3(
+        seed ^ SALT_EDGE,
+        x >> EDGE_PATCH_SHIFT,
+        z >> EDGE_PATCH_SHIFT,
+    ) >> 8)
+        & 0xFF) as u16;
+    let mut chosen = mix.dominant();
+    let mut cumulative = 0u16;
+    for &(biome, weight) in mix.entries() {
+        cumulative += weight;
+        if roll < cumulative {
+            chosen = biome;
+            break;
+        }
+    }
+    let (surface, sub_surface, _) = palette(chosen, fields);
+    let sub_depth = mix.blend_i32(|biome| palette(biome, fields).2);
+    (surface, sub_surface, sub_depth.max(1))
+}
+
+/// Metres per side of one material-choice patch inside a transition band. One
+/// roll per patch instead of per metre-column: sand blowing into grass reads as
+/// patches at walking distance, and a coarse distance-ring cell still lands in
+/// a patch of one material rather than in noise.
+const EDGE_PATCH_SHIFT: u32 = 3;
+
 /// Sample one metre-column of the landscape.
 pub fn column(seed: u64, x: i32, z: i32) -> Column {
     let fields = fields(seed, x, z);
-    let raw = fields.elevation + hill_relief(&fields) + fields.mountain;
-    let height = raw.clamp(MIN_SURFACE_Y, MAX_SURFACE_Y);
-    let biome = biome_of(&fields, height);
-    let (surface, sub_surface, sub_depth) = surface_materials(biome, &fields);
+    let base = base_height_of(&fields);
+    let height = landmarks::shape(seed, x, z, base);
+    let inputs = blend_inputs(&fields, height);
+    // The label stays the hard classification, so the world a biome *is* has not
+    // moved; the mixture is what its ground and vegetation are made of, and only
+    // inside a band can the two disagree.
+    let biome = biome_blend::hard_classify(inputs);
+    let mix = biome_blend::classify(inputs);
+    let (surface, sub_surface, sub_depth) = if height - base >= landmarks::ROCK_FACE_M {
+        // A landmark's own rock face: see `landmarks::ROCK_FACE_M`.
+        (material::STONE, material::GRAVEL, 2)
+    } else {
+        surface_materials(&mix, &fields, seed, x, z)
+    };
     let water_level = if height < SEA_LEVEL {
         SEA_LEVEL
     } else {
@@ -664,10 +726,23 @@ pub fn column(seed: u64, x: i32, z: i32) -> Column {
         height,
         water_level,
         biome,
+        mix,
         surface,
         sub_surface,
         sub_depth,
     }
+}
+
+/// The biome mixture at a column; equal to [`column`]`(seed, x, z).mix`.
+pub fn biome_mix(seed: u64, x: i32, z: i32) -> BiomeMix {
+    biome_blend::classify(blend_inputs_at(seed, x, z))
+}
+
+/// The ground material a biome lays down at a point, whatever the mixture at
+/// that point says. A transition band's material roll compares against these,
+/// so the acceptance test can predict the share of each material in a band.
+pub fn biome_surface(seed: u64, x: i32, z: i32, biome: Biome) -> u8 {
+    palette(biome, &fields(seed, x, z)).0
 }
 
 /// Biome at a surface column; equal to [`column`]`(seed, x, z).biome`.
@@ -762,7 +837,9 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
             cell.count += 1;
         };
         let grass_roll = hash3(seed ^ SALT_FLORA, x, z);
-        let grass = column.biome.grass_density() as i32;
+        // Ground-cover pressures are the mixture's own mean, so a boundary band
+        // thins one biome's cover into the next instead of ending it at a line.
+        let grass = column.mix.pressure(Biome::grass_density) as i32;
         if grass > 0 && ((grass_roll & 0xFFFF) as i32) < grass * 1024 {
             let kind = match (grass_roll >> 24) & 0x3F {
                 0..=1 if matches!(column.biome, Biome::Desert | Biome::Mountain) => {
@@ -779,7 +856,7 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
         // carry two clumps and the pair reads as one denser tuft. It uses the
         // understory pressure, which is zero where cover is meant to be thin.
         let understory_roll = hash3(seed ^ SALT_FLORA ^ 0x2f11_9a3d, x, z);
-        let understory = column.biome.understory_density() as i32;
+        let understory = column.mix.pressure(Biome::understory_density) as i32;
         if understory > 0 && ((understory_roll & 0xFFFF) as i32) < understory * 1024 {
             let kind = match (understory_roll >> 26) & 0x3F {
                 0..=2 if column.biome.grassy() => FloraKind::Fern,
@@ -791,7 +868,7 @@ pub fn flora_cell(seed: u64, cell_x: i32, cell_z: i32) -> FloraCell {
         // Flowers use an independent roll so a tuft and a flower can share a
         // column instead of displacing each other.
         let flower_roll = hash3(seed ^ SALT_FLORA ^ 0x51ed_2701, x, z);
-        let flowers = column.biome.flower_density() as i32;
+        let flowers = column.mix.pressure(Biome::flower_density) as i32;
         if flowers > 0 && ((flower_roll & 0xFFFF) as i32) < flowers * 1024 {
             let kind = match (flower_roll >> 34) & 3 {
                 0 => FloraKind::FlowerRed,
@@ -816,11 +893,12 @@ pub fn tree_cell(seed: u64, cell_x: i32, cell_z: i32) -> Option<FloraSite> {
     let z =
         cell_z * TREE_CELL_M + (hash3(seed ^ SALT_FLORA ^ 0x9e37_79b9, cell_x, cell_z) & 7) as i32;
     let column = column(seed, x, z);
-    if column.flooded() || column.biome.tree_density() == 0 {
+    let tree_density = column.mix.pressure(Biome::tree_density) as i32;
+    if column.flooded() || tree_density == 0 {
         return None;
     }
     let roll = hash3(seed ^ SALT_FLORA ^ 0xc2b2_ae3d, cell_x, cell_z);
-    if (roll & 0xFFFF) as i32 >= column.biome.tree_density() as i32 * 1024 {
+    if (roll & 0xFFFF) as i32 >= tree_density * 1024 {
         return None;
     }
     // Cold or high ground grows conifers; warmer ground grows broadleaf.

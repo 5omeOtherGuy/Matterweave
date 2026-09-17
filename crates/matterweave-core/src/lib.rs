@@ -1,8 +1,10 @@
 //! Authoritative voxel data, reference queries and derived surface geometry.
 
 mod async_world;
+pub mod biome_blend;
 pub mod coarse;
 pub mod input;
+pub mod landmarks;
 pub mod landscape;
 pub mod material;
 mod mesh;
@@ -14,6 +16,7 @@ pub mod water;
 pub use async_world::{
     AsyncStats, AsyncWorld, MAX_MESH_RESULTS, MAX_MESH_RESULT_BYTES, MAX_QUEUED_MESH_JOBS,
 };
+pub use biome_blend::BiomeMix;
 pub use coarse::{CoarseError, CoarseTile};
 pub use input::{InputService, VirtualKey};
 pub use landscape::{

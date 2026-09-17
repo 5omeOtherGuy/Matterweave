@@ -233,6 +233,34 @@ above the ground the scripted exercise path flies, which is 60 m by default; an 
 height (1.7 m, the walk-mode constant) records the near-ground view along the real
 moving path. Both are absent by default, refuse a zero frame, clamp the altitude to
 the camera's own limits and leave everything else unchanged.
+`MATTERWEAVE_LANDSCAPE_SHOT=/tmp/spawn.ppm` writes one full-resolution frame of the
+settled scene and exits, or `shot /path` in the marker does it on a device. The run
+presents the warmup frames the scale check also waits for - or the last frame
+`--smoke-frames` allows, whichever is later - so the streaming window and the
+distance rings have filled before the capture, then writes a PPM and prints
+`LANDSCAPE SHOT:`. It changes nothing about the scene, and it is what a claim about
+what a player *sees* is checked against: the camera, HUD and flora switches combine
+with it exactly as they do without it.
+
+### The demo world
+
+The landscape sample opens at a named spawn, not at a search: `DEMO_SEED`,
+`DEMO_SPAWN`, `DEMO_YAW_DEGREES` and `DEMO_EYE_ABOVE_GROUND_M` in
+`matterweave-core/src/landmarks.rs`. That position stands on plains ground with
+tundra and stony mountain ground inside a short walk and frames three landmarks -
+a rock spire at 447 m and ziggurats at 1114 m and 1375 m - against the skyline. A
+generator change that moves any of it fails `tests/landmarks.rs` rather than quietly
+shipping a different demo, and the same file states the measured distances, the
+visible silhouette height of each landmark and the width of every transition the
+spawn view crosses.
+
+Biome boundaries are bands rather than thresholds: a column's ground material and
+its vegetation pressures come from a mixture of biomes, while its biome *label*
+stays the hard classification, so the world a biome is has not moved. The bands and
+their widths are in `crates/matterweave-core/src/biome_blend.rs`; `tests/landscape.rs`
+measures them along boundary crossings, asserts that no metre of walkable ground
+carries more than a quarter of a transition, and checks that the blend's material
+roll is unbiased against the weights that asked for it.
 
 `MATTERWEAVE_LANDSCAPE_FLORA=off|shadow` is a measurement mode, not a quality
 setting. `off` runs terrain, water, sky and HUD with no flora at all; `shadow` builds

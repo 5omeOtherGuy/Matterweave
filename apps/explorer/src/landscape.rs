@@ -64,9 +64,11 @@ pub const MARKER_FILE: &str = "landscape.txt";
 /// and never parsed.
 pub const MAX_MARKER_BYTES: u64 = 128;
 
-/// Generator seed of the sample world. The generator is a versioned function of
-/// this seed, so the same build always shows the same landscape.
-pub const SEED: u64 = 20260913;
+/// Generator seed of the sample world. It is the demo world's seed
+/// (`matterweave_core::landmarks::DEMO_SEED`): the acceptance tests for the
+/// spawn, the three biomes and the landmarks all re-derive their claims from
+/// this one number.
+pub const SEED: u64 = matterweave_core::landmarks::DEMO_SEED;
 
 /// Eye height above the surface in walk mode.
 const EYE_HEIGHT: f32 = 1.7;
@@ -277,6 +279,18 @@ pub fn normalized_filter(tile: &RingTile) -> TileFilter {
 
 // -- Sample ------------------------------------------------------------------
 
+/// The demo's opening camera: the named spawn in
+/// `matterweave_core::landmarks`, on plains ground with tundra ground at its
+/// feet and stony mountain ground 16 m away. It frames a rock spire at 447 m, a
+/// ziggurat at 1114 m and a second ziggurat at 1375 m against the skyline, with a
+/// plains/tundra/mountain transition beginning inside its first metre.
+///
+/// This used to be a scan for the first 64 m grid point with open water nearby,
+/// which meant the opening view was a property of the seed rather than of the
+/// demo: nothing could be said about what a player would see. A named position
+/// is what makes the framing, the captures and the acceptance tests the same
+/// place; `crates/matterweave-core/tests/landmarks.rs` fails if the generator
+/// moves it, and `MATTERWEAVE_LANDSCAPE_EYE` still overrides it for a capture.
 /// One line naming the drawn-instance count per [`FLORA_BAND_EDGES_M`] band,
 /// edges included. A log line rather than a formatter because these numbers are
 /// what a coverage report quotes.
@@ -341,40 +355,15 @@ impl CoverageCounters {
 /// pass and the vegetation field in the same frame, with the mountains and the
 /// distance rings beyond them.
 fn spawn_camera() -> Camera {
-    for gz in (-24..24).rev() {
-        for gx in -24..24 {
-            let (x, z) = (gx * 64, gz * 64);
-            let ground = landscape::height_at(SEED, x, z);
-            if !(2..=14).contains(&ground) {
-                continue;
-            }
-            for (dx, dz) in [
-                (1, 0),
-                (-1, 0),
-                (0, 1),
-                (0, -1),
-                (1, 1),
-                (-1, -1),
-                (1, -1),
-                (-1, 1),
-            ] {
-                if landscape::height_at(SEED, x + dx * 64, z + dz * 64) < -2 {
-                    return Camera {
-                        position: Vec3::new(x as f32, ground as f32 + 8., z as f32),
-                        yaw: (dx as f32).atan2(dz as f32),
-                        pitch: -0.05,
-                    };
-                }
-            }
-        }
-    }
-    // No coast found in the probed square: keep the old behaviour rather than
-    // failing to start.
-    let height = landscape::height_at(SEED, 0, 0) as f32;
+    let [x, ground, z] = matterweave_core::landmarks::DEMO_SPAWN;
     Camera {
-        position: Vec3::new(0., height.max(0.) + 40., 0.),
-        yaw: 0.6,
-        pitch: -0.12,
+        position: Vec3::new(
+            x as f32,
+            (ground + matterweave_core::landmarks::DEMO_EYE_ABOVE_GROUND_M) as f32,
+            z as f32,
+        ),
+        yaw: (matterweave_core::landmarks::DEMO_YAW_DEGREES as f32).to_radians(),
+        pitch: -0.05,
     }
 }
 
@@ -469,6 +458,39 @@ fn eye_override(directory: &Path) -> Option<Camera> {
 
 /// Environment variable naming a fixed landscape camera, see [`eye_override`].
 pub const EYE_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_EYE";
+
+/// Environment variable asking a desktop run for one full-resolution capture of
+/// the settled scene: `MATTERWEAVE_LANDSCAPE_SHOT=/tmp/spawn.ppm`. The run
+/// presents frames until the scene has settled - the last frame a
+/// `--smoke-frames` limit allows, or `SCALE_CHECK_FRAME` without one - so the
+/// streaming window and the distance rings have filled, then writes the frame as
+/// a PPM and exits.
+///
+/// This exists because an acceptance claim about what a player *sees* needs an
+/// image of it, and before it there was no way to take one on the host without
+/// asking for a render-scale comparison as well. It changes nothing about the
+/// scene: the camera, the HUD switch and the flora switch that frame it are the
+/// same ones every other run uses, and `MATTERWEAVE_LANDSCAPE_HUD=off` plus
+/// [`EYE_ENV_VAR`] are what a measurement capture usually combines it with.
+pub const SHOT_ENV_VAR: &str = "MATTERWEAVE_LANDSCAPE_SHOT";
+
+/// Where a capture run writes its frame, from [`SHOT_ENV_VAR`] or a `shot PATH`
+/// word pair in the sample marker (a phone has no command line). An absent or
+/// empty value is no capture.
+fn shot_request(directory: &Path) -> Option<PathBuf> {
+    if let Ok(text) = std::env::var(SHOT_ENV_VAR) {
+        let text = text.trim();
+        return (!text.is_empty()).then(|| PathBuf::from(text));
+    }
+    let text = marker_text(directory)?;
+    let mut words = text.split_whitespace();
+    while let Some(word) = words.next() {
+        if word.eq_ignore_ascii_case("shot") {
+            return words.next().map(PathBuf::from);
+        }
+    }
+    None
+}
 
 /// Environment variable that selects how the flora layer is drawn:
 /// `off` leaves terrain, water and sky with no flora at all, `shadow` builds
@@ -753,10 +775,6 @@ pub struct LandscapeSample {
     /// exactly as it shipped; `Some` replaces the fly camera with physics and
     /// makes flying unreachable.
     player: Option<WorldPlayer>,
-    /// Frame index at which a world-mode host run captures one frame, writes
-    /// it beside the save and exits. Desktop-only spawn/HUD evidence; `None`
-    /// in every normal run.
-    pub world_capture: Option<u64>,
     /// Directory the run's save would live in; where the scale-check images go.
     directory: PathBuf,
     /// Water surfaces: the identity-keyed derived-mesh cache plus the window
@@ -808,6 +826,14 @@ pub struct LandscapeSample {
     /// Wind strength this run flies with: the sample's own weather unless a
     /// capture run fixed the air (see [`wind_strength`]).
     wind_strength: f32,
+    /// One capture to take once the scene has settled, then exit. See
+    /// [`SHOT_ENV_VAR`] and [`Self::request_world_capture`].
+    shot: Option<PathBuf>,
+    /// Presented frame the capture is taken on. The tiles stream in over the
+    /// first seconds, so a capture of a landscape has to wait for them: this is
+    /// the run's own last frame when `--smoke-frames` gave it one, and
+    /// [`SCALE_CHECK_FRAME`] otherwise.
+    shot_frame: u64,
     /// Requested by BACK; the owning experience switches menus.
     pub return_to_menu: bool,
     pub failed: bool,
@@ -911,6 +937,10 @@ impl LandscapeSample {
         Self {
             renderer: None,
             window: None,
+            shot: shot_request(&directory),
+            shot_frame: frame_limit
+                .map(|frames| frames.saturating_sub(1).max(SCALE_CHECK_FRAME))
+                .unwrap_or(SCALE_CHECK_FRAME),
             world,
             preparation: AsyncWorld::new(),
             camera,
@@ -974,7 +1004,6 @@ impl LandscapeSample {
             render_scale: DEFAULT_RENDER_SCALE,
             scale_check: false,
             player,
-            world_capture: None,
             directory,
             water: WaterStream::new(terrain_source, SEED),
             water_uploaded: 0,
@@ -1515,42 +1544,15 @@ impl LandscapeSample {
         self.lighting.clouds = self.clouds.settings(self.cloud_time);
         let hud = self.hud();
         let matrix = view_projection(&self.camera, size.width as f32 / size.height as f32);
-        if self.player.is_some() && self.world_capture == Some(self.frames) {
-            // Host evidence for the spawn pose and the HUD: write the frame the
-            // display would have shown, print the player line rendered into
-            // it, and exit. Desktop-only; never runs unasked.
-            let player_line = self
-                .player
-                .as_ref()
-                .map(WorldPlayer::hud_line)
-                .unwrap_or_default();
-            let lighting = self.lighting;
-            let directory = self.directory.clone();
-            let captured = world_player::write_capture(
-                self.renderer.as_mut().unwrap(),
-                matrix,
-                eye,
-                &hud,
-                &lighting,
-                &directory,
-            );
-            match captured {
-                Ok((width, height, path)) => eprintln!(
-                    "WORLD CAPTURE: {width}x{height} {} | {player_line}",
-                    path.display()
-                ),
-                Err(error) => {
-                    log::error!("World capture failed: {error}");
-                    eprintln!("World capture failed: {error}");
-                    self.failed = true;
-                }
-            }
-            event_loop.exit();
-            return;
-        }
         if self.scale_check && self.frames >= self.scale_check_frame {
             self.run_scale_check(event_loop, &hud, matrix, eye);
             return;
+        }
+        if let Some(path) = self.shot.clone() {
+            if self.frames >= self.shot_frame {
+                self.run_shot(event_loop, &path, matrix, eye);
+                return;
+            }
         }
         let render_begin = capturing.then(Instant::now);
         let outcome =
@@ -2012,6 +2014,61 @@ impl LandscapeSample {
         renderer.capture_frame(matrix, eye, hud, lighting)
     }
 
+    /// Ask for one capture of the settled scene, written beside the save as
+    /// `world-capture.ppm`. This is the world sample's `--world-capture` flag:
+    /// it goes through the same frame and the same writer as
+    /// [`SHOT_ENV_VAR`], so there is one capture path and not two.
+    pub fn request_world_capture(&mut self) {
+        self.shot = Some(self.directory.join("world-capture.ppm"));
+    }
+
+    /// One settled frame, written as a PPM. The frame is the sample's own: the
+    /// same camera, lighting and HUD a player gets, captured after the warmup
+    /// frames the scale check also waits for.
+    fn run_shot(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        path: &Path,
+        matrix: [[f32; 4]; 4],
+        eye: [f32; 3],
+    ) {
+        let hud = self.hud();
+        let lighting = self.lighting;
+        let frame = match self.capture_at(1.0, matrix, eye, &hud, &lighting) {
+            Ok(frame) => frame,
+            Err(error) => {
+                log::error!("Landscape shot failed: {error}");
+                eprintln!("LANDSCAPE SHOT: FAIL {error}");
+                self.failed = true;
+                event_loop.exit();
+                return;
+            }
+        };
+        if let Err(error) = scale_check::write_ppm(path, frame.width, frame.height, &frame.rgba) {
+            log::warn!("Landscape shot image: {error}");
+            eprintln!("LANDSCAPE SHOT: FAIL {error}");
+            self.failed = true;
+        } else if let Some(player) = self.player.as_ref() {
+            // The walking sample's evidence is which frame the display would
+            // have shown *and* what the player line says about where it is.
+            eprintln!(
+                "WORLD CAPTURE: {}x{} {} | {}",
+                frame.width,
+                frame.height,
+                path.display(),
+                player.hud_line()
+            );
+        } else {
+            eprintln!(
+                "LANDSCAPE SHOT: {} at {}x{} from eye {eye:?}",
+                path.display(),
+                frame.width,
+                frame.height
+            );
+        }
+        event_loop.exit();
+    }
+
     fn scale_check_failed(&mut self, event_loop: &ActiveEventLoop, error: &str) {
         log::error!("Landscape scale check failed: {error}");
         eprintln!("SCALE CHECK: FAIL {error}");
@@ -2200,7 +2257,7 @@ impl ApplicationHandler for LandscapeSample {
                     event_loop.exit();
                     return;
                 }
-                if self.scale_check || self.world_capture.is_some() {
+                if self.scale_check || self.shot.is_some() {
                     // The swapchain picks the extra TRANSFER_SRC usage up on
                     // its first build; a surface that cannot supply it fails
                     // the draw with a message naming frame capture.
@@ -2536,7 +2593,8 @@ mod tests {
         // The desktop flag selects the player with no marker at all.
         let flagged = LandscapeSample::new(save.clone(), None, true);
         assert!(flagged.player.is_some());
-        assert!(flagged.world_capture.is_none());
+        // Nothing is captured unless a run asks: the flag is the only caller.
+        assert!(flagged.shot.is_none());
         // The device marker selects it with the flag absent, and the sample
         // reads it itself so android_main's marker path gets it for free.
         std::fs::write(dir.join(world_player::MARKER_FILE), "").unwrap();

@@ -408,21 +408,6 @@ impl WorldPlayer {
 
 /// Writes one captured frame beside the save, so a host run can prove the
 /// spawn pose and the HUD without a phone. Returns the captured extent and the
-/// file path; the caller prints the player line rendered into it.
-pub fn write_capture(
-    renderer: &mut matterweave_render::Renderer,
-    matrix: [[f32; 4]; 4],
-    eye: [f32; 3],
-    hud: &matterweave_render::Hud,
-    lighting: &matterweave_render::LightingSettings,
-    directory: &Path,
-) -> Result<(u32, u32, std::path::PathBuf), String> {
-    let frame = renderer.capture_frame(matrix, eye, hud, lighting)?;
-    let path = directory.join("world-capture.ppm");
-    crate::scale_check::write_ppm(&path, frame.width, frame.height, &frame.rgba)?;
-    Ok((frame.width, frame.height, path))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
