@@ -603,6 +603,55 @@ fn water_surface(world: vec3<f32>, depth_m: f32, opaque: bool) -> vec4<f32> {
     return vec4(aerial_perspective(color, view, view_distance), alpha);
 }
 
+// -- Highlight roll-off -------------------------------------------------------
+//
+// In the near field the lighting bracket is the sum of two terms: the sky
+// ambient `0.28 + 0.12 * up` (0.40 on a top face) and the direct sun
+// `max(dot(n, sun), 0) * intensity` (0.70 for the landscape sample's sun). Each
+// alone is below one; their sum is about 1.10, so a near-white albedo leaves the
+// shader above one and the display clamps it to a flat white. Snow is the clear
+// case: its palette colour is 0.86..0.92, and once the deterministic per-voxel
+// tone of `material::tone` has lifted a cell by up to about a quarter, the
+// tinted albedo itself is around 1.0 and every sunlit snow cell loses its
+// per-voxel value to the clamp. White flower petals (`FLOWER_PETAL_WHITE`) and
+// bright sand cross the same line on their brightest cells.
+//
+// The fix is a highlight shoulder, not an exposure change: everything up to the
+// knee is passed through untouched, and above it the value tends to a ceiling
+// short of one. The shoulder is evaluated on the brightest channel and applied
+// to all three, so the ratios between the channels - hue and saturation - are
+// exactly the material's. The curve is continuous with slope one at the knee,
+// so no step appears where the roll-off begins, and it is monotone, so a
+// brighter surface still reads brighter. Values below the knee are bit-for-bit
+// what they were, which is what keeps the distant band, the water and the
+// mid-tone grass unchanged.
+//
+// Cost: one max-of-three, one compare, one subtract, one multiply, one `exp`,
+// one division and three multiplies per opaque pixel. No new pass, no second
+// render target, no texture and no uniform: the same fragment shader entry point
+// every sample already runs.
+
+/// Lit value at which the shoulder starts. 0.85 is above the brightest mid-tone
+/// a near-field surface has (grass at about 0.53, sand at about 0.79) and below
+/// the near-white materials the clamp was eating.
+const HIGHLIGHT_KNEE: f32 = 0.85;
+/// Asymptote of the shoulder: the brightest value the opaque pass can emit.
+/// Short of 1.0 by 0.01 so an 8-bit target cannot round up to 255, and high
+/// enough that the surface still reads as sunlit rather than dimmed.
+const HIGHLIGHT_CEIL: f32 = 0.99;
+
+/// Map one lit colour through the shoulder on its brightest channel.
+fn highlight_roll_off(lit: vec3<f32>) -> vec3<f32> {
+    let peak = max(lit.r, max(lit.g, lit.b));
+    if peak <= HIGHLIGHT_KNEE {
+        return lit;
+    }
+    let span = HIGHLIGHT_CEIL - HIGHLIGHT_KNEE;
+    let over = (peak - HIGHLIGHT_KNEE) / span;
+    let shoulder = HIGHLIGHT_KNEE + span * (1.0 - exp(-over));
+    return lit * (shoulder / peak);
+}
+
 /// Shade one opaque surface. The derived water pass has its own entry and its
 /// own model; what this function still owns is the *coarse* water of a distance
 /// ring, which arrives here as terrain because that is what it is.
@@ -670,7 +719,7 @@ fn shade(v: Output) -> vec4<f32> {
         path_length = path_length + sample.distance;
         lit = mix(lit, sample.color, mirror);
     }
-    return vec4(aerial_perspective(lit, view, path_length), 1.0);
+    return vec4(aerial_perspective(highlight_roll_off(lit), view, path_length), 1.0);
 }
 @fragment fn fs_main(v: Output) -> @location(0) vec4<f32> {
     return shade(v);
