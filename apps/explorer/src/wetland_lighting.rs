@@ -14,7 +14,10 @@
 //! 2. attaches it to one [`IndirectVolume`] inside an authored coverage box;
 //! 3. advances that volume by a fixed CPU budget and publishes it once complete;
 //! 4. publishes the matching [`ReflectionVolume`], because the frame's geometry
-//!    installs are what retire the previous publications.
+//!    installs are what retire the previous publications. A retained bake is
+//!    brought forward for the new proxy with [`ReflectionVolume::refresh_mesh`],
+//!    an exact per-cell diff, so a moving body does not re-bake the mirror grid;
+//!    a pack that cannot be refreshed is re-baked from the current source.
 //!
 //! Invariants:
 //!
@@ -35,6 +38,12 @@
 //!   the stale publication before the volume recomputes. This gate absorbs
 //!   camera and LOD churn only; body motion that crosses cell boundaries is a
 //!   changed footprint and is disclosed in "Scope and limitations".
+//! - The mirror bake is never approximate. A retained pack is refreshed cell by
+//!   cell only while its own world provenance still matches, which makes the
+//!   refreshed grid identical to a fresh `pack_with_mesh` of the same proxy; a
+//!   pack that cannot prove that is re-baked. Publication re-checks
+//!   `valid_for_scene`, including its footprint digest, on every upload, so a
+//!   scene replaced at an equal revision is refused rather than shown.
 //! - The volume advances by a fixed work/ray budget per frame, and a partially
 //!   accumulated key is never published.
 //! - Any build, attach, update or upload error withdraws indirect and reflection
@@ -81,6 +90,17 @@
 //!   measurements, never a device claim; the Android visual gate for continuous
 //!   motion is **NOT RUN** and belongs to the phone owner (see
 //!   `docs/performance/logs/moving-gi-continuity.md`).
+//! - **Body motion refreshes the bake, it does not re-bake it.** A retained
+//!   pack is brought forward with a diff of the two proxies' occupied cells, so
+//!   the mirror grid stays live and current without the `2 * footprint + proxy`
+//!   cell visits a re-bake costs. Measured by the host fixture
+//!   `continuous_body_motion_reflection_measurement`: 8019 cell visits per frame
+//!   for the re-bake this replaces, 42 with the refresh, zero re-bakes and zero
+//!   stale cells across sustained motion at 1, 2 and 4 cells per frame, with the
+//!   live pack compared cell-for-cell against a fresh bake on every frame. Each
+//!   refreshed publication still pays `valid_for_scene`'s full-footprint digest,
+//!   in the module guard and in the renderer's upload gate, deliberately: that
+//!   re-derivation is what refuses a scene replaced at an equal revision.
 //! - **No performance claim.** The per-frame budget is a bounded CPU work slice
 //!   over bounded volumes; nothing here is a device measurement.
 
@@ -262,6 +282,18 @@ pub(crate) struct Summary {
     pub(crate) digest: Option<u64>,
     /// Upper bound on remaining indirect work units for the current key.
     pub(crate) pending_work: usize,
+    /// This call repacked the reflection source volume from this frame's proxy.
+    /// Counted, never inferred from a publication: a cached pack republished
+    /// after a renderer retirement is not a repack.
+    pub(crate) reflection_repacked: bool,
+    /// This call refreshed the retained reflection source volume in place for
+    /// this frame's proxy, which is a bounded cell diff, not a re-bake.
+    pub(crate) reflection_refreshed: bool,
+    /// Cell visits the reflection source update cost this frame, by
+    /// [`reflection_pack_work`] and [`ReflectionVolume::refresh_mesh`]'s own
+    /// counts: one unit is one cell read or one visited proxy cell. Engine work
+    /// units, not time. Zero when the bake was neither refreshed nor repacked.
+    pub(crate) reflection_pack_work: usize,
     /// Completed indirect faces this frame's proxy edit retained unchanged.
     pub(crate) retained_faces: usize,
     /// Completed indirect faces this frame's proxy edit invalidated.
@@ -303,13 +335,35 @@ pub(crate) struct WetlandLighting {
     last_error: Option<String>,
     last_reported: Option<(bool, bool, Option<u64>)>,
     last_report_at: u64,
+    /// Reflection source packs built by this session. A repack is a full
+    /// re-bake of the coverage box, so this counter is the measurement surface
+    /// for what continuous motion costs the mirror path.
+    reflection_packs: u64,
+    /// Reflection source packs refreshed in place by this session, each a
+    /// bounded diff instead of a re-bake.
+    reflection_refreshes: u64,
+    /// Cell visits charged to the most recent reflection source update.
+    reflection_pack_work: usize,
     /// Test-only fault armed by a regression to fail the next attach step; see
     /// [`AttachFault`]. Production builds compile the field and its checks out.
     #[cfg(test)]
     armed_attach_fault: Option<AttachFault>,
 }
 
-/// Test-only failure injection for the two `attach` steps that can fail in
+/// Cell visits one reflection repack performs, as the production pack path
+/// actually spends them: [`ReflectionVolume::pack_with_mesh`] reads every cell
+/// of the coverage footprint once, its provenance digest reads every cell once
+/// more, and merging the mesh proxy visits one cell per occupied proxy cell.
+/// One unit is therefore one cell-scale read, never wall time or a device cost.
+fn reflection_pack_work(proxy_cells: usize) -> usize {
+    let footprint = BOX_DIMENSIONS
+        .iter()
+        .map(|&d| d as usize)
+        .product::<usize>();
+    2 * footprint + proxy_cells
+}
+
+/// Test-only failure injection for the `attach` steps that can fail in
 /// production only on allocation or pack errors. A regression arms one, so the
 /// state transition after a failed attach is exercised deterministically without
 /// an allocator fault.
@@ -318,7 +372,8 @@ pub(crate) struct WetlandLighting {
 enum AttachFault {
     /// `IndirectVolume::new` fails before a superseded volume is replaced.
     Volume,
-    /// `ReflectionVolume::pack_with_mesh` fails after the footprint change.
+    /// The reflection source update - the in-place refresh or the full re-bake -
+    /// fails after the footprint change.
     Reflection,
 }
 
@@ -351,6 +406,9 @@ impl WetlandLighting {
             bounds: LocalBounds::default(),
             published_sun: None,
             proxy_rebuilds: 0,
+            reflection_packs: 0,
+            reflection_refreshes: 0,
+            reflection_pack_work: 0,
             updates: 0,
             last_error: None,
             last_reported: None,
@@ -399,6 +457,36 @@ impl WetlandLighting {
                 }
             }
         }
+    }
+
+    /// The live reflection bake, for tests that compare a retained pack against
+    /// a fresh one for the same source. Production reads the pack only through
+    /// `publish_reflection`.
+    #[cfg(test)]
+    pub(crate) fn reflection_pack(&self) -> Option<&ReflectionVolume> {
+        self.reflection.as_ref()
+    }
+
+    /// A fresh reflection bake of `source`'s current geometry, built exactly as
+    /// `attach` would build it. Test-only: it exists so a measurement can prove
+    /// a *retained* pack still equals the current scene's bake instead of
+    /// assuming it. It does not touch the live pack or the pack counter.
+    #[cfg(test)]
+    pub(crate) fn fresh_reflection(
+        &mut self,
+        source: &FrameSource<'_>,
+    ) -> Result<ReflectionVolume, String> {
+        let built = self.build_proxy(source)?;
+        let table = mirror_table(palette(self.palette_dynamic))?;
+        ReflectionVolume::pack_with_mesh(
+            source.world,
+            SOURCE_EPOCH,
+            self.origin,
+            BOX_DIMENSIONS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &built.proxy,
+        )
     }
 
     /// The state of a frame that does no lighting work: the attached
@@ -454,6 +542,8 @@ impl WetlandLighting {
             let cells = built.proxy.occupied_cells();
             let pool_meshes = built.pool_meshes;
             let millis = built.millis;
+            let packs_before = self.reflection_packs;
+            let refreshes_before = self.reflection_refreshes;
             let edit = match self.attach(sink, source, built) {
                 Ok(edit) => edit,
                 Err(error) => {
@@ -478,6 +568,14 @@ impl WetlandLighting {
             self.attached_cells = cells;
             self.attached_pool_meshes = pool_meshes;
             summary.proxy_rebuilt = true;
+            summary.reflection_repacked = self.reflection_packs > packs_before;
+            summary.reflection_refreshed = self.reflection_refreshes > refreshes_before;
+            summary.reflection_pack_work =
+                if summary.reflection_repacked || summary.reflection_refreshed {
+                    self.reflection_pack_work
+                } else {
+                    0
+                };
             summary.retained_faces = edit.retained_faces;
             summary.invalidated_faces = edit.invalidated_faces;
             summary.dirty_faces = edit.dirty_faces;
@@ -600,9 +698,10 @@ impl WetlandLighting {
         })
     }
 
-    /// Attach a freshly built proxy and pack its matching reflection source.
-    /// A footprint change retires both publications: the cached indirect values
-    /// and the packed mirror grid describe the previous representation.
+    /// Attach a freshly built proxy and bring its matching reflection source up
+    /// to date. A footprint change retires both publications, because the cached
+    /// indirect values and the packed mirror grid describe the previous
+    /// representation.
     ///
     /// The indirect volume replaces its proxy through exact dependency
     /// retention, so only the completed faces whose recorded proxy cells changed
@@ -610,6 +709,16 @@ impl WetlandLighting {
     /// complete key, so the retire-then-reconverge sequence is the same and the
     /// retained values only shorten it. `Ok(ProxyEdit::default())` means the
     /// footprint did not change and nothing was attached.
+    ///
+    /// The mirror bake is brought up to date the same exact way: a packed cell's
+    /// value is the scene material of one cell, so
+    /// [`ReflectionVolume::refresh_mesh`] rewrites exactly the cells the old or
+    /// the new proxy occupies and the cells whose proxy material changed in
+    /// place. The retained grid is then identical to a fresh
+    /// [`ReflectionVolume::pack_with_mesh`] of the new representation, so the
+    /// retired publication is replaced by a *current* one and no approximation is
+    /// ever shown. A pack that cannot be refreshed - a foreign or replaced world,
+    /// or one already known stale - is dropped and re-baked below.
     fn attach(
         &mut self,
         sink: &mut impl Publication,
@@ -639,6 +748,12 @@ impl WetlandLighting {
             }
             self.palette_dynamic = palette_dynamic;
             self.published_sun = None;
+            // The mirror palette is derived from the same drawn colours, and a
+            // retained pack carries its palette together with its grid, so a
+            // palette change (a body drawn in another colour) must be re-baked
+            // rather than refreshed. Without this the mirror would keep shading
+            // the reflected body with a colour the scene no longer has.
+            self.reflection = None;
         }
         let digest = built.proxy.digest();
         let changed = {
@@ -651,7 +766,28 @@ impl WetlandLighting {
         if changed {
             sink.withdraw_lighting();
             self.published_sun = None;
-            self.reflection = None;
+            #[cfg(test)]
+            if self.armed_attach_fault == Some(AttachFault::Reflection) {
+                return Err(AttachFault::Reflection.message().into());
+            }
+            // A retained bake of the previous representation is refreshed cell
+            // by cell instead of re-derived; a failed refresh - a foreign or
+            // replaced world, or a bug this code cannot see - drops it so the
+            // full pack below owns that case and derives from the current
+            // source.
+            if !self.reflection_stale {
+                if let Some(pack) = self.reflection.as_mut() {
+                    match pack.refresh_mesh(source.world, SOURCE_EPOCH, &built.proxy) {
+                        Ok(refresh) => {
+                            self.reflection_refreshes = self.reflection_refreshes.saturating_add(1);
+                            self.reflection_pack_work = refresh.inspected + 2 * refresh.rewritten;
+                        }
+                        Err(_) => self.reflection = None,
+                    }
+                }
+            } else {
+                self.reflection = None;
+            }
         }
         if self.reflection.is_none() || self.reflection_stale {
             // The pack is a bake of the current proxy: repack whenever the
@@ -671,6 +807,8 @@ impl WetlandLighting {
                 DEFAULT_TRACE_STEPS,
                 &built.proxy,
             )?);
+            self.reflection_packs = self.reflection_packs.saturating_add(1);
+            self.reflection_pack_work = reflection_pack_work(built.proxy.occupied_cells());
             self.reflection_stale = false;
         }
         let mut edit = ProxyEdit::default();
@@ -2027,7 +2165,8 @@ dependency_kib={} gi_live={}",
         let digest = summary.digest.expect("digest");
 
         // The pebble crosses a cell boundary: the footprint change retires the
-        // cached publication before the mirror bake runs, and the bake fails.
+        // cached publication before the mirror source is brought up to date, and
+        // that update fails.
         let moved = vec![placed(0, [3.2, 0.2, 3.2])];
         let moved_source = FrameSource {
             installed: &moved,
@@ -2065,6 +2204,154 @@ dependency_kib={} gi_live={}",
         );
         assert!(summary.indirect_live && summary.reflection_live);
         assert_ne!(summary.digest, Some(digest));
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    #[test]
+    fn a_body_cell_move_refreshes_the_bake_instead_of_rebaking_it() {
+        let fixture = Fixture::new();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        let body = |x: f32| {
+            let mut mesh = pebble(material::MOSS_TURF);
+            for vertex in &mut mesh.vertices {
+                vertex.position = [
+                    vertex.position[0] + x,
+                    vertex.position[1],
+                    vertex.position[2] + 1.2,
+                ];
+            }
+            mesh
+        };
+        let resting = body(-1.7);
+        settle(
+            &mut lighting,
+            &mut sink,
+            &FrameSource {
+                dynamic: &resting,
+                ..fixture.source()
+            },
+            InstallState::Installed,
+        );
+        let packs = lighting.reflection_packs;
+
+        // One cell in +X: the representation changes, and the bake is brought
+        // forward cell by cell instead of being re-derived.
+        let moved = body(-0.7);
+        let source = FrameSource {
+            dynamic: &moved,
+            ..fixture.source()
+        };
+        sink.renderer_install();
+        let summary = lighting
+            .update(&mut sink, &source, InstallState::Current)
+            .expect("body cell move");
+        assert!(summary.reflection_refreshed, "{summary:?}");
+        assert!(!summary.reflection_repacked, "{summary:?}");
+        assert_eq!(lighting.reflection_packs, packs, "no re-bake");
+        assert!(summary.reflection_live);
+        // The refreshed grid is exactly the bake the current representation
+        // would produce, entry for entry, and validates only for it.
+        let fresh = lighting.fresh_reflection(&source).expect("fresh bake");
+        let live = lighting.reflection_pack().expect("live pack");
+        assert_eq!(live.materials(), fresh.materials());
+        assert_eq!(live.palette(), fresh.palette());
+        assert_eq!(live.source_mesh_digest(), fresh.source_mesh_digest());
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    /// A refresh that cannot prove the retained bake is current - here the
+    /// authoritative world moved to a new revision - must fall back to a full
+    /// re-bake of the *current* source instead of keeping the retained grid.
+    #[test]
+    fn an_unrefreshable_pack_is_rebaked_from_the_current_source() {
+        let mut fixture = Fixture::new();
+        fixture.meshes = vec![pebble(material::MOSS_TURF)];
+        fixture.instances = vec![placed(0, [1.2, 0.2, 1.2])];
+        let source = fixture.source();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        settle(&mut lighting, &mut sink, &source, InstallState::Installed);
+        let refreshes = lighting.reflection_refreshes;
+
+        // A future editable world: the revision moves, so the retained bake
+        // cannot be brought forward cell by cell, and the same frame moves the
+        // body across a cell boundary.
+        fixture.world.set([64, 0, 64], 1);
+        let moved = vec![placed(0, [3.2, 0.2, 3.2])];
+        let moved_source = FrameSource {
+            installed: &moved,
+            ..fixture.source()
+        };
+        sink.renderer_install();
+        let summary = lighting
+            .update(&mut sink, &moved_source, InstallState::Installed)
+            .expect("fallback frame");
+        assert!(
+            summary.reflection_repacked,
+            "a pack that cannot be refreshed must be re-baked: {summary:?}"
+        );
+        assert!(!summary.reflection_refreshed);
+        assert_eq!(
+            lighting.reflection_refreshes, refreshes,
+            "the refused refresh must not be counted"
+        );
+        assert!(summary.reflection_live);
+        let digest = lighting
+            .reflection_pack()
+            .and_then(|pack| pack.source_mesh_digest())
+            .expect("live pack identity");
+        let fresh = lighting
+            .fresh_reflection(&moved_source)
+            .expect("fresh bake");
+        let live = lighting.reflection_pack().expect("live pack");
+        assert_eq!(live.materials(), fresh.materials());
+        assert_eq!(live.palette(), fresh.palette());
+        assert_eq!(live.source_mesh_digest(), fresh.source_mesh_digest());
+        assert!(live.valid_for_scene(moved_source.world, SOURCE_EPOCH, Some(digest)));
+        assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    #[test]
+    fn a_dynamic_colour_change_rebakes_the_mirror_palette() {
+        let fixture = Fixture::new();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        let first = body_at([0.2, 0.0, 1.2], [0.8, 0.1, 0.1]);
+        let source = FrameSource {
+            dynamic: &first,
+            ..fixture.source()
+        };
+        settle(&mut lighting, &mut sink, &source, InstallState::Installed);
+        let packs = lighting.reflection_packs;
+        assert_eq!(
+            lighting.reflection_pack().unwrap().palette()[DYNAMIC_MATERIAL as usize][..3],
+            [0.8, 0.1, 0.1]
+        );
+
+        // The body moves a cell and is drawn in another colour, both at once:
+        // the palette is recomputed by the rebuild, and the retained mirror grid
+        // must follow it. A pack that keeps the old palette would shade the
+        // reflected body with a colour the scene no longer has.
+        let second = body_at([1.2, 0.0, 1.2], [0.1, 0.2, 0.9]);
+        let source = FrameSource {
+            dynamic: &second,
+            ..fixture.source()
+        };
+        sink.renderer_install();
+        let summary = lighting
+            .update(&mut sink, &source, InstallState::Current)
+            .expect("colour frame");
+        assert!(
+            summary.reflection_repacked,
+            "a palette change must re-bake the mirror grid: {summary:?}"
+        );
+        assert_eq!(lighting.reflection_packs, packs + 1);
+        assert_eq!(
+            lighting.reflection_pack().unwrap().palette()[DYNAMIC_MATERIAL as usize][..3],
+            [0.1, 0.2, 0.9]
+        );
+        assert!(summary.reflection_live);
         assert!(sink.violations.is_empty(), "{:?}", sink.violations);
     }
 
@@ -2117,5 +2404,271 @@ dependency_kib={} gi_live={}",
             "a stale unchanged digest must clear without rebuilding every frame"
         );
         assert!(sink.violations.is_empty(), "{:?}", sink.violations);
+    }
+
+    // ===================================================================
+    // Continuous body motion: what continuous physics activity does to the
+    // mirror bake. The GI half of the same requirement has its own fixture and
+    // regression above; this is the reflection half, measured on the identical
+    // production state machine and the renderer-faithful sink.
+    // ===================================================================
+
+    /// Per-frame reflection response to a moving physics body, in engine work
+    /// units. Everything is read from the production `WetlandLighting` step,
+    /// never from wall time.
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    struct MotionFrame {
+        /// The merged body mesh changed, so the app uploads it; the renderer
+        /// retires both publications before this frame's lighting step.
+        dynamic_upload: bool,
+        reflection_live: bool,
+        indirect_live: bool,
+        proxy_rebuilt: bool,
+        reflection_repacked: bool,
+        reflection_refreshed: bool,
+        reflection_pack_work: usize,
+        invalidated_faces: usize,
+        dirty_faces: usize,
+        pending_work: usize,
+        /// Entries in which the live pack differed from a fresh bake of this
+        /// same frame's own geometry. Nonzero means a wrong reflection was
+        /// drawable, so any configuration reporting one is a failure.
+        stale_entries: usize,
+        /// Occupied cells of the attached representation this frame.
+        proxy_cells: usize,
+    }
+
+    const MOTION_PATH_SPAN: i32 = 8;
+    const MOTION_PATH_START_X: f32 = -3.7;
+    const MOTION_PATH_Z: f32 = 1.2;
+
+    /// Triangular body path (out `SPAN` cells, then back) so a sustained run
+    /// stays inside the coverage box.
+    fn motion_body_x(cells: i32) -> f32 {
+        let period = 2 * MOTION_PATH_SPAN;
+        let phase = cells.rem_euclid(period);
+        let offset = if phase <= MOTION_PATH_SPAN {
+            phase
+        } else {
+            period - phase
+        };
+        MOTION_PATH_START_X + offset as f32
+    }
+
+    /// The half-metre body on the plate's second row at `x`.
+    fn motion_body(x: f32) -> Mesh {
+        let mut mesh = pebble(material::MOSS_TURF);
+        for vertex in &mut mesh.vertices {
+            vertex.position = [
+                vertex.position[0] + x,
+                vertex.position[1],
+                vertex.position[2] + MOTION_PATH_Z,
+            ];
+        }
+        mesh
+    }
+
+    /// Drive `frames` frames of continuous body motion at `cells_per_frame`,
+    /// one production frame each: the app uploads the changed dynamic mesh
+    /// (which retires both publications at the renderer) and then the
+    /// production lighting state machine runs once. Every live frame's pack is
+    /// compared cell-for-cell and entry-for-entry against a fresh bake of that
+    /// same frame's own geometry.
+    fn run_body_motion(cells_per_frame: i32, frames: i32) -> (Vec<MotionFrame>, FakeSink) {
+        let fixture = Fixture::new();
+        let mut lighting = WetlandLighting::new([0.0, 0.0, 0.0]);
+        let mut sink = FakeSink::new(fixture.sun);
+        let resting = motion_body(motion_body_x(0));
+        settle(
+            &mut lighting,
+            &mut sink,
+            &FrameSource {
+                dynamic: &resting,
+                ..fixture.source()
+            },
+            InstallState::Installed,
+        );
+
+        let mut recorded = Vec::new();
+        for frame in 0..frames {
+            let moved = motion_body(motion_body_x((frame + 1) * cells_per_frame));
+            let source = FrameSource {
+                dynamic: &moved,
+                ..fixture.source()
+            };
+            // Fractional interpolation changes the mesh for any real motion, so
+            // `DynamicMeshCache::update` reports a rebuild and the app uploads;
+            // a still body reports nothing and uploads nothing. The renderer's
+            // dynamic upload disables both publications before the step.
+            let upload = cells_per_frame != 0;
+            if upload {
+                sink.renderer_install();
+            }
+            let summary = lighting
+                .update(&mut sink, &source, InstallState::Current)
+                .expect("motion frame");
+            let fresh = if summary.reflection_live {
+                Some(
+                    lighting
+                        .fresh_reflection(&source)
+                        .expect("fresh reflection bake"),
+                )
+            } else {
+                None
+            };
+            let stale_entries = match (lighting.reflection_pack(), fresh.as_ref()) {
+                (Some(live), Some(fresh)) => {
+                    assert_eq!(
+                        live.source_mesh_digest(),
+                        fresh.source_mesh_digest(),
+                        "a live pack must identify the geometry being compared"
+                    );
+                    live.materials()
+                        .iter()
+                        .zip(fresh.materials())
+                        .filter(|(a, b)| a != b)
+                        .count()
+                        + live
+                            .palette()
+                            .iter()
+                            .zip(fresh.palette())
+                            .filter(|(a, b)| a != b)
+                            .count()
+                }
+                _ => 0,
+            };
+            recorded.push(MotionFrame {
+                dynamic_upload: upload,
+                reflection_live: summary.reflection_live,
+                indirect_live: summary.indirect_live,
+                proxy_rebuilt: summary.proxy_rebuilt,
+                reflection_repacked: summary.reflection_repacked,
+                reflection_refreshed: summary.reflection_refreshed,
+                reflection_pack_work: summary.reflection_pack_work,
+                invalidated_faces: summary.invalidated_faces,
+                dirty_faces: summary.dirty_faces,
+                pending_work: summary.pending_work,
+                stale_entries,
+                proxy_cells: summary.proxy_cells,
+            });
+        }
+        (recorded, sink)
+    }
+
+    /// Longest run of consecutive frames with no reflection published.
+    fn longest_dark_run(frames: &[MotionFrame]) -> usize {
+        let (mut longest, mut dark) = (0, 0);
+        for frame in frames {
+            dark = if frame.reflection_live { 0 } else { dark + 1 };
+            longest = longest.max(dark);
+        }
+        longest
+    }
+
+    /// Measurement, not an expectation: the fraction of frames reflections stay
+    /// live under sustained body motion at several rates, the repack count and
+    /// the repack cost in engine work units. It asserts only the invariants the
+    /// production contract already guarantees — no stale pack, no publish
+    /// violation — so the printed table is an honest reading of the code, not a
+    /// restatement of an assumption.
+    #[test]
+    fn continuous_body_motion_reflection_measurement() {
+        let mut table = Vec::new();
+        for rate in [0, 1, 2, 4] {
+            let (frames, sink) = run_body_motion(rate, 24);
+            assert!(
+                sink.violations.is_empty(),
+                "rate {rate}: {:?}",
+                sink.violations
+            );
+            let live = frames.iter().filter(|frame| frame.reflection_live).count();
+            let repacks = frames
+                .iter()
+                .filter(|frame| frame.reflection_repacked)
+                .count();
+            let refreshes = frames
+                .iter()
+                .filter(|frame| frame.reflection_refreshed)
+                .count();
+            let work: usize = frames.iter().map(|frame| frame.reflection_pack_work).sum();
+            let stale: usize = frames.iter().map(|frame| frame.stale_entries).sum();
+            let proxy_cells = frames.first().map_or(0, |frame| frame.proxy_cells);
+            let fraction = live as f64 / frames.len() as f64;
+            assert_eq!(
+                stale, 0,
+                "rate {rate}: a live pack differed from a fresh bake"
+            );
+            if rate == 1 {
+                for (index, frame) in frames.iter().enumerate() {
+                    println!(
+                        "[reflection motion] frame={index} upload={} live={} rebuilt={} \
+repacked={} refreshed={} work={} invalidated={} dirty={} pending={} stale={}",
+                        frame.dynamic_upload,
+                        frame.reflection_live,
+                        frame.proxy_rebuilt,
+                        frame.reflection_repacked,
+                        frame.reflection_refreshed,
+                        frame.reflection_pack_work,
+                        frame.invalidated_faces,
+                        frame.dirty_faces,
+                        frame.pending_work,
+                        frame.stale_entries,
+                    );
+                }
+            }
+            println!(
+                "[reflection motion] rate={rate} frames={} live={} live_fraction={:.3} \
+dark_frames={} longest_dark_run={} repacks={} refreshes={} pack_work={} work_per_frame={:.1}",
+                frames.len(),
+                live,
+                fraction,
+                frames.len() - live,
+                longest_dark_run(&frames),
+                repacks,
+                refreshes,
+                work,
+                work as f64 / frames.len() as f64,
+            );
+            table.push((rate, fraction, repacks, refreshes, work, proxy_cells));
+        }
+        println!("[reflection motion] table {table:?}");
+
+        // The measured contract. Reflections stay live on every frame of
+        // sustained motion, and every live pack was proven equal to a fresh bake
+        // of that same frame's geometry above. Motion must not re-bake: the
+        // mirror grid is refreshed cell by cell, so the full-volume pack count
+        // stays zero and each motion frame costs a bounded diff instead of the
+        // `2 * footprint + proxy` cell visits a re-bake costs.
+        let proxy_cells = table
+            .iter()
+            .map(|(_, _, _, _, _, cells)| *cells)
+            .max()
+            .unwrap_or(0);
+        // Two diff sides, plus up to four changed cells at two units each (a
+        // scene-material read and a grid write).
+        let refresh_bound = 2 * proxy_cells + 4 * 2;
+        let full_repack_work = reflection_pack_work(proxy_cells);
+        assert!(
+            refresh_bound * 8 < full_repack_work,
+            "fixture: the refresh bound {refresh_bound} must be far below a \
+{full_repack_work}-visit re-bake"
+        );
+        for (rate, fraction, repacks, refreshes, work, _) in &table {
+            assert_eq!(
+                *fraction, 1.0,
+                "rate {rate}: reflection was not live on every frame"
+            );
+            assert_eq!(*repacks, 0, "rate {rate}: motion re-baked the mirror grid");
+            let expected_refreshes = if *rate == 0 { 0 } else { 24 };
+            assert_eq!(
+                *refreshes, expected_refreshes,
+                "rate {rate}: every motion frame must refresh the retained bake"
+            );
+            assert!(
+                *work <= expected_refreshes * refresh_bound,
+                "rate {rate}: motion work {work} exceeds the bounded-diff ceiling \
+{refresh_bound} per frame (a full re-bake costs {full_repack_work})"
+            );
+        }
     }
 }
