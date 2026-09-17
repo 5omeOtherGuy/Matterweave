@@ -2,6 +2,8 @@
 pub mod async_indirect;
 mod clouds;
 mod frustum;
+#[cfg(test)]
+mod highlight_tests;
 mod hud;
 pub mod indirect;
 #[cfg(test)]
