@@ -22,10 +22,15 @@ pub const STATIC_INSTANCE_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 /// Hard ceiling on one wind-capable flora scene's instances. A dense field is
 /// meant to be bounded: a caller over this budget is told so and keeps the
 /// scene it already has, rather than having its far tier silently truncated.
-pub const MAX_FLORA_INSTANCES: usize = 16_384;
+/// Doubled from 16 384 with the 72 m ground-cover profile, which plans up to
+/// 30 268 sites at a probed plains eye where the 48 m profile planned 14 693.
+pub const MAX_FLORA_INSTANCES: usize = 32_768;
 /// Per-buffer byte ceiling implied by [`MAX_FLORA_INSTANCES`]. A flora scene
 /// carries two per-instance buffers of the same length - the packed transform
-/// record and the wind record - so this bounds each of them.
+/// record and the wind record - so this bounds each of them: 512 KiB per
+/// buffer, 1 MiB for the pair. The records stay 16 bytes, so the wind path is
+/// unchanged per vertex (one record per instance, the same fields, the same
+/// shader reads); only the number of instances grew.
 pub const MAX_FLORA_BYTES: usize = MAX_FLORA_INSTANCES * INSTANCE_RECORD_SIZE;
 /// Tallest flora prototype the wind path accepts, in metres. Displacement
 /// scales with the height a vertex sits at, so an absurd height would turn a
