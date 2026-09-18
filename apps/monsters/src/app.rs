@@ -129,7 +129,10 @@ pub struct MonsterApp {
     touch: TouchInput,
     message: Option<(String, f32)>,
     uploaded_revision: Option<u64>,
-    scene_key: Option<(Place, bool)>,
+    /// Currently uploaded static scene: place, whether the battle arena is
+    /// showing, the visible species pair and the active slot. A switch,
+    /// evolution or trainer queue step changes the key and rebuilds models.
+    scene_key: Option<(Place, bool, u16, u16, usize)>,
     pub smoke: Option<SmokeState>,
     audio: GameAudio,
     settings_path: PathBuf,
@@ -533,6 +536,9 @@ impl MonsterApp {
             return;
         }
         let mut sound: Option<Sound> = None;
+        if let BattleAction::Switch(index) = action {
+            state.active = index.min(game.party.len().saturating_sub(1));
+        }
         for event in battle.log.drain(..) {
             match &event {
                 BattleEvent::PlayerUsedMove { .. } | BattleEvent::WildUsedMove { .. } => {
@@ -859,15 +865,8 @@ impl MonsterApp {
     }
 
     fn sync_scene(&mut self) -> Result<(), String> {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return Ok(());
-        };
         let battle = self.screen == Screen::Battle;
-        let key = (self.map.layout.place, battle);
-        if self.scene_key == Some(key) {
-            return Ok(());
-        }
-        let (meshes, instances) = if battle {
+        let (key, meshes, instances) = if battle {
             let Some(state) = self.battle.as_ref() else {
                 return Ok(());
             };
@@ -878,25 +877,52 @@ impl MonsterApp {
                 .map(|m| m.species)
                 .unwrap_or(SpeciesId(1));
             let wild_species = state.battle.wild.species;
-            visuals::arena_scene(player_species, wild_species, self.battle_center, 0.045)
+            let key = (
+                self.map.layout.place,
+                true,
+                player_species.0,
+                wild_species.0,
+                state.active,
+            );
+            let (meshes, instances) =
+                visuals::arena_scene(player_species, wild_species, self.battle_center, 0.045);
+            (key, meshes, instances)
         } else {
-            let mut npcs = Vec::new();
-            for spot in self.map.layout.npcs {
-                let role = visuals::role_of(spot.id);
-                let y = 2.0;
-                npcs.push((
-                    role,
-                    [spot.tile[0] as f32 + 0.5, y, spot.tile[1] as f32 + 0.5],
-                    0u8,
-                ));
-            }
-            visuals::npc_scene(&npcs)
+            let key = (self.map.layout.place, false, 0, 0, 0);
+            let (meshes, instances) = self.overworld_scene();
+            (key, meshes, instances)
+        };
+        if self.scene_key == Some(key) {
+            return Ok(());
+        }
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Ok(());
         };
         renderer
             .replace_static_scene(&meshes, &instances)
             .map_err(|e| e.to_string())?;
         self.scene_key = Some(key);
         Ok(())
+    }
+
+    /// Every NPC in the current place, one prototype per role.
+    fn overworld_scene(
+        &self,
+    ) -> (
+        Vec<matterweave_core::Mesh>,
+        Vec<matterweave_render::StaticInstance>,
+    ) {
+        let mut npcs = Vec::new();
+        for spot in self.map.layout.npcs {
+            let role = visuals::role_of(spot.id);
+            let y = 2.0;
+            npcs.push((
+                role,
+                [spot.tile[0] as f32 + 0.5, y, spot.tile[1] as f32 + 0.5],
+                0u8,
+            ));
+        }
+        visuals::npc_scene(&npcs)
     }
 
     fn camera(&self) -> (Mat4, [f32; 3]) {
@@ -1861,6 +1887,7 @@ impl ApplicationHandler for MonsterApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use matterweave_monsters::roster::ids;
 
     #[test]
     fn avatar_rotation_maps_local_plus_z_to_the_facing_direction() {
@@ -1874,6 +1901,39 @@ mod tests {
             -z_point[0] * sin + z_point[2] * cos,
         ];
         assert!(rotated[0] > 4.9, "yaw rotates the model onto +X");
+    }
+
+    #[test]
+    fn switching_updates_the_active_slot_and_the_arena_key() {
+        let dir = std::env::temp_dir().join(format!("mossbound-switch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("save.json");
+        let _ = std::fs::remove_file(&path);
+        let mut app = MonsterApp::new(path, Some(1));
+        app.begin_smoke_exercise();
+        // Give the party a second member and start a wild battle.
+        let second = Monster::wild(ids::NIBBIT, 5).expect("valid wild");
+        app.save
+            .as_mut()
+            .unwrap()
+            .game
+            .capture(&second)
+            .expect("party room");
+        app.start_wild_battle(Monster::wild(ids::PUFFPEEP, 5).unwrap());
+        assert_eq!(app.battle.as_ref().unwrap().active, 0);
+        let key_before = app.save.as_ref().map(|s| s.game.party[0].species).unwrap();
+        app.battle_action(BattleAction::Switch(1));
+        let state = app.battle.as_ref().unwrap();
+        assert_eq!(state.active, 1, "the switch changes the active slot");
+        assert_ne!(
+            app.save
+                .as_ref()
+                .map(|s| s.game.party[state.active].species)
+                .unwrap(),
+            key_before,
+            "the arena key would change with the new species"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
