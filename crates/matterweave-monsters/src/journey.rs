@@ -1,6 +1,6 @@
 //! The directed journey: two towns, four routes, trainers and the gym.
 //! All structured content with stable ids; validation tests pin reachability.
-use crate::roster::{ids, SpeciesId, ROSTER, STARTERS};
+use crate::roster::{ids, SpeciesId, ROSTER};
 use serde::{Deserialize, Serialize};
 
 /// Stable location identifiers in journey order.
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(ROUTES.len(), 4, "four distinct routes");
         assert!(GYM.is_town(), "the gym lives in a town");
         assert!(
-            GYM_TRAINERS.len() >= 1,
+            !GYM_TRAINERS.is_empty(),
             "a lead-in challenge precedes the leader"
         );
         assert_eq!(
@@ -371,7 +371,7 @@ mod tests {
     fn every_family_head_is_obtainable_and_finals_are_post_or_evolved() {
         let heads = family_heads();
         assert_eq!(heads.len(), 12, "12 family heads");
-        let mut obtainable: HashSet<SpeciesId> = STARTERS.into_iter().collect();
+        let mut obtainable: HashSet<SpeciesId> = crate::roster::STARTERS.into_iter().collect();
         for route in ROUTES {
             for e in route.encounters {
                 obtainable.insert(e.species);
@@ -494,10 +494,10 @@ mod tests {
             Place::QuarryLoop,
         ];
         assert_eq!(Place::ALL, order, "journey order is the documented one");
-        assert!(Mistpath_side_loop(&order));
+        assert!(mistpath_side_loop(&order));
     }
 
-    fn Mistpath_side_loop(order: &[Place; 6]) -> bool {
+    fn mistpath_side_loop(order: &[Place; 6]) -> bool {
         // Mistpath sits between Thornhollow and Tidewater as an optional leg.
         order[2] == Place::Thornhollow
             && order[3] == Place::Mistpath
