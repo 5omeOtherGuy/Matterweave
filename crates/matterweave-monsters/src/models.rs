@@ -921,11 +921,16 @@ pub fn model_boxes(spec: &ModelSpec) -> Vec<VoxelBox> {
 pub fn mesh_for(id: SpeciesId, unit: f32) -> Mesh {
     let spec = spec_for(id);
     let boxes = model_boxes(&spec);
-    let scale = unit * spec.scale;
+    mesh_from_boxes(&boxes, &spec.palette, unit * spec.scale)
+}
+
+/// Build a mesh from an explicit box list and palette at a given scale (metres
+/// per voxel). Shared by creature models and the app's avatars and props.
+pub fn mesh_from_boxes(boxes: &[VoxelBox], palette: &[[u8; 3]; 4], scale: f32) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    for b in &boxes {
-        let c = spec.palette[b.slot as usize % 4];
+    for b in boxes {
+        let c = palette[b.slot as usize % 4];
         let color = [
             c[0] as f32 / 255.0,
             c[1] as f32 / 255.0,

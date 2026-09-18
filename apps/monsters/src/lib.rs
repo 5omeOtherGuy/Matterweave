@@ -2,3 +2,4 @@
 //! `matterweave-monsters` crate.
 pub mod lifecycle;
 pub mod maps;
+pub mod visuals;
