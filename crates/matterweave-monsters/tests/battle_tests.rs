@@ -9,8 +9,7 @@ use matterweave_monsters::roster::ids;
 use matterweave_monsters::state::Game;
 
 fn setup(starter: u16, wild: u16, wild_level: u8) -> (Game, Battle) {
-    let game =
-        Game::new_game("Wren", matterweave_monsters::roster::SpeciesId(starter)).unwrap();
+    let game = Game::new_game("Wren", matterweave_monsters::roster::SpeciesId(starter)).unwrap();
     let monster = Monster::wild(matterweave_monsters::roster::SpeciesId(wild), wild_level).unwrap();
     let battle = Battle::wild_encounter(monster, game.party[0].level);
     (game, battle)
