@@ -51,15 +51,6 @@ pub struct Features {
     pub shell: bool,
 }
 
-const NONE: Features = Features {
-    ears: EarKind::None,
-    tail: TailKind::None,
-    horns: false,
-    wings: false,
-    fins: false,
-    spikes: false,
-    shell: false,
-};
 
 const fn feat(
     ears: EarKind,
@@ -953,10 +944,11 @@ pub fn mesh_for(id: SpeciesId, unit: f32) -> Mesh {
         ];
         push_box(&mut vertices, &mut indices, min, max, color);
     }
-    let mut mesh = Mesh::default();
-    mesh.vertices = vertices;
-    mesh.indices = indices;
-    mesh
+    Mesh {
+        vertices,
+        indices,
+        revision: 0,
+    }
 }
 
 fn push_box(
