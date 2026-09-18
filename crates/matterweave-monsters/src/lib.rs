@@ -2,6 +2,7 @@
 //! lifecycle, Vulkan and physics types stay in the app host.
 pub mod battle;
 pub mod journey;
+pub mod models;
 pub mod monsters;
 pub mod moves;
 pub mod roster;
