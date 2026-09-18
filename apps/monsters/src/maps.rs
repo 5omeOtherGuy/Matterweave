@@ -11,6 +11,9 @@ use matterweave_monsters::journey::Place;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tile {
     Path,
+    /// Plain mown ground: walkable like grass but never a wild-encounter
+    /// zone. Towns use this as their base so a paved town is safe.
+    Lawn,
     Grass,
     TallGrass,
     Flower,
@@ -30,6 +33,25 @@ impl Tile {
     /// not, so a paved town or a cleared road is a safe walk.
     pub fn encounters(self) -> bool {
         matches!(self, Tile::Grass | Tile::TallGrass)
+    }
+
+    /// Walkable surface height in metres for this tile: tall grass is one
+    /// voxel proud of the rest.
+    pub fn ground_height(self) -> f32 {
+        match self {
+            Tile::TallGrass => 3.0,
+            _ => 2.0,
+        }
+    }
+
+    /// Ground cover material and solid height for the voxel world.
+    fn ground(self) -> (u8, i32) {
+        match self {
+            Tile::Path | Tile::Floor | Tile::Door => (material::SOIL, 2),
+            Tile::TallGrass => (material::MOSS, 3),
+            Tile::Tree | Tile::Rock | Tile::Wall => (material::MOSS, 2),
+            Tile::Lawn | Tile::Grass | Tile::Flower => (material::MOSS, 2),
+        }
     }
 
     /// Relative encounter pressure; tall grass is the classic lure.
@@ -171,8 +193,10 @@ pub fn generate_tiles(layout: &PlaceLayout) -> Vec<Tile> {
         for z in rect.z..rect.z + rect.d {
             for x in rect.x..rect.x + rect.w {
                 let current = tiles[(z * MAP_W + x) as usize];
-                if matches!(current, Tile::Grass | Tile::TallGrass | Tile::Flower)
-                    && scatter(hash2(x, z, 7), 62)
+                if matches!(
+                    current,
+                    Tile::Lawn | Tile::Grass | Tile::TallGrass | Tile::Flower
+                ) && scatter(hash2(x, z, 7), 62)
                 {
                     tiles[(z * MAP_W + x) as usize] = Tile::Tree;
                 }
@@ -183,8 +207,10 @@ pub fn generate_tiles(layout: &PlaceLayout) -> Vec<Tile> {
         for z in rect.z..rect.z + rect.d {
             for x in rect.x..rect.x + rect.w {
                 let current = tiles[(z * MAP_W + x) as usize];
-                if matches!(current, Tile::Grass | Tile::TallGrass | Tile::Flower)
-                    && scatter(hash2(x, z, 11), 55)
+                if matches!(
+                    current,
+                    Tile::Lawn | Tile::Grass | Tile::TallGrass | Tile::Flower
+                ) && scatter(hash2(x, z, 11), 55)
                 {
                     tiles[(z * MAP_W + x) as usize] = Tile::Rock;
                 }
@@ -255,12 +281,7 @@ pub fn generate_world(layout: &PlaceLayout, seed: u64) -> World {
     for z in 0..MAP_H {
         for x in 0..MAP_W {
             let tile = tiles[(z * MAP_W + x) as usize];
-            let (surface, top) = match tile {
-                Tile::Path | Tile::Floor | Tile::Door => (material::SOIL, 2),
-                Tile::TallGrass => (material::MOSS, 3),
-                Tile::Tree | Tile::Rock | Tile::Wall => (material::MOSS, 2),
-                Tile::Grass | Tile::Flower => (material::MOSS, 2),
-            };
+            let (surface, top) = tile.ground();
             for y in 0..top {
                 world.set(
                     [x, y, z],
@@ -358,7 +379,7 @@ pub fn layout(place: Place) -> &'static PlaceLayout {
 static EMBERFIELD: PlaceLayout = PlaceLayout {
     place: Place::Emberfield,
     spawn: [16, 20],
-    base: Tile::Flower,
+    base: Tile::Lawn,
     paths: &[
         [16, 20],
         [16, 14],
@@ -526,7 +547,7 @@ static MISTPATH: PlaceLayout = PlaceLayout {
 static TIDEWATER: PlaceLayout = PlaceLayout {
     place: Place::Tidewater,
     spawn: [16, 21],
-    base: Tile::Flower,
+    base: Tile::Lawn,
     paths: &[
         [16, 21],
         [16, 13],

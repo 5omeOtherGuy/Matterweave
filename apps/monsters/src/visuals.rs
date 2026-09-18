@@ -171,7 +171,8 @@ pub fn npc_scene(npcs: &[(NpcRole, [f32; 3], u8)]) -> (Vec<Mesh>, Vec<StaticInst
 }
 
 /// The battle arena: the player's active monster facing the opponent across a
-/// small clearing. `unit` scales the models to arena size.
+/// small clearing, tight enough that the fixed camera frames both. `unit`
+/// scales the models to arena size.
 pub fn arena_scene(
     player_species: SpeciesId,
     wild_species: SpeciesId,
@@ -182,16 +183,20 @@ pub fn arena_scene(
         matterweave_monsters::models::mesh_for(player_species, unit),
         matterweave_monsters::models::mesh_for(wild_species, unit),
     ];
+    // Both combatants sit in front of the fixed camera, which looks along +Z
+    // with screen-left at +X: the opponent stands far-left, the player's
+    // creature near-right, and they face each other across the X axis
+    // (quarter 1 faces +X, quarter 3 faces -X).
     let instances = vec![
         StaticInstance {
             prototype: 0,
-            translation: [center[0] - 3.0, center[1], center[2] - 3.0],
-            yaw_quarters: 0,
+            translation: [center[0] - 1.5, center[1], center[2] + 0.8],
+            yaw_quarters: 1,
         },
         StaticInstance {
             prototype: 1,
-            translation: [center[0] + 3.0, center[1], center[2] + 3.0],
-            yaw_quarters: 2,
+            translation: [center[0] + 1.5, center[1], center[2] + 3.0],
+            yaw_quarters: 3,
         },
     ];
     (meshes, instances)
@@ -238,9 +243,11 @@ mod tests {
             0.05,
         );
         assert_eq!(meshes.len(), 2);
-        assert_eq!(instances[0].yaw_quarters, 0);
-        assert_eq!(instances[1].yaw_quarters, 2);
+        // Player near-right facing +X, opponent far-left facing -X.
+        assert_eq!(instances[0].yaw_quarters, 1);
+        assert_eq!(instances[1].yaw_quarters, 3);
         assert!(instances[0].translation[2] < instances[1].translation[2]);
+        assert!(instances[0].translation[0] < instances[1].translation[0]);
         assert_eq!(instances[0].translation[1], 2.0);
     }
 }
