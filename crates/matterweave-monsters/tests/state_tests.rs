@@ -243,3 +243,45 @@ fn save_round_trips_through_json() {
     // Corrupt payloads are a refusal, not a panic.
     assert!(Game::load(b"not json").is_err());
 }
+
+#[test]
+fn save_file_round_trips_atomically_and_refuses_foreign_versions() {
+    use matterweave_monsters::journey::Place;
+    use matterweave_monsters::state::SaveFile;
+
+    let dir = std::env::temp_dir().join(format!("mossbound-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("save.json");
+    let _ = std::fs::remove_file(&path);
+
+    let mut game = Game::new_game("Wren", ids::CINDERUB).unwrap();
+    let _ = game.capture(&Monster::wild(ids::FLITFIN, 6).unwrap());
+    let mut save = SaveFile::new(game, Place::MeadowWay);
+    save.position = [4.5, 3.0, 9.25];
+    save.yaw = 1.5;
+    save.save(&path).expect("save writes");
+    assert!(!dir
+        .join(format!(".mossbound-{}.tmp", std::process::id()))
+        .exists());
+
+    let loaded = SaveFile::load(&path).expect("save loads");
+    assert_eq!(loaded.place, Place::MeadowWay);
+    assert_eq!(loaded.position, [4.5, 3.0, 9.25]);
+    assert_eq!(loaded.game.party.len(), 2);
+    assert_eq!(loaded.game.player_name, "Wren");
+
+    // A foreign version is refused and the bytes stay untouched for recovery.
+    let bytes = std::fs::read(&path).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["version"] = serde_json::Value::from(99);
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(matches!(
+        SaveFile::load(&path),
+        Err(GameError::InvalidTransition)
+    ));
+    assert!(
+        SaveFile::load(&path).is_err(),
+        "the original bytes are preserved"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

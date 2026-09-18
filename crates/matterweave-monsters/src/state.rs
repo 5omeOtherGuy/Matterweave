@@ -1,6 +1,7 @@
 //! The authoritative game state: party, storage, items, progression, battles
 //! and captures. Serializes as the save attachment; rendering and Android
 //! lifecycle never mutate this directly.
+use crate::journey::Place;
 use crate::monsters::{
     GameError, Monster, MoveSlot, MAX_LEVEL, MAX_PARTY, MAX_STORAGE, MOVES_PER_MONSTER, PP_PER_MOVE,
 };
@@ -228,6 +229,67 @@ impl Game {
 }
 
 pub const SAVE_VERSION: u32 = 1;
+
+/// The complete on-disk save: rules state plus where the player stands. The
+/// maps themselves are deterministic authored data, not saved edits, so a
+/// save only needs the position.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SaveFile {
+    pub version: u32,
+    pub game: Game,
+    pub place: Place,
+    pub position: [f32; 3],
+    pub yaw: f32,
+}
+
+impl SaveFile {
+    pub const FILE_VERSION: u32 = 1;
+
+    pub fn new(game: Game, place: Place) -> Self {
+        Self {
+            version: Self::FILE_VERSION,
+            game,
+            place,
+            position: [0.0; 3],
+            yaw: 0.0,
+        }
+    }
+
+    /// Atomic save: same-directory temp, fsync, rename. A crash cannot leave a
+    /// half-written save, and the previous save survives a failed write.
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        let temp = parent.join(format!(".mossbound-{}.tmp", std::process::id()));
+        {
+            let mut file = std::fs::File::create(&temp)?;
+            let bytes = serde_json::to_vec(self).map_err(std::io::Error::other)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
+        std::fs::rename(&temp, path)?;
+        if let Ok(directory) = std::fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
+    /// Load with the version gate; a corrupt or foreign file is a refusal, and
+    /// the caller keeps the original bytes.
+    pub fn load(path: &std::path::Path) -> Result<Self, GameError> {
+        let bytes = std::fs::read(path).map_err(|_| GameError::InvalidTransition)?;
+        let save: SaveFile =
+            serde_json::from_slice(&bytes).map_err(|_| GameError::InvalidTransition)?;
+        if save.version != Self::FILE_VERSION {
+            return Err(GameError::InvalidTransition);
+        }
+        save.game.validate()?;
+        Ok(save)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapturedWhere {

@@ -51,7 +51,6 @@ pub struct Features {
     pub shell: bool,
 }
 
-
 const fn feat(
     ears: EarKind,
     tail: TailKind,
