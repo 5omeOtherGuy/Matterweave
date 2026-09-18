@@ -1,6 +1,7 @@
 //! The Mossbound runtime: screens, touch input, overworld walking, encounters,
 //! battles and persistence. Game rules live in `matterweave-monsters`; this
 //! module owns the window, renderer and input and never mutates world data.
+use crate::audio::{GameAudio, Sound};
 use crate::lifecycle::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use crate::maps::{self, PlaceMap};
 use crate::visuals::{self};
@@ -56,6 +57,7 @@ struct Button {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum UiAction {
     NewGame,
+    ToggleMute,
     Talk,
     Continue,
     PickStarter(u8),
@@ -80,6 +82,16 @@ struct BattleState {
     active: usize,
     log: Vec<String>,
     flash: f32,
+}
+
+/// A scripted host exercise: start a new game, walk a route, meet a wild
+/// creature, capture it and save. This drives the real render loop the way a
+/// player would; it is host runtime evidence, never a device claim.
+pub struct SmokeState {
+    pub frames: u64,
+    pub battles: u32,
+    pub captures: u32,
+    pub finished: bool,
 }
 
 /// Touch bookkeeping: one joystick drag and one camera drag at a time.
@@ -118,10 +130,18 @@ pub struct MonsterApp {
     message: Option<(String, f32)>,
     uploaded_revision: Option<u64>,
     scene_key: Option<(Place, bool)>,
+    pub smoke: Option<SmokeState>,
+    audio: GameAudio,
+    settings_path: PathBuf,
 }
 
 impl MonsterApp {
     pub fn new(save_path: PathBuf, frame_limit: Option<u64>) -> Self {
+        let settings_path = save_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|dir| dir.join("mossbound-settings.json"))
+            .unwrap_or_else(|| PathBuf::from("mossbound-settings.json"));
         let save = SaveFile::load(&save_path).ok();
         let place = save.as_ref().map(|s| s.place).unwrap_or(Place::Emberfield);
         let map = PlaceMap::build(place, 7);
@@ -165,7 +185,95 @@ impl MonsterApp {
             message: None,
             uploaded_revision: None,
             scene_key: None,
+            smoke: None,
+            audio: GameAudio::new(&settings_path),
+            settings_path,
         }
+    }
+
+    /// Start the scripted host exercise: a fresh game in Emberfield with the
+    /// Ember starter, ready to walk the opening route.
+    pub fn begin_smoke_exercise(&mut self) {
+        let game = Game::new_game("Wren", matterweave_monsters::roster::ids::CINDERUB)
+            .expect("the Ember starter is valid");
+        self.save = Some(SaveFile::new(game, Place::Emberfield));
+        self.install_place(Place::Emberfield, maps::layout(Place::Emberfield).spawn);
+        self.cam_yaw = std::f32::consts::PI;
+        self.screen = Screen::Overworld;
+        self.smoke = Some(SmokeState {
+            frames: 0,
+            battles: 0,
+            captures: 0,
+            finished: false,
+        });
+    }
+
+    /// Drive the scripted exercise for one frame. Returns true when it has
+    /// completed and the caller should exit.
+    fn drive_smoke(&mut self) -> bool {
+        let Some(smoke) = self.smoke.as_mut() else {
+            return false;
+        };
+        smoke.frames += 1;
+        let frames = smoke.frames;
+        if smoke.finished {
+            return true;
+        }
+        // Count captures from the rules state so the script cannot claim one
+        // that did not happen.
+        if let Some(save) = &self.save {
+            if save.game.party.len() > 1 {
+                smoke.captures = smoke.captures.max(1);
+            }
+        }
+        let mut fire_capture = false;
+        match self.screen {
+            Screen::Overworld => {
+                let place = self.map.layout.place;
+                let (x, z) = (self.player_pos[0], self.player_pos[2]);
+                // Camera yaw is PI: forward is -Z and right is -X.
+                self.touch.vector = match place {
+                    Place::Emberfield => [0.0, 1.0],
+                    _ => {
+                        let into_grass = x > 13.0;
+                        if into_grass && z > 14.0 {
+                            [-1.0, 0.35]
+                        } else if z > 10.0 {
+                            [0.0, 1.0]
+                        } else {
+                            [-1.0, 0.0]
+                        }
+                    }
+                };
+            }
+            Screen::Battle if frames % 20 == 0 => fire_capture = true,
+            _ => {}
+        }
+        if fire_capture {
+            smoke.battles += 1;
+            self.battle_action(BattleAction::Capture);
+        }
+        // Done when a capture has landed and the overworld is back with a save.
+        let done = self
+            .smoke
+            .as_ref()
+            .is_some_and(|smoke| self.screen == Screen::Overworld && smoke.captures > 0);
+        if done {
+            self.save_now();
+            if let Some(smoke) = self.smoke.as_mut() {
+                smoke.finished = true;
+                println!(
+                    "MOSSBOUND SMOKE: place={} steps={} attempts={} captures={} party={}",
+                    self.map.layout.place.name(),
+                    smoke.frames,
+                    smoke.battles,
+                    smoke.captures,
+                    self.save.as_ref().map(|s| s.game.party.len()).unwrap_or(0),
+                );
+            }
+            return true;
+        }
+        false
     }
 
     fn game(&self) -> Option<&Game> {
@@ -291,11 +399,13 @@ impl MonsterApp {
                 self.battle_center = [self.player_pos[0], 2.0, self.player_pos[2]];
                 self.screen = Screen::Battle;
                 self.scene_key = None;
+                self.audio.play(Sound::Encounter);
             }
         }
     }
 
     fn start_wild_battle(&mut self, wild: Monster) {
+        self.audio.play(Sound::Encounter);
         let level = self.game().map(|g| g.party[0].level).unwrap_or(5);
         self.battle = Some(BattleState {
             battle: Battle::wild_encounter(wild, level),
@@ -422,8 +532,22 @@ impl MonsterApp {
             state.log.truncate(6);
             return;
         }
+        let mut sound: Option<Sound> = None;
         for event in battle.log.drain(..) {
+            match &event {
+                BattleEvent::PlayerUsedMove { .. } | BattleEvent::WildUsedMove { .. } => {
+                    sound = Some(Sound::Hit)
+                }
+                BattleEvent::LevelUp { .. } | BattleEvent::Evolved { .. } => {
+                    sound = Some(Sound::LevelUp)
+                }
+                BattleEvent::Heal { .. } => sound = Some(Sound::Heal),
+                _ => {}
+            }
             state.log.push(describe(&event, game, active));
+        }
+        if let Some(sound) = sound {
+            self.audio.play(sound);
         }
         state.log.truncate(6);
         state.flash = if state.log.last().is_some_and(|line| line.contains("hit")) {
@@ -480,6 +604,9 @@ impl MonsterApp {
                     } else if charms > 0 {
                         lines.push(format!("Reward: +{charms} charms, +{tonics} tonics."));
                     }
+                    if leader {
+                        self.audio.play(Sound::Badge);
+                    }
                     self.battle = None;
                     self.screen = Screen::Overworld;
                     self.scene_key = None;
@@ -502,6 +629,7 @@ impl MonsterApp {
                 }
             }
             BattlePhase::Captured => {
+                self.audio.play(Sound::Capture);
                 self.battle = None;
                 self.screen = Screen::Overworld;
                 self.scene_key = None;
@@ -681,6 +809,14 @@ impl MonsterApp {
                     self.notice("No other creature can fight.");
                 }
             }
+            UiAction::ToggleMute => {
+                self.audio.set_muted(!self.audio.settings.muted);
+                if let Err(error) = self.audio.settings.save(&self.settings_path) {
+                    log::warn!("settings save failed: {error}");
+                }
+                let muted = self.audio.settings.muted;
+                self.notice(if muted { "Sound off." } else { "Sound on." });
+            }
             UiAction::MenuHeal(_) | UiAction::MenuSwap(_) | UiAction::MenuWithdraw(_) => {
                 self.menu_action(action)
             }
@@ -823,6 +959,11 @@ impl MonsterApp {
             state.flash = (state.flash - dt).max(0.0);
         }
 
+        self.audio.poll();
+        if self.smoke.is_some() && self.drive_smoke() {
+            event_loop.exit();
+            return;
+        }
         if self.screen == Screen::Overworld {
             self.update_overworld(dt);
         }
@@ -1225,6 +1366,17 @@ impl MonsterApp {
                 hud,
             );
         }
+        let sound_label = if self.audio.settings.muted {
+            "SOUND OFF"
+        } else {
+            "SOUND ON"
+        };
+        self.button(
+            [width - 130.0, height - 140.0, 118.0, 58.0],
+            sound_label,
+            UiAction::ToggleMute,
+            hud,
+        );
         self.button(
             [width - 130.0, height - 70.0, 118.0, 58.0],
             "CLOSE",
@@ -1542,6 +1694,7 @@ fn name_of(game: &Game, index: usize) -> String {
 impl ApplicationHandler for MonsterApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.lifecycle.apply(PlatformEvent::WindowCreated);
+        self.audio.resume();
         if self.window.is_some() {
             return;
         }
@@ -1577,6 +1730,7 @@ impl ApplicationHandler for MonsterApp {
         if self.dirty {
             self.save_now();
         }
+        self.audio.suspend();
         self.lifecycle.apply(PlatformEvent::WindowDestroyed);
         self.renderer = None;
         self.window = None;
