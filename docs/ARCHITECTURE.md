@@ -20,12 +20,17 @@ gameplay interface.
 | `matterweave-physics` | Fixed-step voxel physics adapter: terrain collision, walking capsule, rigid voxel volumes, constraints and bounded fracture. No Rapier, window or Vulkan handles escape. | `matterweave-core`, `matterweave-detail` |
 | `matterweave-audio` | Bounded PCM sound-effect service with a deterministic mixer and an Android AAudio backend. The real-time render pass allocates no memory, takes no blocking lock and performs no I/O. | — (`ringbuf`; `ndk` on Android) |
 | `matterweave-pacing` | Deterministic, clock-free frame pacer and frame-timing statistics. std only, no `unsafe`, fixed 120-sample rings. | — |
+| `matterweave-monsters` | Mossbound game rules and content: the locked 30-species roster, moves, battles, capture, party/storage, progression, journey/encounter data and creature voxel models. No window, renderer, physics or Android types. | `matterweave-core` |
 | `apps/explorer` (`matterweave-explorer`) | Sample application built as an Android shared library and a desktop executable for host tests; composes the engine crates. | all six engine crates except `matterweave-audio` |
+| `apps/monsters` (`matterweave-monsters-app`) | Mossbound host: window, Vulkan renderer composition, touch screens, lifecycle, audio and saves. Its own Android module (`android/game`, application id `dev.matterweave.mossbound`) builds a separate APK. | `matterweave-core`, `-render`, `-physics`, `-pacing`, `-audio`, `matterweave-monsters` |
 
 Dependency direction is one-way: engine crates depend only downward on `core` (and, in
-`physics`, `detail`). `render` and `physics` are siblings with no edge between them. The
-sample depends on the engine; no engine crate depends on the sample or on Android UI.
-`matterweave-audio` is not yet composed into `apps/explorer`.
+`physics`, `detail`). `render` and `physics` are siblings with no edge between them. An
+application depends on the engine; no engine crate depends on an application or on
+Android UI. `matterweave-audio` is not yet composed into `apps/explorer`, but
+`apps/monsters` uses it directly. `matterweave-monsters` carries only game rules and
+content and has no edge to `render`, `physics` or `audio`, so battle and journey logic
+stay host-independent.
 
 Android lifecycle lives in the host, not in an engine crate: the `android/` Gradle
 project, NativeActivity and the narrowly vendored winit 0.30.12 patch. This keeps
@@ -186,8 +191,9 @@ predictably while preserving authoritative game state.
 
 ## Source layout
 
-The implemented layout is `crates/matterweave-{core,detail,render,physics,audio,pacing}`,
-`apps/explorer` and `android/`. These supersede the earlier proposed Rust `engine/*`,
+The implemented layout is `crates/matterweave-{core,detail,render,physics,audio,pacing,monsters}`,
+`apps/explorer`, `apps/monsters` and `android/` (with the separate `android/game` module
+for the Mossbound APK). These supersede the earlier proposed Rust `engine/*`,
 `platform/android`, `samples`, Rust `tests`/`benchmarks` and Rust `tools` directories,
 none of which was created; the existing `tools/` is Python build and verification
 scripts, not the proposed Rust tools crate. Keep build commands aligned with the layout

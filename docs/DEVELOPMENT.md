@@ -81,6 +81,43 @@ event, recreates the host window/renderer, and exits after the requested
 presented-frame count. Failure exits nonzero. This exercises shared code, not Android
 lifecycle callbacks on a phone. Inspect validation output as well as exit status.
 
+### Mossbound (monster RPG)
+
+The game rules and content live in `crates/matterweave-monsters` (no window, renderer,
+physics or Android types); its host is `apps/monsters` and its Android module is
+`android/game`, which builds a separate APK under the application id
+`dev.matterweave.mossbound`. The explorer APK never contains the game.
+
+```sh
+cargo test --locked -p matterweave-monsters        # roster, battle, journey, full loop
+cargo test --locked -p matterweave-monsters-app    # map reachability, visuals, avatar math
+cargo run --locked -p matterweave-monsters-app -- --save /tmp/mossbound/world.json
+```
+
+The scripted host exercise starts a new game, walks Emberfield into the Meadow Way,
+meets a wild creature, captures it and writes the save, then prints a
+`MOSSBOUND SMOKE:` line and exits:
+
+```sh
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  timeout 600s xvfb-run -a target/debug/matterweave-monsters-app \
+  --save /tmp/mossbound-smoke/world.json --smoke-exercise --smoke-frames 1200
+```
+
+Software-renderer frames are correctness evidence only. On Android:
+
+```sh
+android/gradlew -p android :game:assembleDebug --no-daemon
+python3 tools/verify_apk.py android/game/build/outputs/apk/debug/game-debug.apk \
+  --lib libmatterweave_monsters_app.so
+adb install -r android/game/build/outputs/apk/debug/game-debug.apk
+adb shell am start -n dev.matterweave.mossbound/android.app.NativeActivity
+```
+
+The game saves `mossbound-save.json` and `mossbound-settings.json` in its own private
+data directory; the explorer's `world.json` is never touched. The existing explorer
+commands below remain explorer regression checks and are not game evidence.
+
 ## Documentation and dependency checks
 
 ```sh
