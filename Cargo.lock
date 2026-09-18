@@ -876,9 +876,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"
-version = "0.1.23"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d8f1ea3f21fd3405dcaf6c9b5c1630af9afc422d9073ea39c5f6d6c772e08ed"
+checksum = "6480ccc157a1389bb2e4891b24751b0f798ba640d22386f23143fbcc89da195a"
 dependencies = [
  "bitflags 2.13.1",
  "libc",
@@ -963,6 +963,40 @@ dependencies = [
  "matterweave-audio",
  "matterweave-core",
  "matterweave-detail",
+ "matterweave-pacing",
+ "matterweave-physics",
+ "matterweave-render",
+ "pollster",
+ "serde",
+ "serde_json",
+ "winit",
+]
+
+[[package]]
+name = "matterweave-monsters"
+version = "0.5.0"
+dependencies = [
+ "glam 0.30.9",
+ "log",
+ "matterweave-core",
+ "matterweave-physics",
+ "matterweave-render",
+ "pollster",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "matterweave-monsters-app"
+version = "0.5.0"
+dependencies = [
+ "android-activity",
+ "android_logger",
+ "glam 0.30.9",
+ "log",
+ "matterweave-audio",
+ "matterweave-core",
+ "matterweave-monsters",
  "matterweave-pacing",
  "matterweave-physics",
  "matterweave-render",

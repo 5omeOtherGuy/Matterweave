@@ -19,6 +19,16 @@ def main() -> int:
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT"))
     parser.add_argument("--profile", choices=("dev", "release"), default="dev")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--crate",
+        default="matterweave-explorer",
+        help="workspace package to build as a shared library",
+    )
+    parser.add_argument(
+        "--lib",
+        default="libmatterweave_explorer.so",
+        help="library file name cargo emits for that package",
+    )
     args = parser.parse_args()
     if not args.sdk:
         parser.error("set ANDROID_HOME to an Android SDK containing NDK " + NDK)
@@ -39,12 +49,12 @@ def main() -> int:
         import shlex
         flags = "\x1f".join(shlex.split(env["RUSTFLAGS"]))
     env["CARGO_ENCODED_RUSTFLAGS"] = (flags + "\x1f" if flags else "") + "-Clink-arg=-Wl,-z,max-page-size=16384"
-    subprocess.run(["cargo", "build", "--locked", "-p", "matterweave-explorer", "--lib",
+    subprocess.run(["cargo", "build", "--locked", "-p", args.crate, "--lib",
                     "--target", TARGET, "--profile", args.profile], cwd=ROOT, env=env, check=True)
     target_dir = Path(env.get("CARGO_TARGET_DIR", ROOT / "target"))
     if not target_dir.is_absolute():
         target_dir = ROOT / target_dir
-    library = target_dir / TARGET / ("debug" if args.profile == "dev" else "release") / "libmatterweave_explorer.so"
+    library = target_dir / TARGET / ("debug" if args.profile == "dev" else "release") / args.lib
     output = args.out.resolve() / "arm64-v8a"
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(library, output / library.name)
