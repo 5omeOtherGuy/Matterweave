@@ -70,7 +70,7 @@ impl Rolls {
         Self(seed | 1)
     }
 
-    pub fn next(&mut self) -> u32 {
+    pub fn next_u32(&mut self) -> u32 {
         let mut x = self.0;
         x ^= x << 13;
         x ^= x >> 7;
@@ -80,7 +80,7 @@ impl Rolls {
     }
 
     pub fn percent(&mut self) -> u32 {
-        self.next() % 100
+        self.next_u32() % 100
     }
 }
 
@@ -202,7 +202,7 @@ fn player_attack(
     move_name: &str,
     rolls: &mut Rolls,
 ) -> Result<(), GameError> {
-    let roll = rolls.next();
+    let roll = rolls.next_u32();
     let dealt = damage(&game.party[active], &battle.wild, move_name, roll)?;
     battle.wild.current_hp = battle.wild.current_hp.saturating_sub(dealt);
     if let Some(slot) = game.party[active]
@@ -252,7 +252,7 @@ fn wild_strike(game: &mut Game, battle: &mut Battle, active: usize, rolls: &mut 
     }
     let chosen = pick_wild_move(&battle.wild, rolls);
     let Ok(move_name) = chosen else { return };
-    let roll = rolls.next();
+    let roll = rolls.next_u32();
     let dealt = damage(&battle.wild, &game.party[active], &move_name, roll).unwrap_or(0);
     let member = &mut game.party[active];
     member.current_hp = member.current_hp.saturating_sub(dealt);
@@ -278,5 +278,5 @@ fn pick_wild_move(wild: &Monster, rolls: &mut Rolls) -> Result<String, GameError
     if usable.is_empty() {
         return Err(GameError::NoMoves);
     }
-    Ok(usable[rolls.next() as usize % usable.len()].to_string())
+    Ok(usable[rolls.next_u32() as usize % usable.len()].to_string())
 }
