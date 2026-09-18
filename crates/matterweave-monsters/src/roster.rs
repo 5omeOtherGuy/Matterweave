@@ -84,7 +84,12 @@ macro_rules! species {
             id: SpeciesId($id),
             name: $name,
             affinity: Affinity::$affinity,
-            stats: Stats { hp: $hp, attack: $atk, defense: $def, speed: $spd },
+            stats: Stats {
+                hp: $hp,
+                attack: $atk,
+                defense: $def,
+                speed: $spd,
+            },
             evolves_into: $evo,
             learnset: $learnset,
         }
@@ -234,7 +239,10 @@ mod tests {
                 cursor = map.get(&id.0).and_then(|s| s.evolves_into.map(|(t, _)| t));
             }
         }
-        assert_eq!(families, 12, "12 families: 3 starters + 4 three-stage + 4 two-stage + 1 single");
+        assert_eq!(
+            families, 12,
+            "12 families: 3 starters + 4 three-stage + 4 two-stage + 1 single"
+        );
     }
 
     #[test]
@@ -276,7 +284,10 @@ mod tests {
         // Role distinctness: fastest starter has the lowest defense.
         let mut fastest = starters.clone();
         fastest.sort_by_key(|s| std::cmp::Reverse(s.stats.speed));
-        assert!(fastest[0].stats.defense < fastest[2].stats.defense, "speed/defense roles split");
+        assert!(
+            fastest[0].stats.defense < fastest[2].stats.defense,
+            "speed/defense roles split"
+        );
     }
 
     #[test]
@@ -286,7 +297,12 @@ mod tests {
             let mut last = 0;
             for (name, level) in entry.learnset {
                 assert!(!name.is_empty());
-                assert!(*level >= last && *level <= 40, "{} move level {}", entry.name, level);
+                assert!(
+                    *level >= last && *level <= 40,
+                    "{} move level {}",
+                    entry.name,
+                    level
+                );
                 last = *level;
             }
         }
@@ -313,4 +329,3 @@ mod tests {
         }
     }
 }
-
