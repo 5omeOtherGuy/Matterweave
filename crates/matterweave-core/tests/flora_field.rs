@@ -11,8 +11,8 @@ const MAX_SITES: usize = 9_000;
 const MAX_TREES: usize = 700;
 
 /// Ground-cover cells a full plan for the shipped tiers can cover:
-/// `(2 * 48 / 2 + 1)^2`.
-const GROUND_WINDOW_CELLS: usize = 49 * 49;
+/// `(2 * 72 / 2 + 1)^2` for the shipped 40/56/72 m tiers.
+const GROUND_WINDOW_CELLS: usize = 73 * 73;
 /// Tree cells a full plan can cover: `(2 * 160 / 8 + 1)^2`.
 const TREE_WINDOW_CELLS: usize = 41 * 41;
 

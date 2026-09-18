@@ -935,14 +935,15 @@ pub struct FloraTier {
     pub density_percent: u8,
 }
 
-/// The shipped density profile: full density to 32 m, thinning smoothly to
-/// nothing at 48 m.
+/// The shipped density profile: full density to 40 m, thinning smoothly to
+/// nothing at 72 m.
 ///
 /// Ground cover is drawn where it resolves: a blade is one fine voxel (6.25 cm)
 /// across, and the landscape render target resolves about 1.6 mrad per pixel
-/// (65 degrees over 720 rows), so a blade is sub-pixel beyond ~40 m and a clump
-/// is a handful of pixels. The profile therefore ends near that distance, but
-/// it *fades* to it: an earlier profile kept every cell to 28 m and one in eight
+/// (65 degrees over 720 rows), so a blade is sub-pixel beyond ~40 m while a
+/// clump of blades is still a handful of pixels at 72 m. The profile therefore
+/// fades across that whole range rather than ending where the single blade
+/// stops resolving: an earlier profile kept every cell to 28 m and one in eight
 /// to 40 m and then stopped, which is a visible fence at walking distance, and
 /// because the plan is anchored to a lattice the fence moved with the player.
 ///
@@ -950,22 +951,32 @@ pub struct FloraTier {
 /// rebuilt only after the eye has left the committed anchor by the sample's
 /// rebuild hysteresis (20 m), so the profile trails the eye by up to that
 /// distance; the plateau is what keeps full density in front of the eye
-/// whatever the trail is, and 32 m leaves at least a dozen metres of it. The
-/// fade then has to be long enough not to read as a fence and short enough to
-/// fit the instance budget: 16 m is six times the slope the replaced
-/// `keep_every` step had, and the 48 m end costs nothing that 40 m did not -
-/// the window is a square, so its area and the plan's cost are set by the
-/// plateau, not by the last metres of the fade. Density is a percentage at each
-/// band's outer edge and ramps smoothly from the previous edge, so no boundary
-/// is a step. Radii ascend, are whole numbers of [`FLORA_CELL_M`] cells and are
-/// the square half-extent the plan covers.
-pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 2] = [
+/// whatever the trail is, and 40 m leaves twenty metres of it. The fade then
+/// has to be long enough not to read as a fence and short enough to fit the
+/// instance budget: 32 m in two 16 m smoothsteps (100% to 60% at 56 m, then to
+/// 0% at 72 m) is steep enough to end in view and shallow enough that no four
+/// metres of it steps. Density is a percentage at each band's outer edge and
+/// ramps smoothly from the previous edge, so no boundary is a step. Radii
+/// ascend, are whole numbers of [`FLORA_CELL_M`] cells and are the square
+/// half-extent the plan covers.
+///
+/// The instance budget is the other bound on the profile: with unlimited caps
+/// the densest eye it has been measured over plans 30 268 ground-cover
+/// placements, and the renderer's doubled instance budget leaves 32 068 for
+/// ground cover after its 700-tree reserve. A denser profile would have its
+/// outermost rows refused by the planner's cap, which is the straight moving
+/// edge this fade exists to avoid.
+pub const LANDSCAPE_FLORA_TIERS: [FloraTier; 3] = [
     FloraTier {
-        radius_m: 32,
+        radius_m: 40,
         density_percent: 100,
     },
     FloraTier {
-        radius_m: 48,
+        radius_m: 56,
+        density_percent: 60,
+    },
+    FloraTier {
+        radius_m: 72,
         density_percent: 0,
     },
 ];
@@ -2868,8 +2879,20 @@ mod tests {
         None
     }
 
+    /// Caps for tests that measure the shipped profile itself: they exceed the
+    /// densest eye it has been measured over (30 268 sites) so that nothing is
+    /// truncated.
+    const GENEROUS_SITE_CAP: usize = 40_000;
+    const GENEROUS_TREE_CAP: usize = 4_000;
+
     fn plan_default(eye: [f32; 3]) -> FloraPlan {
-        plan_flora(SEED_UNDER_TEST, eye, &LANDSCAPE_FLORA_TIERS, 20_000, 4_000)
+        plan_flora(
+            SEED_UNDER_TEST,
+            eye,
+            &LANDSCAPE_FLORA_TIERS,
+            GENEROUS_SITE_CAP,
+            GENEROUS_TREE_CAP,
+        )
     }
 
     #[test]
@@ -3079,8 +3102,9 @@ mod tests {
         let beyond = fraction(shells);
         assert_eq!(beyond, 0.0, "nothing survives past the outer radius");
         // Monotone, and no shell changes the density by a step: the smoothstep's
-        // steepest metre is 9.4%, so a four-metre shell cannot move more than
-        // 0.38. The tier boundary in particular is mid-plateau.
+        // steepest metre is 5.6%, so a four-metre shell cannot move more than
+        // 0.23. The 0.42 bound leaves room for the hash noise on a shell's few
+        // hundred cells. The tier boundary in particular is mid-plateau.
         let mut previous = fraction(0);
         for shell in 1..=shells {
             let current = fraction(shell);
@@ -3125,7 +3149,11 @@ mod tests {
     #[test]
     fn caps_refuse_placements_and_report_them() {
         let full = plan_default(PLAINS_EYE);
-        assert_eq!(full.dropped, 0, "the generous caps must not bite");
+        assert_eq!(
+            full.dropped, 0,
+            "the generous caps ({GENEROUS_SITE_CAP}/{GENEROUS_TREE_CAP}) must exceed what the \
+             shipped tiers produce"
+        );
         assert!(full.sites.len() > 500, "{} sites", full.sites.len());
         let capped = plan_flora(SEED_UNDER_TEST, PLAINS_EYE, &LANDSCAPE_FLORA_TIERS, 100, 7);
         assert_eq!(capped.sites.len(), 100);
@@ -3137,6 +3165,77 @@ mod tests {
         );
         // Capping drops the tail; it does not reshuffle the kept prefix.
         assert_eq!(capped.sites, full.sites[..100]);
+    }
+
+    /// The renderer's whole flora instance budget, mirrored here because
+    /// `matterweave-core` does not depend on `matterweave-render`, where the
+    /// constant lives (`crates/matterweave-render/src/static_scene.rs`).
+    /// `apps/explorer`'s `the_plan_caps_stay_inside_the_renderer_budget` test
+    /// is the one that pins the caps against the real constant; keep this
+    /// mirror in step when that changes.
+    const FLORA_INSTANCE_BUDGET: usize = 32_768;
+    /// Tree placements `apps/explorer` reserves out of that budget
+    /// (`MAX_PLANNED_TREES`), leaving the rest for ground cover.
+    const FLORA_TREE_RESERVE: usize = 700;
+
+    #[test]
+    fn the_shipped_tiers_fit_the_renderer_instance_budget() {
+        // The eyes the tier set was measured over, `landmarks::DEMO_SPAWN`
+        // included. `plan_flora` with caps far above any real plan measures the
+        // profile itself, so a tier edit that pushes ground cover past the
+        // renderer's budget fails here instead of truncating rows on a phone.
+        const EYES: [[f32; 3]; 7] = [
+            [5632.0, 77.0, 1536.0],
+            [0.5, 40.0, 0.5],
+            [1234.5, 30.0, -4321.5],
+            [-4000.5, 20.0, 3000.5],
+            [7777.5, 60.0, 7777.5],
+            [-7777.5, 15.0, -7777.5],
+            [5542.5, 45.0, 1285.0],
+        ];
+        let mut worst_sites = 0usize;
+        let mut worst_trees = 0usize;
+        let mut worst_eye = EYES[0];
+        for eye in EYES {
+            let plan = plan_flora(
+                SEED_UNDER_TEST,
+                eye,
+                &LANDSCAPE_FLORA_TIERS,
+                usize::MAX / 4,
+                usize::MAX / 4,
+            );
+            if plan.sites.len() > worst_sites {
+                worst_sites = plan.sites.len();
+                worst_eye = eye;
+            }
+            worst_trees = worst_trees.max(plan.trees.len());
+        }
+        // The planner's site cap is `FLORA_INSTANCE_BUDGET - FLORA_TREE_RESERVE`
+        // = 32 068, which the worst eye is 1 800 sites under. The guard is 0.94
+        // of the whole instance budget (30 801), not 0.94 of that cap: the
+        // latter is 30 143, 124 below what the shipped 40/56/72 m profile
+        // plans. Taking the factor against the whole budget keeps the profile
+        // as specified and still leaves 1 267 sites of warning between the
+        // guard and the cap, which is what the guard is for: a tier edit that
+        // spends them fails here.
+        assert!(
+            worst_trees <= FLORA_TREE_RESERVE,
+            "the worst eye plans {worst_trees} trees, over the {FLORA_TREE_RESERVE}-tree reserve"
+        );
+        // The guard is an upper bound, so prove it is measuring a real plan and
+        // not an empty one: the densest probed eye plans 30 268 sites.
+        assert!(
+            worst_sites > 25_000,
+            "the guard saw only {worst_sites} sites at {worst_eye:?}, so it is not measuring the \
+             shipped profile"
+        );
+        assert!(
+            worst_sites <= FLORA_INSTANCE_BUDGET * 94 / 100,
+            "the shipped tiers plan {worst_sites} sites at {worst_eye:?}, over the \
+             {FLORA_INSTANCE_BUDGET}*0.94 = {} guard (planner cap {})",
+            FLORA_INSTANCE_BUDGET * 94 / 100,
+            FLORA_INSTANCE_BUDGET - FLORA_TREE_RESERVE
+        );
     }
 
     #[test]
@@ -3192,7 +3291,12 @@ mod tests {
                     !matches!(site.kind, FloraKind::TreeBroadleaf | FloraKind::TreeConifer),
                     "a tree reached the ground-cover list"
                 );
-                assert!(chebyshev(site.x, site.z, eye_x, eye_z) <= 96 + FLORA_CELL_M);
+                let outer = LANDSCAPE_FLORA_TIERS
+                    .iter()
+                    .map(|tier| tier.radius_m)
+                    .max()
+                    .unwrap();
+                assert!(chebyshev(site.x, site.z, eye_x, eye_z) <= outer + FLORA_CELL_M);
             }
         }
     }

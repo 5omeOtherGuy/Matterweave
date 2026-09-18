@@ -73,8 +73,14 @@ use crate::detail_runtime::{DetailRuntime, RESIDENT_LODS};
 /// The bands are the evidence for the near field: a report that names the
 /// instance count within 16 m of the eye, and the density factor across every
 /// band boundary, is checkable against these numbers instead of a screenshot.
-/// Eight-metre bands divide the shipped ground-cover band boundaries exactly.
-pub const FLORA_BAND_EDGES_M: [i32; 8] = [8, 16, 24, 32, 40, 48, 64, i32::MAX];
+/// Eight-metre bands divide the shipped ground-cover profile's boundaries
+/// (40 m, 56 m and 72 m) exactly, and the open-ended band starts at 72 m, where
+/// the profile reaches zero. It is not empty in practice: the committed plan
+/// trails its anchor by up to
+/// [`REBUILD_MARGIN_CELLS`] * [`REBUILD_CELL_M`] metres, so instances planned
+/// inside the last tier can stand beyond it, and they belong in a band of their
+/// own rather than folded into the fade's last slice.
+pub const FLORA_BAND_EDGES_M: [i32; 9] = [8, 16, 24, 32, 40, 48, 56, 72, i32::MAX];
 /// Number of distance bands [`FLORA_BAND_EDGES_M`] defines.
 pub const FLORA_BANDS: usize = FLORA_BAND_EDGES_M.len();
 
@@ -91,12 +97,12 @@ pub fn band_of(distance_m: i32) -> usize {
 /// the instance budget, so nothing a plan may hold is refused for being over
 /// it.
 ///
-/// The densest eye the shipped profile planned over an 8x8 grid of 512 m cells
-/// held 15 889 ground-cover placements, so a plan that reaches the cap can
-/// refuse a couple of hundred rows of the outermost cells, where the profile is
-/// nearly zero anyway. A refusal truncates the plan by row, which is a straight
-/// edge, and the planner's `dropped` counter reports it rather than truncating
-/// silently.
+/// The densest eye the shipped profile was measured over plans 30 268
+/// ground-cover placements, so the cap does not bite anywhere it has been
+/// probed; an eye denser than any probed can still reach it, and the rows it
+/// then refuses are the outermost cells, where the profile is nearly zero
+/// anyway. A refusal truncates the plan by row, which is a straight edge, and
+/// the planner's `dropped` counter reports it rather than truncating silently.
 pub const MAX_PLANNED_SITES: usize = MAX_FLORA_INSTANCES - MAX_PLANNED_TREES;
 /// Tree placements one plan may carry.
 pub const MAX_PLANNED_TREES: usize = 700;
@@ -181,10 +187,12 @@ fn bend_factor(bend_percent: u8) -> f32 {
     0.75 + 0.25 * (offset / span).min(1.0)
 }
 
-/// Detail level for a ground-cover placement's density band. The near band
-/// draws the authoritative source clump; the far band draws the derived half
-/// level, which is a low mat of merged blades at 12.5 cm cells - the right read
-/// for ground cover between 28 and 48 m and strictly cheaper than the source.
+/// Detail level for a ground-cover placement's density band. The plateau band
+/// draws the authoritative source clump; every band past it draws the derived
+/// half level, which is a low mat of merged blades at 12.5 cm cells - the right
+/// read for ground cover from 40 m out to the 72 m end of the fade and strictly
+/// cheaper than the source. The three shipped tiers therefore use two levels,
+/// not three: the middle and outer bands draw the same instance geometry.
 /// Beyond the last band there is no ground cover at all: see
 /// [`matterweave_core::landscape::LANDSCAPE_FLORA_TIERS`] for the crossover.
 fn lod_for_tier(tier: u8) -> Lod {
@@ -964,8 +972,9 @@ mod tests {
 
     #[test]
     fn distance_bands_select_coarser_geometry() {
-        // Ground cover: the near band draws the source clump, the far band its
-        // half level. There is no third band - beyond 48 m the field is ground
+        // Ground cover: the plateau band draws the source clump, and both fade
+        // bands draw its half level, so the 72 m profile adds reach without
+        // adding vertex count at its far end. Beyond 72 m the field is ground
         // colour, because a 6.25 cm blade is sub-pixel there.
         assert_eq!(lod_for_tier(0), Lod::Source);
         assert_eq!(lod_for_tier(1), Lod::Half);
@@ -1007,6 +1016,10 @@ mod tests {
     #[test]
     fn the_plan_caps_stay_inside_the_renderer_budget() {
         const { assert!(MAX_PLANNED_SITES + MAX_PLANNED_TREES <= MAX_FLORA_INSTANCES) };
+        // The core guard `the_shipped_tiers_fit_the_renderer_instance_budget`
+        // mirrors these two numbers because `matterweave-core` cannot depend on
+        // the renderer; keep the mirror in step with this test.
+        //
         // The tree radius must reach past the outermost ground-cover band, or a
         // forest would stop being a forest at the edge of the field.
         assert!(
