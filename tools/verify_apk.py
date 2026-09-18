@@ -8,12 +8,17 @@ import struct
 import zipfile
 
 
-def verify(path: Path) -> None:
+def verify(path: Path, library: str = "libmatterweave_explorer.so") -> None:
+    """Check the ARM64 ELF and ZIP alignment of every packaged library.
+
+    `library` names the expected native library; the explorer default keeps the
+    existing invocation working, and a second app passes its own name.
+    """
     with zipfile.ZipFile(path) as apk, path.open("rb") as raw:
         libraries = [item for item in apk.infolist() if item.filename.endswith(".so")]
         if not libraries:
             raise ValueError("APK contains no native libraries")
-        expected = "lib/arm64-v8a/libmatterweave_explorer.so"
+        expected = f"lib/arm64-v8a/{library}"
         if expected not in {item.filename for item in libraries}:
             raise ValueError(f"missing {expected}")
         for info in libraries:
@@ -50,5 +55,10 @@ def verify(path: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk", type=Path)
+    parser.add_argument(
+        "--lib",
+        default="libmatterweave_explorer.so",
+        help="expected native library file name (default: the explorer's)",
+    )
     arguments = parser.parse_args()
-    verify(arguments.apk)
+    verify(arguments.apk, arguments.lib)

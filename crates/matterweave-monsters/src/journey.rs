@@ -126,9 +126,11 @@ pub const ROUTES: &[Route] = &[
             encounter!(ids::PEBBLEDOVE, 11, 14, 20),
             encounter!(ids::DUNEMOLE, 12, 15, 20),
             encounter!(ids::NIBBIT, 11, 14, 10),
-            // Post-gym sanctuary: the two starter lines not chosen.
-            encounter!(post, ids::BROOKLET, 26, 30, 20),
-            encounter!(post, ids::SPROUTLET, 26, 30, 20),
+            // Post-gym sanctuary: every starter base line, so whichever was
+            // chosen at the opening the other two are obtainable here.
+            encounter!(post, ids::CINDERUB, 26, 30, 18),
+            encounter!(post, ids::BROOKLET, 26, 30, 18),
+            encounter!(post, ids::SPROUTLET, 26, 30, 18),
             encounter!(post, ids::CRAGHOWL, 28, 32, 10),
             encounter!(post, ids::LUMIVEIL, 28, 32, 8),
         ],
@@ -232,15 +234,18 @@ pub const GYM: Place = Place::Tidewater;
 pub const GYM_TRAINERS: &[&str] = &["gym-attendant-lune", "gym-attendant-kest"];
 pub const GYM_LEADER: &str = "leader-marwick";
 
-/// Gym staff. Leader Marwick keeps the Stone theme and three monsters.
+/// Gym staff. Leader Marwick keeps the Lumen theme and three monsters. Lumen
+/// is neutral in both directions against every starter affinity, so no
+/// opening choice is hard-countered by the finale (Tide halves Ember and
+/// Verdant; Stone halves Ember and Verdant too).
 pub const GYM_BATTLES: &[Trainer] = &[
     Trainer {
         id: "gym-attendant-lune",
         place: Place::Tidewater,
         title: "Attendant Lune",
         party: &[
-            trainer_mon!(ids::SHARDPUP, 13),
-            trainer_mon!(ids::PEBBLEDOVE, 14),
+            trainer_mon!(ids::GLIMMERWISP, 13),
+            trainer_mon!(ids::NIBBIT, 14),
         ],
         reward_charms: 3,
         reward_tonics: 1,
@@ -251,8 +256,8 @@ pub const GYM_BATTLES: &[Trainer] = &[
         place: Place::Tidewater,
         title: "Attendant Kest",
         party: &[
-            trainer_mon!(ids::MOSSLING, 14),
-            trainer_mon!(ids::FLITFIN, 15),
+            trainer_mon!(ids::GLIMMERWISP, 15),
+            trainer_mon!(ids::BURROWL, 16),
         ],
         reward_charms: 3,
         reward_tonics: 1,
@@ -263,9 +268,9 @@ pub const GYM_BATTLES: &[Trainer] = &[
         place: Place::Tidewater,
         title: "Leader Marwick",
         party: &[
-            trainer_mon!(ids::SHARDPUP, 16),
-            trainer_mon!(ids::PEBBLEDOVE, 17),
-            trainer_mon!(ids::CRAGHOWL, 18),
+            trainer_mon!(ids::GLIMMERWISP, 16),
+            trainer_mon!(ids::LUMIVEIL, 14),
+            trainer_mon!(ids::GLIMMERWISP, 17),
         ],
         reward_charms: 8,
         reward_tonics: 4,
@@ -469,15 +474,37 @@ mod tests {
         assert_eq!(GYM_BATTLES.last().unwrap().id, GYM_LEADER);
         let leader = GYM_BATTLES.last().unwrap();
         assert!(leader.party.len() >= 3, "the finale is a real battle");
-        // The gym theme is coherent: the leader fields a Stone family.
+        // The finale is coherent and neutral for every starter choice: the
+        // leader fields a Lumen team, no gym staff member resists a starter's
+        // attacks, and no staff member hits a starter for double.
         use crate::roster::Affinity;
         assert!(
             leader
                 .party
                 .iter()
-                .all(|m| species(m.species).is_some_and(|s| s.affinity == Affinity::Stone)),
-            "the leader keeps the Stone theme"
+                .all(|m| species(m.species).is_some_and(|s| s.affinity == Affinity::Lumen)),
+            "the leader keeps the Lumen theme"
         );
+        for battle in GYM_BATTLES {
+            for picked in battle.party {
+                let defender = species(picked.species).unwrap();
+                for starter in crate::roster::STARTERS {
+                    let data = species(starter).unwrap();
+                    assert!(
+                        data.affinity.against(defender.affinity) >= 1.0,
+                        "{} must not resist {}'s attacks",
+                        defender.name,
+                        data.name
+                    );
+                    assert!(
+                        defender.affinity.against(data.affinity) <= 1.0,
+                        "{} must not hit {} for double",
+                        defender.name,
+                        data.name
+                    );
+                }
+            }
+        }
     }
 
     #[test]

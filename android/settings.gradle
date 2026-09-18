@@ -7,3 +7,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = 'Matterweave'
 include ':app'
+// Mossbound: a separate game APK sharing the engine crates.
+include ':game'
