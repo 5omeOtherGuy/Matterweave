@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, TouchPhase, WindowEvent},
+    event::{ElementState, MouseButton, TouchPhase, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -134,6 +134,9 @@ pub struct MonsterApp {
     /// evolution or trainer queue step changes the key and rebuilds models.
     scene_key: Option<(Place, bool, u16, u16, usize)>,
     pub smoke: Option<SmokeState>,
+    /// Desktop cursor position; a left click is routed through the same
+    /// pointer path as a touch so the host build is testable without a phone.
+    cursor: Option<[f32; 2]>,
     audio: GameAudio,
     settings_path: PathBuf,
 }
@@ -189,6 +192,7 @@ impl MonsterApp {
             uploaded_revision: None,
             scene_key: None,
             smoke: None,
+            cursor: None,
             audio: GameAudio::new(&settings_path),
             settings_path,
         }
@@ -399,7 +403,7 @@ impl MonsterApp {
                     log: Vec::new(),
                     flash: 0.0,
                 });
-                self.battle_center = [self.player_pos[0], 2.0, self.player_pos[2]];
+                self.battle_center = self.arena_center();
                 self.screen = Screen::Battle;
                 self.scene_key = None;
                 self.audio.play(Sound::Encounter);
@@ -418,7 +422,7 @@ impl MonsterApp {
             log: Vec::new(),
             flash: 0.0,
         });
-        self.battle_center = [self.player_pos[0], 2.0, self.player_pos[2]];
+        self.battle_center = self.arena_center();
         self.screen = Screen::Battle;
         self.scene_key = None;
         self.touch.vector = [0.0, 0.0];
@@ -925,11 +929,69 @@ impl MonsterApp {
         visuals::npc_scene(&npcs)
     }
 
+    /// Centre the arena on the nearest path/lawn tile that also has open sky
+    /// and open neighbours, so neither the battle camera nor either combatant
+    /// sits under a canopy. Routes are built around a path spine, so a clear
+    /// candidate is nearly always within a few tiles. The world is only read,
+    /// never changed.
+    fn arena_center(&self) -> [f32; 3] {
+        let (px, pz) = (
+            self.player_pos[0].floor() as i32,
+            self.player_pos[2].floor() as i32,
+        );
+        let open_column =
+            |x: i32, z: i32| -> bool { (3..10).all(|y| self.map.world.get([x, y, z]) == 0) };
+        for radius in 0i32..8 {
+            for dz in -radius..=radius {
+                for dx in -radius..=radius {
+                    if dx.abs() != radius && dz.abs() != radius {
+                        continue;
+                    }
+                    let (x, z) = (px + dx, pz + dz);
+                    let Some(tile) = self.map.tile(x, z) else {
+                        continue;
+                    };
+                    if !matches!(
+                        tile,
+                        maps::Tile::Path | maps::Tile::Floor | maps::Tile::Lawn
+                    ) {
+                        continue;
+                    }
+                    if open_column(x, z) && open_column(x + 2, z) && open_column(x, z + 3) {
+                        return [x as f32 + 0.5, tile.ground_height(), z as f32 + 0.5];
+                    }
+                }
+            }
+        }
+        [self.player_pos[0], self.ground_y(), self.player_pos[2]]
+    }
+
+    /// Walkable surface height under the player, from the tile itself.
+    fn ground_y(&self) -> f32 {
+        self.map
+            .tile(
+                self.player_pos[0].floor() as i32,
+                self.player_pos[2].floor() as i32,
+            )
+            .map_or(2.0, maps::Tile::ground_height)
+    }
+
     fn camera(&self) -> (Mat4, [f32; 3]) {
         if self.screen == Screen::Battle {
             let center = Vec3::from(self.battle_center);
-            let eye = center + Vec3::new(0.0, 5.0, -7.6);
-            let target = center + Vec3::new(0.0, 1.1, 0.0);
+            let target = center + Vec3::new(0.2, 0.4, 1.5);
+            // Frame both combatants from behind the player's side, pulled in
+            // if terrain sits between the camera and the arena.
+            let offset = Vec3::new(0.0, 3.1, -4.8);
+            let distance = match self.map.world.raycast(
+                target.to_array(),
+                offset.normalize().to_array(),
+                offset.length(),
+            ) {
+                Some(hit) => (hit.distance - 0.4).clamp(0.9, offset.length()),
+                None => offset.length(),
+            };
+            let eye = target + offset.normalize() * distance;
             (Mat4::look_at_rh(eye, target, Vec3::Y), eye.to_array())
         } else {
             let target = Vec3::new(
@@ -942,7 +1004,22 @@ impl MonsterApp {
                 CAM_PITCH.sin(),
                 self.cam_yaw.cos() * CAM_PITCH.cos(),
             );
-            let eye = target - forward * CAM_DISTANCE_M;
+            // Foreground occlusion: pull the camera in to just before the
+            // first solid voxel between the player and the desired eye, so a
+            // tree, wall or ridge cannot bury the view inside geometry. The
+            // ray reads the authoritative world and never moves the player.
+            let desired = -forward * CAM_DISTANCE_M;
+            let distance = match self.map.world.raycast(
+                target.to_array(),
+                desired.normalize().to_array(),
+                CAM_DISTANCE_M,
+            ) {
+                // Never place the eye past the hit: a close obstacle must
+                // bring the camera right in, not through it.
+                Some(hit) => (hit.distance - 0.4).clamp(0.9, CAM_DISTANCE_M),
+                None => CAM_DISTANCE_M,
+            };
+            let eye = target + desired.normalize() * distance;
             (Mat4::look_at_rh(eye, target, Vec3::Y), eye.to_array())
         }
     }
@@ -1809,6 +1886,17 @@ impl ApplicationHandler for MonsterApp {
                                 self.button_action(UiAction::MenuOpen);
                             }
                         }
+                        PhysicalKey::Code(KeyCode::F1) => {
+                            println!(
+                                "MOSSBOUND STATE: place={} pos=({:.2},{:.2},{:.2}) screen={:?} party={}",
+                                self.map.layout.place.name(),
+                                self.player_pos[0],
+                                self.player_pos[1],
+                                self.player_pos[2],
+                                self.screen,
+                                self.save.as_ref().map(|s| s.game.party.len()).unwrap_or(0),
+                            );
+                        }
                         PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
                             self.touch.vector = [0.0, 1.0];
                         }
@@ -1855,6 +1943,35 @@ impl ApplicationHandler for MonsterApp {
                         self.touch.joystick = None;
                         self.touch.camera = None;
                         self.touch.vector = [0.0, 0.0];
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = Some([position.x as f32, position.y as f32]);
+                if let Some((active, _)) = self.touch.joystick {
+                    self.pointer_move(active, self.cursor.unwrap());
+                }
+                if let Some((active, _, _)) = self.touch.camera {
+                    self.pointer_move(active, self.cursor.unwrap());
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left {
+                    if let Some(point) = self.cursor {
+                        let width = self
+                            .window
+                            .as_ref()
+                            .map(|w| w.inner_size().width as f32)
+                            .unwrap_or(1280.0);
+                        match state {
+                            ElementState::Pressed => {
+                                // The mouse shares the touch path; its id cannot
+                                // collide with a real touch id.
+                                const MOUSE_ID: u64 = u64::MAX;
+                                self.pointer_down(MOUSE_ID, point, width);
+                            }
+                            ElementState::Released => self.pointer_up(u64::MAX),
+                        }
                     }
                 }
             }
