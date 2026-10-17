@@ -28,7 +28,7 @@ recreates and uploads the current world on resume.
 Dependencies are pinned exactly in `Cargo.toml`. `ash` 0.38.0, `ash-window` 0.13.0,
 `raw-window-handle` 0.6.2, `winit` 0.30.12, `Naga` 24.0.0, `bytemuck` 1.23.2, `font8x8` 0.3.1
 and `glam` 0.30.9 supply Vulkan access, surface glue, build-time WGSL→SPIR-V compilation,
-explicit upload layout, HUD glyphs and matrix math. DEPENDENCIES
+explicit upload layout, HUD glyphs and matrix math. [The generated inventory](../../docs/dependencies.json)
 records source, version and upstream license; the lockfile records checksums. Existing
 ash-window glue and Naga avoid custom platform bindings and a separate C++ shader compiler
 build. wgpu was assessed as a viable alternative; no measured speed advantage over wgpu is
@@ -265,12 +265,7 @@ asynchronous indirect preparation (`async_indirect`), the sky dome and cloud pas
 freed when clouds are disabled, and teardown) and the ray reference
 (`ray_reference_vulkan`). Host lavapipe values are correctness evidence only.
 
-Workspace commands and actual validation results belong to
-[DEVELOPMENT](../../docs/DEVELOPMENT.md) and STATUS. Physical Android
+Workspace commands are in [DEVELOPMENT](../../docs/DEVELOPMENT.md); actual validation
+results belong in the pull request that produced them. Physical Android
 lifecycle, rotation, driver behavior and sustained performance require device evidence;
-desktop/lavapipe runs do not establish those properties. Engine notes and measurements are in
-ray reference,
-indirect light,
-reflections,
-async indirect and
-shadow reuse.
+desktop/lavapipe runs do not establish those properties.

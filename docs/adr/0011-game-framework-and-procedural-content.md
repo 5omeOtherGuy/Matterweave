@@ -29,7 +29,7 @@ M1 verifies seeded generation and save/load edits. M6 demonstrates two different
 
 ## References
 
-Project brief, roadmap, [world data](0005-voxel-world-data.md).
+[World data](0005-voxel-world-data.md).
 
 ## Second-sample implementation note — 2026-09-18
 

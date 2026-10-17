@@ -29,7 +29,7 @@ M2/M4 record approach, retreat, zoom and rapid reversal captures; inspect seams,
 
 ## References
 
-[Epic Nanite overview](https://dev.epicgames.com/documentation/unreal-engine/nanite-virtualized-geometry-in-unreal-engine), [world data](0005-voxel-world-data.md), benchmarks.
+[Epic Nanite overview](https://dev.epicgames.com/documentation/unreal-engine/nanite-virtualized-geometry-in-unreal-engine), [world data](0005-voxel-world-data.md).
 
 ## v0.2 bounded residency slice
 
@@ -41,7 +41,7 @@ The wetland submits shared source meshes and authoritative quarter-turn placemen
 
 ## Automatic selection reference — 2026-09-08
 
-The detail crate selects Source/Half/Quarter per instance using perspective view-forward depth or orthographic scale, hysteresis, a global dilation bias and budgeted mesh preparation. Error values are estimates: any-occupied coarsening can fill a deep narrow opening, and no guaranteed surface-error bound is claimed. Host approach/retreat/zoom, off-axis and source-authority tests pass. The 9-phase native Vulkan check exercises retained geometry, perspective FOV/orthographic zoom, edits, zero extent and renderer recreation. The thin-sheet fixture stays at Source; the physical OnePlus 13 run also passes 1080 frames and HOME/resume. Captured images do not close temporal/transition-quality acceptance. See the native gate and detail engine notes. This advances the prototype; the ADR's visual/residency acceptance remains open.
+The detail crate selects Source/Half/Quarter per instance using perspective view-forward depth or orthographic scale, hysteresis, a global dilation bias and budgeted mesh preparation. Error values are estimates: any-occupied coarsening can fill a deep narrow opening, and no guaranteed surface-error bound is claimed. Host approach/retreat/zoom, off-axis and source-authority tests pass. The 9-phase native Vulkan check exercises retained geometry, perspective FOV/orthographic zoom, edits, zero extent and renderer recreation. The thin-sheet fixture stays at Source; the physical OnePlus 13 run also passes 1080 frames and HOME/resume. Captured images do not close temporal/transition-quality acceptance. This advances the prototype; the ADR's visual/residency acceptance remains open.
 
 ## Far-terrain distance rings — 2026-09-13
 

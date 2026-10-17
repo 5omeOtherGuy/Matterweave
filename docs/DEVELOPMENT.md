@@ -2,16 +2,16 @@
 
 The workspace contains `matterweave-core`, `matterweave-detail`, `matterweave-render`
 (ash/Vulkan), `matterweave-physics` (Rapier), `matterweave-audio` and
-`matterweave-pacing`, plus the `matterweave-explorer` sample in `apps/explorer`.
-Android NativeActivity loads the explorer shared library; a desktop executable
-supplies supporting integration tests. See MVP scope and status
-for implemented behavior and actual evidence.
+`matterweave-pacing`, plus the `matterweave-explorer` sample in `apps/explorer` and the
+Mossbound game (`matterweave-monsters` with its host in `apps/monsters`).
+Android NativeActivity loads the sample's shared library; a desktop executable
+supplies supporting integration tests.
 
 ## Environment setup
 
 Use Linux x86_64, Python 3.11+, Rustup, JDK 21, unzip, and network access to the
 pinned upstream sources. The docs validator alone still supports Python 3.10+.
-Dependencies and build tools are listed in the component record.
+Rust dependencies are listed in [the generated inventory](dependencies.json).
 
 ```sh
 git clone https://github.com/5omeOtherGuy/Matterweave.git
@@ -62,7 +62,7 @@ disables it. Missing layers are reported in the capabilities line.
 cargo run --locked -p matterweave-explorer -- --save /tmp/matterweave-world.json
 ```
 
-Desktop controls are listed in v0.2. The desktop launcher is
+The desktop launcher is
 supporting evidence; Android remains the product platform.
 
 For a headless integration run on Linux, install Xvfb, xauth, Mesa Vulkan drivers and
@@ -155,8 +155,8 @@ The supported artifact is the development APK. The owner requested delivery via
 [GitHub prereleases](https://github.com/5omeOtherGuy/Matterweave/releases), with an APK
 checksum and its build/test limitations. Production signing and store publication have
 not been configured. The Android CI job runs the same build and retains the APK and
-SHA-256 as a workflow artifact. CI execution status must be checked separately from the
-locally executed commands in STATUS.
+SHA-256 as a workflow artifact. CI execution status must be checked separately from
+locally executed commands.
 
 ```sh
 export PATH="$ANDROID_HOME/platform-tools:$PATH"
@@ -171,8 +171,8 @@ authorization must already be available. No physical device is implied by the pr
 of `adb`. Save files live at `internal_data_path()/world.json`; no network,
 external-storage permission, cloud account or service is required.
 
-Touch and keyboard controls for walking, flight, terrain edits and physical object
-interaction are listed in v0.2. Edits save immediately;
+Touch and keyboard controls cover walking, flight, terrain edits and physical object
+interaction. Edits save immediately;
 terrain, object state, camera and control preferences share one atomic snapshot.
 Existing v0.1 saves migrate automatically. Back exits the activity; HOME inside the app
 respawns the player. These are distinct from the phone's Home navigation action.
@@ -192,22 +192,21 @@ Physical-device checklist (record each result, do not infer from host tests):
    application does not render while suspended. Test low-memory behavior where feasible;
    preserve any failure logs.
 6. Record model, OS/API, driver, build commit, APK checksum, seed, resolution and
-   conditions in a new evidence report. Follow BENCHMARKS before making
+   conditions in the pull request. These conditions are required before making
    performance claims; host/emulator timings do not select a mobile renderer.
 
 ## Native and device gates
 
 ### Opt-in native detail/flora viewer
 
-See gallery mode for marker grammar, strict
-user-save isolation and remaining device/quality limits. `flora source` loads the
+`flora source` loads the
 reviewed 84-plant fixture once; it does not select an accepted full-map showcase.
 
 ```sh
-export CARGO_TARGET_DIR=/mnt/bench/matterweave-dev/performance/target
 cargo build --locked -p matterweave-explorer --bin matterweave-explorer
-python3 tools/performance/check_gallery_capture.py "$CARGO_TARGET_DIR/debug/matterweave-explorer" /mnt/bench/matterweave-dev/performance/gallery-tile-check
-python3 tools/performance/check_gallery_capture.py "$CARGO_TARGET_DIR/debug/matterweave-explorer" /mnt/bench/matterweave-dev/performance/gallery-flora-check --preset flora
+gallery_dir=$(mktemp -d)
+python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer "$gallery_dir/tile"
+python3 tools/performance/check_gallery_capture.py target/debug/matterweave-explorer "$gallery_dir/flora" --preset flora
 ```
 
 Choose fresh artifact directories on repeats. These actual Vulkan/Xvfb checks retain
@@ -408,7 +407,7 @@ Run `cargo run --locked -p matterweave-explorer -- --detail-check --save /tmp/un
 and require `PASS detail` in `/tmp/detail-check-report.txt`. On Android the same
 one-shot mechanism above accepts `detail` and writes `detail-check-report.txt`. The 9
 phases exercise retained geometry with automatic perspective/orthographic LOD, an edit,
-zero extent and recreation. See evidence and limits.
+zero extent and recreation.
 
 ### Frame-pacing gate
 
@@ -424,7 +423,7 @@ actually measured, so a device that cannot place its cost in the window a phase 
 reports `INCONCLUSIVE`; it never reports `PASS`. Phases also report `over_budget_frames`,
 the frames whose real render already exceeded the requested cost so no synthetic cost
 could be added. This is a scheduling correctness gate, not a throughput, power or
-thermal measurement. See frame pacing.
+thermal measurement.
 
 ### Background indirect-light check
 
@@ -432,8 +431,7 @@ Run `cargo run --locked -p matterweave-explorer -- --async-engine-check --save /
 and require `PASS async indirect` in `/tmp/async-engine-check-report.txt`. Android
 accepts the one-shot marker value `indirect-async`. The fixture presents direct-only
 frames during CPU preparation, then uploads completed matching radiance. Reports
-separate owner request/upload time from request-to-poll latency. See
-controller evidence and limits.
+separate owner request/upload time from request-to-poll latency.
 
 The standalone correctness check compares all cells/faces of an open, closed and reopened
 enclosure against synchronous lighting:
@@ -473,20 +471,17 @@ seconds, with at least six route changes. CI executes the short gate. Cross-comp
 check, push it under `/data/local/tmp`, and run it with
 `600 /data/local/tmp/matterweave-stream-new.json` for a ten-minute gate. Record exact
 source/binary checksum, device and build configuration alongside stdout and health
-observations. See streaming stress.
+observations.
 
 ### Renderer comparison
 
 Full-image ray/raster/shared-depth hybrid correctness:
-`cargo run --locked -p matterweave-render --example renderer_comparison`. See
-comparison protocol for tolerances, artifacts and
-Android evidence. Opt-in landscape correctness adds near vegetation/distant terrain
+`cargo run --locked -p matterweave-render --example renderer_comparison`. Opt-in landscape correctness adds near vegetation/distant terrain
 and negative-coordinate orthographic edits:
 `cargo run --locked -p matterweave-render --example renderer_comparison -- --landscape`.
 The default remains 16 runs; the opt-in suite has 24. GPU-free fixture contracts:
 `cargo test --locked -p matterweave-render --example renderer_comparison`.
-Set `CARGO_TARGET_DIR` and `MATTERWEAVE_COMPARISON_OUT` beneath `/mnt/bench`.
-See landscape fixture evidence.
+`MATTERWEAVE_COMPARISON_OUT` chooses where the comparison images are written.
 
 ### Optional packed-occupancy ray candidate (issue 42)
 
@@ -508,8 +503,7 @@ VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT \
 
 CPU-only classifier controls and layout contracts:
 `cargo test -p matterweave-ray-hierarchy --example ray_hierarchy_gpu` and
-`cargo test -p matterweave-render --lib ray_hierarchy_gpu`. Evidence, tolerances and
-the Android gate are in the GPU log.
+`cargo test -p matterweave-render --lib ray_hierarchy_gpu`.
 
 ### Full wetland integration checks
 
@@ -521,28 +515,11 @@ regression explicitly after map/collision/app changes:
 ```sh
 cargo test --locked -p matterweave-explorer --lib full_wetland_load_edit_collision_and_reload -- --ignored --nocapture
 cargo test --locked -p matterweave-physics --test showcase_traversal -- --ignored --nocapture --test-threads=1
-MATTERWEAVE_VALIDATION=1 python3 tools/performance/check_wetland_capture.py target/debug/matterweave-explorer /mnt/bench/matterweave-wetland-check
 ```
 
-Use a fresh artifact directory. On a host with hardware ICDs that cannot present to
-Xvfb, explicitly select the installed lavapipe ICD with `VK_ICD_FILENAMES`;
-software-renderer timings are correctness evidence only. The capture verifier requires
-25 presented frames, 20 schema-valid records with actual simulation, six arch bodies, an
-isolated wetland save and no Vulkan validation errors. It retains failure artifacts and
-terminates its owned process group on timeout.
-
-Native route replay cancellation can be checked through the actual app:
-
-```sh
-VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json MATTERWEAVE_VALIDATION=1 python3 tools/performance/check_wetland_capture.py target/debug/matterweave-explorer /mnt/bench/matterweave-replay-check --check-replay-cancel
-```
-
-The request advances the normal simulation, then the explicit 25-frame smoke exit must
-record terminal CANCEL. This is not a full route pass. Phone requests and isolated
-fixture requirements are in route replay. The
-paired collector records fresh readiness, serialized
-installs and actual compositor/app evidence; its `--help` is safe to run without a
-phone. Only one collector/device owner may run at a time.
+On a host with hardware ICDs that cannot present to Xvfb, explicitly select the
+installed lavapipe ICD with `VK_ICD_FILENAMES`; software-renderer timings are
+correctness evidence only.
 
 ### Audio service correctness
 
@@ -589,7 +566,7 @@ existing file, stop at the requested count and flush on suspend or exit. Invalid
 requests remain for correction. Normal runs create no frame log.
 
 The current development branch writes typed schema v2
-to `frame-profile-v2-*.csv`; the shipped v0.3 APK writes the historical v1 format. Do
+to `frame-profile-v2-*.csv` (validated by `tools/performance/validate_frame_profile.py`); the shipped v0.3 APK writes the historical v1 format. Do
 not parse either format as the other. V2 records exact draw/submission/completion IDs
 and renderer epochs, main-thread CPU busy time where supported, stage walls, separate
 mesh-sync/render fence waits and actual work/save-attempt counters. Retries may occur
@@ -597,46 +574,19 @@ before or after submission; successful present API calls are not scanouts. Missi
 measurements remain empty, never fabricated zeroes. GPU timestamp spans can include
 queue stalls and are not pure shader execution or compositor timestamps.
 
-Copy captures under `/mnt/bench` and preserve build/scene/conditions before making
+Copy captures off the device and preserve build/scene/conditions before making
 performance comparisons. New instrumentation overhead and same-build repeatability must
 be qualified on the phone; host correctness and an APK build do not establish that
 qualification.
 
-Performance tool and deterministic host-fixture checks:
+Deterministic host-fixture check:
 
 ```sh
-python3 -m unittest discover -s tools/performance -p 'test_*.py'
 cargo test --locked -p matterweave-core --test performance_replay
 ```
 
-`tools/performance/check_handoff.py BOARD_JSON SUBMISSION_JSON ARTIFACT` validates a
-frozen patch admission against the sole lead-written board; see
-the handoff contract. It is not a process supervisor.
-`tools/performance/validate_conditions.py HEALTH_JSONL` checks two-minute **idle
-readiness**, not app performance. Rows use actual `elapsed_s` and `data.battery` /
-`data.thermalservice` raw dumps; current HAL skin readings, actual power-state fields
-and non-overridden thermal status are required. Never substitute synthetic times into
-real readiness evidence. The replay fixture currently proves host world regressions
-only; app/phone input-replay integration remains outstanding.
-
-Coordination startup/recovery checks:
-
-```sh
-python3 -m unittest discover -s tools/coordination -p 'test_*.py' -v
-```
-
-See the board operations guide and
-v0.3 protocol for bounded worker reads and ownership rules.
-
-Offline paired summaries use the analysis tool:
-
-```sh
-python3 tools/performance/analyze_wetland_pairs.py --input /absolute/completed-or-partial-batch --out /absolute/fresh-analysis
-```
-
-Only completed trial directories are analyzed. Keep separately collected batches
-separate; compare their within-pair differences after controls and image review. Run the
-performance tool tests above after changing the analysis tool.
+The replay fixture proves host world regressions only; app/phone input-replay
+integration remains outstanding.
 
 ## Troubleshooting and diagnostics
 
@@ -649,8 +599,7 @@ Terrain generation and dirty chunk meshing use bounded background preparation. T
 normal app still publishes collision and uploads GPU resources on its owner thread.
 Engine APIs additionally support background detail-collision preparation, shared chunk
 snapshots, automatic LOD and an opt-in diffuse-light reference. Greedy chunk meshes,
-conservative frustum culling and filtered cached shadows are implemented. See STATUS for
-native/Android checks and remaining scheduling/quality limits. Physics runs at 60 Hz
+conservative frustum culling and filtered cached shadows are implemented. Physics runs at 60 Hz
 with bounded catch-up and interpolated object rendering. The resident window,
 stored-override limit and save size are explicit in the core README. Corrupt
 world/session snapshots remain intact; numbered recovery snapshots are loaded on
@@ -688,4 +637,4 @@ existing one-shot `files/engine-check.txt` request accepts `destruction`; launch
 `files/destruction-check-report.txt` through `run-as`. Remove only a stale diagnostic
 report before a fresh run. Preserve gameplay saves. A complete run reports 25
 phase summaries, six presented frames per phase on host or 60 on Android, followed
-by one final restored frame. See evidence and limitations.
+by one final restored frame.

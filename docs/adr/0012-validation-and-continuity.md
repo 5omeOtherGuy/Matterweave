@@ -13,7 +13,7 @@ Implementation will continue in a new session with the repository as its only pr
 
 Keep requirements, ADRs, live status, commands, dependency/toolchain provenance and next actions in Git. Maintain clear distinctions between owner goals, proposals, accepted engineering decisions, implemented behavior and measurements. Pin adopted dependencies and record their licenses.
 
-Use staged native milestones and reproducible fixture-based comparisons. Separate host tests, package builds, emulator checks, physical-device functional checks and sustained performance evidence. Label targets and unavailable tests honestly. Update relevant records at implementation handoffs.
+Use staged native milestones and reproducible fixture-based comparisons. Separate host tests, package builds, emulator checks, physical-device functional checks and sustained performance evidence. Label targets and unavailable tests honestly. Record validation in the pull request that delivers the change.
 
 ## Alternatives
 
@@ -29,4 +29,4 @@ The setup validator checks local documentation links, ADR structure/status index
 
 ## References
 
-[Agent instructions](../../AGENTS.md), [development guide](../DEVELOPMENT.md), benchmark protocol, handoff.
+[Agent instructions](../../AGENTS.md), [development guide](../DEVELOPMENT.md).

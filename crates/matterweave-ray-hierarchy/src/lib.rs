@@ -3,9 +3,7 @@
 //! This crate is an **experiment**, not a selected production renderer path. It answers
 //! one question: can a bounded crop of authoritative voxel material be traversed
 //! correctly through a compact block-occupancy structure, with the same hits, materials,
-//! normals and depth as the retained dense reference? See
-//! [the log](../../../docs/performance/logs/ray-hierarchy-experiment.md) for the measured
-//! comparison, provenance of the referenced prior art, and the integration handoff.
+//! normals and depth as the retained dense reference?
 //!
 //! # Relation to the retained reference
 //!

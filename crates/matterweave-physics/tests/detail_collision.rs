@@ -552,8 +552,7 @@ fn detail_collision_preserves_legacy_terrain_and_is_not_rebuilt_per_frame() {
 }
 
 /// Cost of the existing authored `dense_tile` fixture. The assertions are the
-/// engineering budgets; the printed line is the measurement recorded in
-/// docs/performance/p03/collision/opus-execution.md.
+/// engineering budgets; the printed line is the host measurement.
 #[test]
 fn dense_tile_collision_cost_stays_bounded() {
     let scene = matterweave_detail::dense_tile(matterweave_detail::FLORA_CANONICAL_SEED)
