@@ -9,7 +9,7 @@ struct Camera {
     // Normalized direction to sun xyz, intensity w (same as ray_reference.wgsl).
     sun: vec4<f32>,
 };
-var<push_constant> camera: Camera;
+var<immediate> camera: Camera;
 struct Input {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,

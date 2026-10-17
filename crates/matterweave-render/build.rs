@@ -8,8 +8,8 @@ const EXECUTION_MODEL_FRAGMENT: u32 = 4;
 
 /// Force the early fragment test on `entry` in this module.
 ///
-/// Naga 24 parses WGSL's `@early_depth_test` but its SPIR-V backend does not
-/// emit the execution mode, so insert it here. The two depth-tested full-screen
+/// The WGSL here does not use `@early_depth_test(force)` (Naga 24's SPIR-V
+/// backend could not emit it), so insert the execution mode here. The two depth-tested full-screen
 /// passes (the sky dome and the cloud composite) need the depth test to run
 /// before the shader: that is what stops covered pixels from being shaded at
 /// all rather than being shaded and then discarded. Neither writes depth nor
@@ -65,6 +65,15 @@ fn main() {
         ("ray_hierarchy_gpu", &["fs_main"]),
         ("comparison_raster", &["fs_main"]),
     ];
+    // Newer Naga guards every loop with a hidden iteration counter and wraps
+    // integer division in zero/overflow checks by default. Keep loops and
+    // divisions exactly as written, as Naga 24 emitted them, so the upgrade
+    // does not add work to every cloud-march and ray step.
+    let options = naga::back::spv::Options {
+        force_loop_bounding: false,
+        emit_int_div_checks: false,
+        ..Default::default()
+    };
     for (name, fragments) in shaders {
         let source = format!("src/{name}.wgsl");
         println!("cargo:rerun-if-changed={source}");
@@ -73,7 +82,7 @@ fn main() {
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
         let info = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::PUSH_CONSTANT,
+            naga::valid::Capabilities::IMMEDIATES,
         )
         .validate(&module)
         .expect("validate shader");
@@ -88,7 +97,7 @@ fn main() {
             let mut words = naga::back::spv::write_vec(
                 &module,
                 &info,
-                &Default::default(),
+                &options,
                 Some(&naga::back::spv::PipelineOptions {
                     shader_stage: stage,
                     entry_point: entry.into(),

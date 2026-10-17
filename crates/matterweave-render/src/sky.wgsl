@@ -18,7 +18,7 @@ struct Sky {
     // amortisation and are read only by `fs_clouds`.
     control: vec4<u32>,
 };
-var<push_constant> sky: Sky;
+var<immediate> sky: Sky;
 
 // Per-frame shader cost counters. Every atomic below sits behind
 // `sky.control.w & COUNTERS_ENABLED`, so a normal frame pays one uniform branch
