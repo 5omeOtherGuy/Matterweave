@@ -66,7 +66,7 @@ type Surface = ([i32; 3], [i32; 3], u8);
 /// quad never grows across a material boundary.
 fn surfaces(world: &World, mesh: &Mesh) -> BTreeSet<Surface> {
     let mut result = BTreeSet::new();
-    for quad in mesh.vertices.chunks_exact(4) {
+    for quad in mesh.vertices.as_chunks::<4>().0 {
         let normal = quad[0].normal.map(|v| v as i32);
         let axis = normal.iter().position(|v| *v != 0).unwrap();
         let u = (axis + 1) % 3;
@@ -85,11 +85,8 @@ fn surfaces(world: &World, mesh: &Mesh) -> BTreeSet<Surface> {
             }
         }
     }
-    for triangle in mesh.indices.chunks_exact(3) {
-        let [a, b, c] = triangle
-            .try_into()
-            .unwrap_or([0; 3])
-            .map(|i| mesh.vertices[i as usize]);
+    for triangle in mesh.indices.as_chunks::<3>().0 {
+        let [a, b, c] = triangle.map(|i| mesh.vertices[i as usize]);
         let u: [f32; 3] = std::array::from_fn(|i| b.position[i] - a.position[i]);
         let v: [f32; 3] = std::array::from_fn(|i| c.position[i] - a.position[i]);
         let cross = [

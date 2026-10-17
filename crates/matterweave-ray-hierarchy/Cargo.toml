@@ -2,7 +2,7 @@
 name = "matterweave-ray-hierarchy"
 version.workspace = true
 edition = "2021"
-rust-version = "1.96"
+rust-version = "1.99.1"
 publish = false
 
 [dependencies]
@@ -13,4 +13,4 @@ matterweave-render = { path = "../matterweave-render" }
 glam = "=0.30.9"
 # The native functional example is the only target that uses these two.
 ash = "=0.38.0"
-bytemuck = "=1.23.2"
+bytemuck = "=1.25.2"

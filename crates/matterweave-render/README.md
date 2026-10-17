@@ -26,7 +26,7 @@ app owns Android lifecycle and drops `Renderer` before its native window becomes
 recreates and uploads the current world on resume.
 
 Dependencies are pinned exactly in `Cargo.toml`. `ash` 0.38.0, `ash-window` 0.13.0,
-`raw-window-handle` 0.6.2, `winit` 0.30.12, `Naga` 24.0.0, `bytemuck` 1.23.2, `font8x8` 0.3.1
+`raw-window-handle` 0.6.2, `winit` 0.30.12, `Naga` 24.0.0, `bytemuck` 1.25.2, `font8x8` 0.3.1
 and `glam` 0.30.9 supply Vulkan access, surface glue, build-time WGSL→SPIR-V compilation,
 explicit upload layout, HUD glyphs and matrix math. [The generated inventory](../../docs/dependencies.json)
 records source, version and upstream license; the lockfile records checksums. Existing

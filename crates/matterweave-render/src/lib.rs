@@ -1752,7 +1752,9 @@ impl Renderer {
             self.swapchain.as_ref().map(|s| s.format),
             Some(vk::Format::B8G8R8A8_SRGB) | Some(vk::Format::B8G8R8A8_UNORM)
         ) {
-            raw.chunks_exact_mut(4).for_each(|px| px.swap(0, 2));
+            for px in raw.as_chunks_mut::<4>().0 {
+                px.swap(0, 2);
+            }
         }
         Ok(CapturedFrame {
             width,

@@ -245,7 +245,7 @@ mod tests {
     }
 
     fn top_colour(mesh: &Mesh) -> [f32; 3] {
-        for quad in mesh.vertices.chunks_exact(4) {
+        for quad in mesh.vertices.as_chunks::<4>().0 {
             if quad[0].normal == [0.0, 1.0, 0.0] {
                 return quad[0].color;
             }

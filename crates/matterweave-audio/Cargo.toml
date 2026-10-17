@@ -7,7 +7,7 @@ publish = false
 description = "Bounded PCM sound-effect service with a deterministic mixer and an Android AAudio output backend"
 
 [dependencies]
-ringbuf = "=0.5.1"
+ringbuf = "=0.5.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 ndk = { version = "=0.9.0", default-features = false, features = ["audio", "api-level-28"] }

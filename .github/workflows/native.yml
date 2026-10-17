@@ -20,7 +20,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned Rust
-        run: rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
       - name: Formatting, lint and behavioral tests
         run: |
           cargo fmt --all -- --check
@@ -103,7 +103,7 @@ jobs:
           java-version: '21.0.8'
       - name: Install pinned Rust and Android tools
         run: |
-          rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
           python3 tools/setup_android.py --sdk "$ANDROID_HOME" --accept-licenses
       - name: Build ARM64 APK
         run: android/gradlew -p android :app:assembleDebug --no-daemon

@@ -16,7 +16,7 @@ Rust dependencies are listed in [the generated inventory](dependencies.json).
 ```sh
 git clone https://github.com/5omeOtherGuy/Matterweave.git
 cd Matterweave
-rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
 export ANDROID_HOME="$HOME/Android/Sdk"
 python3 tools/setup_android.py --sdk "$ANDROID_HOME"
 ```

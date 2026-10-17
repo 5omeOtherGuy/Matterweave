@@ -44,7 +44,7 @@ def main() -> None:
     subprocess.run(command + ["--licenses"], input="y\n" * 200 if args.accept_licenses else None,
                    text=True, check=True)
     subprocess.run(command + list(PACKAGES), check=True)
-    subprocess.run(["rustup", "target", "add", "--toolchain", "1.96.0", "aarch64-linux-android"], check=True)
+    subprocess.run(["rustup", "target", "add", "--toolchain", "1.99.1", "aarch64-linux-android"], check=True)
     print(f"SDK ready. Set ANDROID_HOME={sdk}")
 
 

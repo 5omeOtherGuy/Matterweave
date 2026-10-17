@@ -357,7 +357,7 @@ fn assert_coarse_face_contract(tile: &CoarseTile, mesh: &Mesh) -> f32 {
         }
     }
     let tolerance = scale * 1.0e-4;
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         let positions: [[f32; 3]; 3] =
             std::array::from_fn(|i| mesh.vertices[triangle[i] as usize].position);
         let smallest = triangle_edges(&positions)
@@ -391,7 +391,9 @@ fn triangle_edges(positions: &[[f32; 3]; 3]) -> [f32; 3] {
 /// Counts triangles that lie completely on the fine plane and face `+x`.
 fn on_plane_positive_faces(mesh: &Mesh, plane_x: i32) -> usize {
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .filter(|triangle| {
             triangle.iter().all(|&index| {
                 let vertex = mesh.vertices[index as usize];
@@ -436,7 +438,7 @@ fn cull_occluded_plane_faces(source: &World, mesh: Mesh, plane_x: i32) -> Mesh {
         ..Mesh::default()
     };
     let mut remap = vec![u32::MAX; mesh.vertices.len()];
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         let indices: [u32; 3] = std::array::from_fn(|i| triangle[i]);
         let vertices: [Vertex; 3] = std::array::from_fn(|i| mesh.vertices[indices[i] as usize]);
         let solid_across = {
@@ -1020,7 +1022,9 @@ mod tests {
         let mesh = coarse_tile_mesh(&tile);
         let feature_top_triangles = mesh
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .filter(|triangle| {
                 triangle.iter().all(|&index| {
                     let position = mesh.vertices[index as usize].position;
@@ -1062,7 +1066,7 @@ mod tests {
         // Region contract by triangle: triangles left of the split carry unit
         // edges, triangles starting at the split carry coarse-cell edges.
         let scale = (1 << MIXED_LEVEL) as f32;
-        for triangle in mixed.mesh.indices.chunks_exact(3) {
+        for triangle in mixed.mesh.indices.as_chunks::<3>().0 {
             let positions: [[f32; 3]; 3] =
                 std::array::from_fn(|i| mixed.mesh.vertices[triangle[i] as usize].position);
             let min_x = positions

@@ -1005,7 +1005,9 @@ mod tests {
         // Records are grouped per prototype in input order within each group.
         let records: Vec<[f32; 4]> = plan
             .instance_bytes
-            .chunks_exact(INSTANCE_RECORD_SIZE)
+            .as_chunks::<INSTANCE_RECORD_SIZE>()
+            .0
+            .iter()
             .map(|c| *bytemuck::from_bytes(c))
             .collect();
         assert_eq!(records[0], [0., 0., 0., 0.]);

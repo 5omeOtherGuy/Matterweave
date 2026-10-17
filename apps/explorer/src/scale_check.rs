@@ -37,7 +37,7 @@ pub fn image_difference(a: &[u8], b: &[u8]) -> Option<ImageDifference> {
     let mut over = 0usize;
     let mut identical = 0usize;
     let mut total = 0u64;
-    for (pa, pb) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
         let mut worst = 0u8;
         let mut all_equal = true;
         for channel in 0..4 {
@@ -73,7 +73,7 @@ pub fn write_ppm(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()
     }
     let mut bytes = Vec::with_capacity(expected / 4 * 3 + 32);
     bytes.extend_from_slice(format!("P6\n{width} {height}\n255\n").as_bytes());
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         bytes.extend_from_slice(&pixel[..3]);
     }
     std::fs::write(path, bytes).map_err(|error| format!("{}: {error}", path.display()))
