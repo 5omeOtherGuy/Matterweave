@@ -10,6 +10,6 @@ Describe what the change enables and any material limitations.
 
 List commands and actual outcomes. Identify device/build/profile details for runtime claims. State relevant checks not run and why. Link benchmark evidence for performance claims.
 
-## Decisions and handoff
+## Decisions
 
-Note ADR/status/development-guide updates and the next action.
+Note ADR or development-guide updates. Open follow-up work as an issue.

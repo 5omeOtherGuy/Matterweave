@@ -19,8 +19,7 @@
 //! - Nothing here runs per frame: [`Physics::replace_detail_scene`] is a load-time
 //!   or edit-time call.
 //!
-//! Backend choice, measured against the pinned rapier3d 0.32.0 / parry3d 0.26.1
-//! (see docs/performance/p03/collision/opus-execution.md):
+//! Backend choice, measured against the pinned rapier3d 0.32.0 / parry3d 0.26.1:
 //! - `SharedShape::voxels` (parry `Voxels`) was implemented and rejected. Its
 //!   storage is attractively sparse (8^3 chunks of one state byte), but
 //!   `contact_manifolds_voxels_shape` intersects the *unloosened* voxel AABB
@@ -68,8 +67,7 @@ pub const MAX_DETAIL_SOURCE_COLLISION_CELLS: usize = 16 << 20;
 /// cost: each entry is a pose (32 B) plus a shared cuboid allocation (~32 B)
 /// plus its compound BVH leaf (~32-64 B), i.e. roughly 100-130 B per box, so
 /// this cap is an estimated 26-34 MiB of resident shape memory. It is not raised
-/// to fit a whole map in one shape; see the aggregate note in
-/// docs/performance/p03/collision/opus-execution.md.
+/// to fit a whole map in one shape.
 pub const MAX_DETAIL_BOXES: usize = 262_144;
 /// Largest number of 16^3 scratch chunks held while merging *one* prototype.
 /// Each chunk is a 4,096-bit occupancy mask (512 B), freed as soon as that

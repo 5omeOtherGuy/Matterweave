@@ -17,7 +17,7 @@ Use a fixed simulation step, bounded catch-up and render interpolation. Start de
 
 ## Alternatives
 
-Existing Rust libraries, focused extensions and qualifying foreign dependencies are alternatives under the component-selection criteria. A custom collision/fracture layer may be needed around the library. Do not hand-roll a complete solver when an existing solution meets requirements; custom work requires necessity or a significant demonstrated advantage.
+Existing Rust libraries, focused extensions and qualifying foreign dependencies are alternatives under the [ADR-0014](0014-rust-modularity-and-evidence-led-reuse.md) reuse criteria. A custom collision/fracture layer may be needed around the library. Do not hand-roll a complete solver when an existing solution meets requirements; custom work requires necessity or a significant demonstrated advantage.
 
 ## Consequences
 
@@ -37,4 +37,4 @@ Rapier 0.32.0 is the selected solver for the bounded M3 slice under ADR-0014. Se
 
 ## Background detail preparation — 2026-09-08
 
-Immutable source snapshots feed a bounded single worker; opaque scene tokens reject stale results before owner-thread publication changes any live collider. Reset and rapid source reversals have deterministic queue regressions. A direct ARM64 Android executable checks floor creation, standing contact, removal and falling on OnePlus 13. This is real native physics execution, while APK frame-loop publication budgets and sustained stress remain open. See controller and evidence. ADR remains Proposed.
+Immutable source snapshots feed a bounded single worker; opaque scene tokens reject stale results before owner-thread publication changes any live collider. Reset and rapid source reversals have deterministic queue regressions. A direct ARM64 Android executable checks floor creation, standing contact, removal and falling on OnePlus 13. This is real native physics execution, while APK frame-loop publication budgets and sustained stress remain open. ADR remains Proposed.

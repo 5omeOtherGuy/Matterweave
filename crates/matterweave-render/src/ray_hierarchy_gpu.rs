@@ -4,9 +4,7 @@
 //! `matterweave-ray-hierarchy`: it owns the fragment kernel, its SPIR-V and the
 //! byte-level binding contract. It is **not** a selected production path, it changes no
 //! renderer default, and it makes no performance claim. The retained
-//! [`crate::ray_reference`] pipeline and its shader are untouched. See
-//! [the engineering log](../../../docs/performance/logs/ray-hierarchy-gpu.md) and
-//! [the CPU experiment](../../../docs/performance/logs/ray-hierarchy-experiment.md).
+//! [`crate::ray_reference`] pipeline and its shader are untouched.
 //!
 //! # Descriptor contract (set 0)
 //!

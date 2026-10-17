@@ -40,7 +40,7 @@
 //! through `Renderer::upload`; no arbitrary chunk-key namespace is invented.
 //! Per-frame evidence prints the source revision, CPU triangle counts, coarse
 //! tile facts and face scale. `Presented` alone is never treated as visual
-//! correctness; see the matching engineering log for the recorded run.
+//! correctness.
 //!
 //! ```text
 //! cargo test -p matterweave-render --example terrain_tiles_smoke

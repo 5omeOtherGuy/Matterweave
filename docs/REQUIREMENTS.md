@@ -2,13 +2,13 @@
 
 ## Status meanings
 
-**Owner requirement**: an explicit current goal. **Working requirement**: an engineering interpretation or setup convention the implementation session may refine with evidence. **Research candidate**: an opportunity, not a delivery commitment. All acceptance evidence below is outstanding unless STATUS.md says otherwise.
+**Owner requirement**: an explicit current goal. **Working requirement**: an engineering interpretation or setup convention the implementation session may refine with evidence. **Research candidate**: an opportunity, not a delivery commitment. All acceptance evidence below is outstanding unless a merged pull request records it.
 
 | ID | Requirement | Basis | Evidence required | ADR / milestone |
 | --- | --- | --- | --- | --- |
 | R01 | Deliver an Android-native engine and sample application with all runtime work on device; no required cloud rendering, simulation or world storage. | Owner requirement | Reproducible ARM64 APK, native execution and recorded physical-device run; network-disabled cold start, local generation/load, render/simulate/edit/save, process restart and reload. | 0001, 0015 / M0–M1 |
 | R02 | Use voxels as meaningful world/object data with fine-detail capability. | Owner requirement | Queryable voxel data, two resolutions, edits and persistence; not only block-themed meshes. | 0005 / M1–M3 |
-| R03 | Prioritize high-end Android fidelity and sustained efficiency. | Owner requirement | CPU/GPU frame times, memory/residency and thermal traces under the benchmark protocol. | 0002, 0012 / all |
+| R03 | Prioritize high-end Android fidelity and sustained efficiency. | Owner requirement | CPU/GPU frame times, memory/residency and thermal traces with the measurement conditions AGENTS.md requires. | 0002, 0012 / all |
 | R04 | Investigate useful multicore CPU, GPU, RAM and NPU/accelerator capabilities. | Owner requirement | Device capability inventory and measured adopt/defer conclusions; bounded memory and work scheduling. | 0002, 0013 / M0–M5 |
 | R05 | Support multiple genres, environments and 3D/2.5D views. | Owner requirement | Two samples with different cameras and mechanics sharing the same runtime. | 0001, 0011 / M6 |
 | R06 | Support procedural worlds and replayable game systems. | Owner requirement | Seeded generation, versioned generator identity, save/load of edits and a reproducible sample. | 0011 / M1, M3, M6 |
@@ -31,9 +31,9 @@
 
 Android-native operation and the reusable voxel product identity take precedence over a browser or desktop-only implementation. Correct gameplay and stable world state take precedence over camera-dependent shortcuts. Optimize image and simulation quality together with sustained frame time; a feature is not an optimization if it merely moves work to another processor or hides stalls in averages.
 
-There is no accepted exact FPS target, RAM allowance, voxel size, world size, device floor or UE5 parity claim. Proposed evaluation budgets are in BENCHMARKS.md, where they are explicitly identified as working targets.
+There is no accepted exact FPS target, RAM allowance, voxel size, world size, device floor or UE5 parity claim.
 
-Rust preference, modularity and reuse are accepted selection constraints. Significant or major advantage is assessed against a workload-specific criterion established before an experiment, not an invented universal percentage. See component selection; missing bindings do not automatically justify switching language, and Rust preference does not justify rewriting adequate tools solely for purity.
+Rust preference, modularity and reuse are accepted selection constraints. Significant or major advantage is assessed against a workload-specific criterion established before an experiment, not an invented universal percentage. Missing bindings do not automatically justify switching language, and Rust preference does not justify rewriting adequate tools solely for purity.
 
 ## Non-goals for the initial implementation
 

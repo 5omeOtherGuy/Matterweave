@@ -61,8 +61,8 @@ To reproduce, download and verify the package archive, unpack it, then run
 Host renderer smoke checks continue to cover the unmodified host platform. An
 ARM64 Android build checks the changed platform code. Actual activity destruction
 and recreation must also be exercised on a device; a host build cannot validate
-Android callback ordering. Concrete build/device results belong in the root
-`docs/STATUS.md` and its evidence references.
+Android callback ordering. Concrete build/device results belong in the pull
+request that changes this patch.
 
 When updating winit, first check whether upstream implements both fixes; remove
 this override when equivalent lifecycle behavior is verified.

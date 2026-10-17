@@ -109,7 +109,7 @@ types; no Rapier, window or Vulkan handle escapes.
 - Greedy merged cuboids in a `SharedShape::compound` are used. `SharedShape::voxels` was
   implemented and rejected against the pinned rapier3d 0.32.0 / parry3d 0.26.1: its manifold
   generation emits nothing across a small prediction gap, which left the kinematic character
-  unable to jump. See `docs/performance/p03/collision/opus-execution.md`.
+  unable to jump.
 
 ## Public surface
 
@@ -137,8 +137,8 @@ types; no Rapier, window or Vulkan handle escapes.
   operations leave prior state and bodies unchanged.
 - No `unsafe` code in the crate. `rapier3d 0.32.0` (Apache-2.0) is pinned from
   [crates.io](https://crates.io/crates/rapier3d/0.32.0); the lockfile records transitive
-  revisions and checksums. See DEPENDENCIES for the selection
-  record.
+  revisions and checksums. [The generated inventory](../../docs/dependencies.json) records
+  source, version and license.
 
 ## Limits and what it does not do
 
@@ -177,5 +177,4 @@ synchronous collision publication. `examples/async_detail_collision.rs` exercise
 background path.
 
 The physics selection and evidence record is in
-[ADR-0010](../../docs/adr/0010-physics-and-editing.md) and
-DEPENDENCIES.
+[ADR-0010](../../docs/adr/0010-physics-and-editing.md).

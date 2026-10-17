@@ -31,4 +31,4 @@ M0 records the integration shortlist and adopts only necessary infrastructure. M
 
 ## References
 
-Research and engine comparison, [native foundation](0003-native-foundation.md).
+[Native foundation](0003-native-foundation.md).

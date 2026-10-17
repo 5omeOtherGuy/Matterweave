@@ -25,8 +25,8 @@ Native lifecycle, touch interaction, packaging and actual-device verification ar
 
 ## Validation
 
-M0/M1 establish the native slice. M6 demonstrates two different samples sharing the engine. Fresh-session usability is checked through the handoff and reproducible instructions.
+M0/M1 establish the native slice. M6 demonstrates two different samples sharing the engine. Fresh-session usability is checked through the repository's reproducible instructions.
 
 ## References
 
-Project brief, [requirements](../REQUIREMENTS.md), roadmap.
+[Requirements](../REQUIREMENTS.md).

@@ -4,12 +4,9 @@ Bounded **experiment** for [issue 42](https://github.com/5omeOtherGuy/Matterweav
 hierarchical voxel ray traversal with packed block occupancy, compared against the
 retained dense reference.
 
-Not a production renderer path and not a performance result. See
-the CPU engineering log for the
-measured CPU comparison, the prior-art assessment, the disclosed limits and the
-integration handoff, and
-the GPU log for the optional native
-Vulkan functional comparison of the `BlockMask` kernel (issue 42). The library itself
+Not a production renderer path and not a performance result. The optional native
+Vulkan functional comparison of the `BlockMask` kernel (issue 42) is the
+`ray_hierarchy_gpu` example. The library itself
 stays CPU-only; the GPU candidate is a standalone example that borrows the crate's
 snapshots and fixtures.
 
@@ -47,9 +44,7 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
 The example's classifier unit tests (positive and negative controls) run with
 `cargo test -p matterweave-ray-hierarchy --example ray_hierarchy_gpu`.
 
-The differential corpora print their counts with `--nocapture`; the log records the
-observed numbers, including zero measured distance deviation from `World::raycast`, the
-three tied-plane resolutions and the four crop-boundary ties found in the seeded corpus,
-and the strict geometric classifier that separates those from real errors. The review
-disposition and re-run evidence are in
-the repair log.
+The differential corpora print their counts with `--nocapture`, including the distance
+deviation from `World::raycast`, the tied-plane resolutions and the crop-boundary ties
+found in the seeded corpus, which the strict geometric classifier separates from real
+errors.

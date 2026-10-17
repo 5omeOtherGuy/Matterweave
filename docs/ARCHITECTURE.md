@@ -38,14 +38,15 @@ platform handles and Vulkan/physics types out of the gameplay-facing APIs.
 
 External boundaries: the renderer owns ash; the physics adapter keeps `rapier3d` behind
 its public array/core-type API; audio uses the pinned `ndk` AAudio bindings on Android
-only. Internal `core` has no platform dependency. See DEPENDENCIES.
+only. Internal `core` has no platform dependency. Versions, sources and licenses are in
+[the generated inventory](dependencies.json).
 
 ## Rust modules and efficient interfaces
 
 Use modules/crates with explicit ownership and data contracts, keeping Android,
 rendering, physics, world data, tools and game rules separable. Reuse adequate
 implementations inside those boundaries; a bespoke architecture is not a mandate to
-reimplement all internals. See component selection.
+reimplement all internals.
 
 Prefer stable handles and contiguous/batched data where suitable. Static composition can
 preserve optimization opportunities; modularity does not require dynamic plugins or

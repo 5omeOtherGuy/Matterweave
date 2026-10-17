@@ -44,14 +44,13 @@ Accepted for the M0/M1 baseline: Rust/Cargo 1.96.0 (edition 2021), NDK
 The first backend uses ash 0.38.0 with ash-window 0.13.0. winit 0.30.12 and
 android-activity 0.6.0 provide a consistent NativeActivity implementation.
 No Java/Kotlin app source, GameActivity glue, CMake or physics library is required.
-Naga 24.0.0 validates WGSL and generates SPIR-V at build time. Dependency locks,
-checksums, licenses and alternatives are in DEPENDENCIES.
+Naga 24.0.0 validates WGSL and generates SPIR-V at build time. Dependency versions,
+sources and licenses are in [the generated inventory](../dependencies.json).
 
 The development APK builds; native ARM64 exports, system-library dependencies,
 signing and 16 KiB ELF/ZIP alignment are inspected. Host tests and an ash/Vulkan
 smoke exercise verify editing, persistence, resize and renderer recreation.
-STATUS records the exact results and unexecuted physical-device
-gates. Engineering acceptance does not claim physical Android execution or mobile
+Engineering acceptance does not claim physical Android execution or mobile
 performance. Rendering selection beyond this reference remains ADR-0006/M2 work.
 
 ## v0.2 lifecycle implementation note
