@@ -1,4 +1,4 @@
-name: Rust and Android MVP
+name: CI
 
 on:
   push:
@@ -9,10 +9,31 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the secret scan reads the whole history
+      - name: Set up the pinned toolchain and gate tools
+        run: |
+          .agents/setup
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Gate
+        run: scripts/gate
+
   host:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: 2
     steps:
@@ -21,14 +42,12 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
-      - name: Formatting, lint and behavioral tests
+      - name: Build binaries and examples
+        run: cargo build --locked --workspace --bins --examples
+      - name: Timed behavioral runs
         run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test --workspace --locked
           cargo run --locked -p matterweave-render --example async_indirect
           cargo run --locked -p matterweave-core --example stream_stress -- 1 "$RUNNER_TEMP/stream-stress.json"
-          python3 tools/check_docs.py
       - name: Native Vulkan smoke
         run: |
           sudo apt-get update

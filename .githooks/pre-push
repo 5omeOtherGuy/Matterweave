@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Every change to main lands through a squash-merged pull request (AGENTS.md),
+# so refuse direct pushes to main, then run the gate. Only the owner may skip
+# this with `git push --no-verify`.
+set -euo pipefail
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    if [ "$remote_ref" = refs/heads/main ]; then
+        echo "pre-push: refusing a direct push to main; open a pull request" >&2
+        exit 1
+    fi
+done
+exec "$(git rev-parse --show-toplevel)/scripts/gate"

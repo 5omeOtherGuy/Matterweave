@@ -1,0 +1,4 @@
+# Reviewed false positives in history that no longer exists on main: a test
+# result line ("PASS:25frames/20valid") and a public debug-certificate digest.
+6b3c617f436d51ff9b23af50b9c2c7bba60001c9:docs/performance/logs/completion-execution.md:generic-api-key:130
+d3ad151686559bf3e8e5aeb188fffed26f4ff333:docs/evidence/2026-09-07-mvp.md:generic-api-key:85

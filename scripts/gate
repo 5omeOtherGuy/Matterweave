@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# The gate: everything a change must pass before it lands. CI runs exactly this
+# command in the `gate` job, and .githooks/pre-push runs it before every push.
+# Quiet on success; on failure it prints the failing step's output.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+
+step() {
+    local name=$1
+    shift
+    if ! "$@" >"$scratch/output" 2>&1; then
+        cat "$scratch/output" >&2
+        echo "gate: FAILED at $name: $*" >&2
+        exit 1
+    fi
+}
+
+command -v gitleaks >/dev/null || {
+    echo "gate: gitleaks is not installed; run .agents/setup" >&2
+    exit 1
+}
+
+step format cargo fmt --all -- --check
+step lint cargo clippy --workspace --all-targets --locked -- -D warnings
+step tests cargo test --workspace --locked
+step docs python3 tools/check_docs.py
+step "secret scan" gitleaks git --no-banner --redact --log-level warn .
+echo "gate: pass"

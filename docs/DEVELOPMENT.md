@@ -46,6 +46,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+`scripts/gate` runs these three with the documentation check and a gitleaks secret
+scan, quietly unless a step fails; CI runs it as the `gate` job and
+`.githooks/pre-push` runs it before every push. `.agents/setup` installs the pinned
+toolchain and gitleaks and enables the hooks.
+
 Core tests cover independent reference edits, negative/chunk boundaries, ray queries,
 mesh winding/occlusion, bounded snapshot validation, save failures, round trips and
 revision exhaustion. Explorer tests cover simultaneous touch roles, cancellation,
