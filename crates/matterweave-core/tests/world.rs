@@ -136,7 +136,7 @@ fn surface_mesh_occludes_chunk_seams_and_winds_outward() {
     assert_eq!(mesh.revision, world.revision());
     assert_eq!(mesh.vertices.len(), 10 * 4);
     assert_eq!(mesh.indices.len(), 10 * 6);
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         let a = mesh.vertices[triangle[0] as usize];
         let b = mesh.vertices[triangle[1] as usize];
         let c = mesh.vertices[triangle[2] as usize];

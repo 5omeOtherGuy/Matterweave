@@ -274,7 +274,7 @@ impl MeshProxy {
             if mesh.indices.len() % 3 != 0 {
                 return Err("Mesh proxy indices must be complete triangles".into());
             }
-            for triangle in mesh.indices.chunks_exact(3) {
+            for triangle in mesh.indices.as_chunks::<3>().0 {
                 let mut points = [[0f32; 3]; 3];
                 let mut lower = [f32::INFINITY; 3];
                 let mut upper = [f32::NEG_INFINITY; 3];

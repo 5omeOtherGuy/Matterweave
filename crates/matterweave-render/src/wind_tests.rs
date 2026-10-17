@@ -45,7 +45,9 @@ fn flora(prototype: usize, translation: [f32; 3], phase: f32, bend: f32) -> Flor
 
 fn wind_records(bytes: &[u8]) -> Vec<[f32; 4]> {
     bytes
-        .chunks_exact(WIND_RECORD_SIZE)
+        .as_chunks::<WIND_RECORD_SIZE>()
+        .0
+        .iter()
         .map(|chunk| *bytemuck::from_bytes::<[f32; 4]>(chunk))
         .collect()
 }

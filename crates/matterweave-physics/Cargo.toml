@@ -8,7 +8,7 @@ publish = false
 matterweave-core = { path = "../matterweave-core" }
 matterweave-detail = { path = "../matterweave-detail" }
 rapier3d = "=0.32.0"
-serde = { version = "=1.0.219", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 
 [dev-dependencies]
-serde_json = "=1.0.140"
+serde_json = "=1.0.154"
