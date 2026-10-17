@@ -1022,7 +1022,9 @@ mod tests {
         let mesh = coarse_tile_mesh(&tile);
         let feature_top_triangles = mesh
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .filter(|triangle| {
                 triangle.iter().all(|&index| {
                     let position = mesh.vertices[index as usize].position;
@@ -1064,7 +1066,7 @@ mod tests {
         // Region contract by triangle: triangles left of the split carry unit
         // edges, triangles starting at the split carry coarse-cell edges.
         let scale = (1 << MIXED_LEVEL) as f32;
-        for triangle in mixed.mesh.indices.chunks_exact(3) {
+        for triangle in mixed.mesh.indices.as_chunks::<3>().0 {
             let positions: [[f32; 3]; 3] =
                 std::array::from_fn(|i| mixed.mesh.vertices[triangle[i] as usize].position);
             let min_x = positions
