@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 matterweave-core = { path = "../matterweave-core" }
 matterweave-detail = { path = "../matterweave-detail" }
-rapier3d = "=0.32.0"
+rapier3d = "=0.36.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 
 [dev-dependencies]
