@@ -3,6 +3,7 @@ name = "matterweave-core"
 version.workspace = true
 edition = "2021"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 bytemuck = { version = "=1.25.2", features = ["derive"] }

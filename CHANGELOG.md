@@ -45,6 +45,8 @@ User-visible changes. The format follows
 
 ### Changed
 
+- Matterweave is now open source, licensed under MIT OR Apache-2.0 at your option
+  ([#99](https://github.com/5omeOtherGuy/Matterweave/issues/99)).
 - The Rust toolchain is 1.99.1; naga 30, glam 0.34 and pollster 1.0 replace older
   pins ([#100](https://github.com/5omeOtherGuy/Matterweave/pull/100),
   [#101](https://github.com/5omeOtherGuy/Matterweave/pull/101),

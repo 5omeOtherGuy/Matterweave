@@ -19,7 +19,7 @@ for package in sorted(metadata["packages"], key=lambda item: (item["name"], item
         record["checksum"] = checksums[(package["name"], package["version"])]
         packages.append(record)
 report = {
-    "note": "Locked Cargo dependencies including host/build/other-platform packages. Upstream licenses do not select a Matterweave license. Vendored patches are listed separately.",
+    "note": "Locked Cargo dependencies including host/build/other-platform packages. Upstream licenses cover only these packages, not Matterweave's own code. Vendored patches are listed separately.",
     "vendored": [{
         "name": "winit", "version": "0.30.12",
         "source": "https://crates.io/api/v1/crates/winit/0.30.12/download",

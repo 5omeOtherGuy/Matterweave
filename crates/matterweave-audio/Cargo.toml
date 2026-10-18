@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish = false
+license = "MIT OR Apache-2.0"
 description = "Bounded PCM sound-effect service with a deterministic mixer and an Android AAudio output backend"
 
 [dependencies]
