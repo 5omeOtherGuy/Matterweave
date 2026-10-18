@@ -1392,8 +1392,8 @@ mod tests {
     }
 
     fn look(eye: glam::Vec3, target: glam::Vec3) -> glam::Mat4 {
-        glam::Mat4::perspective_rh(70_f32.to_radians(), 1.0, 0.2, 20_000.0)
-            * glam::Mat4::look_at_rh(eye, target, glam::Vec3::Y)
+        glam::camera::rh::proj::directx::perspective(70_f32.to_radians(), 1.0, 0.2, 20_000.0)
+            * glam::camera::rh::view::look_at_mat4(eye, target, glam::Vec3::Y)
     }
 
     /// Apply the stored column-major homography to a UV the way the shader does.

@@ -992,7 +992,10 @@ impl MonsterApp {
                 None => offset.length(),
             };
             let eye = target + offset.normalize() * distance;
-            (Mat4::look_at_rh(eye, target, Vec3::Y), eye.to_array())
+            (
+                glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y),
+                eye.to_array(),
+            )
         } else {
             let target = Vec3::new(
                 self.player_pos[0],
@@ -1020,12 +1023,20 @@ impl MonsterApp {
                 None => CAM_DISTANCE_M,
             };
             let eye = target + desired.normalize() * distance;
-            (Mat4::look_at_rh(eye, target, Vec3::Y), eye.to_array())
+            (
+                glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y),
+                eye.to_array(),
+            )
         }
     }
 
     fn view_proj(&self, aspect: f32) -> [[f32; 4]; 4] {
-        let projection = Mat4::perspective_rh(50f32.to_radians(), aspect.max(0.01), 0.1, 200.0);
+        let projection = glam::camera::rh::proj::directx::perspective(
+            50f32.to_radians(),
+            aspect.max(0.01),
+            0.1,
+            200.0,
+        );
         (projection * self.camera().0).to_cols_array_2d()
     }
 

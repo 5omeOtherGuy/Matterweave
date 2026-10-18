@@ -29,7 +29,7 @@
 //! lives in memory; the only file touched is the report beside the
 //! caller-provided path. No performance is measured.
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::{Mesh, World};
 use matterweave_render::indirect::{IndirectVolume, MeshGeometry, MeshProxy, UpdateBudget};
 use matterweave_render::reflection::{
@@ -298,8 +298,8 @@ fn diagnostic_lines(phase: usize, presented: u32, indirect: bool, reflection: bo
 }
 
 fn view_projection(aspect: f32) -> [[f32; 4]; 4] {
-    (Mat4::perspective_rh(60f32.to_radians(), aspect, 0.1, 200.)
-        * Mat4::look_at_rh(
+    (glam::camera::rh::proj::directx::perspective(60f32.to_radians(), aspect, 0.1, 200.)
+        * glam::camera::rh::view::look_at_mat4(
             Vec3::from_array(CAMERA_EYE),
             Vec3::from_array(CAMERA_TARGET),
             Vec3::Y,

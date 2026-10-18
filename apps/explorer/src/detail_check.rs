@@ -34,7 +34,7 @@
 use crate::detail_runtime::{
     lod_histogram, yaw_quarters, DetailRuntime, FrameUpdate, RESIDENT_LODS,
 };
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_detail::{
     material, showcase_prototype, Camera as LodCamera, DetailScene, DetailVolume, Lod, LodConfig,
     PreparedFrame, Projection, Scale, Transform, Yaw, FLORA_FUNGUS_SCALE_M, SCALE_FINE_M,
@@ -712,15 +712,17 @@ impl PhasePlan {
     fn view_projection(&self, aspect: f32) -> [[f32; 4]; 4] {
         let eye = Vec3::from_array(self.eye);
         let target = Vec3::from_array(self.target);
-        let look = Mat4::look_at_rh(eye, target, Vec3::Y);
+        let look = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
         let proj = match self.projection {
             Projection::Perspective { vertical_fov_rad } => {
-                Mat4::perspective_rh(vertical_fov_rad, aspect, 0.1, 2000.0)
+                glam::camera::rh::proj::directx::perspective(vertical_fov_rad, aspect, 0.1, 2000.0)
             }
             Projection::Orthographic { view_height_m } => {
                 let half_h = view_height_m / 2.0;
                 let half_w = half_h * aspect;
-                Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, 0.1, 2000.0)
+                glam::camera::rh::proj::directx::orthographic(
+                    -half_w, half_w, -half_h, half_h, 0.1, 2000.0,
+                )
             }
         };
         (proj * look).to_cols_array_2d()
@@ -1767,6 +1769,7 @@ impl ApplicationHandler for DetailCheck {
 mod tests {
     use super::*;
     use crate::detail_runtime::yaw_quarters;
+    use glam::Mat4;
     use matterweave_detail::{Bounds, InstanceLod};
 
     fn phase(name: &str) -> PhasePlan {

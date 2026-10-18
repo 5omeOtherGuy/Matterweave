@@ -13,7 +13,7 @@ use crate::controls::{
 };
 use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use crate::settings::SharedSettings;
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use matterweave_core::{InputService, VirtualKey, World};
 use matterweave_physics::{BodySnapshot, DynamicMeshCache, Physics, PhysicsSnapshot};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
@@ -516,7 +516,7 @@ impl VoxelRelayApp {
     pub fn camera_view_proj(&self, aspect: f32) -> [[f32; 4]; 4] {
         let view_height = 24.0;
         let view_width = view_height * aspect.max(0.01);
-        let proj = Mat4::orthographic_rh(
+        let proj = glam::camera::rh::proj::directx::orthographic(
             -view_width / 2.0,
             view_width / 2.0,
             -view_height / 2.0,
@@ -526,7 +526,7 @@ impl VoxelRelayApp {
         );
         let eye = Vec3::new(7.5, 22.0, -2.0);
         let target = Vec3::new(7.5, 1.0, 12.0);
-        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
         (proj * view).to_cols_array_2d()
     }
 
@@ -907,6 +907,7 @@ impl ApplicationHandler for VoxelRelayApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Mat4;
 
     #[test]
     fn chamber_generation_verifies_walls_plate_door_and_obstacle() {

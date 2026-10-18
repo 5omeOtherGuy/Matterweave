@@ -21,7 +21,7 @@
 //! on a software Vulkan driver, never Android evidence and never a performance
 //! measurement; llvmpipe milliseconds are noise.
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::{Mesh, Vertex};
 use matterweave_render::{Atmosphere, Clouds, FrameResult, Hud, LightingSettings, Renderer};
 use std::{
@@ -207,8 +207,12 @@ fn shore_water() -> Mesh {
 fn view_projection(aspect: f32, yaw_deg: f32, eye: Vec3) -> [[f32; 4]; 4] {
     let yaw = yaw_deg.to_radians();
     let forward = Vec3::new(yaw.sin(), 0.0, -yaw.cos());
-    (Mat4::perspective_rh(70_f32.to_radians(), aspect.max(0.01), 0.2, 20_000.0)
-        * Mat4::look_at_rh(eye, eye + forward, Vec3::Y))
+    (glam::camera::rh::proj::directx::perspective(
+        70_f32.to_radians(),
+        aspect.max(0.01),
+        0.2,
+        20_000.0,
+    ) * glam::camera::rh::view::look_at_mat4(eye, eye + forward, Vec3::Y))
     .to_cols_array_2d()
 }
 

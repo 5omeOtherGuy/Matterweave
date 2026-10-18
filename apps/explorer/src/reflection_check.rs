@@ -1,7 +1,7 @@
 //! Native Vulkan R09 reflection gate: quality phases on device, plus an
 //! off/on frame-cost measurement. Writes a local report; Android screenshots are
 //! captured externally with adb. Not a minimum-FPS or efficiency claim.
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::{Mesh, World};
 use matterweave_render::reflection::{
     MaterialTable, ReflectionVolume, DEFAULT_TRACE_STEPS, SURFACE_OFFSET,
@@ -92,12 +92,13 @@ fn eye(phase: usize) -> [f32; 3] {
 }
 
 fn camera(phase: usize) -> [[f32; 4]; 4] {
-    let view = Mat4::look_at_rh(
+    let view = glam::camera::rh::view::look_at_mat4(
         Vec3::from_array(eye(phase)),
         Vec3::new(-1.0, 3.0, 0.0),
         Vec3::Y,
     );
-    let projection = Mat4::perspective_rh(35f32.to_radians(), 4. / 3., 0.1, 100.);
+    let projection =
+        glam::camera::rh::proj::directx::perspective(35f32.to_radians(), 4. / 3., 0.1, 100.);
     (projection * view).to_cols_array_2d()
 }
 

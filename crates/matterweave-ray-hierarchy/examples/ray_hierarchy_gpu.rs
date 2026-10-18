@@ -86,11 +86,11 @@ fn camera(origin: Vec3, direction: Vec3, orthographic: bool) -> (Mat4, Vec3) {
     } else {
         Vec3::Y
     };
-    let view = Mat4::look_at_rh(eye, eye + forward, up);
+    let view = glam::camera::rh::view::look_at_mat4(eye, eye + forward, up);
     let projection = if orthographic {
-        Mat4::orthographic_rh(-0.5, 0.5, -0.5, 0.5, NEAR, FAR)
+        glam::camera::rh::proj::directx::orthographic(-0.5, 0.5, -0.5, 0.5, NEAR, FAR)
     } else {
-        Mat4::perspective_rh(1.0, 1.0, NEAR, FAR)
+        glam::camera::rh::proj::directx::perspective(1.0, 1.0, NEAR, FAR)
     };
     (projection * view, eye)
 }

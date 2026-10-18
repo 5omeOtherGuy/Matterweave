@@ -5,7 +5,6 @@
 //! renderer recreation. Run under Xvfb/lavapipe with `MATTERWEAVE_VALIDATION=1`
 //! and require an empty validation stream; it is not Android or performance
 //! evidence and makes no pixel-quality claim (see `reflection_validation`).
-use glam::Mat4;
 use matterweave_core::{Mesh, World};
 use matterweave_render::reflection::{MaterialTable, ReflectionVolume, SURFACE_OFFSET};
 use matterweave_render::{FrameResult, Hud, LightingSettings, Renderer, Sun};
@@ -69,12 +68,12 @@ fn recolor(mesh: &mut Mesh, world: &World, table: &MaterialTable) {
 }
 
 fn camera() -> [[f32; 4]; 4] {
-    let view = Mat4::look_at_rh(
+    let view = glam::camera::rh::view::look_at_mat4(
         glam::Vec3::new(9.0, 6.0, 9.0),
         glam::Vec3::new(0.0, 0.0, 0.0),
         glam::Vec3::Y,
     );
-    let projection = Mat4::perspective_rh(1.0, 1.4, 0.1, 100.0);
+    let projection = glam::camera::rh::proj::directx::perspective(1.0, 1.4, 0.1, 100.0);
     (projection * view).to_cols_array_2d()
 }
 

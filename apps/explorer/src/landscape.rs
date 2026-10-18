@@ -35,7 +35,7 @@ use crate::metrics;
 use crate::platform::{clamped_frame_delta, PlatformEvent, PlatformLifecycle};
 use crate::scale_check;
 use crate::world_player::{self, PlayerInput, WorldPlayer};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use matterweave_core::landscape::{
     self, Clip, RingTile, TileFilter, LANDSCAPE_RINGS, LOD_TILE_CELLS,
 };
@@ -582,8 +582,16 @@ fn clamp_camera(camera: &mut Camera) {
 }
 
 fn view_projection(camera: &Camera, aspect: f32) -> [[f32; 4]; 4] {
-    (Mat4::perspective_rh(65_f32.to_radians(), aspect.max(0.01), 0.2, FAR_PLANE)
-        * Mat4::look_at_rh(camera.position, camera.position + camera.forward(), Vec3::Y))
+    (glam::camera::rh::proj::directx::perspective(
+        65_f32.to_radians(),
+        aspect.max(0.01),
+        0.2,
+        FAR_PLANE,
+    ) * glam::camera::rh::view::look_at_mat4(
+        camera.position,
+        camera.position + camera.forward(),
+        Vec3::Y,
+    ))
     .to_cols_array_2d()
 }
 

@@ -651,8 +651,9 @@ impl Camera {
 
     fn view_projection(&self, aspect: f32) -> Mat4 {
         let eye = Vec3::from_array(self.eye);
-        let view = Mat4::look_at_rh(eye, Vec3::from_array(self.target), Vec3::Y);
-        Mat4::perspective_rh(self.fov_y, aspect, self.near, self.far) * view
+        let view =
+            glam::camera::rh::view::look_at_mat4(eye, Vec3::from_array(self.target), Vec3::Y);
+        glam::camera::rh::proj::directx::perspective(self.fov_y, aspect, self.near, self.far) * view
     }
 }
 
