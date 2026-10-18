@@ -70,7 +70,8 @@ Branch as `<type>/<slug>`, one concern per PR, with a Conventional Commits title
 `scripts/gate` must pass locally (the pre-push hook runs it). Merge once the latest
 `gate`, `host` and `android` runs on the head commit all concluded `success`:
 `gh pr merge <number> --squash --delete-branch --match-head-commit <sha>`.
-Changes to CI or release configuration get an independent review first.
+Changes to CI or release configuration get an independent review first. Record
+user-visible changes under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
 Ask the owner only for a decision that is genuinely theirs: hardware, licensing,
 repository access, a store release, or anything irreversible. Anything needing

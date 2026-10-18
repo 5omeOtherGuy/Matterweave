@@ -33,5 +33,11 @@ captures/
 .DS_Store
 Thumbs.db
 
+# Editor files and local agent scratch
+.vscode/
+*.swp
+*~
+.amp/in/
+
 # Worker run artifacts (orchestration scaffolding, not project documents)
 ENGINEERING-LOG-*.md

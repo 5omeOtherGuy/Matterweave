@@ -1,12 +1,18 @@
 # Matterweave
 
-**A modular native Android voxel engine and game framework, built primarily in Rust.**
+Modular native Android voxel engine and game framework in Rust.
 
-The workspace is at version 0.5.0. [v0.5.0](https://github.com/5omeOtherGuy/Matterweave/releases/tag/v0.5.0)
-is the latest published prerelease: an intermediate engine delivery, not a finished
-engine.
+Status: pre-release. Development APKs are published as GitHub prereleases for trying
+the engine; nothing is promised, and saves and APIs may change between versions.
 
-## Current implementation
+[![CI](https://github.com/5omeOtherGuy/Matterweave/actions/workflows/native.yml/badge.svg?branch=main)](https://github.com/5omeOtherGuy/Matterweave/actions/workflows/native.yml)
+[![release](https://img.shields.io/github/v/release/5omeOtherGuy/Matterweave?include_prereleases)](https://github.com/5omeOtherGuy/Matterweave/releases)
+
+## What it does
+
+Matterweave is a voxel engine for Android phones: editable worlds, physics, lighting
+and streaming built natively on Vulkan, with sample games that exist to prove the
+engine is reusable. The engine is the product; Android-native delivery is what counts.
 
 - **Core:** sparse 16³ chunks, deterministic terrain, exact voxel/ray queries,
   local revisions, greedy/reference meshes and bounded asynchronous preparation.
@@ -36,42 +42,82 @@ engine.
 - **Delivery:** pinned Rust/NDK/Gradle builds, ARM64 development APK, host and
   physical-device evidence, Vulkan validation and signing/page-alignment checks.
 
-Open milestone work includes the equivalent-quality ray/mesh/hybrid comparison and
-primary-path selection, full Lumen-like indirect lighting/reflections and sustained
-efficiency acceptance. Android is the product platform; the desktop executable
-supports development and testing.
+Lumen-like lighting and Nanite-like detail are outcome goals, without a
+feature-parity promise.
 
-## Build and run
+## Install
 
-After installing the tools in the [development guide](docs/DEVELOPMENT.md):
+Download `matterweave-arm64-debug.apk` (and `SHA256SUMS` to check it) from the
+[latest prerelease](https://github.com/5omeOtherGuy/Matterweave/releases) and install it
+with USB debugging enabled:
 
 ```sh
-cargo test --workspace --locked
-android/gradlew -p android :app:assembleDebug --no-daemon
-python3 tools/verify_apk.py android/app/build/outputs/apk/debug/app-debug.apk
+sha256sum -c --ignore-missing SHA256SUMS
+adb install -r matterweave-arm64-debug.apk
 ```
 
-APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
-Minimum development profile: ARM64 Android API 28, Vulkan 1.1.
-Installation, controls, validation and troubleshooting are in the development guide.
+Prerelease APKs are signed with a development key; uninstall an APK built elsewhere
+before installing one from a release.
 
-## Project context
+## Usage
 
-1. [AGENTS.md](AGENTS.md): contributor and agent instructions.
-2. [Requirements](docs/REQUIREMENTS.md).
-3. [ADR index](docs/adr/README.md) and [architecture](docs/ARCHITECTURE.md).
-4. [Development guide](docs/DEVELOPMENT.md) and the [dependency inventory](docs/dependencies.json).
+On the phone, launch **Matterweave** in landscape. On a Linux desktop with a Vulkan
+driver, run the explorer from a checkout:
 
-Rust, efficient modularity and evidence-led reuse are accepted policy. Lumen-like
-lighting and Nanite-like detail remain outcome goals, without a feature-parity
-promise. The reference surface renderer does not resolve the planned ray/mesh/hybrid
-comparison. No mobile speed advantage is claimed from host or emulator results.
+```sh
+cargo run --locked -p matterweave-explorer -- --save /tmp/matterweave-world.json
+cargo run --locked -p matterweave-explorer -- --landscape --save /tmp/matterweave-landscape/world.json
+```
 
-For documentation checks: `python3 tools/check_docs.py`.
+The desktop executable supports development and testing; it is not the product.
+
+## Configuration
+
+Desktop flags (`--landscape`, `--world`, `--clouds off|low|high`) and the developer
+environment variables and marker files for devices are described in the
+[development guide](docs/DEVELOPMENT.md).
+
+## Compatibility
+
+- Phones: ARM64 Android, API 28 or later, Vulkan 1.1. This is a development profile,
+  not a store compatibility or performance guarantee.
+- Build host: Linux x86_64 with Rust 1.99.1, JDK 21 and the pinned Android SDK/NDK.
+- CI builds the APK and checks its page alignment and signing on every change; it
+  does not run it on a device.
+
+## Development
+
+Set up a checkout once, then run the gate before you push:
+
+```sh
+.agents/setup
+scripts/gate
+```
+
+The gate checks formatting, lints, the workspace tests, the documentation links and
+secrets. A focused test:
+
+```sh
+cargo test --locked -p matterweave-core --test world
+```
+
+The [development guide](docs/DEVELOPMENT.md) covers the Android build, Vulkan smoke
+runs and device checks; [ARCHITECTURE](docs/ARCHITECTURE.md),
+[REQUIREMENTS](docs/REQUIREMENTS.md) and the [ADR index](docs/adr/README.md) record
+the design and its decisions. See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a
+pull request.
+
+## Contributing, support and security
+
+- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Bugs and feature requests: [issues](https://github.com/5omeOtherGuy/Matterweave/issues).
+- Vulnerabilities: [SECURITY.md](SECURITY.md).
+- Changes: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
 The owner has not selected a project license. Public visibility is not a license
 grant. Upstream dependency licenses, versions and provenance are recorded in
 [the dependency inventory](docs/dependencies.json); they do not license original
-Matterweave code. The included Gradle wrapper retains its upstream license.
+Matterweave code. The included Gradle wrapper and the patched winit in `vendor/winit`
+retain their upstream licenses.

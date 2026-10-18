@@ -2,6 +2,10 @@
 
 Read [AGENTS.md](AGENTS.md) and the [ADR index](docs/adr/README.md) first. Work state and next milestones live in issues and pull requests.
 
+Small fixes are welcome directly as a pull request; larger changes start with an
+issue. Issues and pull requests are triaged on a best-effort basis while the project
+is pre-release. Report vulnerabilities as [SECURITY.md](SECURITY.md) describes.
+
 ## Changes
 
 - Explain the problem, resulting behavior and relevant requirement/ADR.

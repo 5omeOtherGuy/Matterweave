@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in the engine, the explorer or Mossbound does not work.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release (for example v0.5.0) or commit.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Phone model, Android version and GPU driver, or desktop OS and Vulkan driver.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include logcat or console output if you have it.
+    validations:
+      required: true
