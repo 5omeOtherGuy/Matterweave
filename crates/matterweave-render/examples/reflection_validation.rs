@@ -1749,8 +1749,12 @@ fn main() {
         harness.publish(&volume).unwrap();
         let eye = [11.0, 3.0, 0.0];
         let target = [-1.0, 3.0, 0.0];
-        let view = Mat4::look_at_rh(Vec3::from_array(eye), Vec3::from_array(target), Vec3::Y);
-        let projection = Mat4::perspective_rh(
+        let view = glam::camera::rh::view::look_at_mat4(
+            Vec3::from_array(eye),
+            Vec3::from_array(target),
+            Vec3::Y,
+        );
+        let projection = glam::camera::rh::proj::directx::perspective(
             35f32.to_radians(),
             IMAGE_W as f32 / IMAGE_H as f32,
             0.1,
@@ -1845,7 +1849,7 @@ fn main() {
 
         // Camera movement.
         harness.publish(&volume).unwrap();
-        let moved = Mat4::look_at_rh(
+        let moved = glam::camera::rh::view::look_at_mat4(
             Vec3::from_array([11.0, 6.0, 5.0]),
             Vec3::from_array([-1.0, 2.0, 0.0]),
             Vec3::Y,
@@ -2268,8 +2272,9 @@ fn camera_for(probe: &Probe) -> (Camera, [f32; 3]) {
     } else {
         Vec3::Y
     };
-    let view = Mat4::look_at_rh(eye, eye + forward, up);
-    let projection = Mat4::orthographic_rh(-0.25, 0.25, -0.25, 0.25, 0.1, 200.0);
+    let view = glam::camera::rh::view::look_at_mat4(eye, eye + forward, up);
+    let projection =
+        glam::camera::rh::proj::directx::orthographic(-0.25, 0.25, -0.25, 0.25, 0.1, 200.0);
     (
         Camera {
             view_proj: (projection * view).to_cols_array_2d(),

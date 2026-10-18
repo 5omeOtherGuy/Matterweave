@@ -24,7 +24,7 @@
 //! exercised when the platform actually delivers them.
 
 use crate::dynamic_upload::DynamicUploadState;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::{Vertex, World};
 use matterweave_physics::{
     BodySnapshot, DynamicMeshCache, Physics, PhysicsSave, PhysicsSnapshot, FIXED_DT, MAX_BODIES,
@@ -134,8 +134,8 @@ fn source_snapshot() -> PhysicsSnapshot {
 fn view_projection(aspect: f32) -> [[f32; 4]; 4] {
     let eye = Vec3::from_array(CAMERA_EYE);
     let target = Vec3::from_array(CAMERA_TARGET);
-    (Mat4::perspective_rh(60f32.to_radians(), aspect, 0.1, 200.0)
-        * Mat4::look_at_rh(eye, target, Vec3::Y))
+    (glam::camera::rh::proj::directx::perspective(60f32.to_radians(), aspect, 0.1, 200.0)
+        * glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y))
     .to_cols_array_2d()
 }
 

@@ -1,6 +1,6 @@
 //! Backend-independent sunlight settings and stable directional projection.
 use crate::clouds::Clouds;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 
 /// Direction points from a surface toward the sun; callers need not normalize it.
 #[derive(Clone, Copy, Debug)]
@@ -330,7 +330,7 @@ impl ShadowCamera {
         } else {
             Vec3::Y
         };
-        let light = Mat4::look_to_rh(Vec3::ZERO, -direction, up);
+        let light = glam::camera::rh::view::look_to_mat4(Vec3::ZERO, -direction, up);
         // Anchor the fit to a world grid before projecting into light space, so
         // a sub-cell camera move cannot change the matrix at all. The existing
         // texel snap below still removes the sub-texel jitter inside the cell.
@@ -364,7 +364,7 @@ impl ShadowCamera {
         }
         min_z = ((min_z - 16.0) / 16.0).floor() * 16.0;
         max_z = ((max_z + 16.0) / 16.0).ceil() * 16.0;
-        let projection = Mat4::orthographic_rh(
+        let projection = glam::camera::rh::proj::directx::orthographic(
             x - SHADOW_HALF_EXTENT,
             x + SHADOW_HALF_EXTENT,
             y - SHADOW_HALF_EXTENT,
@@ -389,6 +389,7 @@ impl ShadowCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Mat4;
     const FLOOR: [[f32; 3]; 2] = [[-48., -1., -48.], [48., 0., 48.]];
 
     fn projected(m: [[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {

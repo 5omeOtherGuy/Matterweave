@@ -29,7 +29,7 @@ use crate::fixtures::{self, sparse_fixture, Rng, StartKind};
 use crate::{
     clip_depth, BlockShape, HierarchyVolume, RayHit, SourceKey, TraversalMode, TraversalStats,
 };
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::World;
 use matterweave_render::ray_reference::RayVolume;
 use matterweave_render::Sun;
@@ -1054,12 +1054,12 @@ fn depth_matches_across_modes_and_the_projection_convention() {
         4.0,
         fixture.right()[2] as f32 * 0.5,
     );
-    let view = Mat4::look_at_rh(eye, target, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
     let mut rng = Rng::new(0xF0);
     let mut compared = 0usize;
     for projection in [
-        Mat4::perspective_rh(1.0, 1.0, 0.1, 200.0),
-        Mat4::orthographic_rh(-24.0, 24.0, -24.0, 24.0, 0.1, 200.0),
+        glam::camera::rh::proj::directx::perspective(1.0, 1.0, 0.1, 200.0),
+        glam::camera::rh::proj::directx::orthographic(-24.0, 24.0, -24.0, 24.0, 0.1, 200.0),
     ] {
         let view_projection = projection * view;
         let uniform = pack

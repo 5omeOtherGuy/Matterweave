@@ -13,7 +13,7 @@
 //! measured, never from the cost the phase requested. A device that cannot place
 //! its frame cost in the window a phase needs reports INCONCLUSIVE; it never
 //! reports PASS.
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::World;
 use matterweave_pacing::{
     Config as PacingConfig, FrameSample, Pacer, Policy as PacingPolicy, Snapshot,
@@ -512,12 +512,12 @@ impl ApplicationHandler for PacingCheck {
         let frame_start = Instant::now();
         renderer.begin_frame_diagnostics();
         let eye = Vec3::new(1.8, 1.6, 1.8);
-        let view = Mat4::perspective_rh(
+        let view = glam::camera::rh::proj::directx::perspective(
             70f32.to_radians(),
             size.width as f32 / size.height as f32,
             0.05,
             100.,
-        ) * Mat4::look_at_rh(eye, Vec3::new(-2., 0.9, -1.), Vec3::Y);
+        ) * glam::camera::rh::view::look_at_mat4(eye, Vec3::new(-2., 0.9, -1.), Vec3::Y);
         let result = renderer.render_with_lighting(
             view.to_cols_array_2d(),
             eye.to_array(),

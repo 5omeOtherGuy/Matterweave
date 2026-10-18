@@ -3224,9 +3224,13 @@ mod tests {
 
     /// Looking down -Z from the origin with a 90 degree field of view.
     fn forward_view() -> [[f32; 4]; 4] {
-        let projection =
-            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 20_000.0);
-        let view = glam::Mat4::look_at_rh(
+        let projection = glam::camera::rh::proj::directx::perspective(
+            std::f32::consts::FRAC_PI_2,
+            1.0,
+            0.1,
+            20_000.0,
+        );
+        let view = glam::camera::rh::view::look_at_mat4(
             glam::Vec3::ZERO,
             glam::Vec3::new(0.0, 0.0, -1.0),
             glam::Vec3::Y,

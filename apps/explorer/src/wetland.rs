@@ -3009,7 +3009,7 @@ mod detail_tests {
         assert_eq!(lod.viewport_height_px, 900.0);
 
         let view_projection = Mat4::from_cols_array_2d(&camera.view_projection(16.0 / 9.0));
-        // glam's `perspective_rh` stores 1/tan(fov_y/2) in m11. The engine's
+        // glam's `camera::rh::proj::directx::perspective` stores 1/tan(fov_y/2) in m11. The engine's
         // pixels-per-metre must use that same vertical scale, or production
         // selection would run against a field of view the renderer never draws.
         let render_y_scale = view_projection.y_axis.y;

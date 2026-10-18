@@ -699,6 +699,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 
 [[package]]
+name = "glam"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
+
+[[package]]
 name = "glamx"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -977,7 +983,7 @@ version = "0.5.0"
 dependencies = [
  "android-activity",
  "android_logger",
- "glam 0.30.9",
+ "glam 0.34.1",
  "libc",
  "log",
  "matterweave-audio",
@@ -996,7 +1002,7 @@ dependencies = [
 name = "matterweave-monsters"
 version = "0.5.0"
 dependencies = [
- "glam 0.30.9",
+ "glam 0.34.1",
  "log",
  "matterweave-core",
  "matterweave-physics",
@@ -1012,7 +1018,7 @@ version = "0.5.0"
 dependencies = [
  "android-activity",
  "android_logger",
- "glam 0.30.9",
+ "glam 0.34.1",
  "log",
  "matterweave-audio",
  "matterweave-core",
@@ -1047,7 +1053,7 @@ version = "0.5.0"
 dependencies = [
  "ash",
  "bytemuck",
- "glam 0.30.9",
+ "glam 0.34.1",
  "matterweave-core",
  "matterweave-render",
 ]
@@ -1060,7 +1066,7 @@ dependencies = [
  "ash-window",
  "bytemuck",
  "font8x8",
- "glam 0.30.9",
+ "glam 0.34.1",
  "matterweave-core",
  "naga",
  "raw-window-handle",

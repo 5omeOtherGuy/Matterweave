@@ -1,5 +1,5 @@
 use crate::settings::{Handedness, SettingRow, SharedSettings};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use matterweave_core::{InputService, VirtualKey};
 use matterweave_render::Hud;
 use std::collections::HashSet;
@@ -415,8 +415,16 @@ impl Camera {
             .clamp(Vec3::new(-248., -8., -248.), Vec3::new(248., 70., 248.));
     }
     pub fn view_projection(&self, aspect: f32) -> [[f32; 4]; 4] {
-        (Mat4::perspective_rh(65_f32.to_radians(), aspect.max(0.01), 0.1, 240.)
-            * Mat4::look_at_rh(self.position, self.position + self.forward(), Vec3::Y))
+        (glam::camera::rh::proj::directx::perspective(
+            65_f32.to_radians(),
+            aspect.max(0.01),
+            0.1,
+            240.,
+        ) * glam::camera::rh::view::look_at_mat4(
+            self.position,
+            self.position + self.forward(),
+            Vec3::Y,
+        ))
         .to_cols_array_2d()
     }
 }

@@ -3,7 +3,7 @@
 //! checking that the offscreen target is allocated only while clouds are on and
 //! that it follows the frame. Run under Xvfb/lavapipe; this is neither Android
 //! device evidence nor a performance measurement.
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::{Mesh, Vertex};
 use matterweave_render::{Atmosphere, Clouds, FrameResult, Hud, LightingSettings, Renderer};
 use std::{
@@ -22,8 +22,12 @@ use winit::{
 /// integrates the slab instead of leaving on the first ray test.
 fn view_projection(aspect: f32) -> [[f32; 4]; 4] {
     let eye = Vec3::new(0., 120., 0.);
-    (Mat4::perspective_rh(70_f32.to_radians(), aspect.max(0.01), 0.2, 8000.)
-        * Mat4::look_at_rh(eye, eye + Vec3::new(0.6, 0.45, -0.6), Vec3::Y))
+    (glam::camera::rh::proj::directx::perspective(
+        70_f32.to_radians(),
+        aspect.max(0.01),
+        0.2,
+        8000.,
+    ) * glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::new(0.6, 0.45, -0.6), Vec3::Y))
     .to_cols_array_2d()
 }
 

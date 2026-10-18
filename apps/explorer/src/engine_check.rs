@@ -1,6 +1,6 @@
 //! Native Vulkan R09 first-bounce gate, not a mobile performance benchmark.
 //! Writes a local report; Android screenshots are captured externally with adb.
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::World;
 use matterweave_render::{
     async_indirect::{AsyncIndirectConfig, AsyncIndirectLight},
@@ -294,12 +294,12 @@ impl ApplicationHandler for IndirectCheck {
             return;
         }
         let eye = Vec3::new(1.8, 1.6, 1.8);
-        let view = Mat4::perspective_rh(
+        let view = glam::camera::rh::proj::directx::perspective(
             70f32.to_radians(),
             size.width as f32 / size.height as f32,
             0.05,
             100.,
-        ) * Mat4::look_at_rh(eye, Vec3::new(-2., 0.9, -1.), Vec3::Y);
+        ) * glam::camera::rh::view::look_at_mat4(eye, Vec3::new(-2., 0.9, -1.), Vec3::Y);
         match r.render_with_lighting(
             view.to_cols_array_2d(),
             eye.to_array(),

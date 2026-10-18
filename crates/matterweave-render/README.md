@@ -27,7 +27,7 @@ recreates and uploads the current world on resume.
 
 Dependencies are pinned exactly in `Cargo.toml`. `ash` 0.38.0, `ash-window` 0.13.0,
 `raw-window-handle` 0.6.2, `winit` 0.30.12, `Naga` 30.0.1, `bytemuck` 1.25.2, `font8x8` 0.3.1
-and `glam` 0.30.9 supply Vulkan access, surface glue, build-time WGSL→SPIR-V compilation,
+and `glam` 0.34.1 supply Vulkan access, surface glue, build-time WGSL→SPIR-V compilation,
 explicit upload layout, HUD glyphs and matrix math. [The generated inventory](../../docs/dependencies.json)
 records source, version and upstream license; the lockfile records checksums. Existing
 ash-window glue and Naga avoid custom platform bindings and a separate C++ shader compiler

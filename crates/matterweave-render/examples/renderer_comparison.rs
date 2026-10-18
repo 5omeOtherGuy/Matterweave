@@ -101,9 +101,9 @@ impl Cam {
         } else {
             Vec3::Y
         };
-        let view = Mat4::look_at_rh(eye, eye + forward, up);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + forward, up);
         let projection = if self.orthographic {
-            Mat4::orthographic_rh(
+            glam::camera::rh::proj::directx::orthographic(
                 -self.extent,
                 self.extent,
                 -self.extent,
@@ -112,7 +112,12 @@ impl Cam {
                 FAR,
             )
         } else {
-            Mat4::perspective_rh(self.extent, WIDTH as f32 / HEIGHT as f32, NEAR, FAR)
+            glam::camera::rh::proj::directx::perspective(
+                self.extent,
+                WIDTH as f32 / HEIGHT as f32,
+                NEAR,
+                FAR,
+            )
         };
         projection * view
     }

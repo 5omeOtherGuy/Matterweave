@@ -348,10 +348,10 @@ mod tests {
         assert_eq!(offset_of!(RayUniform, sun), 176);
         let pack = RayVolume::pack(&World::new(0), 0, [-4, -3, -2], [8, 6, 4], palette()).unwrap();
         let eye = Vec3::new(3.0, 4.0, 8.0);
-        let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
         for proj in [
-            Mat4::perspective_rh(1.0, 1.4, 0.1, 100.0),
-            Mat4::orthographic_rh(-5.0, 5.0, -4.0, 4.0, 0.1, 100.0),
+            glam::camera::rh::proj::directx::perspective(1.0, 1.4, 0.1, 100.0),
+            glam::camera::rh::proj::directx::orthographic(-5.0, 5.0, -4.0, 4.0, 0.1, 100.0),
         ] {
             let vp = proj * view;
             let uniform = pack.uniform(vp, eye, crate::Sun::default()).unwrap();

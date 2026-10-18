@@ -1,6 +1,6 @@
 //! Native Vulkan R09 first-bounce gate, not a mobile performance benchmark.
 //! Optional MW_INDIRECT_CAPTURE_DIR uses host xwd for phase image evidence.
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use matterweave_core::World;
 use matterweave_render::{
     indirect::{IndirectVolume, UpdateBudget},
@@ -193,8 +193,12 @@ impl ApplicationHandler for App {
             self.prepared = Some(phase);
         }
         let eye = Vec3::new(1.8, 1.6, 1.8);
-        let view = Mat4::perspective_rh(70f32.to_radians(), 640. / 480., 0.05, 100.)
-            * Mat4::look_at_rh(eye, Vec3::new(-2., 0.9, -1.), Vec3::Y);
+        let view = glam::camera::rh::proj::directx::perspective(
+            70f32.to_radians(),
+            640. / 480.,
+            0.05,
+            100.,
+        ) * glam::camera::rh::view::look_at_mat4(eye, Vec3::new(-2., 0.9, -1.), Vec3::Y);
         match r.render_with_lighting(
             view.to_cols_array_2d(),
             eye.to_array(),
