@@ -2,11 +2,22 @@
 
 ## Profile
 - Purpose: native Android voxel engine and reusable game framework in Rust, with sample games that validate it.
-- Stage: pre-release (repository standard 2026-10-17)
+- Stage: pre-release (repository standard 2026-10-18)
 - Gate: `scripts/gate` (CI job `gate`)
 - Landing: PR, squash-merged on a green gate; agents land: yes
 - Release: none (the owner publishes GitHub prereleases); agents release: no
 - Outside issues and PRs: agents triage; outside PRs merge: owner approves
+- Sensitive paths:
+  - agent policy, setup and gate: `AGENTS.md`, `.agents/`, `.githooks/`, `scripts/gate`,
+    `tools/check_docs.py`, `.gitleaksignore`, `rust-toolchain.toml`;
+  - CI and repository configuration: `.github/`;
+  - build, packaging and release configuration: `Cargo.toml`, `android/`,
+    `tools/build_native.py`, `tools/setup_android.py`, `tools/verify_apk.py`;
+  - public interfaces: the versioned save formats (`crates/matterweave-core/src/persistence.rs`,
+    `crates/matterweave-monsters/src/state.rs`, the physics snapshot in
+    `crates/matterweave-physics/src/lib.rs`) and the `android_main` entry points in
+    `apps/*/src/lib.rs`. No crate is published; engine APIs are consumed only
+    inside this workspace.
 - Deliberate deviations from the standard:
   - Every change lands through a PR, even in pre-release, and `.githooks/pre-push`
     refuses direct pushes to `main`.
@@ -70,8 +81,13 @@ Branch as `<type>/<slug>`, one concern per PR, with a Conventional Commits title
 `scripts/gate` must pass locally (the pre-push hook runs it). Merge once the latest
 `gate`, `host` and `android` runs on the head commit all concluded `success`:
 `gh pr merge <number> --squash --delete-branch --match-head-commit <sha>`.
-Changes to CI or release configuration get an independent review first. Record
-user-visible changes under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+A change to a sensitive path (Profile above), a public interface, security-sensitive
+code, credential handling, install or setup, CI or release configuration, or agent
+policy gets an independent review before it merges, listed path or not; so does a
+docs change that alters rules or executable instructions. The reviewer reads the diff
+against this file's rules and records the review on the PR against the reviewed
+head; a later push needs a new one.
+Record user-visible changes under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 
 Ask the owner only for a decision that is genuinely theirs: hardware, licensing,
 repository access, a store release, or anything irreversible. Anything needing
