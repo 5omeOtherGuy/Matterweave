@@ -5,6 +5,9 @@ android {
     compileSdk = 35
     buildToolsVersion = '36.0.0'
     ndkVersion = '28.2.13676358'
+    // NativeActivity only (hasCode=false): keep AGP 9's built-in Kotlin and its
+    // stdlib out of the APK.
+    enableKotlin = false
     defaultConfig {
         applicationId = 'dev.matterweave.explorer'
         minSdk = 28
