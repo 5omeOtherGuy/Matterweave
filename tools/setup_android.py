@@ -12,7 +12,7 @@ import zipfile
 
 ARCHIVE = "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip"
 SHA256 = "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee"
-PACKAGES = ("platforms;android-35", "build-tools;35.0.0", "ndk;28.2.13676358", "platform-tools")
+PACKAGES = ("platforms;android-35", "build-tools;36.0.0", "ndk;28.2.13676358", "platform-tools")
 
 
 def main() -> None:
