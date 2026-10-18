@@ -22,7 +22,7 @@ python3 tools/setup_android.py --sdk "$ANDROID_HOME"
 ```
 
 The setup helper validates the command-line tools archive SHA-256 and invokes SDK
-manager for API 35, build-tools 35.0.0 and NDK 28.2.13676358. Review the SDK licenses
+manager for API 35, build-tools 36.0.0 and NDK 28.2.13676358. Review the SDK licenses
 when prompted; `--accept-licenses` is available for authorized CI setup. It adds the
 `aarch64-linux-android` Rust target. It does not change global Rust, Gradle or shell
 configuration. Existing SDK installations are supported.
@@ -142,9 +142,9 @@ to bypass failures.
 ```sh
 android/gradlew -p android :app:assembleDebug --no-daemon
 python3 tools/verify_apk.py android/app/build/outputs/apk/debug/app-debug.apk
-"$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/debug/app-debug.apk
-"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
-"$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk
 sha256sum android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
