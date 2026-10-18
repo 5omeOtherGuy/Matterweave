@@ -7,16 +7,18 @@
 - Landing: PR, squash-merged on a green gate; agents land: yes
 - Release: none (the owner publishes GitHub prereleases); agents release: no
 - Outside issues and PRs: agents triage; outside PRs merge: owner approves
-- Deliberate deviations from the standard: every change lands through a PR, even in
-  pre-release, and `.githooks/pre-push` refuses direct pushes to `main`; a PR also
-  needs the `host` (Vulkan smoke) and `android` (APK) jobs green, which stay outside
-  the hermetic gate; a few workspace tests still wait on worker threads with bounded
-  sleeps (#106); claims only
-  for what ran, measurements with their conditions, authoritative world data, layer
-  separation, smallest slice, Rust and reuse (Rules below); owner-only decisions
-  (Delivery below); no per-task, status or handoff documents (Writing things down
-  below); component selection, ADRs and dependency/asset provenance, and the
-  measurement rule for performance claims ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- Deliberate deviations from the standard:
+  - Every change lands through a PR, even in pre-release, and `.githooks/pre-push`
+    refuses direct pushes to `main`.
+  - A PR also needs the `host` (Vulkan smoke) and `android` (APK) jobs green; they stay
+    outside the hermetic gate.
+  - A few workspace tests still wait on worker threads with bounded sleeps (#106).
+  - Claims only for what ran, measurements with their conditions, authoritative world
+    data, layer separation, smallest slice, Rust and reuse (Rules below).
+  - Owner-only decisions (Delivery below); no per-task, status or handoff documents
+    (Writing things down below).
+  - Component selection, ADRs, dependency/asset provenance and the measurement rule for
+    performance claims ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 Matterweave is a native Android voxel engine and reusable game framework. The
 engine is the product; the sample games exist to validate it. Android-native
