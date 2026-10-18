@@ -8,7 +8,10 @@
 - Release: none (the owner publishes GitHub prereleases); agents release: no
 - Outside issues and PRs: agents triage; outside PRs merge: owner approves
 - Deliberate deviations from the standard: every change lands through a PR, even in
-  pre-release, and `.githooks/pre-push` refuses direct pushes to `main`; claims only
+  pre-release, and `.githooks/pre-push` refuses direct pushes to `main`; a PR also
+  needs the `host` (Vulkan smoke) and `android` (APK) jobs green, which stay outside
+  the hermetic gate; a few workspace tests still wait on worker threads with bounded
+  sleeps (#106); claims only
   for what ran, measurements with their conditions, authoritative world data, layer
   separation, smallest slice, Rust and reuse (Rules below); owner-only decisions
   (Delivery below); no per-task, status or handoff documents (Writing things down
@@ -63,7 +66,7 @@ Never force-push shared history.
 
 Branch as `<type>/<slug>`, one concern per PR, with a Conventional Commits title.
 `scripts/gate` must pass locally (the pre-push hook runs it). Merge once the latest
-`gate` run on the head commit concluded `success`:
+`gate`, `host` and `android` runs on the head commit all concluded `success`:
 `gh pr merge <number> --squash --delete-branch --match-head-commit <sha>`.
 Changes to CI or release configuration get an independent review first.
 
