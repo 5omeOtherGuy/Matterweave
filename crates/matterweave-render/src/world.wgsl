@@ -2,7 +2,7 @@ struct Camera {
     view_proj: mat4x4<f32>,
     eye: vec4<f32>,
 };
-var<push_constant> camera: Camera;
+var<immediate> camera: Camera;
 // Layout is defined once in Rust: crates/matterweave-render/src/shader_contract.rs.
 // `indirect_dimensions.w` and `reflection_dimensions.w` are enable flags.
 // `reflection_params` is (trace step bound, surface offset, 0, 0).

@@ -1,5 +1,5 @@
 struct Camera { view_proj: mat4x4<f32> };
-var<push_constant> camera: Camera;
+var<immediate> camera: Camera;
 // Packed instance record: translation xyz, quarter-turn yaw in w. The identity
 // record (0,0,0,0) leaves non-instanced casters unchanged. Must match world.wgsl
 // and static_scene.rs rotate_xz exactly so casters and receivers agree.

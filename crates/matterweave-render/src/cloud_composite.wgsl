@@ -12,7 +12,7 @@ struct Composite {
     // (inverse frame width, inverse frame height, cloud texel width, cloud texel height)
     texel: vec4<f32>,
 };
-var<push_constant> composite: Composite;
+var<immediate> composite: Composite;
 @group(0) @binding(0) var cloud_texture: texture_2d<f32>;
 @group(0) @binding(1) var cloud_sampler: sampler;
 

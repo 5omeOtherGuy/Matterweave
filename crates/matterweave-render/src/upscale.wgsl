@@ -24,7 +24,7 @@ struct Upscale {
     target_texel: vec2<f32>,
     params: vec2<f32>,
 };
-var<push_constant> upscale: Upscale;
+var<immediate> upscale: Upscale;
 @group(0) @binding(0) var world_color: texture_2d<f32>;
 @group(0) @binding(1) var world_sampler: sampler;
 
