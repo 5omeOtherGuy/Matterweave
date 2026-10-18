@@ -15,7 +15,7 @@ is pre-release. Report vulnerabilities as [SECURITY.md](SECURITY.md) describes.
 - Resolve routine technical decisions with evidence; record material decisions in an ADR using [the template](docs/adr/template.md).
 - Record sources, exact versions, licenses and local changes for adopted
 dependencies and assets. A research link is not an adopted dependency.
-- The owner has not selected a project license. Do not add one or represent this repository as licensed open source without that decision.
+- Contributions are licensed under the repository's license, MIT OR Apache-2.0 (see the [README](README.md#license)); there is no CLA.
 
 ## Verification
 

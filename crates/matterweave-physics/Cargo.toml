@@ -3,6 +3,7 @@ name = "matterweave-physics"
 version.workspace = true
 edition = "2021"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 matterweave-core = { path = "../matterweave-core" }

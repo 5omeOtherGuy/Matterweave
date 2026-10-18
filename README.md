@@ -7,6 +7,7 @@ the engine; nothing is promised, and saves and APIs may change between versions.
 
 [![CI](https://github.com/5omeOtherGuy/Matterweave/actions/workflows/native.yml/badge.svg?branch=main)](https://github.com/5omeOtherGuy/Matterweave/actions/workflows/native.yml)
 [![release](https://img.shields.io/github/v/release/5omeOtherGuy/Matterweave?include_prereleases)](https://github.com/5omeOtherGuy/Matterweave/releases)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 ## What it does
 
@@ -116,8 +117,15 @@ pull request.
 
 ## License
 
-The owner has not selected a project license. Public visibility is not a license
-grant. Upstream dependency licenses, versions and provenance are recorded in
-[the dependency inventory](docs/dependencies.json); they do not license original
-Matterweave code. The included Gradle wrapper and the patched winit in `vendor/winit`
-retain their upstream licenses.
+Matterweave is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Unless you explicitly state otherwise, any contribution you
+intentionally submit for inclusion in Matterweave, as defined in the Apache-2.0
+license, is dual licensed as above, without any additional terms or conditions.
+
+The included Gradle wrapper and the patched winit in `vendor/winit` keep their
+upstream licenses. Dependency licenses, versions and provenance are recorded in
+[the dependency inventory](docs/dependencies.json).

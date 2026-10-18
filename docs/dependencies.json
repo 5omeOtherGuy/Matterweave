@@ -1,5 +1,5 @@
 {
-  "note": "Locked Cargo dependencies including host/build/other-platform packages. Upstream licenses do not select a Matterweave license. Vendored patches are listed separately.",
+  "note": "Locked Cargo dependencies including host/build/other-platform packages. Upstream licenses cover only these packages, not Matterweave's own code. Vendored patches are listed separately.",
   "vendored": [
     {
       "name": "winit",
