@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+    labels: [dependencies]
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Patched locally under vendor/winit; updating it means re-applying the patch.
+      - dependency-name: winit
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+    labels: [dependencies]
+    groups:
+      gradle-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+    labels: [dependencies]
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
