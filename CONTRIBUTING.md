@@ -15,7 +15,8 @@ dependencies and assets. A research link is not an adopted dependency.
 
 ## Verification
 
-Run `python3 tools/check_docs.py` for documentation changes. Use the native/Android
+Run `.agents/setup` once, then `scripts/gate` before you push; CI runs the same command
+in its `gate` job, and every pull request must pass it. Use the native/Android
 checks documented in [the development guide](docs/DEVELOPMENT.md) as implementation
 adds them. Report tests run and relevant tests not run with reasons. Performance
 claims carry the measurement conditions [AGENTS.md](AGENTS.md) requires; visual-fidelity
