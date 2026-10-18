@@ -118,6 +118,21 @@ impl RayVolume {
     pub fn materials(&self) -> &[u32] {
         &self.materials
     }
+    /// Single-cell write for a derived pack that maintains this grid
+    /// incrementally (see [`crate::reflection::ReflectionVolume::refresh_mesh`]).
+    /// Index in the packed order of [`RayVolume::materials`]; `false` and no
+    /// write when it is outside the grid. The caller owns every validity
+    /// guarantee around the write, including that the grid still matches the
+    /// source it reports.
+    pub(crate) fn set_material(&mut self, index: usize, material: u8) -> bool {
+        match self.materials.get_mut(index) {
+            Some(slot) => {
+                *slot = u32::from(material);
+                true
+            }
+            None => false,
+        }
+    }
     /// Group 0 binding 2: exactly 256 vec4s, stride 16 (4096 bytes).
     pub fn palette(&self) -> &[[f32; 4]; 256] {
         &self.palette
