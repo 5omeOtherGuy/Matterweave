@@ -10,7 +10,7 @@ matterweave-core = { path = "../matterweave-core" }
 matterweave-render = { path = "../matterweave-render" }
 
 [dev-dependencies]
-glam = "=0.30.9"
+glam = "=0.32.1"
 # The native functional example is the only target that uses these two.
 ash = "=0.38.0"
 bytemuck = "=1.25.2"
