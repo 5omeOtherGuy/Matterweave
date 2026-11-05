@@ -52,6 +52,14 @@
 //! [`MeshProxy`]'s material instead, which is how a detail volume or moving
 //! mesh-only object becomes reflective and traceable.
 //!
+//! A mesh change does not have to re-bake the volume: a packed cell's value is the
+//! scene material of exactly one cell, so [`ReflectionVolume::refresh_mesh`]
+//! rewrites exactly the cells the old or the new proxy occupies and the cells
+//! whose proxy material changed in place. The result is the same grid
+//! [`ReflectionVolume::pack_with_mesh`] would produce for that world and proxy;
+//! retention is exact, never an approximation, and every publication gate is
+//! unchanged.
+//!
 //! Bound: at most one pending publication, no background job, one host-visible
 //! coherent destination buffer per resource, and at most
 //! `MAX_REFLECTION_CELLS * 4 + REFLECTION_PALETTE_BYTES` bytes uploaded.
@@ -142,6 +150,9 @@ pub struct ReflectionMemoryStats {
     pub material_bytes: usize,
     /// Group-0 binding 5: 256 vec4s.
     pub palette_bytes: usize,
+    /// The pack's record of the mesh cells it was baked from, used by
+    /// [`ReflectionVolume::refresh_mesh`]. Zero for a unit-voxel-only pack.
+    pub mesh_cells_bytes: usize,
     /// One complete upload of both descriptors.
     pub upload_bytes: usize,
     /// CPU-side resident payload including the packed grid copy.
@@ -181,6 +192,11 @@ impl ReflectionSample {
 /// Mesh-only geometry is baked in at pack time through [`MeshProxy`]; the
 /// authoritative provenance (epoch, revision, seed) is stored here rather than
 /// taken from the composed pack, whose source world is a derived copy.
+///
+/// [`ReflectionVolume::mesh_cells`] is the pack's own record of the mesh cells it
+/// was baked from, in the packed grid's local-index order. It exists so
+/// [`ReflectionVolume::refresh_mesh`] can rewrite exactly the cells a mesh change
+/// can move, instead of re-deriving the whole footprint.
 #[derive(Debug)]
 pub struct ReflectionVolume {
     pack: RayVolume,
@@ -191,6 +207,62 @@ pub struct ReflectionVolume {
     source_revision: u64,
     source_seed: u64,
     mesh_digest: Option<u64>,
+    /// Occupied proxy cells clipped to this volume's footprint, as
+    /// `(local index, proxy material)`, in ascending local-index order. Empty
+    /// for a pack built without a mesh.
+    mesh_cells: Vec<(u32, u8)>,
+}
+
+/// Local index of a cell in the packed grid, or `None` when the cell lies outside
+/// the half-open footprint. The index order is the documented
+/// `x + dims.x * (y + dims.y * z)` of the packed grids.
+fn local_index(origin: [i32; 3], dimensions: [u32; 3], cell: [i32; 3]) -> Option<u32> {
+    let local: [i64; 3] =
+        std::array::from_fn(|axis| i64::from(cell[axis]) - i64::from(origin[axis]));
+    if (0..3).any(|axis| local[axis] < 0 || local[axis] >= i64::from(dimensions[axis])) {
+        return None;
+    }
+    Some(local[0] as u32 + dimensions[0] * (local[1] as u32 + dimensions[1] * local[2] as u32))
+}
+
+/// Inverse of [`local_index`] for an index inside the footprint.
+fn local_cell(origin: [i32; 3], dimensions: [u32; 3], index: u32) -> [i32; 3] {
+    let x = index % dimensions[0];
+    let y = (index / dimensions[0]) % dimensions[1];
+    let z = index / (dimensions[0] * dimensions[1]);
+    [
+        origin[0] + x as i32,
+        origin[1] + y as i32,
+        origin[2] + z as i32,
+    ]
+}
+
+/// The in-footprint proxy cells a pack records, in ascending local-index order.
+/// `MeshProxy::cells` is documented as ascending local index, so filtering to the
+/// footprint preserves the order the diff relies on.
+fn mesh_cells_of(
+    origin: [i32; 3],
+    dimensions: [u32; 3],
+    mesh: Option<&MeshProxy>,
+) -> Vec<(u32, u8)> {
+    mesh.map_or_else(Vec::new, |mesh| {
+        mesh.cells()
+            .filter_map(|(cell, material)| {
+                local_index(origin, dimensions, cell).map(|index| (index, material))
+            })
+            .collect()
+    })
+}
+
+/// One incremental mesh refresh: what the pack inspected and what it rewrote.
+/// Counts, never time; one inspection or rewrite is a cell-scale read or write.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReflectionRefresh {
+    /// Proxy cells inspected on the old and the new side of the diff.
+    pub inspected: usize,
+    /// Cells whose packed material was rewritten, each a scene-material read
+    /// plus a grid write.
+    pub rewritten: usize,
 }
 
 impl ReflectionVolume {
@@ -292,6 +364,7 @@ impl ReflectionVolume {
             source_revision: world.revision(),
             source_seed: world.seed(),
             mesh_digest: mesh.map(MeshProxy::digest),
+            mesh_cells: mesh_cells_of(origin, dimensions, mesh),
         })
     }
     pub fn origin(&self) -> [i32; 3] {
@@ -352,6 +425,97 @@ impl ReflectionVolume {
     pub fn valid_for_scene(&self, world: &World, epoch: u64, mesh_digest: Option<u64>) -> bool {
         self.mesh_digest == mesh_digest && self.valid_for(world, epoch)
     }
+    /// Exact per-cell refresh for a new mesh proxy of the same authoritative world,
+    /// so a moving body costs a bounded diff instead of a full re-bake.
+    ///
+    /// A packed cell's value is the scene material of exactly one cell, so when
+    /// only the mesh changes, the cells whose packed value can differ are exactly
+    /// the cells the old or the new proxy occupies plus the cells whose proxy
+    /// material changed in place. Both cell lists are in ascending local-index
+    /// order, so one merge walk enumerates them, and each enumerated cell is
+    /// rewritten with `scene_material(world, Some(mesh), cell)` - the same union
+    /// rule `pack_with_mesh` applies. After a successful call the grid is
+    /// therefore bit-identical to the grid `pack_with_mesh` would produce for the
+    /// same world and proxy; the pack is refreshed, never approximated, and the
+    /// caller must re-derive nothing else.
+    ///
+    /// Checked preconditions: `epoch` must equal the pack's, and `world` must
+    /// carry the pack's revision and seed. Any other world needs a full repack,
+    /// because only the caller knows which world cells changed. The footprint
+    /// digest is not re-derived here: [`ReflectionVolume::valid_for_scene`]
+    /// remains what authorizes publication, so a scene *replaced* at an equal
+    /// revision is still refused there and repacked by the caller, never
+    /// published from this refreshed grid.
+    ///
+    /// The stored mesh identity becomes `mesh`'s digest, so the refreshed pack
+    /// validates for the proxy it was just refreshed against and for no other.
+    pub fn refresh_mesh(
+        &mut self,
+        world: &World,
+        epoch: u64,
+        mesh: &MeshProxy,
+    ) -> Result<ReflectionRefresh, String> {
+        if self.source_epoch != epoch {
+            return Err("Reflection refresh epoch does not match the pack".into());
+        }
+        if self.source_revision != world.revision() || self.source_seed != world.seed() {
+            return Err("Reflection refresh requires the pack's own world".into());
+        }
+        let next = mesh_cells_of(self.origin(), self.dimensions(), Some(mesh));
+        let mut refresh = ReflectionRefresh {
+            inspected: self.mesh_cells.len() + next.len(),
+            rewritten: 0,
+        };
+        let (mut old, mut new) = (0, 0);
+        while old < self.mesh_cells.len() || new < next.len() {
+            let order = match (self.mesh_cells.get(old), next.get(new)) {
+                (Some(&(a, _)), Some(&(b, _))) => a.cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => break,
+            };
+            let dirty = match order {
+                std::cmp::Ordering::Equal => {
+                    let material_changed = self.mesh_cells[old].1 != next[new].1;
+                    let index = self.mesh_cells[old].0;
+                    old += 1;
+                    new += 1;
+                    material_changed.then_some(index)
+                }
+                // The cell left the proxy: the world (or air) is what remains.
+                std::cmp::Ordering::Less => {
+                    let index = self.mesh_cells[old].0;
+                    old += 1;
+                    Some(index)
+                }
+                // The cell entered the proxy.
+                std::cmp::Ordering::Greater => {
+                    let index = next[new].0;
+                    new += 1;
+                    Some(index)
+                }
+            };
+            let Some(index) = dirty else {
+                continue;
+            };
+            let cell = local_cell(self.origin(), self.dimensions(), index);
+            let material = scene_material(world, Some(mesh), cell);
+            // A cell the world already owns is masked by the world's material,
+            // so a body moving over or off it changes nothing: writing only real
+            // differences keeps `rewritten` a count of changed cells and makes a
+            // no-op refresh cost no grid writes.
+            if self.pack.materials()[index as usize] == u32::from(material) {
+                continue;
+            }
+            if !self.pack.set_material(index as usize, material) {
+                return Err("Reflection refresh cell is outside the packed grid".into());
+            }
+            refresh.rewritten += 1;
+        }
+        self.mesh_cells = next;
+        self.mesh_digest = Some(mesh.digest());
+        Ok(refresh)
+    }
     /// Digest of the authoritative source at publication time.
     pub fn source_digest(&self) -> u64 {
         self.digest
@@ -372,11 +536,16 @@ impl ReflectionVolume {
     }
     pub fn memory_stats(&self) -> ReflectionMemoryStats {
         let material_bytes = std::mem::size_of_val(self.materials());
+        let mesh_cells_bytes = std::mem::size_of_val(self.mesh_cells.as_slice());
         ReflectionMemoryStats {
             material_bytes,
             palette_bytes: REFLECTION_PALETTE_BYTES,
+            mesh_cells_bytes,
             upload_bytes: material_bytes + REFLECTION_PALETTE_BYTES,
-            resident_bytes: material_bytes + REFLECTION_PALETTE_BYTES + size_of::<Self>(),
+            resident_bytes: material_bytes
+                + REFLECTION_PALETTE_BYTES
+                + mesh_cells_bytes
+                + size_of::<Self>(),
         }
     }
 }
@@ -636,6 +805,10 @@ mod tests {
         let stats = v.memory_stats();
         assert_eq!(stats.material_bytes, 32 * 24 * 32 * 4);
         assert_eq!(stats.palette_bytes, REFLECTION_PALETTE_BYTES);
+        assert_eq!(
+            stats.mesh_cells_bytes, 0,
+            "a unit-voxel-only pack records no mesh cells"
+        );
         assert_eq!(
             stats.upload_bytes,
             stats.material_bytes + REFLECTION_PALETTE_BYTES
@@ -1169,6 +1342,261 @@ mod tests {
             )
             .hit,
             "grid-aligned mesh faces reflect onto world geometry"
+        );
+    }
+
+    // ===================================================================
+    // D3.3 incremental mesh refresh. Declared criterion, asserted rather than
+    // eyeballed:
+    //
+    // R3 exact retention: refreshing a pack for a new proxy yields the identical
+    //    grid, palette and mesh identity a fresh `pack_with_mesh` produces for
+    //    that world and proxy - for a cell entering the proxy, a cell leaving it
+    //    back to a solid world cell, and a cell whose proxy material changed in
+    //    place - and the refreshed pack validates only for the proxy it was
+    //    refreshed against. A foreign world is refused, not approximated.
+    // ===================================================================
+
+    /// One unit cube painted `material`, one instance per placement.
+    fn mesh_proxy_with(material: u8, instances: &[StaticInstance]) -> MeshProxy {
+        let meshes = [mesh_prototype()];
+        let materials = [material];
+        MeshProxy::build(
+            &MeshGeometry {
+                meshes: &meshes,
+                instances,
+                materials: &materials,
+            },
+            MESH_ORIGIN,
+            MESH_DIMS,
+        )
+        .unwrap()
+    }
+
+    /// Bit-for-bit equality of everything the shader and the publication gates
+    /// read: the packed grid, the palette, the bounds and the mesh identity.
+    fn assert_same_pack(left: &ReflectionVolume, right: &ReflectionVolume) {
+        assert_eq!(left.origin(), right.origin());
+        assert_eq!(left.dimensions(), right.dimensions());
+        assert_eq!(left.materials(), right.materials(), "packed grids differ");
+        assert_eq!(left.palette(), right.palette(), "palettes differ");
+        assert_eq!(left.source_mesh_digest(), right.source_mesh_digest());
+        assert_eq!(left.source_digest(), right.source_digest());
+        assert_eq!(
+            left.memory_stats().mesh_cells_bytes,
+            right.memory_stats().mesh_cells_bytes
+        );
+    }
+
+    #[test]
+    fn r3_refreshed_pack_equals_a_fresh_bake_for_every_change_shape() {
+        let world = mesh_world();
+        let table = mesh_table();
+        // A body placed over a solid world cell: the world's material masks it,
+        // so this placement changes nothing in the packed grid.
+        const FLOOR_UNDER: [i32; 3] = [0, -1, 0];
+        assert_ne!(world.get(FLOOR_UNDER), 0);
+        let stacked = StaticInstance {
+            prototype: 0,
+            translation: [0., -1., 0.],
+            yaw_quarters: 0,
+        };
+        let resting = mesh_proxy(&[mesh_object(), control_object()]);
+        let raised = mesh_proxy(&[lifted_object(), control_object()]);
+        // The same proxy material as the recolored placement, so a move can be
+        // isolated from a material change.
+        let on_the_floor = mesh_proxy_with(WALL, &[stacked, control_object()]);
+        // Same cell in all three placements, different proxy material: a
+        // material-only change must be rebuilt even though occupancy holds.
+        let recolored = mesh_proxy_with(WALL, &[mesh_object(), control_object()]);
+        assert_eq!(
+            resting.occupied_cells(),
+            recolored.occupied_cells(),
+            "fixture: the material-only change keeps the cell count"
+        );
+
+        // Baseline: a full bake of the resting placement, then refresh through
+        // every change shape, comparing against a fresh bake each time.
+        let mut pack = ReflectionVolume::pack_with_mesh(
+            &world,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &resting,
+        )
+        .unwrap();
+        assert_eq!(pack.material_at(OBJECT_CELL), OBJECT);
+        assert_eq!(pack.mirror_at(OBJECT_CELL), 1.0);
+
+        // 1. Every proxy cell keeps its occupancy and changes material: the
+        //    packed grid must follow the material, not only the footprint.
+        let refresh = pack.refresh_mesh(&world, 0, &recolored).unwrap();
+        assert_eq!(refresh.rewritten, 2, "two proxy cells changed material");
+        assert_same_pack(
+            &pack,
+            &ReflectionVolume::pack_with_mesh(
+                &world,
+                0,
+                MESH_ORIGIN,
+                MESH_DIMS,
+                &table,
+                DEFAULT_TRACE_STEPS,
+                &recolored,
+            )
+            .unwrap(),
+        );
+        assert_eq!(pack.material_at(OBJECT_CELL), WALL);
+        assert_eq!(pack.material_at(CONTROL_CELL), WALL);
+
+        // 2. The object cell leaves the proxy (the world there is air, so it
+        //    becomes nonreflective) while a second cell enters a solid world
+        //    cell, which masks the body: only the vacated cell changes.
+        let refresh = pack.refresh_mesh(&world, 0, &on_the_floor).unwrap();
+        assert_eq!(
+            refresh.rewritten, 1,
+            "only the vacated air cell changes the packed grid"
+        );
+        assert_same_pack(
+            &pack,
+            &ReflectionVolume::pack_with_mesh(
+                &world,
+                0,
+                MESH_ORIGIN,
+                MESH_DIMS,
+                &table,
+                DEFAULT_TRACE_STEPS,
+                &on_the_floor,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            pack.material_at(OBJECT_CELL),
+            world.get(OBJECT_CELL),
+            "a vacated cell falls back to the world (air here)"
+        );
+        assert_eq!(pack.mirror_at(OBJECT_CELL), 0.0);
+        assert_eq!(
+            pack.material_at(FLOOR_UNDER),
+            world.get(FLOOR_UNDER),
+            "a solid world cell keeps the world's material under a body"
+        );
+
+        // 3. Back to the resting placement and then lifted: an occupancy move.
+        assert!(pack.refresh_mesh(&world, 0, &resting).unwrap().rewritten > 0);
+        assert_same_pack(
+            &pack,
+            &ReflectionVolume::pack_with_mesh(
+                &world,
+                0,
+                MESH_ORIGIN,
+                MESH_DIMS,
+                &table,
+                DEFAULT_TRACE_STEPS,
+                &resting,
+            )
+            .unwrap(),
+        );
+        let refresh = pack.refresh_mesh(&world, 0, &raised).unwrap();
+        assert_eq!(refresh.rewritten, 2, "the object's old and new cell change");
+        assert_same_pack(
+            &pack,
+            &ReflectionVolume::pack_with_mesh(
+                &world,
+                0,
+                MESH_ORIGIN,
+                MESH_DIMS,
+                &table,
+                DEFAULT_TRACE_STEPS,
+                &raised,
+            )
+            .unwrap(),
+        );
+
+        // The refreshed pack validates only for the proxy it was refreshed
+        // against; an older identity is refused and needs its own refresh.
+        assert!(pack.valid_for_scene(&world, 0, Some(raised.digest())));
+        assert!(!pack.valid_for_scene(&world, 0, Some(resting.digest())));
+        assert!(!pack.valid_for_scene(&world, 0, None));
+        // A no-op refresh is a no-op: nothing is rewritten and the pack is
+        // still exactly the fresh bake.
+        let noop = pack.refresh_mesh(&world, 0, &raised).unwrap();
+        assert_eq!(noop.rewritten, 0);
+        assert_eq!(noop.inspected, 2 * raised.occupied_cells());
+        assert_same_pack(
+            &pack,
+            &ReflectionVolume::pack_with_mesh(
+                &world,
+                0,
+                MESH_ORIGIN,
+                MESH_DIMS,
+                &table,
+                DEFAULT_TRACE_STEPS,
+                &raised,
+            )
+            .unwrap(),
+        );
+        // The pack's own memory accounting includes its mesh-cell record.
+        let stats = pack.memory_stats();
+        assert!(stats.mesh_cells_bytes >= raised.occupied_cells() * size_of::<(u32, u8)>());
+        assert!(stats.resident_bytes >= stats.upload_bytes + stats.mesh_cells_bytes);
+    }
+
+    #[test]
+    fn r3_refresh_refuses_a_foreign_or_replaced_world() {
+        let world = mesh_world();
+        let table = mesh_table();
+        let proxy = mesh_proxy(&[mesh_object()]);
+        let mut pack = ReflectionVolume::pack_with_mesh(
+            &world,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+            &proxy,
+        )
+        .unwrap();
+        let before = pack.materials().to_vec();
+        // A different epoch is a replacement the pack cannot reason about.
+        assert!(pack.refresh_mesh(&world, 1, &proxy).is_err());
+        // A world at a different revision needs a full repack: this method
+        // cannot know which world cells changed.
+        let mut edited = world.clone();
+        edited.set([MESH_ORIGIN[0] + 1, 0, MESH_ORIGIN[2] + 1], TARGET);
+        assert_ne!(edited.revision(), world.revision());
+        assert!(pack.refresh_mesh(&edited, 0, &proxy).is_err());
+        // A different seed is a different scene at the same revision.
+        let other = World::new(world.seed() + 1);
+        assert!(pack.refresh_mesh(&other, 0, &proxy).is_err());
+        assert_eq!(pack.materials(), before, "a refused refresh writes nothing");
+        assert!(pack.valid_for_scene(&world, 0, Some(proxy.digest())));
+        // A unit-voxel-only pack can be refreshed into a mesh-bearing one, and
+        // the result is the fresh bake, because every proxy cell is new.
+        let mut plain = ReflectionVolume::pack(
+            &world,
+            0,
+            MESH_ORIGIN,
+            MESH_DIMS,
+            &table,
+            DEFAULT_TRACE_STEPS,
+        )
+        .unwrap();
+        assert_eq!(plain.memory_stats().mesh_cells_bytes, 0);
+        assert!(plain.refresh_mesh(&world, 0, &proxy).unwrap().rewritten > 0);
+        assert_same_pack(
+            &plain,
+            &ReflectionVolume::pack_with_mesh(
+                &world,
+                0,
+                MESH_ORIGIN,
+                MESH_DIMS,
+                &table,
+                DEFAULT_TRACE_STEPS,
+                &proxy,
+            )
+            .unwrap(),
         );
     }
 
